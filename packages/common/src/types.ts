@@ -7,8 +7,8 @@ export type AgentConfig = {
 	temperature?: number;
 	maxTokens?: number;
 	tools?: string[];
-	createdAt: Date;
-	updatedAt: Date;
+	createdAt: string;
+	updatedAt: string;
 };
 
 export type GatewayRequest = {
@@ -27,7 +27,7 @@ export type GatewayResponse = {
 	agentId: string;
 	message: GatewayMessage;
 	usage: TokenUsage;
-	createdAt: Date;
+	createdAt: string;
 };
 
 export type TokenUsage = {
@@ -41,5 +41,5 @@ export type TelemetryEvent = {
 	type: string;
 	agentId?: string;
 	data: Record<string, unknown>;
-	timestamp: Date;
+	timestamp: string;
 };

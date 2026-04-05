@@ -11,8 +11,8 @@ describe("common types", () => {
 			id: "agent-1",
 			name: "Test Agent",
 			model: "gpt-4",
-			createdAt: new Date(),
-			updatedAt: new Date(),
+			createdAt: new Date().toISOString(),
+			updatedAt: new Date().toISOString(),
 		};
 		expect(config.id).toBe("agent-1");
 		expect(config.name).toBe("Test Agent");
@@ -33,7 +33,7 @@ describe("common types", () => {
 			agentId: "agent-1",
 			message: { role: "assistant", content: "Hi there!" },
 			usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
-			createdAt: new Date(),
+			createdAt: new Date().toISOString(),
 		};
 		expect(response.usage.totalTokens).toBe(15);
 	});

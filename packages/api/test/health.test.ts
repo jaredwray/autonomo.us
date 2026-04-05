@@ -1,10 +1,10 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { createServer } from "../src/server.js";
 
 describe("health route", () => {
 	const server = createServer();
 
-	afterEach(async () => {
+	afterAll(async () => {
 		await server.close();
 	});
 
