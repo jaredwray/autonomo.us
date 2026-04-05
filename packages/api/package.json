@@ -1,0 +1,35 @@
+{
+	"name": "@autonomo.us/api",
+	"version": "0.0.0",
+	"description": "AI gateway API service for autonomo.us",
+	"license": "MIT",
+	"author": "Jared Wray",
+	"type": "module",
+	"main": "./dist/index.cjs",
+	"module": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"import": "./dist/index.js",
+			"require": "./dist/index.cjs"
+		}
+	},
+	"files": ["dist"],
+	"scripts": {
+		"build": "tsup src/index.ts --format esm,cjs --dts",
+		"dev": "tsx watch src/start.ts",
+		"start": "node dist/start.js",
+		"test": "vitest run --coverage",
+		"clean": "rm -rf dist"
+	},
+	"dependencies": {
+		"@autonomo.us/common": "workspace:*",
+		"ai": "^4.0.0",
+		"fastify": "^5.0.0",
+		"mongodb": "^6.0.0"
+	},
+	"devDependencies": {
+		"@types/node": "^22.0.0",
+		"tsx": "^4.0.0"
+	}
+}
