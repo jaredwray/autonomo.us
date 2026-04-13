@@ -2,7 +2,7 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
 	test: {
-		projects: ["packages/*/vitest.config.ts"],
+		projects: ["core/*/vitest.config.ts"],
 		coverage: {
 			reporter: ["json", "text", "lcov"],
 			exclude: [
