@@ -6,17 +6,25 @@
 	"author": "Jared Wray",
 	"type": "module",
 	"main": "./dist/index.cjs",
-	"module": "./dist/index.js",
-	"types": "./dist/index.d.ts",
+	"module": "./dist/index.mjs",
+	"types": "./dist/index.d.mts",
 	"exports": {
 		".": {
-			"import": "./dist/index.js",
-			"require": "./dist/index.cjs"
+			"import": {
+				"types": "./dist/index.d.mts",
+				"default": "./dist/index.mjs"
+			},
+			"require": {
+				"types": "./dist/index.d.cts",
+				"default": "./dist/index.cjs"
+			}
 		}
 	},
-	"files": ["dist"],
+	"files": [
+		"dist"
+	],
 	"scripts": {
-		"build": "tsup src/index.ts --format esm,cjs --dts",
+		"build": "tsdown src/index.ts --format esm,cjs --dts",
 		"dev": "tsx watch src/start.ts",
 		"start": "node dist/start.js",
 		"test": "vitest run --coverage",
@@ -24,12 +32,12 @@
 	},
 	"dependencies": {
 		"@autonomo.us/common": "workspace:*",
-		"ai": "^4.0.0",
-		"fastify": "^5.0.0",
-		"mongodb": "^6.0.0"
+		"ai": "^6.0.159",
+		"fastify": "^5.8.4",
+		"mongodb": "^7.1.1"
 	},
 	"devDependencies": {
-		"@types/node": "^22.0.0",
-		"tsx": "^4.0.0"
+		"@types/node": "^25.6.0",
+		"tsx": "^4.21.0"
 	}
 }
