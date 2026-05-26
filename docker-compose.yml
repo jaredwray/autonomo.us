@@ -6,6 +6,7 @@ services:
     environment:
       MONGO_INITDB_ROOT_USERNAME: autonomous
       MONGO_INITDB_ROOT_PASSWORD: autonomous
+      MONGO_INITDB_DATABASE: autonomous
     volumes:
       - mongo_data:/data/db
 
