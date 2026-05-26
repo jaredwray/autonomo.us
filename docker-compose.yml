@@ -4,8 +4,8 @@ services:
     ports:
       - "27017:27017"
     environment:
-      MONGO_INITDB_ROOT_USERNAME: autonomo
-      MONGO_INITDB_ROOT_PASSWORD: autonomo
+      MONGO_INITDB_ROOT_USERNAME: autonomous
+      MONGO_INITDB_ROOT_PASSWORD: autonomous
     volumes:
       - mongo_data:/data/db
 
@@ -15,9 +15,9 @@ services:
       - "8123:8123"
       - "9000:9000"
     environment:
-      CLICKHOUSE_USER: autonomo
-      CLICKHOUSE_PASSWORD: autonomo
-      CLICKHOUSE_DB: autonomo
+      CLICKHOUSE_USER: autonomous
+      CLICKHOUSE_PASSWORD: autonomous
+      CLICKHOUSE_DB: autonomous
     volumes:
       - clickhouse_data:/var/lib/clickhouse
 
