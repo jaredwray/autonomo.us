@@ -1,0 +1,44 @@
+{
+	"name": "@autonomo.us/logo",
+	"version": "0.0.0",
+	"description": "Animated AUTONOMOUS aurora logo — a dependency-free, framework-agnostic SVG logo library",
+	"license": "MIT",
+	"author": "Jared Wray",
+	"type": "module",
+	"main": "./dist/index.cjs",
+	"module": "./dist/index.mjs",
+	"types": "./dist/index.d.mts",
+	"exports": {
+		".": {
+			"import": {
+				"types": "./dist/index.d.mts",
+				"default": "./dist/index.mjs"
+			},
+			"require": {
+				"types": "./dist/index.d.cts",
+				"default": "./dist/index.cjs"
+			}
+		}
+	},
+	"files": ["dist"],
+	"keywords": [
+		"autonomous",
+		"logo",
+		"svg",
+		"animation",
+		"aurora",
+		"brand",
+		"web-component"
+	],
+	"sideEffects": ["./dist/*.iife.js"],
+	"scripts": {
+		"build": "tsdown src/index.ts --format esm,cjs --dts && tsdown src/iife.ts --format iife --global-name AutonomousLogo --out-dir dist --clean=false",
+		"dev": "vite demo",
+		"test": "vitest run --coverage",
+		"clean": "rm -rf dist"
+	},
+	"devDependencies": {
+		"jsdom": "^29.0.2",
+		"vite": "^8.0.8"
+	}
+}

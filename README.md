@@ -7,6 +7,7 @@ AI platform for gateway, agents, and management.
 - **@autonomo.us/api** — Fastify AI gateway service
 - **@autonomo.us/ux** — React + Vite management dashboard
 - **@autonomo.us/common** — Shared types and utilities
+- **@autonomo.us/logo** — Animated AUTONOMOUS aurora logo (framework-agnostic SVG)
 
 ## Getting Started
 

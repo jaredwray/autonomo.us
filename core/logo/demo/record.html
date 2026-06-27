@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<title>autonomous-logo capture</title>
+		<style>
+			html,
+			body {
+				margin: 0;
+				height: 100%;
+			}
+			body {
+				background:
+					radial-gradient(
+						120% 110% at 50% 18%,
+						#0f1f46 0%,
+						#0a1430 48%,
+						#05091a 100%
+					);
+				display: grid;
+				place-items: center;
+			}
+			#stage {
+				width: 760px;
+			}
+		</style>
+	</head>
+	<body>
+		<div id="stage"></div>
+		<script type="module">
+			import { createLogo } from "/dist/index.mjs";
+			// Don't auto-start: expose a trigger so capture timing is deterministic.
+			window.__start = (opts = {}) => {
+				const stage = document.getElementById("stage");
+				stage.innerHTML = "";
+				window.__logo = createLogo(stage, {
+					animation: "loop",
+					speed: 1,
+					...opts,
+				});
+				window.__t0 = performance.now();
+				return true;
+			};
+			window.__ready = true;
+		</script>
+	</body>
+</html>
