@@ -87,4 +87,25 @@ describe("buildSvg", () => {
 		expect(svg).toContain("#101010");
 		expect(svg).toContain("#303030");
 	});
+
+	it("honours an explicit pixel width on the root svg", () => {
+		const { svg, ratio } = buildSvg(resolveOptions({ width: 320 }));
+		expect(svg).toContain('width="320"');
+		expect(svg).not.toContain('width="100%"');
+		const h = Math.round((320 / ratio) * 100) / 100;
+		expect(svg).toContain(`height="${h}"`);
+	});
+
+	it("fills its container when no width is given", () => {
+		expect(buildSvg(resolveOptions()).svg).toContain('width="100%"');
+	});
+
+	it("escapes the font family so quotes/angles can't break the markup", () => {
+		const svg = buildSvg(
+			resolveOptions({ fontFamily: `My "Quote" <Font>` }),
+		).svg;
+		expect(svg).toContain("&quot;Quote&quot;");
+		expect(svg).toContain("&lt;Font&gt;");
+		expect(svg).not.toContain("<Font>");
+	});
 });

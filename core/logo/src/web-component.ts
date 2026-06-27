@@ -1,6 +1,16 @@
 import { buildSvg, resolveOptions } from "./render.js";
 import type { AnimationMode, LogoOptions } from "./types.js";
 
+// Importing the package root (e.g. for the `renderToString` SSR API) evaluates
+// this module, so the base class must resolve without a DOM. In non-browser
+// runtimes `HTMLElement` is undefined; fall back to a stand-in so the module
+// loads. The element is only ever registered/instantiated in the browser, via
+// `defineAutonomousLogo`, which guards on `customElements`.
+const HTMLElementBase: typeof HTMLElement =
+	typeof HTMLElement !== "undefined"
+		? HTMLElement
+		: (class {} as unknown as typeof HTMLElement);
+
 /**
  * `<autonomous-logo>` custom element — the drop-anywhere wrapper.
  *
@@ -13,7 +23,7 @@ import type { AnimationMode, LogoOptions } from "./types.js";
  * `animation`, `speed`, `streaks`, `colors` (comma-separated), `wordmark-color`,
  * `tracking`, `font-family`, `title`, `reduced-motion`.
  */
-export class AutonomousLogoElement extends HTMLElement {
+export class AutonomousLogoElement extends HTMLElementBase {
 	static get observedAttributes(): string[] {
 		return [
 			"text",

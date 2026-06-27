@@ -139,10 +139,16 @@ export function buildSvg(opts: ResolvedOptions, uid = nextUid()): BuiltSvg {
 		baselineY: bbox.maxY,
 	});
 
+	// Honour an explicit pixel width across every entry point (string, mount,
+	// and custom element); otherwise scale to fill the container.
+	const sizeAttr = opts.width
+		? `width="${opts.width}" height="${Math.round((opts.width / ratio) * 100) / 100}"`
+		: `width="100%" height="100%"`;
+
 	const svg =
 		`<svg xmlns="http://www.w3.org/2000/svg" class="al-root" id="${uid}" ` +
 		`viewBox="0 0 ${MARK_WIDTH} ${vbHeight}" ` +
-		`width="100%" height="100%" role="img" aria-label="${escAttr(opts.title)}" ` +
+		`${sizeAttr} role="img" aria-label="${escAttr(opts.title)}" ` +
 		`preserveAspectRatio="xMidYMid meet" fill="none">` +
 		`<title>${esc(opts.title)}</title>` +
 		`<defs>` +
@@ -203,7 +209,7 @@ function renderWordmark(
 	const cx = MARK_WIDTH / 2;
 	const common =
 		`x="${cx}" y="${baseline}" text-anchor="middle" ` +
-		`font-size="${WORDMARK_SIZE}" font-family='${opts.fontFamily}' ` +
+		`font-size="${WORDMARK_SIZE}" font-family="${escAttr(opts.fontFamily)}" ` +
 		`font-weight="300" dominant-baseline="alphabetic"`;
 	const letters = [...opts.text]
 		.map(
