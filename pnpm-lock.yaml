@@ -48,6 +48,15 @@ importers:
 
   core/common: {}
 
+  core/logo:
+    devDependencies:
+      jsdom:
+        specifier: ^29.0.2
+        version: 29.0.2
+      vite:
+        specifier: ^8.0.8
+        version: 8.0.8(@types/node@25.6.0)(esbuild@0.27.7)(tsx@4.21.0)
+
   core/ux:
     dependencies:
       '@autonomo.us/common':
