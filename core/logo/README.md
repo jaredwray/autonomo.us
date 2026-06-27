@@ -60,6 +60,17 @@ import { renderToString } from "@autonomo.us/logo";
 const svg = renderToString({ animation: "loop" });
 ```
 
+### Disabling the animation
+
+Pass `animated: false` (or `<autonomous-logo animated="false">`) to render a
+completely static logo — useful for print, favicons, or low-power UI. It takes
+precedence over `animation`.
+
+```ts
+createLogo("#brand", { animated: false });
+renderToString({ animated: false });
+```
+
 ### Plain `<script>` (no build step)
 
 ```html
@@ -78,6 +89,7 @@ const svg = renderToString({ animation: "loop" });
 | `text`                 | `string`                      | `"AUTONOMO.US"` | Wordmark text. Empty string renders the mark alone.         |
 | `showWordmark`         | `boolean`                     | `true`         | Render the wordmark beneath the mark.                        |
 | `width`                | `number`                      | _fills parent_ | Pixel width; height follows the aspect ratio.                |
+| `animated`             | `boolean`                     | `true`         | Master on/off switch. `false` renders a static logo (wins over `animation`). |
 | `animation`            | `"loop" \| "once" \| "none"`  | `"loop"`       | Idle forever, play once, or render the resting frame.        |
 | `speed`                | `number`                      | `1`            | Global speed multiplier (`0.1`–`5`).                         |
 | `streaks`              | `number`                      | `13`           | Number of aurora blades (`5`–`40`).                          |

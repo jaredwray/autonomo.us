@@ -37,6 +37,16 @@ describe("defineAutonomousLogo", () => {
 		expect(html).toContain(">N</tspan>");
 	});
 
+	it('renders a static logo when animated="false"', () => {
+		defineAutonomousLogo();
+		const el = document.createElement("autonomous-logo");
+		el.setAttribute("animated", "false");
+		document.body.appendChild(el);
+		const html = (el.shadowRoot as ShadowRoot).innerHTML;
+		expect(html).toContain("<svg");
+		expect(html).not.toContain("animation-delay");
+	});
+
 	it("re-renders when an observed attribute changes", () => {
 		defineAutonomousLogo();
 		const el = document.createElement(

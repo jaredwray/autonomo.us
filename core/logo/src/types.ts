@@ -23,10 +23,19 @@ export type LogoOptions = {
 	 */
 	width?: number;
 	/**
+	 * Master on/off switch for all motion. Defaults to `true`. When `false`,
+	 * the logo renders as a completely static finished frame — equivalent to
+	 * {@link LogoOptions.animation} `"none"`, and taking precedence over it.
+	 * Use this when you need a still logo (print, favicons, low-power UI…).
+	 */
+	animated?: boolean;
+	/**
 	 * Animation behaviour after the one-shot intro completes.
 	 * - `"loop"` (default): the mark stays alive with a subtle aurora idle.
 	 * - `"once"`: play the intro once, then hold the final frame.
 	 * - `"none"`: render the resting frame with no motion.
+	 *
+	 * Ignored when {@link LogoOptions.animated} is `false`.
 	 */
 	animation?: AnimationMode;
 	/**

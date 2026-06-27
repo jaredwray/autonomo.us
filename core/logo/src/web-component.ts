@@ -20,8 +20,8 @@ const HTMLElementBase: typeof HTMLElement =
  * ```
  *
  * Attributes mirror {@link LogoOptions}: `text`, `show-wordmark`, `width`,
- * `animation`, `speed`, `streaks`, `colors` (comma-separated), `wordmark-color`,
- * `tracking`, `font-family`, `title`, `reduced-motion`.
+ * `animated`, `animation`, `speed`, `streaks`, `colors` (comma-separated),
+ * `wordmark-color`, `tracking`, `font-family`, `title`, `reduced-motion`.
  */
 export class AutonomousLogoElement extends HTMLElementBase {
 	static get observedAttributes(): string[] {
@@ -29,6 +29,7 @@ export class AutonomousLogoElement extends HTMLElementBase {
 			"text",
 			"show-wordmark",
 			"width",
+			"animated",
 			"animation",
 			"speed",
 			"streaks",
@@ -85,6 +86,7 @@ export class AutonomousLogoElement extends HTMLElementBase {
 			text: attr("text") ?? undefined,
 			showWordmark: bool("show-wordmark", true),
 			width: num("width"),
+			animated: bool("animated", true),
 			animation: (attr("animation") as AnimationMode | null) ?? undefined,
 			speed: num("speed"),
 			streaks: num("streaks"),

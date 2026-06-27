@@ -73,6 +73,15 @@ describe("buildSvg", () => {
 		);
 	});
 
+	it("treats animated:false as a static off-switch that wins over animation", () => {
+		const resolved = resolveOptions({ animated: false, animation: "loop" });
+		expect(resolved.animated).toBe(false);
+		expect(resolved.animation).toBe("none");
+		expect(buildSvg(resolved).svg).not.toContain("animation-delay");
+		// Default is animated.
+		expect(resolveOptions().animated).toBe(true);
+	});
+
 	it("gates motion behind prefers-reduced-motion by default", () => {
 		expect(buildSvg(resolveOptions()).svg).toContain("prefers-reduced-motion");
 		expect(

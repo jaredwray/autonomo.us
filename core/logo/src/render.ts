@@ -7,6 +7,7 @@ export const DEFAULT_COLORS = ["#2AD6FF", "#3B82F6", "#7C3AED", "#C026D3"];
 const DEFAULTS = {
 	text: "AUTONOMO.US",
 	showWordmark: true,
+	animated: true,
 	animation: "loop",
 	speed: 1,
 	streaks: 13,
@@ -25,10 +26,13 @@ const round = (n: number): number => Math.round(n * 1000) / 1000;
 /** Apply on-brand defaults and clamp values into safe ranges. */
 export function resolveOptions(options: LogoOptions = {}): ResolvedOptions {
 	const text = options.text ?? DEFAULTS.text;
+	// `animated: false` is a hard off-switch and wins over `animation`.
+	const animated = options.animated ?? DEFAULTS.animated;
 	return {
 		text,
 		showWordmark: options.showWordmark ?? DEFAULTS.showWordmark,
-		animation: options.animation ?? DEFAULTS.animation,
+		animated,
+		animation: !animated ? "none" : (options.animation ?? DEFAULTS.animation),
 		speed: clamp(options.speed ?? DEFAULTS.speed, 0.1, 5),
 		streaks: clamp(Math.round(options.streaks ?? DEFAULTS.streaks), 5, 40),
 		colors:
