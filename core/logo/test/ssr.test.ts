@@ -17,7 +17,7 @@ describe("non-DOM runtime (SSR)", () => {
 	it("imports and renders to a string without throwing", () => {
 		const svg = renderToString({ animation: "loop", width: 240 });
 		expect(svg.startsWith("<svg")).toBe(true);
-		expect(svg).toContain("AUTONOMOUS");
+		expect(svg).toContain("AUTONOMO.US");
 		expect(svg).toContain('width="240"');
 	});
 

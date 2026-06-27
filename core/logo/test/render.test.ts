@@ -7,11 +7,11 @@ const count = (haystack: string, needle: string): number =>
 describe("resolveOptions", () => {
 	it("applies on-brand defaults", () => {
 		const o = resolveOptions();
-		expect(o.text).toBe("AUTONOMOUS");
+		expect(o.text).toBe("AUTONOMO.US");
 		expect(o.streaks).toBe(13);
 		expect(o.speed).toBe(1);
 		expect(o.colors).toEqual(DEFAULT_COLORS);
-		expect(o.title).toBe("AUTONOMOUS logo");
+		expect(o.title).toBe("AUTONOMO.US logo");
 	});
 
 	it("clamps out-of-range values", () => {

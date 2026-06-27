@@ -5,7 +5,7 @@ import type { LogoOptions, ResolvedOptions } from "./types.js";
 export const DEFAULT_COLORS = ["#2AD6FF", "#3B82F6", "#7C3AED", "#C026D3"];
 
 const DEFAULTS = {
-	text: "AUTONOMOUS",
+	text: "AUTONOMO.US",
 	showWordmark: true,
 	animation: "loop",
 	speed: 1,

@@ -5,7 +5,7 @@ describe("renderToString", () => {
 	it("returns a self-contained SVG string", () => {
 		const svg = renderToString({ animation: "none" });
 		expect(svg.startsWith("<svg")).toBe(true);
-		expect(svg).toContain("AUTONOMOUS");
+		expect(svg).toContain("AUTONOMO.US");
 	});
 });
 

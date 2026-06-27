@@ -75,7 +75,7 @@ const svg = renderToString({ animation: "loop" });
 
 | Option                 | Type                          | Default        | Notes                                                        |
 | ---------------------- | ----------------------------- | -------------- | ------------------------------------------------------------ |
-| `text`                 | `string`                      | `"AUTONOMOUS"` | Wordmark text. Empty string renders the mark alone.          |
+| `text`                 | `string`                      | `"AUTONOMO.US"` | Wordmark text. Empty string renders the mark alone.         |
 | `showWordmark`         | `boolean`                     | `true`         | Render the wordmark beneath the mark.                        |
 | `width`                | `number`                      | _fills parent_ | Pixel width; height follows the aspect ratio.                |
 | `animation`            | `"loop" \| "once" \| "none"`  | `"loop"`       | Idle forever, play once, or render the resting frame.        |

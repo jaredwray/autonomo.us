@@ -8,7 +8,7 @@
 export type LogoOptions = {
 	/**
 	 * The wordmark rendered beneath the aurora mark. Defaults to
-	 * `"AUTONOMOUS"`. Set to an empty string to render the mark alone.
+	 * `"AUTONOMO.US"`. Set to an empty string to render the mark alone.
 	 */
 	text?: string;
 	/**
