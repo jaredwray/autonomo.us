@@ -1,3 +1,10 @@
+<div align="center">
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="media/logo-light.svg">
+    <img alt="AUTONOMO.US" src="media/logo.svg" width="480">
+  </picture>
+</div>
+
 # autonomo.us
 
 AI platform for gateway, agents, and management.
