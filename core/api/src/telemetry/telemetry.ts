@@ -26,8 +26,13 @@ export type TelemetryServiceOptions = {
 	flushIntervalMs?: number;
 	/** Max events buffered for the sink before oldest are dropped. */
 	maxPending?: number;
+	/** Max distinct models aggregated in memory; overflow folds into "(other)". */
+	maxModels?: number;
 	now?: () => Date;
 };
+
+/** Bucket for aggregates once `maxModels` distinct model ids are tracked. */
+export const OVERFLOW_MODEL_KEY = "(other)";
 
 type MutableModelUsage = ModelUsage & { successLatencyTotal: number };
 
@@ -41,6 +46,7 @@ export class TelemetryService {
 	private readonly maxRecent: number;
 	private readonly flushIntervalMs: number;
 	private readonly maxPending: number;
+	private readonly maxModels: number;
 	private readonly now: () => Date;
 
 	private readonly recent: TelemetryEvent[] = [];
@@ -63,6 +69,7 @@ export class TelemetryService {
 		this.maxRecent = options.maxRecent ?? 100;
 		this.flushIntervalMs = options.flushIntervalMs ?? 2000;
 		this.maxPending = options.maxPending ?? 5000;
+		this.maxModels = options.maxModels ?? 100;
 		this.now = options.now ?? (() => new Date());
 		if (this.sink) {
 			this.timer = setInterval(() => {
@@ -111,14 +118,22 @@ export class TelemetryService {
 	}
 
 	private aggregate(chat: ChatTelemetry): void {
-		const key = chat.model;
+		// Bound the map: unadvertised model ids are routable (and typos still
+		// get recorded), so distinct keys would otherwise grow forever.
+		const key =
+			this.byModel.has(chat.model) || this.byModel.size < this.maxModels
+				? chat.model
+				: OVERFLOW_MODEL_KEY;
 		let usage = this.byModel.get(key);
 		if (!usage) {
 			usage = {
-				model: chat.model.includes("/")
-					? chat.model.slice(chat.model.indexOf("/") + 1)
-					: chat.model,
-				provider: chat.provider,
+				model:
+					key === OVERFLOW_MODEL_KEY
+						? OVERFLOW_MODEL_KEY
+						: chat.model.includes("/")
+							? chat.model.slice(chat.model.indexOf("/") + 1)
+							: chat.model,
+				provider: key === OVERFLOW_MODEL_KEY ? "other" : chat.provider,
 				requests: 0,
 				errors: 0,
 				promptTokens: 0,
@@ -173,12 +188,15 @@ export class TelemetryService {
 
 	/**
 	 * Durable summary from ClickHouse; returns undefined when no sink is
-	 * configured or the query fails (callers fall back to memory).
+	 * configured, pending events cannot be flushed, or the query fails —
+	 * callers fall back to the complete in-memory summary in every case.
 	 */
 	async summaryFromSink(): Promise<UsageSummary | undefined> {
 		if (!this.sink) return undefined;
+		// A failed flush means the durable store is missing events we hold in
+		// memory — serving its summary would silently under-report.
+		if (!(await this.flush())) return undefined;
 		try {
-			await this.flush();
 			return await this.sink.querySummary();
 		} catch {
 			return undefined;
@@ -197,20 +215,34 @@ export class TelemetryService {
 		return this.sink !== undefined;
 	}
 
-	/** Ships pending events to ClickHouse. Failures keep events queued. */
-	async flush(): Promise<void> {
-		if (!this.sink || this.pending.length === 0) return;
-		const batch = this.pending;
-		this.pending = [];
+	/** Bootstraps the ClickHouse schema once (also needed before queries). */
+	private async ensureSchemaOnce(): Promise<void> {
+		if (!this.sink || this.schemaReady) return;
+		await this.sink.ensureSchema();
+		this.schemaReady = true;
+	}
+
+	/**
+	 * Ships pending events to ClickHouse. Returns false when events remain
+	 * queued (sink failure); they are retried on the next flush tick.
+	 */
+	async flush(): Promise<boolean> {
+		if (!this.sink) return false;
 		try {
-			if (!this.schemaReady) {
-				await this.sink.ensureSchema();
-				this.schemaReady = true;
+			await this.ensureSchemaOnce();
+			if (this.pending.length === 0) return true;
+			const batch = this.pending;
+			this.pending = [];
+			try {
+				await this.sink.insert(batch);
+				return true;
+			} catch {
+				// Requeue (bounded) and retry on the next flush tick.
+				this.pending = [...batch, ...this.pending].slice(-this.maxPending);
+				return false;
 			}
-			await this.sink.insert(batch);
 		} catch {
-			// Requeue (bounded) and retry on the next flush tick.
-			this.pending = [...batch, ...this.pending].slice(-this.maxPending);
+			return false;
 		}
 	}
 

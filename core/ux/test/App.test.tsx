@@ -70,6 +70,10 @@ const models = {
 		},
 		{ id: "local/llama3.3", provider: "local", model: "llama3.3" },
 	],
+	providers: [
+		{ name: "anthropic", kind: "anthropic" },
+		{ name: "local", kind: "openai-compatible" },
+	],
 };
 
 function jsonResponse(payload: unknown) {
@@ -141,6 +145,31 @@ describe("App", () => {
 		render(<App />);
 		const ids = await screen.findAllByText("local/llama3.3");
 		expect(ids.length).toBeGreaterThan(0);
+	});
+
+	it("explains routing when a provider has no advertised models", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: RequestInfo | URL) => {
+				const url = String(input);
+				if (url.includes("/v1/telemetry/summary")) {
+					return jsonResponse(summary);
+				}
+				if (url.includes("/v1/telemetry/events")) {
+					return jsonResponse(events);
+				}
+				if (url.includes("/v1/models")) {
+					return jsonResponse({
+						models: [],
+						providers: [{ name: "local", kind: "openai-compatible" }],
+					});
+				}
+				throw new Error(`Unexpected fetch: ${url}`);
+			}),
+		);
+		render(<App />);
+		expect(await screen.findByText(/No advertised models, but/)).toBeDefined();
+		expect(screen.queryByText(/No providers configured/)).toBeNull();
 	});
 
 	it("shows an error banner when the API is unreachable", async () => {

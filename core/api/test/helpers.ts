@@ -1,5 +1,5 @@
 import type { LanguageModel } from "ai";
-import { convertArrayToReadableStream, MockLanguageModelV3 } from "ai/test";
+import { convertArrayToReadableStream, MockLanguageModelV4 } from "ai/test";
 import { ProviderRegistry } from "../src/providers/registry.js";
 
 export const mockUsage = {
@@ -13,7 +13,7 @@ export const mockUsage = {
 };
 
 export function mockModel(text = "Hello there"): LanguageModel {
-	return new MockLanguageModelV3({
+	return new MockLanguageModelV4({
 		doGenerate: async () => ({
 			content: [{ type: "text", text }],
 			finishReason: { unified: "stop" as const, raw: "stop" },
@@ -38,7 +38,7 @@ export function mockModel(text = "Hello there"): LanguageModel {
 }
 
 export function failingModel(message = "provider exploded"): LanguageModel {
-	return new MockLanguageModelV3({
+	return new MockLanguageModelV4({
 		doGenerate: async () => {
 			throw new Error(message);
 		},

@@ -301,6 +301,19 @@ export function App() {
 							</li>
 						))}
 					</ul>
+				) : data && data.providers.length > 0 ? (
+					<div className="empty-state">
+						No advertised models, but{" "}
+						{data.providers.map((provider, index) => (
+							<span key={provider.name}>
+								{index > 0 ? ", " : ""}
+								<code>{provider.name}</code>
+							</span>
+						))}{" "}
+						{data.providers.length === 1 ? "is" : "are"} configured — any{" "}
+						<code>&lt;provider&gt;/&lt;model-id&gt;</code> routes. Set{" "}
+						<code>OPENAI_COMPAT_MODELS</code> to advertise a model list.
+					</div>
 				) : (
 					<div className="empty-state">
 						No providers configured. Set <code>ANTHROPIC_API_KEY</code> and/or{" "}

@@ -10,10 +10,16 @@ export type SinkStatus = {
 	healthy: boolean;
 };
 
+export type ProviderInfo = {
+	name: string;
+	kind: string;
+};
+
 export type DashboardData = {
 	summary: UsageSummary;
 	events: TelemetryEvent[];
 	models: ModelInfo[];
+	providers: ProviderInfo[];
 	sink: SinkStatus;
 };
 
@@ -35,7 +41,7 @@ export async function fetchDashboardData(): Promise<DashboardData> {
 		getJson<{ events: TelemetryEvent[]; sink: SinkStatus }>(
 			"/v1/telemetry/events?limit=25",
 		),
-		getJson<{ models: ModelInfo[] }>("/v1/models"),
+		getJson<{ models: ModelInfo[]; providers: ProviderInfo[] }>("/v1/models"),
 	]);
 
 	return {
@@ -43,5 +49,6 @@ export async function fetchDashboardData(): Promise<DashboardData> {
 		events: eventsPayload.events,
 		sink: eventsPayload.sink,
 		models: modelsPayload.models,
+		providers: modelsPayload.providers,
 	};
 }

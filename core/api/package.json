@@ -31,11 +31,11 @@
 		"clean": "rm -rf dist"
 	},
 	"dependencies": {
-		"@ai-sdk/anthropic": "^3.0.98",
-		"@ai-sdk/openai-compatible": "^2.0.62",
+		"@ai-sdk/anthropic": "^4.0.16",
+		"@ai-sdk/openai-compatible": "^3.0.12",
 		"@autonomo.us/common": "workspace:*",
 		"@fastify/cors": "^11.3.0",
-		"ai": "^6.0.159",
+		"ai": "^7.0.31",
 		"fastify": "^5.8.4",
 		"mongodb": "^7.1.1"
 	},

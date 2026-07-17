@@ -26,12 +26,25 @@ export type ClickHouseConfig = {
 	table: string;
 	username: string;
 	password: string;
+	/** Per-request timeout so a hung ClickHouse never blocks API responses. */
+	requestTimeoutMs: number;
 };
 
 export type ApiConfig = {
 	providers: ProviderConfig[];
 	clickhouse?: ClickHouseConfig;
+	/**
+	 * Browser origins allowed by CORS. `["*"]` allows any origin. The default
+	 * covers the Vite dev dashboard; the gateway holds provider keys and has
+	 * no auth, so arbitrary web pages must not be able to call it.
+	 */
+	corsOrigins: string[];
 };
+
+export const DEFAULT_CORS_ORIGINS = [
+	"http://localhost:5173",
+	"http://127.0.0.1:5173",
+];
 
 export const DEFAULT_ANTHROPIC_MODELS = [
 	"claude-opus-4-8",
@@ -91,8 +104,15 @@ export function configFromEnv(
 				table: env.CLICKHOUSE_TABLE || "telemetry_events",
 				username: env.CLICKHOUSE_USERNAME || "autonomous",
 				password: env.CLICKHOUSE_PASSWORD || "autonomous",
+				requestTimeoutMs: Number(env.CLICKHOUSE_TIMEOUT_MS) || 3000,
 			}
 		: undefined;
 
-	return { providers, clickhouse };
+	const corsOrigins = env.CORS_ORIGIN
+		? env.CORS_ORIGIN.split(",")
+				.map((origin) => origin.trim())
+				.filter((origin) => origin.length > 0)
+		: DEFAULT_CORS_ORIGINS;
+
+	return { providers, clickhouse, corsOrigins };
 }

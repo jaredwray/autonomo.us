@@ -41,6 +41,13 @@ export function toClickHouseDateTime(iso: string): string {
 	return iso.replace("T", " ").replace(/Z$/, "");
 }
 
+/** `anthropic/claude-opus-4-8` + provider `anthropic` → `claude-opus-4-8`. */
+export function stripProviderPrefix(model: string, provider: string): string {
+	return provider && model.startsWith(`${provider}/`)
+		? model.slice(provider.length + 1)
+		: model;
+}
+
 export function eventToRow(event: TelemetryEvent): TelemetryRow {
 	const data = event.data;
 	return {
@@ -93,6 +100,9 @@ export class ClickHouseSink {
 					"X-ClickHouse-Key": this.config.password,
 				},
 				body,
+				// Bound every request so a hung ClickHouse degrades to the
+				// in-memory fallback instead of stalling API responses.
+				signal: AbortSignal.timeout(this.config.requestTimeoutMs ?? 3000),
 			});
 			const text = await response.text();
 			if (!response.ok) {
@@ -111,6 +121,10 @@ export class ClickHouseSink {
 	/** Creates the database and telemetry table if they do not exist. */
 	async ensureSchema(): Promise<void> {
 		await this.request(`CREATE DATABASE IF NOT EXISTS ${this.config.database}`);
+		// ReplacingMergeTree keyed on (timestamp, id) deduplicates retried
+		// inserts: if an insert commits but its response is lost, the batch is
+		// requeued and written again, and the duplicate rows collapse. Reads
+		// use FINAL so summaries never double-count.
 		await this.request(
 			`CREATE TABLE IF NOT EXISTS ${this.table} (
 				id String,
@@ -125,7 +139,7 @@ export class ClickHouseSink {
 				error String,
 				data String,
 				timestamp DateTime64(3, 'UTC')
-			) ENGINE = MergeTree ORDER BY timestamp`,
+			) ENGINE = ReplacingMergeTree ORDER BY (timestamp, id)`,
 		);
 	}
 
@@ -148,8 +162,8 @@ export class ClickHouseSink {
 				sum(completion_tokens) AS completion_tokens,
 				sum(total_tokens) AS total_tokens,
 				round(avgIf(latency_ms, error = '')) AS avg_latency_ms
-			FROM ${this.table}
-			WHERE type = 'gateway.chat'
+			FROM ${this.table} FINAL
+			WHERE type IN ('gateway.chat', 'gateway.error')
 			GROUP BY model, provider
 			ORDER BY requests DESC
 			FORMAT JSON`,
@@ -158,7 +172,12 @@ export class ClickHouseSink {
 			data: Array<Record<string, unknown>>;
 		};
 		const byModel: ModelUsage[] = parsed.data.map((row) => ({
-			model: String(row.model ?? ""),
+			// Rows store the canonical routable id; strip the provider prefix
+			// so ModelUsage.model matches the in-memory summary's shape.
+			model: stripProviderPrefix(
+				String(row.model ?? ""),
+				String(row.provider ?? ""),
+			),
 			provider: String(row.provider ?? ""),
 			requests: asNumber(row.requests),
 			errors: asNumber(row.errors),

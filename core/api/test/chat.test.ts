@@ -90,6 +90,8 @@ describe("POST /v1/chat", () => {
 
 		expect(response.statusCode).toBe(200);
 		expect(response.headers["content-type"]).toContain("text/event-stream");
+		// No Origin header on the request → no CORS header on the stream.
+		expect(response.headers["access-control-allow-origin"]).toBeUndefined();
 
 		const events = response.body
 			.split("\n\n")
@@ -117,6 +119,34 @@ describe("POST /v1/chat", () => {
 		const summary = context.telemetry.summary();
 		expect(summary.totalRequests).toBe(1);
 		expect(summary.totalTokens).toBe(15);
+	});
+
+	it("echoes allowed origins on the SSE path and omits others", async () => {
+		const allowed = await context.server.inject({
+			method: "POST",
+			url: "/v1/chat",
+			headers: { origin: "http://localhost:5173" },
+			payload: {
+				model: "mock/chat-model",
+				messages: [{ role: "user", content: "Hi" }],
+				stream: true,
+			},
+		});
+		expect(allowed.headers["access-control-allow-origin"]).toBe(
+			"http://localhost:5173",
+		);
+
+		const denied = await context.server.inject({
+			method: "POST",
+			url: "/v1/chat",
+			headers: { origin: "https://evil.example" },
+			payload: {
+				model: "mock/chat-model",
+				messages: [{ role: "user", content: "Hi" }],
+				stream: true,
+			},
+		});
+		expect(denied.headers["access-control-allow-origin"]).toBeUndefined();
 	});
 
 	it("returns 404 for unknown providers", async () => {

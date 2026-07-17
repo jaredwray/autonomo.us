@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
 	ClickHouseSink,
 	eventToRow,
+	stripProviderPrefix,
 	toClickHouseDateTime,
 } from "../src/telemetry/clickhouse.js";
 
@@ -11,12 +12,30 @@ const CH_CONFIG = {
 	table: "telemetry_events",
 	username: "user-1",
 	password: "secret-1",
+	requestTimeoutMs: 3000,
 };
 
 describe("toClickHouseDateTime", () => {
 	it("converts ISO timestamps to DateTime64 input format", () => {
 		expect(toClickHouseDateTime("2026-07-17T12:34:56.789Z")).toBe(
 			"2026-07-17 12:34:56.789",
+		);
+	});
+});
+
+describe("stripProviderPrefix", () => {
+	it("strips only the exact provider prefix", () => {
+		expect(stripProviderPrefix("anthropic/claude-opus-4-8", "anthropic")).toBe(
+			"claude-opus-4-8",
+		);
+		expect(stripProviderPrefix("local/meta-llama/Llama-3.3-70B", "local")).toBe(
+			"meta-llama/Llama-3.3-70B",
+		);
+		expect(stripProviderPrefix("claude-opus-4-8", "anthropic")).toBe(
+			"claude-opus-4-8",
+		);
+		expect(stripProviderPrefix("localhost/model", "local")).toBe(
+			"localhost/model",
 		);
 	});
 });
@@ -105,7 +124,29 @@ describe("ClickHouseSink", () => {
 			"X-ClickHouse-Key": "secret-1",
 		});
 		expect(init?.body).toContain('"model":"m"');
+		expect(init?.signal).toBeInstanceOf(AbortSignal);
 		expect(sink.healthy).toBe(true);
+	});
+
+	it("creates a deduplicating table and queries it with FINAL", async () => {
+		const calls: string[] = [];
+		const fetchImpl = vi.fn(async (url: string) => {
+			calls.push(decodeURIComponent(url.replace(/\+/g, " ")));
+			return {
+				ok: true,
+				status: 200,
+				text: async () =>
+					url.includes("SELECT") ? JSON.stringify({ data: [] }) : "",
+			};
+		});
+		const sink = new ClickHouseSink(CH_CONFIG, fetchImpl);
+
+		await sink.ensureSchema();
+		await sink.querySummary();
+
+		expect(calls[1]).toContain("ReplacingMergeTree ORDER BY (timestamp, id)");
+		expect(calls[2]).toContain("FROM autonomous.telemetry_events FINAL");
+		expect(calls[2]).toContain("IN ('gateway.chat', 'gateway.error')");
 	});
 
 	it("marks itself unhealthy on failed requests", async () => {
@@ -148,7 +189,7 @@ describe("ClickHouseSink", () => {
 				JSON.stringify({
 					data: [
 						{
-							model: "claude-opus-4-8",
+							model: "anthropic/claude-opus-4-8",
 							provider: "anthropic",
 							requests: 4,
 							errors: 1,
@@ -180,5 +221,7 @@ describe("ClickHouseSink", () => {
 		// Weighted mean over successful requests: (150*3 + 50*2) / 5 = 110.
 		expect(summary.avgLatencyMs).toBe(110);
 		expect(summary.byModel).toHaveLength(2);
+		// Canonical ids are normalized to match the in-memory summary shape.
+		expect(summary.byModel[0].model).toBe("claude-opus-4-8");
 	});
 });

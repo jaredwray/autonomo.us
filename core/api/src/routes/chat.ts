@@ -13,7 +13,19 @@ import type { TelemetryService } from "../telemetry/telemetry.js";
 export type ChatRouteOptions = {
 	registry: ProviderRegistry;
 	telemetry: TelemetryService;
+	/** Origins allowed on the SSE path; `["*"]` allows any. */
+	corsOrigins?: string[];
 };
+
+/** Returns the CORS origin header value for a request, or undefined to omit. */
+export function resolveCorsOrigin(
+	requestOrigin: string | undefined,
+	allowed: string[],
+): string | undefined {
+	if (allowed.includes("*")) return "*";
+	if (requestOrigin && allowed.includes(requestOrigin)) return requestOrigin;
+	return undefined;
+}
 
 const chatBodySchema = {
 	type: "object",
@@ -91,7 +103,7 @@ export async function chatRoutes(
 			}
 
 			if (body.stream) {
-				return streamChat(server, reply, body, resolved, telemetry);
+				return streamChat(server, reply, body, resolved, options);
 			}
 
 			const started = performance.now();
@@ -146,18 +158,27 @@ async function streamChat(
 	reply: FastifyReply,
 	body: GatewayRequest & { model: string },
 	resolved: ResolvedModel,
-	telemetry: TelemetryService,
+	options: ChatRouteOptions,
 ) {
+	const { telemetry } = options;
 	const started = performance.now();
 	const abort = new AbortController();
 	const raw = reply.raw;
+
+	// reply.hijack() bypasses @fastify/cors, so apply the same allowlist here.
+	const corsOrigin = resolveCorsOrigin(
+		reply.request.headers.origin,
+		options.corsOrigins ?? [],
+	);
 
 	reply.hijack();
 	raw.writeHead(200, {
 		"content-type": "text/event-stream",
 		"cache-control": "no-cache",
 		connection: "keep-alive",
-		"access-control-allow-origin": "*",
+		...(corsOrigin
+			? { "access-control-allow-origin": corsOrigin, vary: "origin" }
+			: {}),
 	});
 	raw.on("close", () => {
 		if (!raw.writableEnded) abort.abort();

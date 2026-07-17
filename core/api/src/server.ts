@@ -34,10 +34,16 @@ export function createServer(options: CreateServerOptions = {}) {
 		logger: options.logger ?? true,
 	});
 
-	server.register(cors, { origin: true });
+	server.register(cors, {
+		origin: config.corsOrigins.includes("*") ? true : config.corsOrigins,
+	});
 	server.register(healthRoutes);
 	server.register(modelsRoutes, { registry });
-	server.register(chatRoutes, { registry, telemetry });
+	server.register(chatRoutes, {
+		registry,
+		telemetry,
+		corsOrigins: config.corsOrigins,
+	});
 	server.register(telemetryRoutes, { telemetry });
 
 	server.addHook("onClose", async () => {

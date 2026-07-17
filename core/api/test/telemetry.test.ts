@@ -10,6 +10,7 @@ const CH_CONFIG = {
 	table: "telemetry_events",
 	username: "autonomous",
 	password: "autonomous",
+	requestTimeoutMs: 3000,
 };
 
 const usage = { promptTokens: 10, completionTokens: 5, totalTokens: 15 };
@@ -127,6 +128,18 @@ describe("TelemetryService", () => {
 		await telemetry.stop();
 	});
 
+	it("folds distinct models beyond maxModels into an overflow bucket", () => {
+		const telemetry = new TelemetryService({ maxModels: 2 });
+		for (const model of ["mock/a", "mock/b", "mock/c", "mock/d"]) {
+			telemetry.recordChat({ model, provider: "mock", usage, latencyMs: 10 });
+		}
+		const summary = telemetry.summary();
+		expect(summary.totalRequests).toBe(4);
+		expect(summary.byModel).toHaveLength(3);
+		const other = summary.byModel.find((m) => m.model === "(other)");
+		expect(other).toMatchObject({ requests: 2, provider: "other" });
+	});
+
 	it("keeps events queued when the sink fails and recovers later", async () => {
 		let fail = true;
 		const inserts: string[] = [];
@@ -151,6 +164,58 @@ describe("TelemetryService", () => {
 		await telemetry.flush();
 		expect(inserts).toHaveLength(1);
 		expect(inserts[0]).toContain("gateway.chat");
+		await telemetry.stop();
+	});
+
+	it("bootstraps the schema before querying an empty sink", async () => {
+		const calls: string[] = [];
+		const fetchImpl = vi.fn(async (url: string) => {
+			calls.push(url);
+			return {
+				ok: true,
+				status: 200,
+				text: async () =>
+					url.includes("SELECT") ? JSON.stringify({ data: [] }) : "",
+			};
+		});
+		const sink = new ClickHouseSink(CH_CONFIG, fetchImpl);
+		const telemetry = new TelemetryService({ sink, flushIntervalMs: 60_000 });
+
+		// No events recorded — the query path must still create the schema.
+		const summary = await telemetry.summaryFromSink();
+		expect(summary?.source).toBe("clickhouse");
+		expect(calls).toHaveLength(3);
+		expect(calls[0]).toContain("CREATE+DATABASE");
+		expect(calls[1]).toContain("CREATE+TABLE");
+		expect(calls[2]).toContain("SELECT");
+		await telemetry.stop();
+	});
+
+	it("falls back to memory when pending events cannot be flushed", async () => {
+		const fetchImpl = vi.fn(async (url: string) => {
+			if (url.includes("INSERT")) {
+				throw new Error("insert denied");
+			}
+			return {
+				ok: true,
+				status: 200,
+				text: async () =>
+					url.includes("SELECT") ? JSON.stringify({ data: [] }) : "",
+			};
+		});
+		const sink = new ClickHouseSink(CH_CONFIG, fetchImpl);
+		const telemetry = new TelemetryService({ sink, flushIntervalMs: 60_000 });
+
+		telemetry.recordChat({
+			model: "mock/a",
+			provider: "mock",
+			usage,
+			latencyMs: 100,
+		});
+
+		// Insert fails, so the sink summary would under-report — refuse it
+		// even though the SELECT itself would succeed.
+		expect(await telemetry.summaryFromSink()).toBeUndefined();
 		await telemetry.stop();
 	});
 });

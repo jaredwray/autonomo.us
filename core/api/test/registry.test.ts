@@ -102,6 +102,19 @@ describe("configFromEnv + registryFromConfig", () => {
 			table: "telemetry_events",
 			username: "autonomous",
 			password: "autonomous",
+			requestTimeoutMs: 3000,
 		});
+	});
+
+	it("parses cors origins from env with a dev-origin default", () => {
+		expect(configFromEnv({}).corsOrigins).toEqual([
+			"http://localhost:5173",
+			"http://127.0.0.1:5173",
+		]);
+		expect(
+			configFromEnv({ CORS_ORIGIN: "https://app.example.com, https://b.dev" })
+				.corsOrigins,
+		).toEqual(["https://app.example.com", "https://b.dev"]);
+		expect(configFromEnv({ CORS_ORIGIN: "*" }).corsOrigins).toEqual(["*"]);
 	});
 });
