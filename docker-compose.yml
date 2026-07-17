@@ -63,7 +63,7 @@ services:
       start_period: 10s
 
   clickhouse:
-    image: clickhouse/clickhouse-server:25
+    image: clickhouse/clickhouse-server:25.8
     ports:
       - "8123:8123"
       - "9000:9000"

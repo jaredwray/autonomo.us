@@ -15,7 +15,7 @@ jobs:
         node-version: ['22', '24']
     services:
       clickhouse:
-        image: clickhouse/clickhouse-server:25
+        image: clickhouse/clickhouse-server:25.8
         env:
           CLICKHOUSE_USER: autonomous
           CLICKHOUSE_PASSWORD: autonomous
