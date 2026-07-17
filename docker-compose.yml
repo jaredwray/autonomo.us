@@ -1,4 +1,50 @@
 services:
+  api:
+    build:
+      context: .
+      dockerfile: core/api/Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_DATABASE: autonomous
+      CLICKHOUSE_USERNAME: autonomous
+      CLICKHOUSE_PASSWORD: autonomous
+      MONGODB_URL: mongodb://autonomous:autonomous@mongo:27017/autonomous?authSource=admin
+      # Register the anthropic provider by exporting ANTHROPIC_API_KEY.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # Defaults to the compose ollama service (start it with --profile llm).
+      OPENAI_COMPAT_BASE_URL: ${OPENAI_COMPAT_BASE_URL:-http://ollama:11434/v1}
+      OPENAI_COMPAT_NAME: ${OPENAI_COMPAT_NAME:-local}
+      OPENAI_COMPAT_MODELS: ${OPENAI_COMPAT_MODELS:-}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:8080,http://localhost:5173,http://127.0.0.1:5173}
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  ux:
+    build:
+      context: .
+      dockerfile: core/ux/Dockerfile
+    ports:
+      - "8080:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:80/"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
   mongo:
     image: mongo:8
     ports:
@@ -9,9 +55,15 @@ services:
       MONGO_INITDB_DATABASE: autonomous
     volumes:
       - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "-u", "autonomous", "-p", "autonomous", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   clickhouse:
-    image: clickhouse/clickhouse-server:25
+    image: clickhouse/clickhouse-server:25.8
     ports:
       - "8123:8123"
       - "9000:9000"
@@ -21,7 +73,25 @@ services:
       CLICKHOUSE_DB: autonomous
     volumes:
       - clickhouse_data:/var/lib/clickhouse
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--user", "autonomous", "--password", "autonomous", "--query", "SELECT 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # Real local LLM for the gateway's OpenAI-compatible provider.
+  # Start with: docker compose --profile llm up -d
+  # Then pull a model: docker compose exec ollama ollama pull llama3.2
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["llm"]
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
 
 volumes:
   mongo_data:
   clickhouse_data:
+  ollama_data:
