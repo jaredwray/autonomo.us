@@ -102,8 +102,10 @@ export function configFromEnv(
 				url: env.CLICKHOUSE_URL,
 				database: env.CLICKHOUSE_DATABASE || "autonomous",
 				table: env.CLICKHOUSE_TABLE || "telemetry_events",
-				username: env.CLICKHOUSE_USERNAME || "autonomous",
-				password: env.CLICKHOUSE_PASSWORD || "autonomous",
+				// ?? not ||: an explicitly empty username/password is valid
+				// (ClickHouse's default user has no password).
+				username: env.CLICKHOUSE_USERNAME ?? "autonomous",
+				password: env.CLICKHOUSE_PASSWORD ?? "autonomous",
 				requestTimeoutMs: Number(env.CLICKHOUSE_TIMEOUT_MS) || 3000,
 			}
 		: undefined;

@@ -23,10 +23,12 @@ export type DashboardData = {
 	sink: SinkStatus;
 };
 
-const API_BASE: string = import.meta.env?.VITE_API_URL ?? "";
+function apiBase(): string {
+	return import.meta.env?.VITE_API_URL ?? "";
+}
 
 async function getJson<T>(path: string): Promise<T> {
-	const response = await fetch(`${API_BASE}${path}`, {
+	const response = await fetch(`${apiBase()}${path}`, {
 		headers: { accept: "application/json" },
 	});
 	if (!response.ok) {

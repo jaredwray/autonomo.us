@@ -24,9 +24,9 @@
 		"dist"
 	],
 	"scripts": {
-		"build": "tsdown src/index.ts --format esm,cjs --dts",
+		"build": "tsdown src/index.ts src/start.ts --format esm,cjs --dts",
 		"dev": "tsx watch src/start.ts",
-		"start": "node dist/start.js",
+		"start": "node dist/start.mjs",
 		"test": "vitest run --coverage",
 		"clean": "rm -rf dist"
 	},

@@ -78,6 +78,9 @@ importers:
         specifier: ^19.2.5
         version: 19.2.5(react@19.2.5)
     devDependencies:
+      '@autonomo.us/api':
+        specifier: workspace:*
+        version: link:../api
       '@testing-library/jest-dom':
         specifier: ^6.9.1
         version: 6.9.1

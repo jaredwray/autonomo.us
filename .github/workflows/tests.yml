@@ -13,6 +13,20 @@ jobs:
     strategy:
       matrix:
         node-version: ['22', '24']
+    services:
+      clickhouse:
+        image: clickhouse/clickhouse-server:25
+        env:
+          CLICKHOUSE_USER: autonomous
+          CLICKHOUSE_PASSWORD: autonomous
+          CLICKHOUSE_DB: autonomous
+        ports:
+          - 8123:8123
+        options: >-
+          --health-cmd "clickhouse-client --user autonomous --password autonomous --query 'SELECT 1'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -23,3 +37,14 @@ jobs:
       - run: pnpm lint
       - run: pnpm build
       - run: pnpm test:ci
+        env:
+          CLICKHOUSE_URL: http://localhost:8123
+          CLICKHOUSE_USERNAME: autonomous
+          CLICKHOUSE_PASSWORD: autonomous
+          CLICKHOUSE_DATABASE: autonomous
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose build api ux

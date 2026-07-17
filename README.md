@@ -18,6 +18,23 @@ AI platform for gateway, agents, and management.
 
 ## Getting Started
 
+Run the whole platform with docker compose — API gateway, dashboard, ClickHouse, and MongoDB:
+
+```bash
+docker compose up --build
+# Dashboard: http://localhost:8080  ·  API: http://localhost:3000
+```
+
+Add a real local LLM with the `llm` profile (Ollama):
+
+```bash
+docker compose --profile llm up --build -d
+docker compose exec ollama ollama pull llama3.2
+OPENAI_COMPAT_MODELS=llama3.2 docker compose up -d api
+```
+
+For development on the host:
+
 ```bash
 pnpm install
 pnpm build
@@ -62,8 +79,8 @@ through environment variables:
 - `GET /health` — health check.
 
 ```bash
-# Local example: Ollama + ClickHouse
-docker compose up -d clickhouse
+# Host-run API against the compose services
+docker compose up -d clickhouse mongo
 OPENAI_COMPAT_BASE_URL=http://localhost:11434/v1 \
 CLICKHOUSE_URL=http://localhost:8123 \
 pnpm --filter @autonomo.us/api dev
@@ -75,6 +92,21 @@ curl -X POST http://localhost:3000/v1/chat \
 
 The UX dashboard polls the telemetry endpoints and shows request/token/latency
 totals, per-model usage, and recent gateway events.
+
+## Testing
+
+Tests run against real services, not mocks: chat routes talk to a real
+OpenAI-compatible HTTP server over the production provider wire path, and the
+telemetry suites run against a real ClickHouse (CI provides one as a service
+container). Locally:
+
+```bash
+docker compose up -d clickhouse
+CLICKHOUSE_USERNAME=autonomous CLICKHOUSE_PASSWORD=autonomous pnpm test
+```
+
+Without a reachable ClickHouse the integration suites skip with a warning;
+everything else still runs.
 
 ## License
 

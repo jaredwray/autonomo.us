@@ -2,20 +2,24 @@ import { describe, expect, it } from "vitest";
 import { configFromEnv, DEFAULT_ANTHROPIC_MODELS } from "../src/config.js";
 import {
 	ProviderRegistry,
+	providerFromConfig,
 	registryFromConfig,
 	UnknownProviderError,
 } from "../src/providers/registry.js";
-import { mockModel } from "./helpers.js";
 
+// Real providers via the production factory; resolve() never dials out, so a
+// placeholder base URL is fine here.
 function registryWith(names: string[]): ProviderRegistry {
 	const registry = new ProviderRegistry();
 	for (const name of names) {
-		registry.register({
-			name,
-			kind: "mock",
-			models: [`${name}-model`],
-			languageModel: () => mockModel(),
-		});
+		registry.register(
+			providerFromConfig({
+				kind: "openai-compatible",
+				name,
+				baseURL: "http://127.0.0.1:9/v1",
+				models: [`${name}-model`],
+			}),
+		);
 	}
 	return registry;
 }

@@ -1,42 +1,55 @@
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import {
+	afterAll,
+	afterEach,
+	beforeAll,
+	beforeEach,
+	describe,
+	expect,
+	it,
+} from "vitest";
 import { createServer } from "../src/server.js";
 import { TelemetryService } from "../src/telemetry/telemetry.js";
-import { mockRegistry } from "./helpers.js";
-
-function buildServer() {
-	const telemetry = new TelemetryService();
-	const server = createServer({
-		registry: mockRegistry(),
-		telemetry,
-		logger: false,
-	});
-	return { server, telemetry };
-}
+import { type StubProvider, startStubProvider } from "./helpers.js";
 
 describe("POST /v1/chat", () => {
-	let context: ReturnType<typeof buildServer>;
+	let provider: StubProvider;
+	let telemetry: TelemetryService;
+	let server: ReturnType<typeof createServer>;
 
-	beforeEach(() => {
-		context = buildServer();
+	beforeAll(async () => {
+		provider = await startStubProvider();
 	});
 
 	afterAll(async () => {
-		await context.server.close();
+		await provider.close();
+	});
+
+	beforeEach(() => {
+		telemetry = new TelemetryService();
+		server = createServer({
+			registry: provider.registry,
+			telemetry,
+			logger: false,
+		});
+	});
+
+	afterEach(async () => {
+		await server.close();
 	});
 
 	it("proxies a chat request and returns usage", async () => {
-		const response = await context.server.inject({
+		const response = await server.inject({
 			method: "POST",
 			url: "/v1/chat",
 			payload: {
-				model: "mock/chat-model",
+				model: "stub/chat-model",
 				messages: [{ role: "user", content: "Hi" }],
 			},
 		});
 
 		expect(response.statusCode).toBe(200);
 		const body = JSON.parse(response.body);
-		expect(body.model).toBe("mock/chat-model");
+		expect(body.model).toBe("stub/chat-model");
 		expect(body.message).toEqual({
 			role: "assistant",
 			content: "Hello there",
@@ -51,38 +64,38 @@ describe("POST /v1/chat", () => {
 	});
 
 	it("records token usage telemetry for successful requests", async () => {
-		await context.server.inject({
+		await server.inject({
 			method: "POST",
 			url: "/v1/chat",
 			payload: {
-				model: "mock/chat-model",
+				model: "stub/chat-model",
 				agentId: "agent-7",
 				messages: [{ role: "user", content: "Hi" }],
 			},
 		});
 
-		const summary = context.telemetry.summary();
+		const summary = telemetry.summary();
 		expect(summary.totalRequests).toBe(1);
 		expect(summary.totalTokens).toBe(15);
 		expect(summary.byModel[0]).toMatchObject({
 			model: "chat-model",
-			provider: "mock",
+			provider: "stub",
 			requests: 1,
 			totalTokens: 15,
 		});
 
-		const [event] = context.telemetry.recentEvents();
+		const [event] = telemetry.recentEvents();
 		expect(event.type).toBe("gateway.chat");
 		expect(event.agentId).toBe("agent-7");
-		expect(event.data.model).toBe("mock/chat-model");
+		expect(event.data.model).toBe("stub/chat-model");
 	});
 
 	it("streams chat responses as SSE and records usage", async () => {
-		const response = await context.server.inject({
+		const response = await server.inject({
 			method: "POST",
 			url: "/v1/chat",
 			payload: {
-				model: "mock/chat-model",
+				model: "stub/chat-model",
 				messages: [{ role: "user", content: "Hi" }],
 				stream: true,
 			},
@@ -114,20 +127,20 @@ describe("POST /v1/chat", () => {
 			completionTokens: 5,
 			totalTokens: 15,
 		});
-		expect(finish.model).toBe("mock/chat-model");
+		expect(finish.model).toBe("stub/chat-model");
 
-		const summary = context.telemetry.summary();
+		const summary = telemetry.summary();
 		expect(summary.totalRequests).toBe(1);
 		expect(summary.totalTokens).toBe(15);
 	});
 
 	it("echoes allowed origins on the SSE path and omits others", async () => {
-		const allowed = await context.server.inject({
+		const allowed = await server.inject({
 			method: "POST",
 			url: "/v1/chat",
 			headers: { origin: "http://localhost:5173" },
 			payload: {
-				model: "mock/chat-model",
+				model: "stub/chat-model",
 				messages: [{ role: "user", content: "Hi" }],
 				stream: true,
 			},
@@ -136,12 +149,12 @@ describe("POST /v1/chat", () => {
 			"http://localhost:5173",
 		);
 
-		const denied = await context.server.inject({
+		const denied = await server.inject({
 			method: "POST",
 			url: "/v1/chat",
 			headers: { origin: "https://evil.example" },
 			payload: {
-				model: "mock/chat-model",
+				model: "stub/chat-model",
 				messages: [{ role: "user", content: "Hi" }],
 				stream: true,
 			},
@@ -150,7 +163,7 @@ describe("POST /v1/chat", () => {
 	});
 
 	it("returns 404 for unknown providers", async () => {
-		const response = await context.server.inject({
+		const response = await server.inject({
 			method: "POST",
 			url: "/v1/chat",
 			payload: {
@@ -164,25 +177,25 @@ describe("POST /v1/chat", () => {
 	});
 
 	it("returns 400 for invalid bodies", async () => {
-		const missingModel = await context.server.inject({
+		const missingModel = await server.inject({
 			method: "POST",
 			url: "/v1/chat",
 			payload: { messages: [{ role: "user", content: "Hi" }] },
 		});
 		expect(missingModel.statusCode).toBe(400);
 
-		const emptyMessages = await context.server.inject({
+		const emptyMessages = await server.inject({
 			method: "POST",
 			url: "/v1/chat",
-			payload: { model: "mock/chat-model", messages: [] },
+			payload: { model: "stub/chat-model", messages: [] },
 		});
 		expect(emptyMessages.statusCode).toBe(400);
 
-		const badRole = await context.server.inject({
+		const badRole = await server.inject({
 			method: "POST",
 			url: "/v1/chat",
 			payload: {
-				model: "mock/chat-model",
+				model: "stub/chat-model",
 				messages: [{ role: "tool", content: "Hi" }],
 			},
 		});
@@ -190,11 +203,11 @@ describe("POST /v1/chat", () => {
 	});
 
 	it("returns 502 and records an error event when the provider fails", async () => {
-		const response = await context.server.inject({
+		const response = await server.inject({
 			method: "POST",
 			url: "/v1/chat",
 			payload: {
-				model: "mock/broken-model",
+				model: "stub/broken-model",
 				messages: [{ role: "user", content: "Hi" }],
 			},
 		});
@@ -202,26 +215,24 @@ describe("POST /v1/chat", () => {
 		expect(response.statusCode).toBe(502);
 		expect(JSON.parse(response.body).error.type).toBe("provider_error");
 
-		const summary = context.telemetry.summary();
+		const summary = telemetry.summary();
 		expect(summary.totalRequests).toBe(1);
 		expect(summary.totalErrors).toBe(1);
-		const [event] = context.telemetry.recentEvents();
+		const [event] = telemetry.recentEvents();
 		expect(event.type).toBe("gateway.error");
 		expect(String(event.data.error)).toContain("provider exploded");
 	});
-});
 
-describe("GET /v1/models", () => {
 	it("lists registered models and providers", async () => {
-		const { server } = buildServer();
 		const response = await server.inject({ method: "GET", url: "/v1/models" });
 
 		expect(response.statusCode).toBe(200);
 		const body = JSON.parse(response.body);
 		expect(body.models).toEqual([
-			{ id: "mock/chat-model", provider: "mock", model: "chat-model" },
+			{ id: "stub/chat-model", provider: "stub", model: "chat-model" },
 		]);
-		expect(body.providers).toEqual([{ name: "mock", kind: "mock" }]);
-		await server.close();
+		expect(body.providers).toEqual([
+			{ name: "stub", kind: "openai-compatible" },
+		]);
 	});
 });

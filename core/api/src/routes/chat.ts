@@ -113,6 +113,9 @@ export async function chatRoutes(
 					messages: body.messages,
 					temperature: body.temperature,
 					maxOutputTokens: body.maxTokens,
+					// Surface provider failures immediately — retry policy belongs
+					// to gateway clients, not hidden inside the proxy hop.
+					maxRetries: 0,
 				});
 
 				const usage = toTokenUsage(result.usage);
@@ -200,6 +203,7 @@ async function streamChat(
 			temperature: body.temperature,
 			maxOutputTokens: body.maxTokens,
 			abortSignal: abort.signal,
+			maxRetries: 0,
 		});
 
 		for await (const part of result.fullStream) {
