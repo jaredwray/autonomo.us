@@ -6,12 +6,22 @@ export const DEFAULT_FAILOVER_POLICY: FailoverPolicy = {
 	timeoutMs: 30_000,
 };
 
+/** Upper bound for `timeoutMs`, shared by the PUT schema and the store. */
+export const MAX_FAILOVER_TIMEOUT_MS = 600_000;
+
 function normalizeTargets(targets: string[]): string[] {
 	return [
 		...new Set(
 			targets.map((target) => target.trim()).filter((target) => target.length),
 		),
 	];
+}
+
+function normalizeTimeout(timeoutMs: number): number {
+	// Values past 2^31-1 ms overflow Node's setTimeout into a ~1ms timer, so
+	// oversized configs must be clamped before they ever reach a timer.
+	if (!Number.isFinite(timeoutMs)) return DEFAULT_FAILOVER_POLICY.timeoutMs;
+	return Math.min(Math.max(0, Math.floor(timeoutMs)), MAX_FAILOVER_TIMEOUT_MS);
 }
 
 /**
@@ -23,8 +33,10 @@ export class FailoverPolicyStore {
 
 	constructor(initial: Partial<FailoverPolicy> = {}) {
 		this.policy = {
-			...DEFAULT_FAILOVER_POLICY,
-			...initial,
+			enabled: initial.enabled ?? DEFAULT_FAILOVER_POLICY.enabled,
+			timeoutMs: normalizeTimeout(
+				initial.timeoutMs ?? DEFAULT_FAILOVER_POLICY.timeoutMs,
+			),
 			targets: normalizeTargets(initial.targets ?? []),
 		};
 	}
@@ -37,7 +49,7 @@ export class FailoverPolicyStore {
 	update(patch: Partial<FailoverPolicy>): FailoverPolicy {
 		this.policy = {
 			enabled: patch.enabled ?? this.policy.enabled,
-			timeoutMs: patch.timeoutMs ?? this.policy.timeoutMs,
+			timeoutMs: normalizeTimeout(patch.timeoutMs ?? this.policy.timeoutMs),
 			targets: patch.targets
 				? normalizeTargets(patch.targets)
 				: this.policy.targets,

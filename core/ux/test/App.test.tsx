@@ -193,6 +193,31 @@ describe("App", () => {
 		});
 	});
 
+	it("accepts a typed model id even when the provider advertises none", async () => {
+		// Default Ollama-style setup: provider registered, no advertised models.
+		await startApp({
+			...BASE_CONFIG,
+			providers: [
+				{
+					kind: "openai-compatible",
+					name: "local",
+					baseURL: "http://127.0.0.1:9/v1",
+					models: [],
+				},
+			],
+		});
+		render(<App />);
+
+		fireEvent.change(await screen.findByLabelText("Fallback model to add"), {
+			target: { value: "  local/llama3.3  " },
+		});
+		fireEvent.click(screen.getByRole("button", { name: "Add" }));
+
+		// Trimmed and listed as the first fallback.
+		expect(screen.getByText("1.")).toBeDefined();
+		expect(screen.getAllByText("local/llama3.3").length).toBeGreaterThan(0);
+	});
+
 	it("removes a fallback model from the target list", async () => {
 		await startApp();
 		render(<App />);

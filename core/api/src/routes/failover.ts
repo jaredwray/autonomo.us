@@ -1,6 +1,9 @@
 import type { FailoverPolicy } from "@autonomo.us/common";
 import type { FastifyInstance } from "fastify";
-import type { FailoverPolicyStore } from "../failover.js";
+import {
+	type FailoverPolicyStore,
+	MAX_FAILOVER_TIMEOUT_MS,
+} from "../failover.js";
 import type { ProviderRegistry } from "../providers/registry.js";
 
 export type FailoverRouteOptions = {
@@ -13,7 +16,11 @@ const failoverBodySchema = {
 	additionalProperties: false,
 	properties: {
 		enabled: { type: "boolean" },
-		timeoutMs: { type: "integer", minimum: 0, maximum: 600_000 },
+		timeoutMs: {
+			type: "integer",
+			minimum: 0,
+			maximum: MAX_FAILOVER_TIMEOUT_MS,
+		},
 		targets: {
 			type: "array",
 			maxItems: 20,

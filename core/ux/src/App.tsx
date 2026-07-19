@@ -4,7 +4,7 @@ import type {
 	ModelUsage,
 	TelemetryEvent,
 } from "@autonomo.us/common";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
 	type DashboardData,
 	fetchDashboardData,
@@ -148,23 +148,29 @@ function FailoverCard(props: { connected: boolean; models: ModelInfo[] }) {
 	const [saved, setSaved] = useState(false);
 	const [saveError, setSaveError] = useState<string | null>(null);
 	const [selection, setSelection] = useState("");
+	// Tracks unsaved edits so a reconnect refetch never clobbers them.
+	const dirty = useRef(false);
 
 	const load = useCallback(async () => {
 		try {
 			setPolicy(await fetchFailoverPolicy());
+			dirty.current = false;
 			setLoadFailed(false);
 		} catch {
 			setLoadFailed(true);
 		}
 	}, []);
 
-	// Load once the API is reachable; retries automatically on reconnect.
+	// Refetch whenever the gateway (re)connects: the policy lives in API
+	// memory, so a restarted gateway is re-seeded from env and the cached copy
+	// would be stale. Unsaved edits win — saving stays an explicit action.
 	useEffect(() => {
-		if (props.connected && policy === null) void load();
-	}, [props.connected, policy, load]);
+		if (props.connected && !dirty.current) void load();
+	}, [props.connected, load]);
 
 	const edit = (patch: Partial<FailoverPolicy>) => {
 		if (!policy) return;
+		dirty.current = true;
 		setPolicy({ ...policy, ...patch });
 		setSaved(false);
 		setSaveError(null);
@@ -176,6 +182,7 @@ function FailoverCard(props: { connected: boolean; models: ModelInfo[] }) {
 		setSaveError(null);
 		try {
 			setPolicy(await updateFailoverPolicy(policy));
+			dirty.current = false;
 			setSaved(true);
 		} catch (error) {
 			setSaveError(error instanceof Error ? error.message : String(error));
@@ -184,7 +191,15 @@ function FailoverCard(props: { connected: boolean; models: ModelInfo[] }) {
 		}
 	};
 
-	const addable = props.models.filter(
+	const addTarget = () => {
+		if (!policy) return;
+		const target = selection.trim();
+		setSelection("");
+		if (!target || policy.targets.includes(target)) return;
+		edit({ targets: [...policy.targets, target] });
+	};
+
+	const suggestions = props.models.filter(
 		(model) => !policy?.targets.includes(model.id),
 	);
 
@@ -260,30 +275,31 @@ function FailoverCard(props: { connected: boolean; models: ModelInfo[] }) {
 							</span>
 						)}
 						<div className="failover-add">
-							<select
+							<input
+								type="text"
+								list="failover-target-options"
+								placeholder="provider/model"
 								aria-label="Fallback model to add"
 								value={selection}
 								onChange={(event) => setSelection(event.target.value)}
-							>
-								<option value="">Select a model…</option>
-								{addable.map((model) => (
-									<option key={model.id} value={model.id}>
-										{model.id}
-									</option>
+							/>
+							<datalist id="failover-target-options">
+								{suggestions.map((model) => (
+									<option key={model.id} value={model.id} />
 								))}
-							</select>
+							</datalist>
 							<button
 								type="button"
-								disabled={selection === ""}
-								onClick={() => {
-									if (!selection) return;
-									edit({ targets: [...policy.targets, selection] });
-									setSelection("");
-								}}
+								disabled={selection.trim() === ""}
+								onClick={addTarget}
 							>
 								Add
 							</button>
 						</div>
+						<span className="hint">
+							Pick an advertised model or type any <code>provider/model</code>{" "}
+							id — providers that are not registered are rejected on save.
+						</span>
 					</div>
 
 					<div className="failover-actions">

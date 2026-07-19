@@ -8,6 +8,7 @@ export {
 export {
 	DEFAULT_FAILOVER_POLICY,
 	FailoverPolicyStore,
+	MAX_FAILOVER_TIMEOUT_MS,
 } from "./failover.js";
 export {
 	type ModelProvider,

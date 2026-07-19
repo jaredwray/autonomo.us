@@ -135,6 +135,10 @@ describe("configFromEnv + registryFromConfig", () => {
 			configFromEnv({ FAILOVER_TIMEOUT_MS: "not-a-number" }).failover
 				?.timeoutMs,
 		).toBe(30000);
+		// Clamped to the PUT /v1/failover cap so it cannot overflow setTimeout.
+		expect(
+			configFromEnv({ FAILOVER_TIMEOUT_MS: "3000000000" }).failover?.timeoutMs,
+		).toBe(600000);
 	});
 
 	it("parses cors origins from env with a dev-origin default", () => {

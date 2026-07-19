@@ -49,6 +49,19 @@ describe("FailoverPolicyStore", () => {
 		expect(store.get().enabled).toBe(false);
 		expect(store.get().targets).toEqual(["a/one"]);
 	});
+
+	it("clamps timeouts so they can never overflow Node timers", () => {
+		// Above 2^31-1 ms, setTimeout degrades to a ~1ms timer — a mistyped env
+		// value must not turn every attempt into an instant abort.
+		expect(
+			new FailoverPolicyStore({ timeoutMs: 3_000_000_000 }).get().timeoutMs,
+		).toBe(600_000);
+		expect(new FailoverPolicyStore({ timeoutMs: -50 }).get().timeoutMs).toBe(0);
+
+		const store = new FailoverPolicyStore();
+		expect(store.update({ timeoutMs: 1_000_000 }).timeoutMs).toBe(600_000);
+		expect(store.update({ timeoutMs: 99.9 }).timeoutMs).toBe(99);
+	});
 });
 
 describe("failover policy API", () => {
@@ -161,6 +174,13 @@ describe("failover policy API", () => {
 			payload: { enabled: "maybe" },
 		});
 		expect(badEnabled.statusCode).toBe(400);
+
+		const oversizedTimeout = await server.inject({
+			method: "PUT",
+			url: "/v1/failover",
+			payload: { timeoutMs: 3_000_000_000 },
+		});
+		expect(oversizedTimeout.statusCode).toBe(400);
 	});
 });
 
@@ -260,6 +280,29 @@ describe("POST /v1/chat failover", () => {
 			model: "stub/slow-model",
 			error: "timed out after 100ms",
 		});
+	});
+
+	it("leaves the timeout unarmed when there is no fallback to try", async () => {
+		// Enabled but with no usable target: aborting a slow-but-successful
+		// request would buy nothing, so the attempt must be allowed to finish.
+		startServer(
+			new FailoverPolicyStore({ enabled: true, targets: [], timeoutMs: 100 }),
+		);
+
+		const response = await server.inject({
+			method: "POST",
+			url: "/v1/chat",
+			payload: {
+				model: "stub/slow-model",
+				messages: [{ role: "user", content: "Hi" }],
+			},
+		});
+
+		expect(response.statusCode).toBe(200);
+		const body = JSON.parse(response.body);
+		expect(body.model).toBe("stub/slow-model");
+		expect(body.message.content).toBe("Slow reply");
+		expect(body.failover).toBeUndefined();
 	});
 
 	it("returns 502 with every attempt when all candidates fail", async () => {

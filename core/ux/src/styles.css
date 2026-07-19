@@ -370,6 +370,7 @@ table.events .model-cell {
 }
 
 .failover input[type="number"],
+.failover input[type="text"],
 .failover select {
 	background: var(--page);
 	border: 1px solid var(--hairline);

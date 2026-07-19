@@ -1,5 +1,8 @@
 import type { FailoverPolicy } from "@autonomo.us/common";
-import { DEFAULT_FAILOVER_POLICY } from "./failover.js";
+import {
+	DEFAULT_FAILOVER_POLICY,
+	MAX_FAILOVER_TIMEOUT_MS,
+} from "./failover.js";
 
 export type AnthropicProviderConfig = {
 	kind: "anthropic";
@@ -125,7 +128,8 @@ export function configFromEnv(
 		: DEFAULT_CORS_ORIGINS;
 
 	// FAILOVER_TIMEOUT_MS=0 is valid ("no timeout"), so 0 must not fall
-	// through to the default the way `Number(...) || fallback` would.
+	// through to the default the way `Number(...) || fallback` would. Oversized
+	// values are clamped to the same cap PUT /v1/failover enforces.
 	const failoverTimeout = env.FAILOVER_TIMEOUT_MS
 		? Number(env.FAILOVER_TIMEOUT_MS)
 		: Number.NaN;
@@ -134,7 +138,7 @@ export function configFromEnv(
 		targets: parseModels(env.FAILOVER_TARGETS, []),
 		timeoutMs:
 			Number.isFinite(failoverTimeout) && failoverTimeout >= 0
-				? failoverTimeout
+				? Math.min(failoverTimeout, MAX_FAILOVER_TIMEOUT_MS)
 				: DEFAULT_FAILOVER_POLICY.timeoutMs,
 	};
 

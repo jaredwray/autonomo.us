@@ -152,7 +152,11 @@ export async function chatRoutes(
 					} catch {}
 				}
 			}
-			const attemptTimeoutMs = policy.enabled ? policy.timeoutMs : 0;
+			// Arm the attempt timeout only when there is somewhere to fail over to;
+			// with no usable fallback it would just abort slow-but-successful
+			// requests without buying anything.
+			const attemptTimeoutMs =
+				policy.enabled && candidates.length > 1 ? policy.timeoutMs : 0;
 
 			if (body.stream) {
 				return streamChat(
