@@ -4,7 +4,7 @@ export type CatalogModel = {
 	/** Provider-native model id, e.g. `claude-sonnet-5` or `gpt-5.2`. */
 	id: string;
 	name: string;
-	/** Release date (`YYYY-MM-DD`) when the source reports one. */
+	/** Release date (`YYYY-MM-DD`, or `YYYY-MM`) when the source reports one. */
 	released?: string;
 };
 
@@ -35,6 +35,12 @@ export const modelCatalog = catalogJson as ModelCatalog;
 
 export const MODELS_DEV_URL = "https://models.dev/api.json";
 
+/**
+ * Per-request budget: a stalled source must fail fast so the fallback path
+ * (previous entry / models.dev) can run instead of hanging the refresh.
+ */
+export const FETCH_TIMEOUT_MS = 30_000;
+
 type FetchLike = typeof fetch;
 
 export type ProviderSpec = {
@@ -58,7 +64,10 @@ async function getJson(
 	headers: Record<string, string>,
 	fetchImpl: FetchLike,
 ): Promise<unknown> {
-	const response = await fetchImpl(url, { headers });
+	const response = await fetchImpl(url, {
+		headers,
+		signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+	});
 	if (!response.ok) {
 		throw new Error(`GET ${url} failed with status ${response.status}`);
 	}
@@ -66,15 +75,16 @@ async function getJson(
 }
 
 /**
- * Coerces the source's release marker into a `YYYY-MM-DD` date: providers
- * report epoch seconds (`created`), models.dev reports ISO dates.
+ * Coerces the source's release marker into a `YYYY-MM-DD` (or month-only
+ * `YYYY-MM`, which models.dev permits) date: providers report epoch seconds
+ * (`created`), models.dev reports ISO dates.
  */
 export function toReleaseDate(value: unknown): string | undefined {
 	if (typeof value === "number" && Number.isFinite(value) && value > 0) {
 		return new Date(value * 1000).toISOString().slice(0, 10);
 	}
 	if (typeof value === "string") {
-		const match = value.match(/^\d{4}-\d{2}-\d{2}/);
+		const match = value.match(/^\d{4}-\d{2}(-\d{2})?/);
 		if (match) return match[0];
 	}
 	return undefined;
@@ -193,11 +203,21 @@ function openAiStyleModels(endpoint: string): ProviderSpec["fetchModels"] {
 			data?: Array<{ id?: unknown; display_name?: unknown; created?: unknown }>;
 		};
 		return normalizeModels(
-			(body.data ?? []).map((entry) => ({
-				id: entry.id,
-				name: entry.display_name,
-				released: entry.created,
-			})),
+			(body.data ?? [])
+				// These endpoints list what the caller's account can use, which
+				// includes private fine-tunes (`ft:...` on OpenAI and Mistral).
+				// Those are account-scoped, not catalog material — the workflow
+				// would commit them to the repo. Routing them still works; the
+				// registry is not limited to advertised models.
+				.filter(
+					(entry) =>
+						!(typeof entry.id === "string" && entry.id.startsWith("ft:")),
+				)
+				.map((entry) => ({
+					id: entry.id,
+					name: entry.display_name,
+					released: entry.created,
+				})),
 		);
 	};
 }

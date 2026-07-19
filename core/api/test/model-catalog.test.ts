@@ -19,7 +19,11 @@ import { ProviderRegistry } from "../src/providers/registry.js";
 import { modelsRoutes } from "../src/routes/models.js";
 import { createServer } from "../src/server.js";
 
-type RecordedCall = { url: URL; headers: Record<string, string> };
+type RecordedCall = {
+	url: URL;
+	headers: Record<string, string>;
+	signal?: AbortSignal;
+};
 
 /**
  * In-memory fetch: the handler returns a JSON body (or throws) per URL, and
@@ -31,11 +35,11 @@ function fakeFetch(
 	const calls: RecordedCall[] = [];
 	const fetchImpl = (async (
 		input: string | URL,
-		init?: { headers?: Record<string, string> },
+		init?: { headers?: Record<string, string>; signal?: AbortSignal },
 	) => {
 		const url = new URL(String(input));
 		const headers = init?.headers ?? {};
-		calls.push({ url, headers });
+		calls.push({ url, headers, signal: init?.signal });
 		return new Response(JSON.stringify(handler(url, headers)), {
 			status: 200,
 			headers: { "content-type": "application/json" },
@@ -77,6 +81,16 @@ describe("toReleaseDate", () => {
 		expect(toReleaseDate(1735689600)).toBe("2025-01-01");
 		expect(toReleaseDate("2026-06-29")).toBe("2026-06-29");
 		expect(toReleaseDate("2026-02-05T12:30:00Z")).toBe("2026-02-05");
+	});
+
+	it("preserves month-only dates, which sort as older than any day in them", () => {
+		expect(toReleaseDate("2026-07")).toBe("2026-07");
+		expect(
+			compareCatalogModels(
+				{ id: "a", name: "a", released: "2026-07-15" },
+				{ id: "b", name: "b", released: "2026-07" },
+			),
+		).toBeLessThan(0);
 	});
 
 	it("rejects values that are not dates", () => {
@@ -175,11 +189,14 @@ describe("buildModelCatalog", () => {
 		expect(calls[1].url.searchParams.get("after_id")).toBe("claude-opus-4-8");
 	});
 
-	it("maps OpenAI-style endpoints, converting created epochs to dates", async () => {
+	it("maps OpenAI-style endpoints, dropping account-scoped fine-tunes", async () => {
 		const { fetchImpl, calls } = fakeFetch(() => ({
 			data: [
 				{ id: "o3", created: 1704067200 },
 				{ id: "gpt-5.2", created: 1735689600 },
+				// Fine-tune ids are visible only to the owning account and must
+				// not end up in the published catalog.
+				{ id: "ft:gpt-4o:acme::abc123", created: 1735689600 },
 			],
 		}));
 
@@ -191,6 +208,9 @@ describe("buildModelCatalog", () => {
 
 		expect(calls[0].url.href).toBe("https://api.openai.com/v1/models");
 		expect(calls[0].headers.authorization).toBe("Bearer sk-test");
+		// Every source request carries a timeout so a stalled endpoint fails
+		// over to the fallback path instead of hanging the refresh.
+		expect(calls[0].signal).toBeInstanceOf(AbortSignal);
 		expect(catalog.providers.openai.models).toEqual([
 			{ id: "gpt-5.2", name: "gpt-5.2", released: "2025-01-01" },
 			{ id: "o3", name: "o3", released: "2024-01-01" },
