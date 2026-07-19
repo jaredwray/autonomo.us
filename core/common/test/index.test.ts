@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type {
 	AgentConfig,
+	FailoverPolicy,
 	GatewayRequest,
 	GatewayResponse,
 	ModelInfo,
@@ -50,6 +51,37 @@ describe("common types", () => {
 		};
 		expect(response.usage.totalTokens).toBe(15);
 		expect(response.model).toBe("anthropic/claude-opus-4-8");
+	});
+
+	it("should create a valid GatewayResponse served by a failover target", () => {
+		const response: GatewayResponse = {
+			id: "resp-2",
+			model: "local/llama3.3",
+			message: { role: "assistant", content: "Hi there!" },
+			usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+			createdAt: new Date().toISOString(),
+			failover: {
+				requestedModel: "anthropic/claude-opus-4-8",
+				attempts: [
+					{
+						model: "anthropic/claude-opus-4-8",
+						error: "timed out after 30000ms",
+					},
+				],
+			},
+		};
+		expect(response.failover?.requestedModel).toBe("anthropic/claude-opus-4-8");
+		expect(response.failover?.attempts).toHaveLength(1);
+	});
+
+	it("should create a valid FailoverPolicy", () => {
+		const policy: FailoverPolicy = {
+			enabled: true,
+			targets: ["anthropic/claude-sonnet-5", "local/llama3.3"],
+			timeoutMs: 30000,
+		};
+		expect(policy.enabled).toBe(true);
+		expect(policy.targets).toHaveLength(2);
 	});
 
 	it("should create a valid ModelInfo", () => {

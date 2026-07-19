@@ -18,6 +18,11 @@ services:
       OPENAI_COMPAT_NAME: ${OPENAI_COMPAT_NAME:-local}
       OPENAI_COMPAT_MODELS: ${OPENAI_COMPAT_MODELS:-}
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:8080,http://localhost:5173,http://127.0.0.1:5173}
+      # Seed the failover policy (runtime-configurable via PUT /v1/failover
+      # or the dashboard's Failover policy card).
+      FAILOVER_ENABLED: ${FAILOVER_ENABLED:-}
+      FAILOVER_TARGETS: ${FAILOVER_TARGETS:-}
+      FAILOVER_TIMEOUT_MS: ${FAILOVER_TIMEOUT_MS:-}
     depends_on:
       clickhouse:
         condition: service_healthy

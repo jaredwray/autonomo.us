@@ -1,6 +1,16 @@
-import type { ModelUsage, TelemetryEvent } from "@autonomo.us/common";
+import type {
+	FailoverPolicy,
+	ModelInfo,
+	ModelUsage,
+	TelemetryEvent,
+} from "@autonomo.us/common";
 import { useCallback, useEffect, useState } from "react";
-import { type DashboardData, fetchDashboardData } from "./api.js";
+import {
+	type DashboardData,
+	fetchDashboardData,
+	fetchFailoverPolicy,
+	updateFailoverPolicy,
+} from "./api.js";
 
 const POLL_INTERVAL_MS = 4000;
 
@@ -128,6 +138,182 @@ function ModelBars(props: { byModel: ModelUsage[] }) {
 				</div>
 			) : null}
 		</div>
+	);
+}
+
+function FailoverCard(props: { connected: boolean; models: ModelInfo[] }) {
+	const [policy, setPolicy] = useState<FailoverPolicy | null>(null);
+	const [loadFailed, setLoadFailed] = useState(false);
+	const [saving, setSaving] = useState(false);
+	const [saved, setSaved] = useState(false);
+	const [saveError, setSaveError] = useState<string | null>(null);
+	const [selection, setSelection] = useState("");
+
+	const load = useCallback(async () => {
+		try {
+			setPolicy(await fetchFailoverPolicy());
+			setLoadFailed(false);
+		} catch {
+			setLoadFailed(true);
+		}
+	}, []);
+
+	// Load once the API is reachable; retries automatically on reconnect.
+	useEffect(() => {
+		if (props.connected && policy === null) void load();
+	}, [props.connected, policy, load]);
+
+	const edit = (patch: Partial<FailoverPolicy>) => {
+		if (!policy) return;
+		setPolicy({ ...policy, ...patch });
+		setSaved(false);
+		setSaveError(null);
+	};
+
+	const save = async () => {
+		if (!policy) return;
+		setSaving(true);
+		setSaveError(null);
+		try {
+			setPolicy(await updateFailoverPolicy(policy));
+			setSaved(true);
+		} catch (error) {
+			setSaveError(error instanceof Error ? error.message : String(error));
+		} finally {
+			setSaving(false);
+		}
+	};
+
+	const addable = props.models.filter(
+		(model) => !policy?.targets.includes(model.id),
+	);
+
+	return (
+		<section className="card">
+			<h2>Failover policy</h2>
+			<p className="card-note">
+				When a model errors or times out, retry the request on the fallback
+				models below in order — also configurable via{" "}
+				<code>PUT /v1/failover</code>
+			</p>
+			{policy ? (
+				<div className="failover">
+					<label className="failover-enable">
+						<input
+							type="checkbox"
+							checked={policy.enabled}
+							onChange={(event) => edit({ enabled: event.target.checked })}
+						/>
+						Enable failover
+					</label>
+
+					<label className="failover-field">
+						Attempt timeout (ms)
+						<input
+							type="number"
+							min={0}
+							step={500}
+							value={policy.timeoutMs}
+							onChange={(event) => {
+								const value = Number(event.target.value);
+								edit({
+									timeoutMs:
+										Number.isFinite(value) && value >= 0
+											? Math.floor(value)
+											: 0,
+								});
+							}}
+						/>
+						<span className="hint">
+							Attempts that don't finish (or streams that don't start) in time
+							fail over; 0 disables the timeout.
+						</span>
+					</label>
+
+					<div className="failover-field">
+						<span>Fallback models, tried in order</span>
+						{policy.targets.length > 0 ? (
+							<ol className="failover-targets">
+								{policy.targets.map((target, index) => (
+									<li key={target}>
+										<span className="order">{index + 1}.</span>
+										<code>{target}</code>
+										<button
+											type="button"
+											onClick={() =>
+												edit({
+													targets: policy.targets.filter(
+														(existing) => existing !== target,
+													),
+												})
+											}
+										>
+											Remove
+										</button>
+									</li>
+								))}
+							</ol>
+						) : (
+							<span className="hint">
+								No fallback models yet — add at least one for failover to have
+								somewhere to go.
+							</span>
+						)}
+						<div className="failover-add">
+							<select
+								aria-label="Fallback model to add"
+								value={selection}
+								onChange={(event) => setSelection(event.target.value)}
+							>
+								<option value="">Select a model…</option>
+								{addable.map((model) => (
+									<option key={model.id} value={model.id}>
+										{model.id}
+									</option>
+								))}
+							</select>
+							<button
+								type="button"
+								disabled={selection === ""}
+								onClick={() => {
+									if (!selection) return;
+									edit({ targets: [...policy.targets, selection] });
+									setSelection("");
+								}}
+							>
+								Add
+							</button>
+						</div>
+					</div>
+
+					<div className="failover-actions">
+						<button
+							type="button"
+							className="primary"
+							disabled={saving}
+							onClick={() => void save()}
+						>
+							{saving ? "Saving…" : "Save policy"}
+						</button>
+						{saved ? <span className="save-ok">Saved</span> : null}
+						{saveError ? <span className="save-error">{saveError}</span> : null}
+					</div>
+				</div>
+			) : (
+				<div className="empty-state">
+					{loadFailed ? (
+						<>
+							Could not load the failover policy.{" "}
+							<button type="button" onClick={() => void load()}>
+								Retry
+							</button>
+						</>
+					) : (
+						"Loading failover policy…"
+					)}
+				</div>
+			)}
+		</section>
 	);
 }
 
@@ -321,6 +507,11 @@ export function App() {
 					</div>
 				)}
 			</section>
+
+			<FailoverCard
+				connected={data !== null && !error}
+				models={data?.models ?? []}
+			/>
 		</div>
 	);
 }

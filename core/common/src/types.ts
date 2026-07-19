@@ -31,12 +31,44 @@ export type GatewayMessage = {
 
 export type GatewayResponse = {
 	id: string;
+	/** Model that answered — a fallback target when failover kicked in. */
 	model: string;
 	agentId?: string;
 	message: GatewayMessage;
 	usage: TokenUsage;
 	finishReason?: string;
 	createdAt: string;
+	/** Present only when the request was served by a failover target. */
+	failover?: {
+		requestedModel: string;
+		attempts: FailoverAttempt[];
+	};
+};
+
+export type FailoverAttempt = {
+	/** Routable id (`provider/model`) that was tried and failed. */
+	model: string;
+	error: string;
+};
+
+/**
+ * Gateway failover policy: when a chat request errors or times out, retry it
+ * against `targets` in order. Configurable at runtime via PUT /v1/failover.
+ */
+export type FailoverPolicy = {
+	/** Master switch; when false requests fail fast with no retries. */
+	enabled: boolean;
+	/**
+	 * Ordered fallback model ids (`provider/model`) tried after the requested
+	 * model fails. The requested model is never retried against itself.
+	 */
+	targets: string[];
+	/**
+	 * Per-attempt budget in milliseconds: non-streaming attempts must finish —
+	 * and streaming attempts must start producing output — within it. 0 turns
+	 * the timeout off so only provider errors trigger failover.
+	 */
+	timeoutMs: number;
 };
 
 export type TokenUsage = {

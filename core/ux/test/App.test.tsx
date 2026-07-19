@@ -3,7 +3,7 @@ import {
 	createServer,
 	TelemetryService,
 } from "@autonomo.us/api";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "../src/App.js";
 
@@ -25,6 +25,7 @@ const BASE_CONFIG: ApiConfig = {
 
 type RunningApp = {
 	telemetry: TelemetryService;
+	url: string;
 	close(): Promise<void>;
 };
 
@@ -35,7 +36,7 @@ async function startApp(config: ApiConfig = BASE_CONFIG): Promise<RunningApp> {
 	const server = createServer({ config, telemetry, logger: false });
 	const url = await server.listen({ port: 0, host: "127.0.0.1" });
 	vi.stubEnv("VITE_API_URL", url);
-	const app: RunningApp = { telemetry, close: () => server.close() };
+	const app: RunningApp = { telemetry, url, close: () => server.close() };
 	running.push(app);
 	return app;
 }
@@ -118,7 +119,8 @@ describe("App", () => {
 		render(<App />);
 		const ids = await screen.findAllByText("local/llama3.3");
 		expect(ids.length).toBeGreaterThan(0);
-		expect(screen.getByText("local/qwen3")).toBeDefined();
+		// Appears in the models card and in the failover target picker.
+		expect(screen.getAllByText("local/qwen3").length).toBeGreaterThan(0);
 	});
 
 	it("explains routing when a provider has no advertised models", async () => {
@@ -144,5 +146,85 @@ describe("App", () => {
 		render(<App />);
 		expect(await screen.findByText("API unreachable")).toBeDefined();
 		expect(screen.getByText("Cannot reach the gateway API.")).toBeDefined();
+	});
+
+	it("loads the failover policy into the card", async () => {
+		await startApp();
+		render(<App />);
+
+		expect(await screen.findByText("Failover policy")).toBeDefined();
+		const toggle = (await screen.findByLabelText(
+			"Enable failover",
+		)) as HTMLInputElement;
+		expect(toggle.checked).toBe(false);
+		const timeout = screen.getByLabelText(
+			/Attempt timeout/,
+		) as HTMLInputElement;
+		expect(timeout.value).toBe("30000");
+	});
+
+	it("saves failover policy changes through the real API", async () => {
+		const app = await startApp();
+		render(<App />);
+
+		const toggle = (await screen.findByLabelText(
+			"Enable failover",
+		)) as HTMLInputElement;
+		fireEvent.click(toggle);
+
+		fireEvent.change(screen.getByLabelText(/Attempt timeout/), {
+			target: { value: "5000" },
+		});
+
+		fireEvent.change(screen.getByLabelText("Fallback model to add"), {
+			target: { value: "local/qwen3" },
+		});
+		fireEvent.click(screen.getByRole("button", { name: "Add" }));
+
+		fireEvent.click(screen.getByRole("button", { name: "Save policy" }));
+		expect(await screen.findByText("Saved")).toBeDefined();
+
+		// The policy round-tripped through the real gateway API.
+		const response = await fetch(`${app.url}/v1/failover`);
+		expect(await response.json()).toEqual({
+			enabled: true,
+			targets: ["local/qwen3"],
+			timeoutMs: 5000,
+		});
+	});
+
+	it("removes a fallback model from the target list", async () => {
+		await startApp();
+		render(<App />);
+
+		fireEvent.change(await screen.findByLabelText("Fallback model to add"), {
+			target: { value: "local/llama3.3" },
+		});
+		fireEvent.click(screen.getByRole("button", { name: "Add" }));
+		expect(screen.getByText("1.")).toBeDefined();
+
+		fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+		expect(screen.queryByText("1.")).toBeNull();
+		expect(screen.getByText(/No fallback models yet/)).toBeDefined();
+	});
+
+	it("surfaces API validation errors when saving fails", async () => {
+		// Seed a policy, then remove the provider so saving it back fails
+		// validation against the real registry.
+		await startApp();
+		render(<App />);
+
+		fireEvent.change(await screen.findByLabelText("Fallback model to add"), {
+			target: { value: "local/qwen3" },
+		});
+		fireEvent.click(screen.getByRole("button", { name: "Add" }));
+
+		// Swap the API for one with no providers registered; startApp points
+		// VITE_API_URL at the new server, so the save lands there.
+		await running.pop()?.close();
+		await startApp({ ...BASE_CONFIG, providers: [] });
+
+		fireEvent.click(screen.getByRole("button", { name: "Save policy" }));
+		expect(await screen.findByText(/Unknown failover target/)).toBeDefined();
 	});
 });

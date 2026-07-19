@@ -6,6 +6,10 @@ export {
 	type ProviderConfig,
 } from "./config.js";
 export {
+	DEFAULT_FAILOVER_POLICY,
+	FailoverPolicyStore,
+} from "./failover.js";
+export {
 	type ModelProvider,
 	ProviderRegistry,
 	providerFromConfig,

@@ -1,3 +1,6 @@
+import type { FailoverPolicy } from "@autonomo.us/common";
+import { DEFAULT_FAILOVER_POLICY } from "./failover.js";
+
 export type AnthropicProviderConfig = {
 	kind: "anthropic";
 	/** Registry name used as the model id prefix, e.g. `anthropic/claude-opus-4-8`. */
@@ -32,6 +35,8 @@ export type ClickHouseConfig = {
 
 export type ApiConfig = {
 	providers: ProviderConfig[];
+	/** Initial failover policy; runtime-mutable via PUT /v1/failover. */
+	failover?: FailoverPolicy;
 	clickhouse?: ClickHouseConfig;
 	/**
 	 * Browser origins allowed by CORS. `["*"]` allows any origin. The default
@@ -71,6 +76,9 @@ function parseModels(value: string | undefined, fallback: string[]): string[] {
  * - `CLICKHOUSE_URL` enables the telemetry sink. `CLICKHOUSE_DATABASE`,
  *   `CLICKHOUSE_TABLE`, `CLICKHOUSE_USERNAME`, and `CLICKHOUSE_PASSWORD`
  *   default to the docker-compose settings.
+ * - `FAILOVER_ENABLED`, `FAILOVER_TARGETS` (comma-separated `provider/model`
+ *   ids), and `FAILOVER_TIMEOUT_MS` seed the failover policy, which stays
+ *   runtime-configurable via PUT /v1/failover and the dashboard.
  */
 export function configFromEnv(
 	env: Record<string, string | undefined> = process.env,
@@ -116,5 +124,19 @@ export function configFromEnv(
 				.filter((origin) => origin.length > 0)
 		: DEFAULT_CORS_ORIGINS;
 
-	return { providers, clickhouse, corsOrigins };
+	// FAILOVER_TIMEOUT_MS=0 is valid ("no timeout"), so 0 must not fall
+	// through to the default the way `Number(...) || fallback` would.
+	const failoverTimeout = env.FAILOVER_TIMEOUT_MS
+		? Number(env.FAILOVER_TIMEOUT_MS)
+		: Number.NaN;
+	const failover: FailoverPolicy = {
+		enabled: env.FAILOVER_ENABLED === "true" || env.FAILOVER_ENABLED === "1",
+		targets: parseModels(env.FAILOVER_TARGETS, []),
+		timeoutMs:
+			Number.isFinite(failoverTimeout) && failoverTimeout >= 0
+				? failoverTimeout
+				: DEFAULT_FAILOVER_POLICY.timeoutMs,
+	};
+
+	return { providers, failover, clickhouse, corsOrigins };
 }
