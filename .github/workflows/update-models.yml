@@ -1,10 +1,11 @@
 name: update-models
 
-# Refreshes the multi-provider model catalog (core/api/src/models.json) once
-# a day. Provider API keys are optional repo secrets — providers whose key is
-# missing fall back to the public models.dev catalog, so the workflow works
-# with no secrets configured at all. A commit is only pushed when the catalog
-# actually changed.
+# Refreshes the bundled model catalog baseline (core/api/src/models.json)
+# once a day. The API also refreshes itself daily at runtime; this baseline
+# is what it serves until that first refresh succeeds. Provider API keys are
+# optional repo secrets — providers whose key is missing fall back to the
+# public models.dev catalog, so the workflow works with no secrets configured
+# at all. A commit is only pushed when the catalog actually changed.
 on:
   schedule:
     - cron: "23 6 * * *"

@@ -37,6 +37,7 @@
 		"@autonomo.us/common": "workspace:*",
 		"@fastify/cors": "^11.3.0",
 		"ai": "^7.0.31",
+		"cacheable": "^2.5.0",
 		"fastify": "^5.8.4",
 		"mongodb": "^7.1.1"
 	},

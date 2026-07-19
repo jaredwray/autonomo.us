@@ -77,7 +77,7 @@ through environment variables:
 
 - `POST /v1/chat` — proxy a chat request; body `{ model, messages, stream?, temperature?, maxTokens? }` where `model` is `provider/model` (e.g. `anthropic/claude-opus-4-8`, `local/llama3.3`). Returns the assistant message plus `usage` token counts; with `stream: true` responds with SSE (`text-delta` events, then `finish` with usage).
 - `GET /v1/models` — routable models and providers.
-- `GET /v1/models/catalog` — the full multi-provider model catalog (`models.json`, refreshed daily).
+- `GET /v1/models/catalog` — the full multi-provider model catalog (refreshed daily at runtime; bundled `models.json` as the fallback).
 - `GET /v1/failover` — current failover policy.
 - `PUT /v1/failover` — update the failover policy; body `{ enabled?, targets?, timeoutMs? }` (partial updates keep omitted fields).
 - `GET /v1/telemetry/summary` — usage aggregates (ClickHouse when available, in-memory otherwise; `?source=memory|clickhouse` to force).
@@ -98,23 +98,32 @@ curl -X POST http://localhost:3000/v1/chat \
 
 ### Model catalog
 
-`core/api/src/models.json` tracks the known models across the major providers
-(Anthropic, OpenAI, Google, Mistral, Groq, xAI, DeepSeek) and is served at
-`GET /v1/models/catalog`. The [update-models](.github/workflows/update-models.yml)
-workflow refreshes it daily: providers whose API key is configured as a repo
-secret (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`,
-`MISTRAL_API_KEY`, `GROQ_API_KEY`, `XAI_API_KEY`, `DEEPSEEK_API_KEY`) are asked
-directly via their models endpoint; everything else comes from the public
-[models.dev](https://models.dev) catalog, so the workflow needs no secrets to
-work. When new models appear (or old ones disappear) the workflow commits the
-updated `models.json`; unchanged runs commit nothing. Refresh it locally with:
+The gateway tracks the known models across the major providers (Anthropic,
+OpenAI, Google, Mistral, Groq, xAI, DeepSeek) and serves the catalog at
+`GET /v1/models/catalog`. On startup the API queries the model sources itself
+and re-checks daily, keeping the result in [cacheable](https://cacheable.org)
+(in-memory with a one-day TTL by default — hand `ModelCatalogService` a
+`Cacheable` with a secondary store to persist it). Providers whose API key is
+set (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`,
+`MISTRAL_API_KEY`, `GROQ_API_KEY`, `XAI_API_KEY`, `DEEPSEEK_API_KEY`) are
+asked directly via their models endpoint; everything else comes from the
+public [models.dev](https://models.dev) catalog, so no keys are required. A
+refresh that cannot reach the sources just keeps the catalog it already has —
+requests are always served from cache, never blocked on a fetch.
+
+The bundled `core/api/src/models.json` is the baseline the gateway serves
+until the first successful refresh. The
+[update-models](.github/workflows/update-models.yml) workflow keeps that
+baseline current: it runs the same collection daily (using repo secrets for
+whichever provider keys are configured) and commits `models.json` only when
+something changed. Refresh the baseline locally with:
 
 ```bash
 pnpm --filter @autonomo.us/api models:update
 ```
 
 To collect another provider, add a spec to `PROVIDERS` in
-`core/api/scripts/update-models.ts` (and its key to the workflow env).
+`core/api/src/model-catalog.ts` (and its key to the workflow env).
 
 ### Failover
 

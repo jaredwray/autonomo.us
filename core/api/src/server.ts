@@ -2,6 +2,7 @@ import cors from "@fastify/cors";
 import Fastify from "fastify";
 import { type ApiConfig, configFromEnv } from "./config.js";
 import { FailoverPolicyStore } from "./failover.js";
+import { ModelCatalogService } from "./model-catalog-service.js";
 import {
 	type ProviderRegistry,
 	registryFromConfig,
@@ -19,6 +20,12 @@ export type CreateServerOptions = {
 	registry?: ProviderRegistry;
 	telemetry?: TelemetryService;
 	failover?: FailoverPolicyStore;
+	/**
+	 * Runtime model catalog. The default instance serves the bundled
+	 * models.json until someone calls `start()` on it — the production
+	 * entrypoint (start.ts) does, so tests never hit the network.
+	 */
+	modelCatalog?: ModelCatalogService;
 	logger?: boolean;
 };
 
@@ -26,6 +33,7 @@ export function createServer(options: CreateServerOptions = {}) {
 	const config = options.config ?? configFromEnv();
 	const registry = options.registry ?? registryFromConfig(config);
 	const failover = options.failover ?? new FailoverPolicyStore(config.failover);
+	const modelCatalog = options.modelCatalog ?? new ModelCatalogService();
 	const telemetry =
 		options.telemetry ??
 		new TelemetryService({
@@ -42,7 +50,7 @@ export function createServer(options: CreateServerOptions = {}) {
 		origin: config.corsOrigins.includes("*") ? true : config.corsOrigins,
 	});
 	server.register(healthRoutes);
-	server.register(modelsRoutes, { registry });
+	server.register(modelsRoutes, { registry, catalog: modelCatalog });
 	server.register(failoverRoutes, { failover, registry });
 	server.register(chatRoutes, {
 		registry,
@@ -53,6 +61,7 @@ export function createServer(options: CreateServerOptions = {}) {
 	server.register(telemetryRoutes, { telemetry });
 
 	server.addHook("onClose", async () => {
+		modelCatalog.stop();
 		await telemetry.stop();
 	});
 

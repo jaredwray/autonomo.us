@@ -1,14 +1,20 @@
+import { Cacheable } from "cacheable";
 import Fastify from "fastify";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	buildModelCatalog,
 	compareCatalogModels,
 	diffCatalogs,
+	type ModelCatalog,
+	modelCatalog,
 	normalizeModels,
 	PROVIDERS,
 	toReleaseDate,
-} from "../scripts/update-models.js";
-import { type ModelCatalog, modelCatalog } from "../src/model-catalog.js";
+} from "../src/model-catalog.js";
+import {
+	MODEL_CATALOG_CACHE_KEY,
+	ModelCatalogService,
+} from "../src/model-catalog-service.js";
 import { ProviderRegistry } from "../src/providers/registry.js";
 import { modelsRoutes } from "../src/routes/models.js";
 import { createServer } from "../src/server.js";
@@ -363,8 +369,132 @@ describe("buildModelCatalog", () => {
 	});
 });
 
+describe("ModelCatalogService", () => {
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	const BASE: ModelCatalog = {
+		updated: "2026-01-01T00:00:00.000Z",
+		providers: {
+			anthropic: {
+				name: "Anthropic",
+				source: "models.dev",
+				models: [{ id: "claude-opus-4-5", name: "Claude Opus 4.5" }],
+			},
+		},
+	};
+
+	it("serves the base catalog without fetching until started", async () => {
+		const { fetchImpl, calls } = fakeFetch(() => {
+			throw new Error("must not fetch");
+		});
+		const service = new ModelCatalogService({
+			base: BASE,
+			env: {},
+			fetchImpl,
+		});
+
+		expect(await service.getCatalog()).toEqual(BASE);
+		expect(calls).toHaveLength(0);
+	});
+
+	it("refresh() stores the fetched catalog in the cacheable instance", async () => {
+		const { fetchImpl } = fakeFetch(() => MODELS_DEV_FIXTURE);
+		const cache = new Cacheable({ ttl: "1d" });
+		const service = new ModelCatalogService({
+			base: BASE,
+			cache,
+			env: {},
+			fetchImpl,
+			log: () => {},
+		});
+
+		expect(await service.refresh()).toBe(true);
+
+		const catalog = await service.getCatalog();
+		expect(catalog.providers.anthropic.models.map((model) => model.id)).toEqual(
+			["claude-sonnet-5", "claude-haiku-4-5"],
+		);
+		expect(await cache.get<ModelCatalog>(MODEL_CATALOG_CACHE_KEY)).toEqual(
+			catalog,
+		);
+	});
+
+	it("keeps the current catalog when the sources are unreachable", async () => {
+		const { fetchImpl } = fakeFetch(() => {
+			throw new Error("network down");
+		});
+		const service = new ModelCatalogService({
+			base: BASE,
+			env: {},
+			fetchImpl,
+			log: () => {},
+		});
+
+		// Every provider entry falls back to the base catalog, so the refresh
+		// succeeds at keeping what is there.
+		expect(await service.refresh()).toBe(true);
+		const catalog = await service.getCatalog();
+		expect(catalog.providers).toEqual(BASE.providers);
+		expect(catalog.updated).toBe(BASE.updated);
+	});
+
+	it("reports failure and keeps the base when no source and no fallback exist", async () => {
+		const { fetchImpl } = fakeFetch(() => {
+			throw new Error("network down");
+		});
+		// The base holds no entry for any known provider, so nothing can be
+		// carried forward and the build fails outright.
+		const orphanBase: ModelCatalog = {
+			updated: "2026-01-01T00:00:00.000Z",
+			providers: {
+				legacy: { name: "Legacy", source: "api", models: [] },
+			},
+		};
+		const logged: string[] = [];
+		const service = new ModelCatalogService({
+			base: orphanBase,
+			env: {},
+			fetchImpl,
+			log: (message) => logged.push(message),
+		});
+
+		expect(await service.refresh()).toBe(false);
+		expect(await service.getCatalog()).toEqual(orphanBase);
+		expect(logged.some((line) => line.includes("refresh failed"))).toBe(true);
+	});
+
+	it("start() refreshes immediately and re-checks on the interval", async () => {
+		vi.useFakeTimers();
+		let modelsDevCalls = 0;
+		const { fetchImpl } = fakeFetch(() => {
+			modelsDevCalls++;
+			return MODELS_DEV_FIXTURE;
+		});
+		const service = new ModelCatalogService({
+			base: BASE,
+			env: {},
+			fetchImpl,
+			refreshIntervalMs: 1000,
+			log: () => {},
+		});
+
+		service.start();
+		await vi.advanceTimersByTimeAsync(0);
+		expect(modelsDevCalls).toBe(1);
+
+		await vi.advanceTimersByTimeAsync(1000);
+		expect(modelsDevCalls).toBe(2);
+
+		service.stop();
+		await vi.advanceTimersByTimeAsync(5000);
+		expect(modelsDevCalls).toBe(2);
+	});
+});
+
 describe("GET /v1/models/catalog", () => {
-	it("serves the bundled models.json catalog", async () => {
+	it("serves the bundled models.json catalog by default", async () => {
 		const server = createServer({
 			config: { providers: [], corsOrigins: [] },
 			logger: false,
@@ -384,7 +514,7 @@ describe("GET /v1/models/catalog", () => {
 		);
 	});
 
-	it("serves an injected catalog override", async () => {
+	it("serves the catalog held by an injected service", async () => {
 		const catalog: ModelCatalog = {
 			updated: "2026-07-01T00:00:00.000Z",
 			providers: {
@@ -398,7 +528,7 @@ describe("GET /v1/models/catalog", () => {
 		const server = Fastify({ logger: false });
 		await server.register(modelsRoutes, {
 			registry: new ProviderRegistry(),
-			catalog,
+			catalog: new ModelCatalogService({ base: catalog }),
 		});
 		const response = await server.inject({
 			method: "GET",
