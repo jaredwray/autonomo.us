@@ -338,6 +338,133 @@ table.events .model-cell {
 	border-radius: 50%;
 }
 
+.failover {
+	display: grid;
+	gap: 16px;
+	justify-items: start;
+}
+
+.failover-enable {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	cursor: pointer;
+}
+
+.failover-enable input {
+	accent-color: var(--series-1);
+}
+
+.failover-field {
+	display: grid;
+	gap: 6px;
+	justify-items: start;
+	color: var(--text-secondary);
+	font-size: 13px;
+}
+
+.failover-field .hint {
+	color: var(--text-muted);
+	font-size: 12px;
+	max-width: 480px;
+}
+
+.failover input[type="number"],
+.failover input[type="text"],
+.failover select {
+	background: var(--page);
+	border: 1px solid var(--hairline);
+	border-radius: 6px;
+	color: var(--text-primary);
+	font: inherit;
+	padding: 6px 8px;
+	min-width: 220px;
+}
+
+.failover-targets {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: grid;
+	gap: 6px;
+}
+
+.failover-targets li {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+
+.failover-targets .order {
+	color: var(--text-muted);
+	font-variant-numeric: tabular-nums;
+}
+
+.failover-targets code {
+	background: var(--page);
+	border: 1px solid var(--hairline);
+	border-radius: 6px;
+	padding: 2px 8px;
+	font-size: 12px;
+	color: var(--text-secondary);
+}
+
+.failover-add {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-top: 2px;
+}
+
+.failover button {
+	background: var(--surface-1);
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	color: var(--text-primary);
+	font: inherit;
+	font-size: 12px;
+	padding: 5px 12px;
+	cursor: pointer;
+}
+
+.failover button:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+
+.failover button.primary {
+	background: var(--series-1);
+	border-color: var(--series-1);
+	color: #ffffff;
+}
+
+.failover-actions {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+
+.save-ok {
+	color: var(--success-text);
+	font-size: 12px;
+}
+
+.save-error {
+	color: var(--status-critical);
+	font-size: 12px;
+}
+
+.empty-state button {
+	background: var(--surface-1);
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	color: var(--text-primary);
+	font: inherit;
+	font-size: 12px;
+	padding: 4px 10px;
+	cursor: pointer;
+}
+
 .tooltip {
 	position: fixed;
 	z-index: 10;

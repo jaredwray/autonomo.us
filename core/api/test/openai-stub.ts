@@ -6,8 +6,10 @@ import type { AddressInfo } from "node:net";
  * The gateway talks to it over actual HTTP through the production
  * `@ai-sdk/openai-compatible` wire path — request parsing, SSE framing, and
  * usage accounting are all exercised for real (the same protocol Ollama,
- * LM Studio, and vLLM speak). `broken-model` responds with a 500 so provider
- * failures are real HTTP errors too.
+ * LM Studio, and vLLM speak). Failure modes are real too: models named
+ * `broken-*` respond with a 500, `slow-model` stalls before answering (for
+ * timeout/failover tests), and `broken-stream-model` drops the connection
+ * mid-stream after emitting output.
  */
 
 export const STUB_USAGE = {
@@ -38,7 +40,10 @@ export async function startOpenAIStub(): Promise<OpenAIStub> {
 				model?: string;
 				stream?: boolean;
 			};
-			if (parsed.model === "broken-model") {
+			if (
+				parsed.model?.startsWith("broken-") &&
+				parsed.model !== "broken-stream-model"
+			) {
 				res.writeHead(500, { "content-type": "application/json" });
 				res.end(JSON.stringify({ error: { message: "provider exploded" } }));
 				return;
@@ -48,6 +53,59 @@ export async function startOpenAIStub(): Promise<OpenAIStub> {
 				created: 1752768000,
 				model: parsed.model,
 			};
+			if (parsed.model === "broken-stream-model") {
+				// Emits output, then kills the socket: a failure after the response
+				// is already committed, so the gateway must not fail over.
+				res.writeHead(200, {
+					"content-type": "text/event-stream",
+					"cache-control": "no-cache",
+				});
+				res.write(
+					`data: ${JSON.stringify({
+						...base,
+						object: "chat.completion.chunk",
+						choices: [
+							{ index: 0, delta: { role: "assistant" }, finish_reason: null },
+						],
+					})}\n\n`,
+				);
+				res.write(
+					`data: ${JSON.stringify({
+						...base,
+						object: "chat.completion.chunk",
+						choices: [
+							{ index: 0, delta: { content: "partial " }, finish_reason: null },
+						],
+					})}\n\n`,
+				);
+				// Let the chunks flush before the reset so the client sees them.
+				const killTimer = setTimeout(() => res.destroy(), 50);
+				res.on("close", () => clearTimeout(killTimer));
+				return;
+			}
+			if (parsed.model === "slow-model") {
+				// Stalls long enough to trip any sub-second attempt timeout, then
+				// answers normally (in case no timeout was armed).
+				const slowTimer = setTimeout(() => {
+					res.writeHead(200, { "content-type": "application/json" });
+					res.end(
+						JSON.stringify({
+							...base,
+							object: "chat.completion",
+							choices: [
+								{
+									index: 0,
+									message: { role: "assistant", content: "Slow reply" },
+									finish_reason: "stop",
+								},
+							],
+							usage: STUB_USAGE,
+						}),
+					);
+				}, 1500);
+				res.on("close", () => clearTimeout(slowTimer));
+				return;
+			}
 			if (parsed.stream) {
 				res.writeHead(200, {
 					"content-type": "text/event-stream",

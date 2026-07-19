@@ -1,11 +1,13 @@
 import cors from "@fastify/cors";
 import Fastify from "fastify";
 import { type ApiConfig, configFromEnv } from "./config.js";
+import { FailoverPolicyStore } from "./failover.js";
 import {
 	type ProviderRegistry,
 	registryFromConfig,
 } from "./providers/registry.js";
 import { chatRoutes } from "./routes/chat.js";
+import { failoverRoutes } from "./routes/failover.js";
 import { healthRoutes } from "./routes/health.js";
 import { modelsRoutes } from "./routes/models.js";
 import { telemetryRoutes } from "./routes/telemetry.js";
@@ -16,12 +18,14 @@ export type CreateServerOptions = {
 	config?: ApiConfig;
 	registry?: ProviderRegistry;
 	telemetry?: TelemetryService;
+	failover?: FailoverPolicyStore;
 	logger?: boolean;
 };
 
 export function createServer(options: CreateServerOptions = {}) {
 	const config = options.config ?? configFromEnv();
 	const registry = options.registry ?? registryFromConfig(config);
+	const failover = options.failover ?? new FailoverPolicyStore(config.failover);
 	const telemetry =
 		options.telemetry ??
 		new TelemetryService({
@@ -39,9 +43,11 @@ export function createServer(options: CreateServerOptions = {}) {
 	});
 	server.register(healthRoutes);
 	server.register(modelsRoutes, { registry });
+	server.register(failoverRoutes, { failover, registry });
 	server.register(chatRoutes, {
 		registry,
 		telemetry,
+		failover,
 		corsOrigins: config.corsOrigins,
 	});
 	server.register(telemetryRoutes, { telemetry });

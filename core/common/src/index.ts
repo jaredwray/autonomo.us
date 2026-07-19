@@ -1,5 +1,7 @@
 export type {
 	AgentConfig,
+	FailoverAttempt,
+	FailoverPolicy,
 	GatewayMessage,
 	GatewayRequest,
 	GatewayResponse,

@@ -110,6 +110,37 @@ describe("configFromEnv + registryFromConfig", () => {
 		});
 	});
 
+	it("parses the failover policy from env with safe defaults", () => {
+		expect(configFromEnv({}).failover).toEqual({
+			enabled: false,
+			targets: [],
+			timeoutMs: 30000,
+		});
+		expect(
+			configFromEnv({
+				FAILOVER_ENABLED: "true",
+				FAILOVER_TARGETS: "anthropic/claude-opus-4-8, local/llama3.3",
+				FAILOVER_TIMEOUT_MS: "5000",
+			}).failover,
+		).toEqual({
+			enabled: true,
+			targets: ["anthropic/claude-opus-4-8", "local/llama3.3"],
+			timeoutMs: 5000,
+		});
+		// 0 is a real setting (no timeout), not a missing value.
+		expect(
+			configFromEnv({ FAILOVER_TIMEOUT_MS: "0" }).failover?.timeoutMs,
+		).toBe(0);
+		expect(
+			configFromEnv({ FAILOVER_TIMEOUT_MS: "not-a-number" }).failover
+				?.timeoutMs,
+		).toBe(30000);
+		// Clamped to the PUT /v1/failover cap so it cannot overflow setTimeout.
+		expect(
+			configFromEnv({ FAILOVER_TIMEOUT_MS: "3000000000" }).failover?.timeoutMs,
+		).toBe(600000);
+	});
+
 	it("parses cors origins from env with a dev-origin default", () => {
 		expect(configFromEnv({}).corsOrigins).toEqual([
 			"http://localhost:5173",

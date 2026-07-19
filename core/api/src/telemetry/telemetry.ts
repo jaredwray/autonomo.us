@@ -16,6 +16,8 @@ export type ChatTelemetry = {
 	latencyMs: number;
 	stream?: boolean;
 	error?: string;
+	/** Set on failover attempts: the model the client originally asked for. */
+	requestedModel?: string;
 };
 
 export type TelemetryServiceOptions = {
@@ -94,6 +96,7 @@ export class TelemetryService {
 				latencyMs: chat.latencyMs,
 				stream: chat.stream ?? false,
 				...(chat.error ? { error: chat.error } : {}),
+				...(chat.requestedModel ? { requestedModel: chat.requestedModel } : {}),
 			},
 			timestamp: this.now().toISOString(),
 		};
