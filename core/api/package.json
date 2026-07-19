@@ -26,6 +26,7 @@
 	"scripts": {
 		"build": "tsdown src/index.ts src/start.ts --format esm,cjs --dts",
 		"dev": "tsx watch src/start.ts",
+		"models:update": "tsx scripts/update-models.ts",
 		"start": "node dist/start.mjs",
 		"test": "vitest run --coverage",
 		"clean": "rm -rf dist"
@@ -36,6 +37,7 @@
 		"@autonomo.us/common": "workspace:*",
 		"@fastify/cors": "^11.3.0",
 		"ai": "^7.0.31",
+		"cacheable": "^2.5.0",
 		"fastify": "^5.8.4",
 		"mongodb": "^7.1.1"
 	},
