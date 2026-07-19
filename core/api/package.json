@@ -26,6 +26,7 @@
 	"scripts": {
 		"build": "tsdown src/index.ts src/start.ts --format esm,cjs --dts",
 		"dev": "tsx watch src/start.ts",
+		"models:update": "tsx scripts/update-models.ts",
 		"start": "node dist/start.mjs",
 		"test": "vitest run --coverage",
 		"clean": "rm -rf dist"

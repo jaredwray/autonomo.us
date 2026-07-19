@@ -7,6 +7,7 @@
 		"includes": [
 			"**/src/**/*.ts",
 			"**/src/**/*.tsx",
+			"**/scripts/**/*.ts",
 			"**/test/**/*.ts",
 			"**/test/**/*.tsx"
 		],

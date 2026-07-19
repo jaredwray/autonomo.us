@@ -1,0 +1,50 @@
+name: update-models
+
+# Refreshes the multi-provider model catalog (core/api/src/models.json) once
+# a day. Provider API keys are optional repo secrets — providers whose key is
+# missing fall back to the public models.dev catalog, so the workflow works
+# with no secrets configured at all. A commit is only pushed when the catalog
+# actually changed.
+on:
+  schedule:
+    - cron: "23 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-models
+
+jobs:
+  update-models:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - run: npm install -g pnpm@10
+      - run: pnpm install
+      - name: Refresh the model catalog
+        run: pnpm --filter @autonomo.us/api models:update
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+      - name: Commit and push the updated catalog
+        run: |
+          if git diff --quiet -- core/api/src/models.json; then
+            echo "Model catalog unchanged, nothing to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add core/api/src/models.json
+          git commit -m "Update model catalog"
+          git push

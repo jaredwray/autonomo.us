@@ -11,6 +11,12 @@ export {
 	MAX_FAILOVER_TIMEOUT_MS,
 } from "./failover.js";
 export {
+	type CatalogModel,
+	type CatalogProvider,
+	type ModelCatalog,
+	modelCatalog,
+} from "./model-catalog.js";
+export {
 	type ModelProvider,
 	ProviderRegistry,
 	providerFromConfig,

@@ -77,6 +77,7 @@ through environment variables:
 
 - `POST /v1/chat` — proxy a chat request; body `{ model, messages, stream?, temperature?, maxTokens? }` where `model` is `provider/model` (e.g. `anthropic/claude-opus-4-8`, `local/llama3.3`). Returns the assistant message plus `usage` token counts; with `stream: true` responds with SSE (`text-delta` events, then `finish` with usage).
 - `GET /v1/models` — routable models and providers.
+- `GET /v1/models/catalog` — the full multi-provider model catalog (`models.json`, refreshed daily).
 - `GET /v1/failover` — current failover policy.
 - `PUT /v1/failover` — update the failover policy; body `{ enabled?, targets?, timeoutMs? }` (partial updates keep omitted fields).
 - `GET /v1/telemetry/summary` — usage aggregates (ClickHouse when available, in-memory otherwise; `?source=memory|clickhouse` to force).
@@ -94,6 +95,26 @@ curl -X POST http://localhost:3000/v1/chat \
   -H "content-type: application/json" \
   -d '{"model": "local/llama3.3", "messages": [{"role": "user", "content": "Hello"}]}'
 ```
+
+### Model catalog
+
+`core/api/src/models.json` tracks the known models across the major providers
+(Anthropic, OpenAI, Google, Mistral, Groq, xAI, DeepSeek) and is served at
+`GET /v1/models/catalog`. The [update-models](.github/workflows/update-models.yml)
+workflow refreshes it daily: providers whose API key is configured as a repo
+secret (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`,
+`MISTRAL_API_KEY`, `GROQ_API_KEY`, `XAI_API_KEY`, `DEEPSEEK_API_KEY`) are asked
+directly via their models endpoint; everything else comes from the public
+[models.dev](https://models.dev) catalog, so the workflow needs no secrets to
+work. When new models appear (or old ones disappear) the workflow commits the
+updated `models.json`; unchanged runs commit nothing. Refresh it locally with:
+
+```bash
+pnpm --filter @autonomo.us/api models:update
+```
+
+To collect another provider, add a spec to `PROVIDERS` in
+`core/api/scripts/update-models.ts` (and its key to the workflow env).
 
 ### Failover
 
