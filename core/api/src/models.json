@@ -1,10 +1,15 @@
 {
-	"updated": "2026-07-24T07:15:33.838Z",
+	"updated": "2026-07-25T07:07:56.099Z",
 	"providers": {
 		"anthropic": {
 			"name": "Anthropic",
 			"source": "models.dev",
 			"models": [
+				{
+					"id": "claude-opus-5",
+					"name": "Claude Opus 5",
+					"released": "2026-07-24"
+				},
 				{
 					"id": "claude-sonnet-5",
 					"name": "Claude Sonnet 5",
@@ -172,11 +177,6 @@
 					"released": "2025-12-11"
 				},
 				{
-					"id": "gpt-5.2-codex",
-					"name": "GPT-5.2 Codex",
-					"released": "2025-12-11"
-				},
-				{
 					"id": "gpt-5.2-pro",
 					"name": "GPT-5.2 Pro",
 					"released": "2025-12-11"
@@ -192,26 +192,6 @@
 					"released": "2025-11-13"
 				},
 				{
-					"id": "gpt-5.1-chat-latest",
-					"name": "GPT-5.1 Chat",
-					"released": "2025-11-13"
-				},
-				{
-					"id": "gpt-5.1-codex",
-					"name": "GPT-5.1 Codex",
-					"released": "2025-11-13"
-				},
-				{
-					"id": "gpt-5.1-codex-max",
-					"name": "GPT-5.1 Codex Max",
-					"released": "2025-11-13"
-				},
-				{
-					"id": "gpt-5.1-codex-mini",
-					"name": "GPT-5.1 Codex mini",
-					"released": "2025-11-13"
-				},
-				{
 					"id": "gpt-5-pro",
 					"name": "GPT-5 Pro",
 					"released": "2025-10-06"
@@ -222,18 +202,8 @@
 					"released": "2025-09-26"
 				},
 				{
-					"id": "gpt-5-codex",
-					"name": "GPT-5-Codex",
-					"released": "2025-09-15"
-				},
-				{
 					"id": "gpt-5",
 					"name": "GPT-5",
-					"released": "2025-08-07"
-				},
-				{
-					"id": "gpt-5-chat-latest",
-					"name": "GPT-5 Chat (latest)",
 					"released": "2025-08-07"
 				},
 				{
@@ -310,16 +280,6 @@
 					"id": "gpt-4o-mini",
 					"name": "GPT-4o mini",
 					"released": "2024-07-18"
-				},
-				{
-					"id": "o3-deep-research",
-					"name": "o3-deep-research",
-					"released": "2024-06-26"
-				},
-				{
-					"id": "o4-mini-deep-research",
-					"name": "o4-mini-deep-research",
-					"released": "2024-06-26"
 				},
 				{
 					"id": "gpt-4o",
@@ -429,12 +389,12 @@
 				},
 				{
 					"id": "deep-research-max-preview-04-2026",
-					"name": "Deep Research Max Preview",
+					"name": "Deep Research Max Preview (Apr-21-2026)",
 					"released": "2026-04-21"
 				},
 				{
 					"id": "deep-research-preview-04-2026",
-					"name": "Gemini Deep Research Preview",
+					"name": "Deep Research Preview (Apr-21-2026)",
 					"released": "2026-04-21"
 				},
 				{
@@ -459,7 +419,7 @@
 				},
 				{
 					"id": "veo-3.1-lite-generate-preview",
-					"name": "Veo 3.1 Lite Preview",
+					"name": "Veo 3.1 lite",
 					"released": "2026-03-31"
 				},
 				{
@@ -514,17 +474,17 @@
 				},
 				{
 					"id": "veo-3.1-fast-generate-preview",
-					"name": "Veo 3.1 Fast Preview",
+					"name": "Veo 3.1 fast",
 					"released": "2025-10-15"
 				},
 				{
 					"id": "veo-3.1-generate-preview",
-					"name": "Veo 3.1 Preview",
+					"name": "Veo 3.1",
 					"released": "2025-10-15"
 				},
 				{
 					"id": "gemini-2.5-computer-use-preview-10-2025",
-					"name": "Gemini 2.5 Computer Use Preview",
+					"name": "Gemini 2.5 Computer Use Preview 10-2025",
 					"released": "2025-10-07"
 				},
 				{
