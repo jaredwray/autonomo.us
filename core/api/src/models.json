@@ -1,5 +1,5 @@
 {
-	"updated": "2026-08-03T07:34:47.486Z",
+	"updated": "2026-08-05T07:18:53.028Z",
 	"providers": {
 		"anthropic": {
 			"name": "Anthropic",
@@ -710,6 +710,11 @@
 			"source": "models.dev",
 			"models": [
 				{
+					"id": "qwen/qwen3.6-27b",
+					"name": "Qwen3.6 27B",
+					"released": "2026-04-22"
+				},
+				{
 					"id": "canopylabs/orpheus-v1-english",
 					"name": "Canopy Labs Orpheus V1 English",
 					"released": "2025-12-19"
@@ -745,11 +750,6 @@
 					"released": "2025-08-05"
 				},
 				{
-					"id": "qwen/qwen3-32b",
-					"name": "Qwen3-32B",
-					"released": "2025-06-11"
-				},
-				{
 					"id": "meta-llama/llama-prompt-guard-2-22m",
 					"name": "Llama Prompt Guard 2 22M",
 					"released": "2025-05-29"
@@ -760,9 +760,9 @@
 					"released": "2025-05-29"
 				},
 				{
-					"id": "meta-llama/llama-4-scout-17b-16e-instruct",
-					"name": "Llama 4 Scout 17B 16E",
-					"released": "2025-04-05"
+					"id": "allam-2-7b",
+					"name": "ALLaM-2-7b",
+					"released": "2025-01-23"
 				},
 				{
 					"id": "llama-3.3-70b-versatile",
