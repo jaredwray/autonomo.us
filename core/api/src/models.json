@@ -1,5 +1,5 @@
 {
-	"updated": "2026-08-06T07:19:11.461Z",
+	"updated": "2026-08-11T06:40:07.633Z",
 	"providers": {
 		"anthropic": {
 			"name": "Anthropic",
@@ -458,11 +458,6 @@
 					"released": "2025-11-20"
 				},
 				{
-					"id": "gemini-3-pro-preview",
-					"name": "Gemini 3 Pro Preview",
-					"released": "2025-11-18"
-				},
-				{
 					"id": "veo-3.1-fast-generate-preview",
 					"name": "Veo 3.1 fast",
 					"released": "2025-10-15"
@@ -511,16 +506,6 @@
 					"id": "gemini-2.5-pro-preview-tts",
 					"name": "Gemini 2.5 Pro Preview TTS",
 					"released": "2025-05-01"
-				},
-				{
-					"id": "gemini-2.0-flash",
-					"name": "Gemini 2.0 Flash",
-					"released": "2024-12-11"
-				},
-				{
-					"id": "gemini-2.0-flash-lite",
-					"name": "Gemini 2.0 Flash-Lite",
-					"released": "2024-12-11"
 				}
 			]
 		},
