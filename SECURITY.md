@@ -57,20 +57,20 @@ Single source of truth for the Defense in Depth rollout. One item per PR. Legend
 
 ### 4. pnpm 11 supply chain controls
 
-- [ ] Pin the package manager in `package.json`. (PR #9 pending)
-- [ ] Enforce a seven-day maturity delay with `minimumReleaseAge: 10080`. (PR #9 pending)
-- [ ] Set `minimumReleaseAgeStrict: true` so resolution fails instead of falling back to too-new versions. (PR #9 pending)
-- [ ] Set `minimumReleaseAgeIgnoreMissingTime: false` so missing publish-time metadata fails closed. (PR #9 pending)
-- [ ] Explicitly set `blockExoticSubdeps: true`. (PR #9 pending)
-- [ ] Use `allowBuilds` (replaces `onlyBuiltDependencies` and related pre-pnpm-11 settings). (PR #9 pending)
-- [ ] Keep `dangerouslyAllowAllBuilds: false`. (PR #9 pending)
-- [ ] Treat every new lifecycle script approval as a security exception. (PR #9 pending)
-- [ ] Maintain approved build scripts as code-reviewed policy (`allowBuilds` in `pnpm-workspace.yaml`), not one-off developer prompts. (PR #9 pending)
-- [ ] Run `pnpm approve-builds` only as part of dependency review, never automatically in CI. (PR #9 pending)
+- [x] Pin the package manager in `package.json`. — PR #9
+- [x] Enforce a seven-day maturity delay with `minimumReleaseAge: 10080`. — PR #9
+- [x] Set `minimumReleaseAgeStrict: true` so resolution fails instead of falling back to too-new versions. — PR #9
+- [x] Set `minimumReleaseAgeIgnoreMissingTime: false` so missing publish-time metadata fails closed. — PR #9
+- [x] Explicitly set `blockExoticSubdeps: true`. — PR #9
+- [x] Use `allowBuilds` (replaces `onlyBuiltDependencies` and related pre-pnpm-11 settings). — PR #9
+- [x] Keep `dangerouslyAllowAllBuilds: false`. — PR #9
+- [x] Treat every new lifecycle script approval as a security exception. — PR #9
+- [x] Maintain approved build scripts as code-reviewed policy (`allowBuilds` in `pnpm-workspace.yaml`), not one-off developer prompts. — PR #9
+- [x] Run `pnpm approve-builds` only as part of dependency review, never automatically in CI. — PR #9
 
 ### 5. GitHub Actions hardening
 
-- [ ] Default all workflows to read-only permissions (`permissions: contents: read`).
+- [ ] Default all workflows to read-only permissions (`permissions: contents: read`). (PR #11 pending)
 - [ ] Give `id-token: write` only to the final publish job. (No publish workflow exists yet; applies when one is added.)
 - [x] No npm tokens in GitHub Actions. — already in place (workflows reference no npm tokens; secrets are provider API keys only)
 - [ ] Pin all third-party actions to a full commit SHA; treat tag- or branch-pinned actions as policy violations.

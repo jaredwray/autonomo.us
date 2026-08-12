@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: update-models
@@ -20,6 +20,10 @@ concurrency:
 jobs:
   update-models:
     runs-on: ubuntu-latest
+    # This job pushes the refreshed catalog back to the repo; it is the only
+    # place in CI allowed to write contents.
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
