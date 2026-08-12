@@ -70,7 +70,7 @@ Single source of truth for the Defense in Depth rollout. One item per PR. Legend
 
 ### 5. GitHub Actions hardening
 
-- [ ] Default all workflows to read-only permissions (`permissions: contents: read`). (PR pending)
+- [ ] Default all workflows to read-only permissions (`permissions: contents: read`). (PR #11 pending)
 - [ ] Give `id-token: write` only to the final publish job. (No publish workflow exists yet; applies when one is added.)
 - [x] No npm tokens in GitHub Actions. — already in place (workflows reference no npm tokens; secrets are provider API keys only)
 - [ ] Pin all third-party actions to a full commit SHA; treat tag- or branch-pinned actions as policy violations.
