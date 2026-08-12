@@ -1,5 +1,4 @@
 packages:
   - 'core/*'
-onlyBuiltDependencies:
-  - '@biomejs/biome'
-  - esbuild
+allowBuilds:
+  esbuild: true

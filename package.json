@@ -5,6 +5,7 @@
 	"license": "MIT",
 	"author": "Jared Wray",
 	"type": "module",
+	"packageManager": "pnpm@11.21.0",
 	"scripts": {
 		"build": "pnpm run --recursive --sequential build",
 		"test": "vitest run --coverage",
