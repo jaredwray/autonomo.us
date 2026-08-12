@@ -12,7 +12,7 @@ This repository follows the [Defense in Depth (Node.js)](https://github.com/jare
 
 Controls enforced through pnpm (configured in `pnpm-workspace.yaml`):
 
-- **Package manager is pinned** (`packageManager` in `package.json`, with integrity hash). CI and Docker builds run the pinned pnpm version.
+- **Package manager is pinned** (`packageManager` in `package.json`, with integrity hash). CI and Docker builds activate pnpm through Corepack, which downloads exactly the pinned version and verifies it against the committed hash before pnpm ever runs.
 - **Seven-day release maturity delay**: new dependency versions must be at least 7 days old before pnpm will resolve to them (`minimumReleaseAge: 10080`). Resolution fails closed when no version qualifies (`minimumReleaseAgeStrict: true`) or when registry publish-time metadata is missing (`minimumReleaseAgeIgnoreMissingTime: false`).
 - **Exotic transitive dependencies are blocked** (`blockExoticSubdeps: true`): only direct dependencies may use git or tarball-URL sources.
 - **Dependency build scripts do not run unless approved** (`strictDepBuilds: true`, `dangerouslyAllowAllBuilds: false`). The `allowBuilds` list in `pnpm-workspace.yaml` is the code-reviewed approval policy. Every addition to that list is a security exception and requires human review of the package's install scripts. Run `pnpm approve-builds` only as part of dependency review — never automatically and never in CI.

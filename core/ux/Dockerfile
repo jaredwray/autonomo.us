@@ -1,7 +1,7 @@
 # Build context is the repository root:
 #   docker build -f core/ux/Dockerfile .
 FROM node:22-alpine AS build
-RUN npm install -g pnpm@11
+RUN corepack enable
 WORKDIR /repo
 
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json tsconfig.json ./
