@@ -57,16 +57,16 @@ Single source of truth for the Defense in Depth rollout. One item per PR. Legend
 
 ### 4. pnpm 11 supply chain controls
 
-- [ ] Pin the package manager in `package.json`. (PR pending)
-- [ ] Enforce a seven-day maturity delay with `minimumReleaseAge: 10080`. (PR pending)
-- [ ] Set `minimumReleaseAgeStrict: true` so resolution fails instead of falling back to too-new versions. (PR pending)
-- [ ] Set `minimumReleaseAgeIgnoreMissingTime: false` so missing publish-time metadata fails closed. (PR pending)
-- [ ] Explicitly set `blockExoticSubdeps: true`. (PR pending)
-- [ ] Use `allowBuilds` (replaces `onlyBuiltDependencies` and related pre-pnpm-11 settings). (PR pending)
-- [ ] Keep `dangerouslyAllowAllBuilds: false`. (PR pending)
-- [ ] Treat every new lifecycle script approval as a security exception. (PR pending)
-- [ ] Maintain approved build scripts as code-reviewed policy (`allowBuilds` in `pnpm-workspace.yaml`), not one-off developer prompts. (PR pending)
-- [ ] Run `pnpm approve-builds` only as part of dependency review, never automatically in CI. (PR pending)
+- [ ] Pin the package manager in `package.json`. (PR #9 pending)
+- [ ] Enforce a seven-day maturity delay with `minimumReleaseAge: 10080`. (PR #9 pending)
+- [ ] Set `minimumReleaseAgeStrict: true` so resolution fails instead of falling back to too-new versions. (PR #9 pending)
+- [ ] Set `minimumReleaseAgeIgnoreMissingTime: false` so missing publish-time metadata fails closed. (PR #9 pending)
+- [ ] Explicitly set `blockExoticSubdeps: true`. (PR #9 pending)
+- [ ] Use `allowBuilds` (replaces `onlyBuiltDependencies` and related pre-pnpm-11 settings). (PR #9 pending)
+- [ ] Keep `dangerouslyAllowAllBuilds: false`. (PR #9 pending)
+- [ ] Treat every new lifecycle script approval as a security exception. (PR #9 pending)
+- [ ] Maintain approved build scripts as code-reviewed policy (`allowBuilds` in `pnpm-workspace.yaml`), not one-off developer prompts. (PR #9 pending)
+- [ ] Run `pnpm approve-builds` only as part of dependency review, never automatically in CI. (PR #9 pending)
 
 ### 5. GitHub Actions hardening
 
