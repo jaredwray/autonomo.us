@@ -14,14 +14,14 @@ Tracking against https://github.com/jaredwray/agentic/blob/main/skills/security/
 - [ ] Direct dependencies use narrower version ranges (`~` over `^` where reasonable; exact versions for high-risk tooling)
 
 ### 4. pnpm 11 Supply Chain Controls
-- [ ] `packageManager: pnpm@11.x` pinned in `package.json` (PR pending)
+- [ ] `packageManager: pnpm@11.x` pinned in `package.json` (PR #10 pending)
 - [ ] `minimumReleaseAge: 10080` set in `pnpm-workspace.yaml`
 - [ ] `minimumReleaseAgeStrict: true` set
 - [ ] `minimumReleaseAgeIgnoreMissingTime: false` set
 - [ ] `blockExoticSubdeps: true` set
 - [ ] `strictDepBuilds: true` set
 - [ ] `dangerouslyAllowAllBuilds: false` confirmed
-- [ ] `allowBuilds: {}` baseline set (PR pending)
+- [ ] `allowBuilds: {}` baseline set (PR #10 pending)
 - [x] Approved build scripts maintained as code-reviewed policy — verified 2026-08-12 (allowlist lives in committed `pnpm-workspace.yaml`)
 - [x] `pnpm approve-builds` only used during dependency review, never automatically in CI — verified 2026-08-12 (CI never invokes it)
 
