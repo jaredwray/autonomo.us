@@ -1,5 +1,20 @@
 packages:
   - 'core/*'
-onlyBuiltDependencies:
-  - '@biomejs/biome'
-  - esbuild
+
+# Supply-chain controls (see SECURITY.md — Supply chain security policy).
+# New versions must be at least 7 days old before pnpm will resolve to them;
+# resolution fails closed when no version qualifies or publish-time metadata
+# is missing from the registry.
+minimumReleaseAge: 10080 # 7 days, in minutes
+minimumReleaseAgeStrict: true
+minimumReleaseAgeIgnoreMissingTime: false
+blockExoticSubdeps: true
+strictDepBuilds: true
+dangerouslyAllowAllBuilds: false
+trustPolicy: no-downgrade
+
+# Approved dependency build scripts. Changes to this list are security
+# exceptions and require code review — never `pnpm approve-builds` in CI.
+allowBuilds:
+  '@biomejs/biome': true
+  esbuild: true
