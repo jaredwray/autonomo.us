@@ -39,8 +39,8 @@ Tracking against https://github.com/jaredwray/agentic/blob/main/skills/security/
 - [ ] Workflow/security scanner runs on every PR touching CI, manifests, lockfiles, release scripts, or security policy
 
 ### 8. Security Tooling and Detection
-- [ ] Aikido runs on every build
-- [ ] Socket.dev integrated as a second detection layer
+- [x] Aikido runs on every build — verified 2026-08-12 (GitHub App check runs on PRs)
+- [x] Socket.dev integrated as a second detection layer — verified 2026-08-12 (GitHub App: PR alerts + project report checks run on PRs)
 - [ ] Socket Gateway in report-only mode (and evaluated for blocking)
 - [ ] `deepsec` runs on PRs touching release/dep/CI/auth/crypto/package paths
 - [ ] Secret scanning enabled on repo and CI artifacts
