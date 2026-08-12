@@ -98,8 +98,8 @@ Tracked separately: release pipeline hardening is covered by the `release-manage
 
 ### 8. Security tooling and detection
 
-- [ ] Keep Aikido running on every build. (manual — external app/integration)
-- [ ] Add Socket.dev as a second detection layer. (manual — external app/integration)
+- [x] Keep Aikido running on every build. — already in place (Aikido GitHub app scans every PR)
+- [x] Add Socket.dev as a second detection layer. — already in place (Socket GitHub app runs PR alerts and project reports)
 - [ ] Evaluate Socket Gateway in report-only mode first; move to default-blocking only after tuning false positives and emergency bypass rules. (manual)
 - [ ] Run `deepsec` on PRs, especially PRs touching release paths, dependency files, CI, auth, crypto, or package boundaries.
 - [ ] Run secret scanning on repos and local/CI artifacts.
