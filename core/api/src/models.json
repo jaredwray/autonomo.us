@@ -1,5 +1,5 @@
 {
-	"updated": "2026-08-13T06:53:02.555Z",
+	"updated": "2026-08-14T06:52:11.778Z",
 	"providers": {
 		"anthropic": {
 			"name": "Anthropic",
@@ -317,6 +317,11 @@
 			"name": "Google",
 			"source": "models.dev",
 			"models": [
+				{
+					"id": "gemini-3.7-flash",
+					"name": "Gemini 3.7 Flash",
+					"released": "2026-08-13"
+				},
 				{
 					"id": "gemini-3.5-flash-lite",
 					"name": "Gemini 3.5 Flash Lite",
