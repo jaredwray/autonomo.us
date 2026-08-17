@@ -1,5 +1,5 @@
 {
-	"updated": "2026-08-14T06:52:11.778Z",
+	"updated": "2026-08-17T06:37:16.574Z",
 	"providers": {
 		"anthropic": {
 			"name": "Anthropic",
@@ -774,6 +774,11 @@
 					"id": "grok-4.6",
 					"name": "Grok 4.6",
 					"released": "2026-08-12"
+				},
+				{
+					"id": "grok-imagine-image-2.0",
+					"name": "Grok Imagine Image 2.0",
+					"released": "2026-08-07"
 				},
 				{
 					"id": "grok-4.5",
