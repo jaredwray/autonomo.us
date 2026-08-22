@@ -1,5 +1,5 @@
 {
-	"updated": "2026-08-17T06:37:16.574Z",
+	"updated": "2026-08-22T06:36:13.566Z",
 	"providers": {
 		"anthropic": {
 			"name": "Anthropic",
@@ -323,6 +323,11 @@
 					"released": "2026-08-13"
 				},
 				{
+					"id": "gemini-flash-latest",
+					"name": "Gemini Flash Latest",
+					"released": "2026-08-13"
+				},
+				{
 					"id": "gemini-3.5-flash-lite",
 					"name": "Gemini 3.5 Flash Lite",
 					"released": "2026-07-21"
@@ -330,6 +335,11 @@
 				{
 					"id": "gemini-3.6-flash",
 					"name": "Gemini 3.6 Flash",
+					"released": "2026-07-21"
+				},
+				{
+					"id": "gemini-flash-lite-latest",
+					"name": "Gemini Flash-Lite Latest",
 					"released": "2026-07-21"
 				},
 				{
@@ -363,18 +373,8 @@
 					"released": "2026-05-19"
 				},
 				{
-					"id": "gemini-flash-latest",
-					"name": "Gemini Flash Latest",
-					"released": "2026-05-19"
-				},
-				{
 					"id": "gemini-3.1-flash-lite",
 					"name": "Gemini 3.1 Flash Lite",
-					"released": "2026-05-07"
-				},
-				{
-					"id": "gemini-flash-lite-latest",
-					"name": "Gemini Flash-Lite Latest",
 					"released": "2026-05-07"
 				},
 				{
@@ -836,6 +836,11 @@
 			"name": "DeepSeek",
 			"source": "models.dev",
 			"models": [
+				{
+					"id": "deepseek-v4-flash-vision-exp",
+					"name": "DeepSeek V4 Flash Vision Exp",
+					"released": "2026-08-21"
+				},
 				{
 					"id": "deepseek-v4-pro",
 					"name": "DeepSeek V4 Pro",
