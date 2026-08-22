@@ -1,11 +1,11 @@
 name: update-models
 
 # Refreshes the bundled model catalog baseline (core/api/src/models.json)
-# once a day. The API also refreshes itself daily at runtime; this baseline
-# is what it serves until that first refresh succeeds. Provider API keys are
-# optional repo secrets — providers whose key is missing fall back to the
-# public models.dev catalog, so the workflow works with no secrets configured
-# at all. A commit is only pushed when the catalog actually changed.
+# once a day and uploads it as a workflow artifact. The API also refreshes
+# itself daily at runtime; the committed models.json is the cold-start
+# fallback until that first refresh succeeds. Provider API keys are optional
+# repo secrets — providers whose key is missing fall back to the public
+# models.dev catalog, so the workflow works with no secrets configured.
 on:
   schedule:
     - cron: "23 6 * * *"
@@ -20,17 +20,25 @@ concurrency:
 jobs:
   update-models:
     runs-on: ubuntu-latest
-    # This job pushes the refreshed catalog back to the repo; it is the only
-    # place in CI allowed to write contents.
     permissions:
-      contents: write
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Socket Firewall
+        uses: SocketDev/action@ba6de6cc0565af1f42295590380973573297e31f # v1.3.2
+        with:
+          mode: firewall-free
+          firewall-version: "1.15.0"
+      - name: Use Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
+          package-manager-cache: false
       - run: corepack enable
-      - run: pnpm install
+      - run: sfw pnpm install --frozen-lockfile
       - name: Refresh the model catalog
         run: pnpm --filter @autonomo.us/api models:update
         env:
@@ -42,14 +50,9 @@ jobs:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-      - name: Commit and push the updated catalog
-        run: |
-          if git diff --quiet -- core/api/src/models.json; then
-            echo "Model catalog unchanged, nothing to commit"
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add core/api/src/models.json
-          git commit -m "Update model catalog"
-          git push
+      - name: Upload model catalog
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: model-catalog
+          path: core/api/src/models.json
+          if-no-files-found: error
