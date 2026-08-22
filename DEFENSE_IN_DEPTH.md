@@ -34,15 +34,15 @@ Profile: npm library · public
 
 ## 5. npm publishing — npm libraries only
 - [ ] OIDC trusted publishing configured **stage-only** on npmjs.com for the publish workflow — it can stage, never publish live (manual)
-- [ ] (PR pending) `.github/workflows/release.yaml` packs then stages with `pnpm stage publish ./packed/*.tgz --no-git-checks`
+- [ ] (PR #14 pending) `.github/workflows/release.yaml` packs then stages with `pnpm stage publish ./packed/*.tgz --no-git-checks`
 - [ ] Maintainer promotes staged versions with 2FA (manual)
 - [ ] Drydock connected — staged releases reviewed before promotion (manual)
 - [ ] No direct publish rights: package requires 2FA and disallows tokens (manual)
-- [ ] (PR pending) `package.json` `repository.url` accurate so provenance maps to this repo
+- [ ] (PR #14 pending) `package.json` `repository.url` accurate so provenance maps to this repo
 
 ## 6. Security tooling
 - [x] Aikido runs on every build — already in place
-- [ ] (PR pending) Aikido release gate: the release workflow's stage-publish job `needs:` a passing `scan-release`
+- [ ] (PR #14 pending) Aikido release gate: the release workflow's stage-publish job `needs:` a passing `scan-release`
 - [x] Socket reviews every PR that changes dependencies — already in place
 
 ## 7. Repository lockdown
