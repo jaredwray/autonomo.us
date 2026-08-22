@@ -113,10 +113,11 @@ requests are always served from cache, never blocked on a fetch.
 
 The bundled `core/api/src/models.json` is the baseline the gateway serves
 until the first successful refresh. The
-[update-models](.github/workflows/update-models.yml) workflow keeps that
-baseline current: it runs the same collection daily (using repo secrets for
-whichever provider keys are configured) and commits `models.json` only when
-something changed. Refresh the baseline locally with:
+[update-models](.github/workflows/update-models.yml) workflow runs the same
+collection daily (using repo secrets for whichever provider keys are
+configured) and uploads the refreshed catalog as a workflow artifact — it
+does not commit back to the repo. Refresh the committed baseline locally
+with:
 
 ```bash
 pnpm --filter @autonomo.us/api models:update

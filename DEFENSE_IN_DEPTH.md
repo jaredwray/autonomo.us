@@ -5,12 +5,12 @@ Tracking against https://github.com/jaredwray/agentic/blob/main/skills/security/
 Profile: npm library · public
 
 ## 1. Security docs
-- [ ] (PR #12 pending) `SECURITY.md` present — contact info + "How this repository is secured" summary
-- [ ] (PR #12 pending) `DEFENSE_IN_DEPTH.md` present (this file)
+- [x] `SECURITY.md` present — contact info + "How this repository is secured" summary — PR #12
+- [x] `DEFENSE_IN_DEPTH.md` present (this file) — PR #12
 
 ## 2. CODEOWNERS and cloud bootstrap
-- [ ] (PR #12 pending) `.github/CODEOWNERS` covers `/.github/`, `/.cursor/`, `/.devcontainer/`, `/scripts/` with owners the maintainer names
-- [ ] (PR #12 pending) Codespaces and Cursor Cloud Agents bootstrap Aikido Safe Chain via scripts/setup-cloud-environment.sh (--ci shims, frozen lockfile)
+- [x] `.github/CODEOWNERS` covers `/.github/`, `/.cursor/`, `/.devcontainer/`, `/scripts/` with owners the maintainer names — PR #12
+- [x] Codespaces and Cursor Cloud Agents bootstrap Aikido Safe Chain via scripts/setup-cloud-environment.sh (--ci shims, frozen lockfile) — PR #12
 
 ## 3. Dependencies (pnpm)
 - [x] `packageManager: pnpm@11.3+` pinned in `package.json` — PR #9
@@ -18,18 +18,18 @@ Profile: npm library · public
 - [x] `trustPolicy: no-downgrade`; no first-party `trustPolicyExclude` — PR #9
 - [x] Lifecycle scripts blocked: `strictDepBuilds: true`, `dangerouslyAllowAllBuilds: false`, `allowBuilds: {}` baseline — PR #9 (`allowBuilds` exceptions: `@biomejs/biome`, `esbuild`)
 - [x] `blockExoticSubdeps: true` — PR #9
-- [ ] Lockfile committed; CI installs with `pnpm install --frozen-lockfile`
+- [ ] (PR pending) Lockfile committed; CI installs with `pnpm install --frozen-lockfile`
 - [x] No `.github/dependabot.yml`; other dependency-update tools (if any) open PRs only — never auto-merge — already in place
 
 ## 4. GitHub Actions
 - [x] `permissions: contents: read` (or `{}` + per-job grants) on every workflow — PR #11
-- [ ] No `contents: write` except jobs whose purpose is mutating the repo (GitHub Release, Changesets version PR); generated output is a workflow artifact, never committed back from CI
-- [ ] Every action pinned to a full commit SHA (`npx actions-up`)
-- [ ] Every job installs Socket Firewall (`SocketDev/action` SHA-pinned, `firewall-version` pinned); `pnpm install` / `npm install` run as `sfw pnpm install` / `sfw npm install`
-- [ ] `.github/workflows/check-workflows.yaml` lints workflows with zizmor on every PR
-- [ ] `persist-credentials: false` on checkouts that don't push
+- [ ] (PR pending) No `contents: write` except jobs whose purpose is mutating the repo (GitHub Release, Changesets version PR); generated output is a workflow artifact, never committed back from CI
+- [ ] (PR pending) Every action pinned to a full commit SHA (`npx actions-up`)
+- [ ] (PR pending) Every job installs Socket Firewall (`SocketDev/action` SHA-pinned, `firewall-version` pinned); `pnpm install` / `npm install` run as `sfw pnpm install` / `sfw npm install`
+- [ ] (PR pending) `.github/workflows/check-workflows.yaml` lints workflows with zizmor on every PR
+- [ ] (PR pending) `persist-credentials: false` on checkouts that don't push
 - [x] No `pull_request_target` on workflows that run untrusted PR code — already in place
-- [x] Artifact-publishing workflows disable `actions/setup-node` default caching (`package-manager-cache: false`) to prevent cache poisoning — verified no artifact-publishing workflows yet
+- [ ] (PR pending) Artifact-publishing workflows disable `actions/setup-node` default caching (`package-manager-cache: false`) to prevent cache poisoning
 - [x] No npm tokens (or other registry credentials) in Actions secrets — already in place
 
 ## 5. npm publishing — npm libraries only
