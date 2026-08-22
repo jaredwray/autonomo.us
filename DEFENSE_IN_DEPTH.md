@@ -18,31 +18,31 @@ Profile: npm library · public
 - [x] `trustPolicy: no-downgrade`; no first-party `trustPolicyExclude` — PR #9
 - [x] Lifecycle scripts blocked: `strictDepBuilds: true`, `dangerouslyAllowAllBuilds: false`, `allowBuilds: {}` baseline — PR #9 (`allowBuilds` exceptions: `@biomejs/biome`, `esbuild`)
 - [x] `blockExoticSubdeps: true` — PR #9
-- [ ] (PR #13 pending) Lockfile committed; CI installs with `pnpm install --frozen-lockfile`
+- [x] Lockfile committed; CI installs with `pnpm install --frozen-lockfile` — PR #13
 - [x] No `.github/dependabot.yml`; other dependency-update tools (if any) open PRs only — never auto-merge — already in place
 
 ## 4. GitHub Actions
 - [x] `permissions: contents: read` (or `{}` + per-job grants) on every workflow — PR #11
-- [ ] (PR #13 pending) No `contents: write` except jobs whose purpose is mutating the repo (GitHub Release, Changesets version PR); generated output is a workflow artifact, never committed back from CI
-- [ ] (PR #13 pending) Every action pinned to a full commit SHA (`npx actions-up`)
-- [ ] (PR #13 pending) Every job installs Socket Firewall (`SocketDev/action` SHA-pinned, `firewall-version` pinned); `pnpm install` / `npm install` run as `sfw pnpm install` / `sfw npm install`
-- [ ] (PR #13 pending) `.github/workflows/check-workflows.yaml` lints workflows with zizmor on every PR
-- [ ] (PR #13 pending) `persist-credentials: false` on checkouts that don't push
+- [x] No `contents: write` except jobs whose purpose is mutating the repo (GitHub Release, Changesets version PR); generated output is a workflow artifact, never committed back from CI — PR #13
+- [x] Every action pinned to a full commit SHA (`npx actions-up`) — PR #13
+- [x] Every job installs Socket Firewall (`SocketDev/action` SHA-pinned, `firewall-version` pinned); `pnpm install` / `npm install` run as `sfw pnpm install` / `sfw npm install` — PR #13
+- [x] `.github/workflows/check-workflows.yaml` lints workflows with zizmor on every PR — PR #13
+- [x] `persist-credentials: false` on checkouts that don't push — PR #13
 - [x] No `pull_request_target` on workflows that run untrusted PR code — already in place
-- [ ] (PR #13 pending) Artifact-publishing workflows disable `actions/setup-node` default caching (`package-manager-cache: false`) to prevent cache poisoning
+- [x] Artifact-publishing workflows disable `actions/setup-node` default caching (`package-manager-cache: false`) to prevent cache poisoning — PR #13
 - [x] No npm tokens (or other registry credentials) in Actions secrets — already in place
 
 ## 5. npm publishing — npm libraries only
 - [ ] OIDC trusted publishing configured **stage-only** on npmjs.com for the publish workflow — it can stage, never publish live (manual)
-- [ ] `.github/workflows/release.yaml` packs then stages with `pnpm stage publish ./packed/*.tgz --no-git-checks`
+- [ ] (PR pending) `.github/workflows/release.yaml` packs then stages with `pnpm stage publish ./packed/*.tgz --no-git-checks`
 - [ ] Maintainer promotes staged versions with 2FA (manual)
 - [ ] Drydock connected — staged releases reviewed before promotion (manual)
 - [ ] No direct publish rights: package requires 2FA and disallows tokens (manual)
-- [ ] `package.json` `repository.url` accurate so provenance maps to this repo
+- [ ] (PR pending) `package.json` `repository.url` accurate so provenance maps to this repo
 
 ## 6. Security tooling
 - [x] Aikido runs on every build — already in place
-- [ ] Aikido release gate: the release workflow's stage-publish job `needs:` a passing `scan-release`
+- [ ] (PR pending) Aikido release gate: the release workflow's stage-publish job `needs:` a passing `scan-release`
 - [x] Socket reviews every PR that changes dependencies — already in place
 
 ## 7. Repository lockdown

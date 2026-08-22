@@ -1,0 +1,113 @@
+name: release
+
+on:
+  workflow_dispatch:
+  release:
+    types: [released]
+
+permissions:
+  contents: read
+
+jobs:
+  aikido-gate:
+    name: Aikido release gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Install Socket Firewall
+        uses: SocketDev/action@ba6de6cc0565af1f42295590380973573297e31f # v1.3.2
+        with:
+          mode: firewall-free
+          firewall-version: "1.15.0"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Install Aikido CI client
+        # zizmor: ignore[adhoc-packages] pinned Aikido CI client for the release gate
+        run: sfw npm install --global @aikidosec/ci-api-client@1.0.17
+
+      # Fails on new SAST/IaC/secrets findings. The API key comes from Aikido's
+      # Continuous Integration settings — it grants no publish authority.
+      - name: Run Aikido release scan
+        env:
+          REPO_NAME: ${{ github.event.repository.name }}
+          AIKIDO_CLIENT_API_KEY: ${{ secrets.AIKIDO_CLIENT_API_KEY }}
+        run: >
+          aikido-api-client scan-release
+          "$REPO_NAME" "$GITHUB_SHA"
+          --apikey "$AIKIDO_CLIENT_API_KEY"
+          --fail-on-sast-scan --fail-on-iac-scan --fail-on-secrets-scan
+
+  build:
+    needs: [aikido-gate]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    services:
+      clickhouse:
+        image: clickhouse/clickhouse-server:25.8
+        env:
+          CLICKHOUSE_USER: autonomous
+          CLICKHOUSE_PASSWORD: autonomous
+          CLICKHOUSE_DB: autonomous
+        ports:
+          - 8123:8123
+        options: >-
+          --health-cmd "clickhouse-client --user autonomous --password autonomous --query 'SELECT 1'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Socket Firewall
+        uses: SocketDev/action@ba6de6cc0565af1f42295590380973573297e31f # v1.3.2
+        with:
+          mode: firewall-free
+          firewall-version: "1.15.0"
+      - name: Use Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Prepare pnpm
+        run: corepack prepare
+
+      - name: Install Dependencies
+        run: sfw pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Testing
+        run: pnpm test:ci
+        env:
+          CLICKHOUSE_URL: http://localhost:8123
+          CLICKHOUSE_USERNAME: autonomous
+          CLICKHOUSE_PASSWORD: autonomous
+          CLICKHOUSE_DATABASE: autonomous
+
+      - name: Pack
+        run: |
+          mkdir -p packed
+          dest="$(pwd)/packed"
+          pnpm --filter @autonomo.us/common pack --pack-destination "$dest"
+          pnpm --filter @autonomo.us/api pack --pack-destination "$dest"
+          pnpm --filter @autonomo.us/logo pack --pack-destination "$dest"
+          ls -la packed
+
+      - name: Stage publish
+        # pnpm ≥ 11.3. --no-git-checks: git-checks run even for a tarball and
+        # fail on a detached release-tag checkout and on the untracked pack output.
+        run: pnpm stage publish ./packed/*.tgz --access public --provenance --no-git-checks
