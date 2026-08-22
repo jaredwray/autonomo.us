@@ -10,8 +10,9 @@ permissions: {}
 jobs:
   zizmor:
     runs-on: ubuntu-latest
-    # Job-level permissions cannot use expressions. Fork PRs already get a
-    # read-only token; skip SARIF upload there so the job does not fail.
+    # Job-level permissions cannot use expressions. Fork and Dependabot PRs
+    # already get a read-only token; skip SARIF upload there so the job does
+    # not fail.
     permissions:
       contents: read
       actions: read
@@ -29,5 +30,5 @@ jobs:
       - name: Run zizmor
         uses: zizmorcore/zizmor-action@3dc1ecc9bcb9e94e9b2c709687979e1298497054 # v0.6.2
         with:
-          advanced-security: ${{ !github.event.pull_request.head.repo.fork }}
-          annotations: ${{ github.event.pull_request.head.repo.fork == true }}
+          advanced-security: ${{ !github.event.pull_request.head.repo.fork && github.actor != 'dependabot[bot]' }}
+          annotations: ${{ github.event.pull_request.head.repo.fork == true || github.actor == 'dependabot[bot]' }}
