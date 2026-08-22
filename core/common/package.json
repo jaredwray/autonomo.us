@@ -4,6 +4,11 @@
 	"description": "Shared types and utilities for autonomo.us",
 	"license": "MIT",
 	"author": "Jared Wray",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/jaredwray/autonomo.us.git",
+		"directory": "core/common"
+	},
 	"type": "module",
 	"main": "./dist/index.cjs",
 	"module": "./dist/index.mjs",

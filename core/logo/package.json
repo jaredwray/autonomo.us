@@ -4,6 +4,11 @@
 	"description": "Animated AUTONOMOUS aurora logo — a dependency-free, framework-agnostic SVG logo library",
 	"license": "MIT",
 	"author": "Jared Wray",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/jaredwray/autonomo.us.git",
+		"directory": "core/logo"
+	},
 	"type": "module",
 	"main": "./dist/index.cjs",
 	"module": "./dist/index.mjs",
