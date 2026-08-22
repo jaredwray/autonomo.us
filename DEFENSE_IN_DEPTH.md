@@ -33,7 +33,7 @@ Profile: npm library · public
 - [x] No npm tokens (or other registry credentials) in Actions secrets — already in place
 
 ## 5. npm publishing — npm libraries only
-- [ ] OIDC trusted publishing configured **stage-only** on npmjs.com for the publish workflow — it can stage, never publish live (manual)
+- [x] OIDC trusted publishing configured **stage-only** on npmjs.com for the publish workflow — it can stage, never publish live (manual)
 - [x] `.github/workflows/release.yaml` packs then stages with `pnpm stage publish ./packed/*.tgz --no-git-checks` — PR #14
 - [x] Maintainer promotes staged versions with 2FA (manual)
 - [x] Drydock connected — staged releases reviewed before promotion (manual)
@@ -46,6 +46,6 @@ Profile: npm library · public
 - [x] Socket reviews every PR that changes dependencies — already in place
 
 ## 7. Repository lockdown
-- [ ] (PR #15 pending) `lockdown-repo.sh` applied; `--check` with `--required-checks` and `--allowed-actions` passes (PRs required on the default branch, merges blocked unless required status checks pass, tag ruleset, immutable releases, fork-PR approval (public repos), read-only workflow tokens, Actions allowlist, secret scanning, Dependabot disabled, private vulnerability reporting (public repos))
-- [ ] Phishing-resistant 2FA (passkeys / hardware keys) on the GitHub and npm accounts (manual)
-- [ ] Recovery codes stored offline in a password manager (manual)
+- [x] `lockdown-repo.sh` applied; `--check` with `--required-checks` and `--allowed-actions` passes (PRs required on the default branch, merges blocked unless required status checks pass, tag ruleset, immutable releases, fork-PR approval (public repos), read-only workflow tokens, Actions allowlist, secret scanning, Dependabot disabled, private vulnerability reporting (public repos)) — PR #15
+- [x] Phishing-resistant 2FA (passkeys / hardware keys) on the GitHub and npm accounts (manual)
+- [x] Recovery codes stored offline in a password manager (manual)
