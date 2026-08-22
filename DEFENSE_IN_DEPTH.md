@@ -34,18 +34,18 @@ Profile: npm library · public
 
 ## 5. npm publishing — npm libraries only
 - [ ] OIDC trusted publishing configured **stage-only** on npmjs.com for the publish workflow — it can stage, never publish live (manual)
-- [ ] (PR #14 pending) `.github/workflows/release.yaml` packs then stages with `pnpm stage publish ./packed/*.tgz --no-git-checks`
+- [x] `.github/workflows/release.yaml` packs then stages with `pnpm stage publish ./packed/*.tgz --no-git-checks` — PR #14
 - [x] Maintainer promotes staged versions with 2FA (manual)
 - [x] Drydock connected — staged releases reviewed before promotion (manual)
 - [x] No direct publish rights: package requires 2FA and disallows tokens (manual)
-- [ ] (PR #14 pending) `package.json` `repository.url` accurate so provenance maps to this repo
+- [x] `package.json` `repository.url` accurate so provenance maps to this repo — PR #14
 
 ## 6. Security tooling
 - [x] Aikido runs on every build — already in place
-- [ ] (PR #14 pending) Aikido release gate: the release workflow's stage-publish job `needs:` a passing `scan-release`
+- [x] Aikido release gate: the release workflow's stage-publish job `needs:` a passing `scan-release` — PR #14
 - [x] Socket reviews every PR that changes dependencies — already in place
 
 ## 7. Repository lockdown
-- [ ] `lockdown-repo.sh` applied; `--check` with `--required-checks` and `--allowed-actions` passes (PRs required on the default branch, merges blocked unless required status checks pass, tag ruleset, immutable releases, fork-PR approval (public repos), read-only workflow tokens, Actions allowlist, secret scanning, Dependabot disabled, private vulnerability reporting (public repos))
+- [ ] (PR #15 pending) `lockdown-repo.sh` applied; `--check` with `--required-checks` and `--allowed-actions` passes (PRs required on the default branch, merges blocked unless required status checks pass, tag ruleset, immutable releases, fork-PR approval (public repos), read-only workflow tokens, Actions allowlist, secret scanning, Dependabot disabled, private vulnerability reporting (public repos))
 - [ ] Phishing-resistant 2FA (passkeys / hardware keys) on the GitHub and npm accounts (manual)
 - [ ] Recovery codes stored offline in a password manager (manual)
