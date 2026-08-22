@@ -18,18 +18,18 @@ Profile: npm library · public
 - [x] `trustPolicy: no-downgrade`; no first-party `trustPolicyExclude` — PR #9
 - [x] Lifecycle scripts blocked: `strictDepBuilds: true`, `dangerouslyAllowAllBuilds: false`, `allowBuilds: {}` baseline — PR #9 (`allowBuilds` exceptions: `@biomejs/biome`, `esbuild`)
 - [x] `blockExoticSubdeps: true` — PR #9
-- [ ] (PR pending) Lockfile committed; CI installs with `pnpm install --frozen-lockfile`
+- [ ] (PR #13 pending) Lockfile committed; CI installs with `pnpm install --frozen-lockfile`
 - [x] No `.github/dependabot.yml`; other dependency-update tools (if any) open PRs only — never auto-merge — already in place
 
 ## 4. GitHub Actions
 - [x] `permissions: contents: read` (or `{}` + per-job grants) on every workflow — PR #11
-- [ ] (PR pending) No `contents: write` except jobs whose purpose is mutating the repo (GitHub Release, Changesets version PR); generated output is a workflow artifact, never committed back from CI
-- [ ] (PR pending) Every action pinned to a full commit SHA (`npx actions-up`)
-- [ ] (PR pending) Every job installs Socket Firewall (`SocketDev/action` SHA-pinned, `firewall-version` pinned); `pnpm install` / `npm install` run as `sfw pnpm install` / `sfw npm install`
-- [ ] (PR pending) `.github/workflows/check-workflows.yaml` lints workflows with zizmor on every PR
-- [ ] (PR pending) `persist-credentials: false` on checkouts that don't push
+- [ ] (PR #13 pending) No `contents: write` except jobs whose purpose is mutating the repo (GitHub Release, Changesets version PR); generated output is a workflow artifact, never committed back from CI
+- [ ] (PR #13 pending) Every action pinned to a full commit SHA (`npx actions-up`)
+- [ ] (PR #13 pending) Every job installs Socket Firewall (`SocketDev/action` SHA-pinned, `firewall-version` pinned); `pnpm install` / `npm install` run as `sfw pnpm install` / `sfw npm install`
+- [ ] (PR #13 pending) `.github/workflows/check-workflows.yaml` lints workflows with zizmor on every PR
+- [ ] (PR #13 pending) `persist-credentials: false` on checkouts that don't push
 - [x] No `pull_request_target` on workflows that run untrusted PR code — already in place
-- [ ] (PR pending) Artifact-publishing workflows disable `actions/setup-node` default caching (`package-manager-cache: false`) to prevent cache poisoning
+- [ ] (PR #13 pending) Artifact-publishing workflows disable `actions/setup-node` default caching (`package-manager-cache: false`) to prevent cache poisoning
 - [x] No npm tokens (or other registry credentials) in Actions secrets — already in place
 
 ## 5. npm publishing — npm libraries only
