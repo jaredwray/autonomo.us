@@ -11,9 +11,9 @@ background**.
   plain HTML, SSR…).
 - **Self-contained SVG** with scoped styles — animates as inline markup, an
   `<img>` source, or a CSS background.
-- **Aurora animation**: the blades build top → bottom, a specular highlight
-  sweeps left → right, then it settles into a seamless, forever idle (curtain
-  sway, breathing, arrhythmic twinkle, slow hue drift).
+- **Aurora animation**: sculpted light ribbons build top → bottom, the
+  signature horizon draws itself in, and a specular highlight sweeps left →
+  right before settling into a seamless atmospheric idle.
 - **Accessible & considerate**: `role="img"` with a label, and motion is
   automatically disabled for `prefers-reduced-motion`.
 - Fully **configurable**: speed, size, palette, streak count, wordmark.
@@ -92,10 +92,10 @@ renderToString({ animated: false });
 | `animated`             | `boolean`                     | `true`         | Master on/off switch. `false` renders a static logo (wins over `animation`). |
 | `animation`            | `"loop" \| "once" \| "none"`  | `"loop"`       | Idle forever, play once, or render the resting frame.        |
 | `speed`                | `number`                      | `1`            | Global speed multiplier (`0.1`–`5`).                         |
-| `streaks`              | `number`                      | `13`           | Number of aurora blades (`5`–`40`).                          |
+| `streaks`              | `number`                      | `15`           | Number of aurora blades (`5`–`40`).                          |
 | `colors`               | `string[]`                    | aurora ramp    | Gradient stops, top → bottom.                                |
 | `wordmarkColor`        | `string`                      | `"#F4F7FF"`    | Wordmark fill.                                               |
-| `tracking`             | `number`                      | `0.34`         | Wordmark letter-spacing, in `em`.                            |
+| `tracking`             | `number`                      | `0.24`         | Wordmark letter-spacing, in `em`.                            |
 | `fontFamily`           | `string`                      | thin sys sans  | Wordmark font stack.                                         |
 | `respectReducedMotion` | `boolean`                     | `true`         | Disable motion under `prefers-reduced-motion`.              |
 

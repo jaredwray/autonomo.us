@@ -1,8 +1,14 @@
 import { buildMark, MARK_WIDTH } from "./geometry.js";
 import type { LogoOptions, ResolvedOptions } from "./types.js";
 
-/** Signature aurora ramp: cyan → blue → violet → magenta. */
-export const DEFAULT_COLORS = ["#2AD6FF", "#3B82F6", "#7C3AED", "#C026D3"];
+/** Signature aurora ramp: arctic cyan → electric blue → violet → orchid. */
+export const DEFAULT_COLORS = [
+	"#5DEBFF",
+	"#2E8CFF",
+	"#6657F6",
+	"#A855F7",
+	"#F06BEA",
+];
 
 const DEFAULTS = {
 	text: "AUTONOMO.US",
@@ -10,10 +16,10 @@ const DEFAULTS = {
 	animated: true,
 	animation: "loop",
 	speed: 1,
-	streaks: 13,
+	streaks: 15,
 	colors: DEFAULT_COLORS,
 	wordmarkColor: "#F4F7FF",
-	tracking: 0.34,
+	tracking: 0.24,
 	fontFamily:
 		'"Helvetica Neue", "Segoe UI", Inter, system-ui, -apple-system, Arial, sans-serif',
 	respectReducedMotion: true,
@@ -65,6 +71,9 @@ const PAD_TOP = 18;
 const WORDMARK_GAP = 30;
 const WORDMARK_SIZE = 27;
 
+// The bright horizon makes the abstract aurora fan read unmistakably as an A.
+const CROSSBAR = "M130 181C166 177 202 176 238 178C270 180 298 184 322 190";
+
 export type BuiltSvg = {
 	uid: string;
 	svg: string;
@@ -101,6 +110,8 @@ export function buildSvg(opts: ResolvedOptions, uid = nextUid()): BuiltSvg {
 	const glowId = id("glow");
 	const maskId = id("m");
 	const sheenId = id("s");
+	const auraId = id("aura");
+	const horizonId = id("horizon");
 	const wordMaskId = id("wm");
 
 	const stops = opts.colors
@@ -165,12 +176,25 @@ export function buildSvg(opts: ResolvedOptions, uid = nextUid()): BuiltSvg {
 		`<stop offset="62%" stop-color="#fff" stop-opacity="0"/>` +
 		`<stop offset="100%" stop-color="#fff" stop-opacity="0"/>` +
 		`</linearGradient>` +
+		`<radialGradient id="${auraId}" cx="50%" cy="55%" r="50%">` +
+		`<stop offset="0%" stop-color="${escAttr(opts.colors[1])}" stop-opacity="0.3"/>` +
+		`<stop offset="55%" stop-color="${escAttr(opts.colors[2] ?? opts.colors.at(-1) ?? opts.colors[0])}" stop-opacity="0.1"/>` +
+		`<stop offset="100%" stop-color="${escAttr(opts.colors[2] ?? opts.colors.at(-1) ?? opts.colors[0])}" stop-opacity="0"/>` +
+		`</radialGradient>` +
+		`<linearGradient id="${horizonId}" gradientUnits="userSpaceOnUse" x1="130" y1="0" x2="322" y2="0">` +
+		`<stop offset="0%" stop-color="#fff" stop-opacity="0"/>` +
+		`<stop offset="18%" stop-color="${escAttr(opts.colors[0])}" stop-opacity="0.75"/>` +
+		`<stop offset="50%" stop-color="#fff"/>` +
+		`<stop offset="82%" stop-color="${escAttr(opts.colors.at(-1) ?? opts.colors[0])}" stop-opacity="0.75"/>` +
+		`<stop offset="100%" stop-color="#fff" stop-opacity="0"/>` +
+		`</linearGradient>` +
 		`<filter id="${glowId}" x="-50%" y="-50%" width="200%" height="200%">` +
 		`<feGaussianBlur stdDeviation="4.5"/></filter>` +
 		`<mask id="${maskId}" maskUnits="userSpaceOnUse">` +
 		`<g fill="#fff" transform="translate(${round(tx)} ${round(ty)})">${bladeMask}</g></mask>` +
 		`</defs>` +
 		`<style>${styles}</style>` +
+		`<ellipse class="al-aura" cx="220" cy="145" rx="176" ry="132" fill="url(#${auraId})"/>` +
 		`<g class="al-mark" transform="translate(${round(tx)} ${round(ty)})">` +
 		`<g class="al-glow" fill="url(#${gradId})" filter="url(#${glowId})">${bladeMask}</g>` +
 		`<g class="al-blades" fill="url(#${gradId})">${blades}</g>` +
@@ -179,6 +203,8 @@ export function buildSvg(opts: ResolvedOptions, uid = nextUid()): BuiltSvg {
 		`<rect class="al-sheen" x="${round(bbox.minX)}" y="${round(bbox.minY - 8)}" ` +
 		`width="${round(bboxW)}" height="${round(bboxH + 16)}" fill="url(#${sheenId})"/>` +
 		`</g>` +
+		`<path class="al-crossbar-glow" d="${CROSSBAR}" stroke="url(#${horizonId})" stroke-width="12" stroke-linecap="round"/>` +
+		`<path class="al-crossbar" d="${CROSSBAR}" stroke="url(#${horizonId})" stroke-width="2.25" stroke-linecap="round"/>` +
 		`</g>` +
 		wordmarkSvg +
 		`</svg>`;
@@ -214,7 +240,7 @@ function renderWordmark(
 	const common =
 		`x="${cx}" y="${baseline}" text-anchor="middle" ` +
 		`font-size="${WORDMARK_SIZE}" font-family="${escAttr(opts.fontFamily)}" ` +
-		`font-weight="300" dominant-baseline="alphabetic"`;
+		`font-weight="600" dominant-baseline="alphabetic"`;
 	const letters = [...opts.text]
 		.map(
 			(ch, j) => `<tspan class="al-letter" style="--j:${j}">${esc(ch)}</tspan>`,
@@ -279,6 +305,8 @@ function buildStyles(
 		wordIn: k("wordIn"),
 		letterIn: k("letterIn"),
 		wordSweep: k("wordSweep"),
+		horizon: k("horizon"),
+		aura: k("aura"),
 	};
 
 	// Highlight band travels in user units, off-canvas at both ends so the
@@ -330,7 +358,13 @@ function buildStyles(
 		`0%{transform:translateX(${round(-layout.width)}px) skewX(-12deg);opacity:0}` +
 		`6%{opacity:1}24%{opacity:1}` +
 		`30%{transform:translateX(${round(MARK_WIDTH * 1.1)}px) skewX(-12deg);opacity:0}` +
-		`100%{transform:translateX(${round(MARK_WIDTH * 1.1)}px) skewX(-12deg);opacity:0}}`;
+		`100%{transform:translateX(${round(MARK_WIDTH * 1.1)}px) skewX(-12deg);opacity:0}}` +
+		`@keyframes ${kf.horizon}{` +
+		`0%{stroke-dashoffset:230;opacity:0}55%{opacity:1}` +
+		`100%{stroke-dashoffset:0;opacity:.9}}` +
+		`@keyframes ${kf.aura}{` +
+		`0%,100%{opacity:.52;transform:scale(.96)}` +
+		`50%{opacity:.78;transform:scale(1.04)}}`;
 
 	// Resting frame — the finished, fully-visible logo.
 	const base =
@@ -340,6 +374,9 @@ function buildStyles(
 		`#${uid} .al-blade{transform-box:fill-box;transform-origin:50% 0%}` +
 		`#${uid} .al-sway,#${uid} .al-breathe{transform-box:fill-box;transform-origin:50% 100%}` +
 		`#${uid} .al-glow{opacity:0.5}` +
+		`#${uid} .al-aura{opacity:.7;transform-box:fill-box;transform-origin:center}` +
+		`#${uid} .al-crossbar-glow{opacity:.32;filter:blur(5px)}` +
+		`#${uid} .al-crossbar{opacity:.9;stroke-dasharray:230;stroke-dashoffset:0}` +
 		`#${uid} .al-sparks{mix-blend-mode:screen}` +
 		`#${uid} .al-spark{opacity:0}` +
 		`#${uid} .al-mark{transform-box:fill-box;transform-origin:50% 100%}` +
@@ -365,12 +402,15 @@ function buildStyles(
 		`animation-delay:calc(${ms(introBase)} + var(--i) * ${ms(stagger)});will-change:transform,opacity}` +
 		`#${uid} .al-spark{animation:${kf.spark} ${ms(igniteDur + 120)} ease-out 1 both;` +
 		`animation-delay:calc(${ms(introBase)} + var(--i) * ${ms(stagger)})}` +
+		`#${uid} .al-crossbar{animation:${kf.horizon} ${ms(900)} cubic-bezier(.16,1,.3,1) both;` +
+		`animation-delay:${ms(buildEnd * 0.72)}}` +
 		// Idle layers (loop only): sway + breathe/twinkle, seeded per blade.
 		(idle
 			? `#${uid} .al-sway{animation:${kf.sway} var(--sd) linear infinite;animation-delay:var(--sdl)}` +
 				`#${uid} .al-breathe{animation:${kf.breathe} var(--bd) linear infinite,` +
 				`${kf.twinkle} var(--td) linear infinite;animation-delay:var(--bdl),var(--tdl)}` +
-				`#${uid} .al-mark{animation:${kf.hue} ${ms(14000)} linear infinite}`
+				`#${uid} .al-mark{animation:${kf.hue} ${ms(14000)} linear infinite}` +
+				`#${uid} .al-aura{animation:${kf.aura} ${ms(7000)} ease-in-out infinite}`
 			: "") +
 		// Highlight: a left → right sweep, fired once the build completes, then
 		// repeated on a long idle cadence.

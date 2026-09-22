@@ -1,7 +1,7 @@
 /**
  * Generative geometry for the aurora "A" mark.
  *
- * The mark is a triangle of slim, sharp-tipped "blades" (aurora light beams).
+ * The mark is a triangle of sculpted, sharp-tipped "blades" (aurora light beams).
  * Tips ride the right-leaning hypotenuse from the apex down to the right foot,
  * while their bottoms sit along the base from the left foot to the right foot.
  * Blade 0 is the tall left leg (apex → left foot); each successive blade steps
@@ -79,8 +79,9 @@ export function buildMark(count: number): MarkGeometry {
 		const anchorY = lerp(LEFT_FOOT.y, RIGHT_FOOT.y, u);
 		const length = Math.hypot(anchorX - tipX, anchorY - tipY);
 
-		// Slim throughout; a hair wider for the tall left blades.
-		const halfWidth = 1.0 + 2.3 * (1 - u);
+		// Deliberate ribbons rather than hairlines: bold enough to remain legible
+		// at favicon size, while the taper preserves the airy aurora character.
+		const halfWidth = 1.55 + 3.25 * (1 - u);
 
 		blades.push({
 			index: i,
@@ -136,7 +137,7 @@ function bladePath(
 		round(tipY + dy * s + py * o),
 	];
 
-	const widest = 0.55;
+	const widest = 0.58;
 	const [tx, ty] = [round(tipX), round(tipY)];
 	const [wrx, wry] = at(widest, halfWidth);
 	const [wlx, wly] = at(widest, -halfWidth);

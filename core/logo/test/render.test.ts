@@ -8,7 +8,7 @@ describe("resolveOptions", () => {
 	it("applies on-brand defaults", () => {
 		const o = resolveOptions();
 		expect(o.text).toBe("AUTONOMO.US");
-		expect(o.streaks).toBe(13);
+		expect(o.streaks).toBe(15);
 		expect(o.speed).toBe(1);
 		expect(o.colors).toEqual(DEFAULT_COLORS);
 		expect(o.title).toBe("AUTONOMO.US logo");
@@ -46,6 +46,13 @@ describe("buildSvg", () => {
 		expect(
 			count(buildSvg(resolveOptions({ streaks: 22 })).svg, 'class="al-blade"'),
 		).toBe(22);
+	});
+
+	it("adds the signature horizon and atmospheric aura", () => {
+		const svg = buildSvg(resolveOptions({ animation: "none" })).svg;
+		expect(svg).toContain('class="al-crossbar"');
+		expect(svg).toContain('class="al-aura"');
+		expect(svg).toContain("radialGradient");
 	});
 
 	it("renders the wordmark as per-letter tspans, or omits it", () => {
