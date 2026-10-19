@@ -13,6 +13,18 @@ strictDepBuilds: true
 dangerouslyAllowAllBuilds: false
 trustPolicy: no-downgrade
 
+# Floors for transitive packages whose parents still accept a vulnerable
+# release. Each range stays on the current major; minimumReleaseAge above
+# keeps a too-new patch from being selected.
+overrides:
+  "@fastify/proxy-addr": ">=5.1.1 <6"
+  "find-my-way": ">=9.7.0 <10"
+  # ajv 8.x still requests fast-uri ^3, and no ajv release raises that
+  # floor. fast-uri 4 requests stay on 4.2.2 via fast-json-stringify 7.
+  "fast-uri@<3.1.8": ">=3.1.8 <4"
+  "undici": ">=7.30.0 <8"
+  "zod": ">=4.6.6 <5"
+
 # Approved dependency build scripts. Changes to this list are security
 # exceptions and require code review — never `pnpm approve-builds` in CI.
 allowBuilds:
