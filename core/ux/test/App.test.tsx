@@ -72,11 +72,12 @@ describe("App", () => {
 		}
 	});
 
-	it("renders the heading, subtitle, and live API status", async () => {
+	it("renders the brand heading and live API status", async () => {
 		await startApp();
 		render(<App />);
-		expect(screen.getByText("autonomo.us")).toBeDefined();
-		expect(screen.getByText("AI Platform Dashboard")).toBeDefined();
+		expect(
+			screen.getByRole("heading", { name: /autonomo\.us/i }),
+		).toBeDefined();
 		expect(await screen.findByText("API connected")).toBeDefined();
 	});
 
