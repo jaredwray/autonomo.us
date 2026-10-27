@@ -1,6 +1,6 @@
 # Build context is the repository root:
 #   docker build -f core/api/Dockerfile .
-FROM node:22-alpine AS build
+FROM node:22.23.4-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS build
 RUN corepack enable
 WORKDIR /repo
 
@@ -17,7 +17,7 @@ COPY core/api core/api
 RUN pnpm --filter @autonomo.us/common build && pnpm --filter @autonomo.us/api build
 
 # Runtime: production dependencies only, plus the built output.
-FROM node:22-alpine
+FROM node:22.23.4-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914
 RUN corepack enable
 WORKDIR /repo
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
