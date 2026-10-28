@@ -41,6 +41,7 @@ export type ApiConfig = {
 	/** Initial failover policy; runtime-mutable via PUT /v1/failover. */
 	failover?: FailoverPolicy;
 	clickhouse?: ClickHouseConfig;
+	mongodbUrl?: string;
 	/**
 	 * Browser origins allowed by CORS. `["*"]` allows any origin. The default
 	 * covers the Vite dev dashboard; the gateway holds provider keys and has
@@ -142,5 +143,11 @@ export function configFromEnv(
 				: DEFAULT_FAILOVER_POLICY.timeoutMs,
 	};
 
-	return { providers, failover, clickhouse, corsOrigins };
+	return {
+		providers,
+		failover,
+		clickhouse,
+		mongodbUrl: env.MONGODB_URL,
+		corsOrigins,
+	};
 }

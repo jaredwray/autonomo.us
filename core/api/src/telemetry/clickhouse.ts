@@ -118,6 +118,11 @@ export class ClickHouseSink {
 		}
 	}
 
+	/** Checks authenticated connectivity without changing the schema. */
+	async ping(): Promise<void> {
+		await this.request("SELECT 1");
+	}
+
 	/** Creates the database and telemetry table if they do not exist. */
 	async ensureSchema(): Promise<void> {
 		await this.request(`CREATE DATABASE IF NOT EXISTS ${this.config.database}`);

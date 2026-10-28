@@ -404,13 +404,7 @@ export function App() {
 									: "dot-muted"
 							}`}
 						/>
-						{data?.sink.configured
-							? data.sink.healthy
-								? "ClickHouse connected"
-								: "ClickHouse unreachable"
-							: summary?.source === "clickhouse"
-								? "ClickHouse connected"
-								: "ClickHouse off"}
+						Health
 					</span>
 				</div>
 			</header>
