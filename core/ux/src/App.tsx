@@ -12,6 +12,8 @@ import {
 	updateFailoverPolicy,
 } from "./api.js";
 
+const logoMark = new URL("./assets/logo-mark.svg", import.meta.url).href;
+
 const POLL_INTERVAL_MS = 4000;
 
 const compact = new Intl.NumberFormat("en-US", {
@@ -386,8 +388,10 @@ export function App() {
 		<div className="dashboard">
 			<header className="dashboard-header">
 				<div>
-					<h1>autonomo.us</h1>
-					<p className="subtitle">AI Platform Dashboard</p>
+					<h1 className="dashboard-brand">
+						<img src={logoMark} alt="" width="45" height="36" />
+						<span>autonomo.us</span>
+					</h1>
 				</div>
 				<div className="status-chips">
 					<span className="chip">
