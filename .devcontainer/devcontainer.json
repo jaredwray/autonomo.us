@@ -1,5 +1,30 @@
 {
 	"name": "Node.js",
 	"image": "mcr.microsoft.com/devcontainers/javascript-node:latest",
-	"postCreateCommand": "bash ./scripts/setup-cloud-environment.sh"
+	"postCreateCommand": "bash ./scripts/setup-cloud-environment.sh",
+	"features": {
+		"ghcr.io/devcontainers/features/docker-in-docker:4": {}
+	},
+	"forwardPorts": [
+		5173,
+		8080
+	],
+	"portsAttributes": {
+		"5173": {
+			"label": "Dashboard (development)",
+			"onAutoForward": "openBrowser"
+		},
+		"8080": {
+			"label": "Dashboard (Docker Compose)",
+			"onAutoForward": "openBrowser"
+		}
+	},
+	"remoteEnv": {
+		"CLICKHOUSE_URL": "http://localhost:8123",
+		"CLICKHOUSE_DATABASE": "autonomous",
+		"CLICKHOUSE_USERNAME": "autonomous",
+		"CLICKHOUSE_PASSWORD": "autonomous",
+		"MONGODB_URL": "mongodb://autonomous:autonomous@localhost:27017/autonomous?authSource=admin"
+	},
+	"postStartCommand": "docker compose up -d --wait mongo clickhouse"
 }

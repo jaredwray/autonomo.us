@@ -33,6 +33,13 @@ docker compose exec ollama ollama pull llama3.2
 OPENAI_COMPAT_MODELS=llama3.2 docker compose up -d api
 ```
 
+For Codespaces or VS Code Dev Containers, rebuild the container after changing
+`.devcontainer/devcontainer.json`. The Docker-in-Docker feature supplies Docker
+and Compose; container startup launches MongoDB and ClickHouse with persistent
+volumes. New terminals inherit the database URLs and credentials for the host-run
+API. Start the API and UX using the development commands below; the dashboard
+uses forwarded port 5173. Port 8080 is also forwarded for the full Compose stack.
+
 For development on the host:
 
 ```bash
@@ -74,6 +81,8 @@ through environment variables:
 | `FAILOVER_TIMEOUT_MS` | Per-attempt budget in ms before failing over (default `30000`; `0` disables the timeout) |
 
 ### Endpoints
+
+- `GET /health` — API liveness (`status`, `timestamp`) plus `mongodb` and `clickhouse`, each containing `configured` and `connected`. Configured databases are actively probed with bounded timeouts; unavailable databases report `connected: false` while liveness remains HTTP 200. Set `MONGODB_URL` and `CLICKHOUSE_URL` to enable the respective checks.
 
 - `POST /v1/chat` — proxy a chat request; body `{ model, messages, stream?, temperature?, maxTokens? }` where `model` is `provider/model` (e.g. `anthropic/claude-opus-4-8`, `local/llama3.3`). Returns the assistant message plus `usage` token counts; with `stream: true` responds with SSE (`text-delta` events, then `finish` with usage).
 - `GET /v1/models` — routable models and providers.

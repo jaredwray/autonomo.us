@@ -49,7 +49,7 @@ export function createServer(options: CreateServerOptions = {}) {
 	server.register(cors, {
 		origin: config.corsOrigins.includes("*") ? true : config.corsOrigins,
 	});
-	server.register(healthRoutes);
+	server.register(healthRoutes, { config });
 	server.register(modelsRoutes, { registry, catalog: modelCatalog });
 	server.register(failoverRoutes, { failover, registry });
 	server.register(chatRoutes, {
