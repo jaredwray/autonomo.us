@@ -22,7 +22,13 @@ if [[ ! -f pnpm-lock.yaml ]]; then
 fi
 
 if [[ -f package.json ]] && grep -q '"packageManager"' package.json && command -v corepack >/dev/null; then
-  corepack enable
+  # Dev container images keep Node's bin directory root-owned while lifecycle
+  # commands run as the unprivileged remote user, so enable corepack via sudo.
+  if [[ -w "$(dirname "$(command -v corepack)")" ]]; then
+    corepack enable
+  else
+    sudo -n corepack enable
+  fi
 fi
 
 if ! command -v pnpm >/dev/null; then
@@ -36,7 +42,9 @@ trap 'rm -f "$installer"' EXIT
 curl -fsSL "$SAFE_CHAIN_INSTALLER_URL" -o "$installer"
 echo "${SAFE_CHAIN_INSTALLER_SHA256}  ${installer}" | sha256sum -c -
 
-sh "$installer" --ci
+# The installer sources nvm.sh under `set -e`; from the repo root nvm tries to
+# switch to the .nvmrc version and fails when nvm has not installed it.
+(cd / && sh "$installer" --ci)
 
 export PATH="${SAFE_CHAIN_SHIMS}:${SAFE_CHAIN_BIN}:${PATH}"
 
