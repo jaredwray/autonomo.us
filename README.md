@@ -35,7 +35,9 @@ OPENAI_COMPAT_MODELS=llama3.2 docker compose up -d api
 
 For Codespaces or VS Code Dev Containers, rebuild the container after changing
 `.devcontainer/devcontainer.json`. The Docker-in-Docker feature supplies Docker
-and Compose; container startup launches MongoDB and ClickHouse with persistent
+and Compose (Docker CE, `"moby": false`, because the Debian trixie base image has
+no Moby packages; with Moby the build fails and Codespaces starts in recovery
+mode). Container startup launches MongoDB and ClickHouse with persistent
 volumes. New terminals inherit the database URLs and credentials for the host-run
 API. Start the API and UX using the development commands below; the dashboard
 uses forwarded port 5173. Port 8080 is also forwarded for the full Compose stack.
