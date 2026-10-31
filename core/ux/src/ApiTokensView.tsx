@@ -1,9 +1,12 @@
 import {
+	API_TOKEN_PERMISSIONS,
 	API_TOKEN_TTLS,
 	type ApiToken,
+	type ApiTokenPermission,
 	type ApiTokenSecret,
 	type ApiTokenSettings,
 	type ApiTokenTtl,
+	DEFAULT_API_TOKEN_PERMISSIONS,
 } from "@autonomo.us/common";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -23,6 +26,71 @@ const date = (value: string | null) =>
 const ttlLabel = (value: ApiTokenTtl) =>
 	value === "never" ? "Never" : `${value} ${value === 1 ? "day" : "days"}`;
 
+const permissionGroups = [
+	{
+		resource: "models",
+		label: "Models",
+		choices: ["models:read", "models:edit"],
+	},
+	{
+		resource: "routing",
+		label: "Routing",
+		choices: ["routing:read", "routing:edit"],
+	},
+	{ resource: "inference", label: "Inference", choices: ["inference:run"] },
+	{ resource: "telemetry", label: "Telemetry", choices: ["telemetry:read"] },
+] as const;
+
+function PermissionFields({
+	value,
+	onChange,
+}: {
+	value: ApiTokenPermission[];
+	onChange(permissions: ApiTokenPermission[]): void;
+}) {
+	return (
+		<fieldset className="token-permission-fields">
+			<legend>Permissions</legend>
+			<p className="card-note">
+				Applies across this gateway. Edit includes Read. Run allows chat and
+				decisions. Managing API tokens requires the owner credential.
+			</p>
+			<div className="token-permission-grid">
+				{permissionGroups.map((group) => (
+					<div className="form-field" key={group.resource}>
+						<label htmlFor={`token-permission-${group.resource}`}>
+							{group.label}
+						</label>
+						<select
+							id={`token-permission-${group.resource}`}
+							value={
+								[...group.choices]
+									.reverse()
+									.find((permission) => value.includes(permission)) ?? ""
+							}
+							onChange={(event) => {
+								const next = value.filter(
+									(permission) => !permission.startsWith(`${group.resource}:`),
+								);
+								if (event.target.value)
+									next.push(event.target.value as ApiTokenPermission);
+								onChange(next);
+							}}
+						>
+							<option value="">None</option>
+							{group.choices.map((permission) => (
+								<option key={permission} value={permission}>
+									{API_TOKEN_PERMISSIONS[permission].split(": ")[1]}
+								</option>
+							))}
+						</select>
+					</div>
+				))}
+			</div>
+		</fieldset>
+	);
+}
+
 function TokenForm({
 	panel,
 	onClose,
@@ -35,6 +103,9 @@ function TokenForm({
 	const token = panel.kind === "create" ? undefined : panel.token;
 	const [name, setName] = useState(token?.name ?? "");
 	const [description, setDescription] = useState(token?.description ?? "");
+	const [permissions, setPermissions] = useState<ApiTokenPermission[]>(() => [
+		...(token?.permissions ?? DEFAULT_API_TOKEN_PERMISSIONS),
+	]);
 	const [ttl, setTtl] = useState<ApiTokenTtl>(token?.ttlDays ?? 30);
 	const [overlap, setOverlap] = useState("86400");
 	const [customHours, setCustomHours] = useState(24);
@@ -79,12 +150,14 @@ function TokenForm({
 									name: name.trim(),
 									description: description.trim(),
 									ttlDays: ttl,
+									permissions,
 								}),
 							);
 						else if (panel.kind === "edit") {
 							await updateApiToken(panel.token.id, {
 								name: name.trim(),
 								description: description.trim(),
+								permissions,
 							});
 							onSaved("Token updated.");
 						} else if (panel.kind === "roll")
@@ -172,6 +245,9 @@ function TokenForm({
 							Roll this token to change its TTL and issue a new secret.
 						</p>
 					)}
+					{metadata && (
+						<PermissionFields value={permissions} onChange={setPermissions} />
+					)}
 					{panel.kind === "roll" && (
 						<>
 							<div className="form-field">
@@ -220,12 +296,6 @@ function TokenForm({
 							Revoke <strong>{token?.name}</strong>? The current value and every
 							previous value will stop working immediately. This cannot be
 							undone.
-						</p>
-					)}
-					{panel.kind === "create" && (
-						<p className="card-note">
-							Tokens can discover models and run chat or decisions. Gateway
-							administration requires the owner credential.
 						</p>
 					)}
 					{error && (
@@ -455,6 +525,7 @@ export function ApiTokensView() {
 								<tr>
 									<th>Name</th>
 									<th>TTL</th>
+									<th>Permissions</th>
 									<th>Status</th>
 									<th>Expires</th>
 									<th>Actions</th>
@@ -474,6 +545,18 @@ export function ApiTokensView() {
 											</small>
 										</td>
 										<td>{ttlLabel(token.ttlDays)}</td>
+										<td>
+											{token.permissions.length
+												? token.permissions.map((permission) => (
+														<span
+															className="token-permission-label"
+															key={permission}
+														>
+															{API_TOKEN_PERMISSIONS[permission]}
+														</span>
+													))
+												: "None"}
+										</td>
 										<td>
 											<span className={`token-status ${token.status}`}>
 												{token.status}

@@ -13,6 +13,7 @@ import type {
 	RoutingConfig,
 	RoutingSettings,
 	TelemetryEvent,
+	UpdateApiTokenRequest,
 	UsageSummary,
 } from "@autonomo.us/common";
 
@@ -47,7 +48,7 @@ export function hasOwnerCredential() {
 	return Boolean(ownerCredential);
 }
 export async function connectOwner(credential: string) {
-	const response = await fetch(`${apiBase()}/v1/api-tokens`, {
+	const response = await fetch(`${apiBase()}/v1/auth/owner`, {
 		headers: {
 			accept: "application/json",
 			authorization: `Bearer ${credential}`,
@@ -218,7 +219,7 @@ export function createApiToken(
 }
 export function updateApiToken(
 	id: string,
-	input: Pick<CreateApiTokenRequest, "name" | "description">,
+	input: UpdateApiTokenRequest,
 ): Promise<ApiToken> {
 	return postJson(`/v1/api-tokens/${encodeURIComponent(id)}`, "PATCH", input);
 }

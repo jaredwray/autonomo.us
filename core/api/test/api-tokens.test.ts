@@ -222,7 +222,6 @@ describe("token API access", () => {
 		).toBe(200);
 		for (const path of [
 			"/v1/api-tokens",
-			"/v1/providers",
 			"/v1/routing",
 			"/v1/telemetry/summary",
 		])

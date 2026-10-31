@@ -1,16 +1,24 @@
 import {
+	API_TOKEN_PERMISSIONS,
 	API_TOKEN_TTLS,
 	type CreateApiTokenRequest,
 	type RollApiTokenRequest,
+	type UpdateApiTokenRequest,
 } from "@autonomo.us/common";
 import type { FastifyInstance } from "fastify";
-import type { ApiTokenStore } from "../auth/tokens.js";
+import { ApiTokenError, type ApiTokenStore } from "../auth/tokens.js";
 
 const metadata = {
 	name: { type: "string", minLength: 1, maxLength: 100, pattern: "\\S" },
 	description: { type: "string", maxLength: 1000 },
 };
 const ttl = { enum: [...API_TOKEN_TTLS] };
+const permissions = {
+	type: "array",
+	maxItems: Object.keys(API_TOKEN_PERMISSIONS).length,
+	uniqueItems: true,
+	items: { type: "string", enum: Object.keys(API_TOKEN_PERMISSIONS) },
+};
 const params = {
 	type: "object",
 	required: ["id"],
@@ -25,9 +33,26 @@ export async function apiTokenRoutes(
 	server.addHook("onRequest", async (_request, reply) => {
 		reply.header("cache-control", "no-store");
 	});
+	// Fastify can coerce a scalar to an array during schema validation. Grants
+	// must be an explicit array; reject malformed input before that coercion.
+	server.addHook("preValidation", async (request) => {
+		if (
+			request.body &&
+			typeof request.body === "object" &&
+			"permissions" in request.body &&
+			!Array.isArray(request.body.permissions)
+		) {
+			throw new ApiTokenError(
+				"Permissions must be an array of permission IDs.",
+			);
+		}
+	});
 	server.get("/v1/api-tokens", () =>
 		options.tokens.settings(options.authenticationRequired),
 	);
+	// The owner check must work even when the token store is unavailable.
+	// Managed tokens have no grant for this route.
+	server.get("/v1/auth/owner", (_request, reply) => reply.code(204).send());
 	server.post<{ Body: CreateApiTokenRequest }>(
 		"/v1/api-tokens",
 		{
@@ -36,7 +61,7 @@ export async function apiTokenRoutes(
 					type: "object",
 					additionalProperties: false,
 					required: ["name", "description", "ttlDays"],
-					properties: { ...metadata, ttlDays: ttl },
+					properties: { ...metadata, ttlDays: ttl, permissions },
 				},
 			},
 		},
@@ -47,7 +72,7 @@ export async function apiTokenRoutes(
 	);
 	server.patch<{
 		Params: { id: string };
-		Body: Pick<CreateApiTokenRequest, "name" | "description">;
+		Body: UpdateApiTokenRequest;
 	}>(
 		"/v1/api-tokens/:id",
 		{
@@ -57,7 +82,7 @@ export async function apiTokenRoutes(
 					type: "object",
 					additionalProperties: false,
 					required: ["name", "description"],
-					properties: metadata,
+					properties: { ...metadata, permissions },
 				},
 			},
 		},

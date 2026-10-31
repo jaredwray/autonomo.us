@@ -101,6 +101,17 @@ describe.skipIf(!available)("durable API tokens", () => {
 				store.revoke(original.token.id, "owner"),
 			).rejects.toMatchObject({ statusCode: 503 });
 			await expect(
+				store.update(
+					original.token.id,
+					{
+						name: "Failed permissions",
+						description: "",
+						permissions: ["routing:edit"],
+					},
+					"owner",
+				),
+			).rejects.toMatchObject({ statusCode: 503 });
+			await expect(
 				store.create(
 					{ name: "Rejected", description: "", ttlDays: 1 },
 					"owner",
@@ -113,6 +124,68 @@ describe.skipIf(!available)("durable API tokens", () => {
 				.db()
 				.command({ collMod: "gateway_api_tokens", validator: {} });
 			await store.close();
+		}
+	});
+	it("upgrades legacy records on mutation and persists reductions across replicas and restarts", async () => {
+		let store = new ApiTokenStore(url.toString());
+		const replica = new ApiTokenStore(url.toString());
+		try {
+			const original = await store.create(
+				{ name: "Legacy permissions", description: "", ttlDays: 30 },
+				"owner",
+			);
+			await client
+				.db()
+				.collection("gateway_api_tokens")
+				.updateOne(
+					{ name: "Legacy permissions" },
+					{ $unset: { permissions: "" } },
+				);
+			expect(
+				(await replica.authenticate(original.secret))?.permissions,
+			).toEqual(["models:read", "inference:run"]);
+			const rolled = await store.roll(
+				original.token.id,
+				{ ttlDays: 30, previousTokenTtlSeconds: 3600 },
+				"owner",
+			);
+			expect(rolled.token.permissions).toEqual([
+				"models:read",
+				"inference:run",
+			]);
+			await store.update(
+				original.token.id,
+				{
+					name: "Legacy permissions",
+					description: "",
+					permissions: ["routing:edit"],
+				},
+				"owner",
+			);
+			await store.close();
+			store = new ApiTokenStore(url.toString());
+			for (const issued of [original, rolled]) {
+				expect((await store.authenticate(issued.secret))?.permissions).toEqual([
+					"routing:edit",
+				]);
+				expect(
+					(await replica.authenticate(issued.secret))?.permissions,
+				).toEqual(["routing:edit"]);
+			}
+			await replica.update(
+				original.token.id,
+				{ name: "Legacy permissions", description: "", permissions: [] },
+				"owner",
+			);
+			expect((await store.authenticate(original.secret))?.permissions).toEqual(
+				[],
+			);
+			expect((await store.authenticate(rolled.secret))?.permissions).toEqual(
+				[],
+			);
+		} finally {
+			await store.close();
+			await replica.close();
 		}
 	});
 });

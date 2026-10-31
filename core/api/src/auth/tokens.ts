@@ -4,19 +4,28 @@ import {
 	randomUUID,
 	timingSafeEqual,
 } from "node:crypto";
-import type {
-	ApiToken,
-	ApiTokenAction,
-	ApiTokenSecret,
-	ApiTokenSettings,
-	ApiTokenTtl,
-	CreateApiTokenRequest,
-	RollApiTokenRequest,
+import {
+	API_TOKEN_PERMISSIONS,
+	type ApiToken,
+	type ApiTokenAction,
+	type ApiTokenPermission,
+	type ApiTokenSecret,
+	type ApiTokenSettings,
+	type ApiTokenTtl,
+	type CreateApiTokenRequest,
+	DEFAULT_API_TOKEN_PERMISSIONS,
+	type RollApiTokenRequest,
+	type UpdateApiTokenRequest,
 } from "@autonomo.us/common";
 import { MongoClient } from "mongodb";
 
 type Credential = { hash: string; prefix: string; expiresAt: string | null };
-type TokenRecord = Omit<ApiToken, "id" | "status" | "previousTokens"> & {
+type TokenRecord = Omit<
+	ApiToken,
+	"id" | "status" | "previousTokens" | "permissions"
+> & {
+	/** Records created before permission support have the gateway-client defaults. */
+	permissions?: ApiTokenPermission[];
 	_id: string;
 	revision: number;
 	credentials: Credential[];
@@ -30,6 +39,46 @@ export class ApiTokenError extends Error {
 	) {
 		super(message);
 	}
+}
+
+function normalizePermissions(
+	permissions: readonly ApiTokenPermission[],
+): ApiTokenPermission[] {
+	if (
+		!Array.isArray(permissions) ||
+		permissions.some(
+			(permission) => !Object.hasOwn(API_TOKEN_PERMISSIONS, permission),
+		) ||
+		new Set(permissions).size !== permissions.length
+	) {
+		throw new ApiTokenError("Choose valid, unique token permissions.");
+	}
+	return (Object.keys(API_TOKEN_PERMISSIONS) as ApiTokenPermission[]).filter(
+		(permission) =>
+			permissions.includes(permission) &&
+			!(
+				permission.endsWith(":read") &&
+				permissions.includes(
+					permission.replace(":read", ":edit") as ApiTokenPermission,
+				)
+			),
+	);
+}
+
+function effectivePermissions(record: TokenRecord) {
+	return normalizePermissions(
+		record.permissions === undefined
+			? DEFAULT_API_TOKEN_PERMISSIONS
+			: record.permissions,
+	);
+}
+
+function permissionSummary(permissions: ApiTokenPermission[]) {
+	return (
+		permissions
+			.map((permission) => API_TOKEN_PERMISSIONS[permission])
+			.join(", ") || "None"
+	);
 }
 
 export function tokenHash(secret: string) {
@@ -71,6 +120,7 @@ function publicToken(record: TokenRecord, now: number): ApiToken {
 		id: record._id,
 		name: record.name,
 		description: record.description,
+		permissions: effectivePermissions(record),
 		ttlDays: record.ttlDays,
 		prefix: record.prefix,
 		createdAt: record.createdAt,
@@ -174,6 +224,11 @@ export class ApiTokenStore {
 			revision: 0,
 			name: input.name.trim(),
 			description: input.description.trim(),
+			permissions: normalizePermissions(
+				input.permissions === undefined
+					? DEFAULT_API_TOKEN_PERMISSIONS
+					: input.permissions,
+			),
 			ttlDays: input.ttlDays,
 			prefix: credential.prefix,
 			createdAt: new Date(now).toISOString(),
@@ -187,7 +242,7 @@ export class ApiTokenStore {
 			record,
 			"created",
 			actor,
-			expiry ? `Expires ${expiry}.` : "Never expires.",
+			`${expiry ? `Expires ${expiry}.` : "Never expires."} Permissions: ${permissionSummary(effectivePermissions(record))}.`,
 		);
 		if (this.mongodbUrl)
 			await this.storage(() => this.collection().insertOne(record));
@@ -224,7 +279,7 @@ export class ApiTokenStore {
 	}
 	update(
 		id: string,
-		input: Pick<CreateApiTokenRequest, "name" | "description">,
+		input: UpdateApiTokenRequest,
 		actor: ApiTokenAction["actor"],
 	) {
 		return this.mutate(id, (record, now) => {
@@ -232,7 +287,20 @@ export class ApiTokenStore {
 				throw new ApiTokenError("Revoked tokens cannot be edited.", 409);
 			record.name = input.name.trim();
 			record.description = input.description.trim();
-			this.action(record, "updated", actor, "Name and description updated.");
+			const before = effectivePermissions(record);
+			record.permissions =
+				input.permissions === undefined
+					? before
+					: normalizePermissions(input.permissions);
+			const changed = before.join() !== record.permissions.join();
+			this.action(
+				record,
+				"updated",
+				actor,
+				changed
+					? `Permissions changed from ${permissionSummary(before)} to ${permissionSummary(record.permissions)}. Name and description saved.`
+					: "Name and description updated.",
+			);
 			return publicToken(record, now);
 		});
 	}
@@ -244,6 +312,7 @@ export class ApiTokenStore {
 		return this.mutate(id, (record, now) => {
 			if (record.revokedAt)
 				throw new ApiTokenError("Revoked tokens cannot be rolled.", 409);
+			record.permissions = effectivePermissions(record);
 			const deadline = new Date(
 				now + input.previousTokenTtlSeconds * 1000,
 			).toISOString();

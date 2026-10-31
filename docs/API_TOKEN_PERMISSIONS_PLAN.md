@@ -1,8 +1,8 @@
 # API token permissions plan
 
-Status: proposed. Token creation, metadata edits, rolling with overlap, revocation,
-expiry enforcement, and the dashboard action log are implemented. Configurable
-resource permissions are the next step.
+Status: initial gateway-wide permissions implemented, along with token lifecycle,
+expiry enforcement, and the dashboard action log. Resource selection, delegated
+token management, and a permanent audit log remain planned.
 
 ## Current behavior
 
@@ -25,14 +25,29 @@ displayed status is active while any version is valid, and the displayed expiry
 is the newest value's expiry. Each still-live previous value is listed separately.
 
 With `OWNER_TOKEN` set, all `/v1/*` requests require bearer authentication.
-The owner can administer the gateway. Managed tokens are limited to model
-discovery and chat/decisions inference, including existing Auto and pool routes.
+The owner can administer the gateway. Managed tokens have explicit permissions
+chosen in Create/Edit token: Models Read/Edit, Routing Read/Edit, Inference Run,
+and Telemetry Read. Edit includes Read, never Run. Access applies across the
+gateway, including all Auto/pool/failover targets when Inference Run is granted.
+API token management and its action history remain owner-only. The API maps each
+route to an action, denies unlisted routes, and returns 403 before provider calls
+when a valid credential lacks its required permission.
+
+Stored permissions are a flat array of IDs, such as `models:read` or
+`routing:edit`. New tokens with omitted permissions and legacy stored tokens
+without the field receive `models:read` and `inference:run`. Models Read now also
+allows viewing provider connection metadata, never secrets. Legacy records gain
+an explicit field when edited or rolled. An explicit empty array grants nothing;
+omitting permissions from a metadata update keeps existing grants. Rolling keeps
+the policy, and permission reductions apply to all overlapping values on their
+next request. Permission edits and their before/after grants are logged atomically.
+
 Without `OWNER_TOKEN`, the existing unauthenticated local-admin behavior remains;
 removing an Authorization header then bypasses token checks. The dashboard
 explicitly identifies this mode. Configure the owner credential before exposing
 the gateway. `/health` and CORS preflight remain accessible without credentials.
 
-## Resource + action + scope
+## Next phase: resource + action + scope
 
 Cloudflare groups token permissions by resource and separates Read and Edit;
 access policies combine permissions with resource selections. Use that shape for
@@ -74,10 +89,10 @@ chat needs Run, while POST model needs Edit. No grant means deny. A grant applie
 only when its resource, action, and scope all match. Multiple matching grants
 are additive; defer exclusion rules until their precedence is specified.
 
-## Dashboard experience
+## Future dashboard experience
 
-Add a Permissions area to Create/Edit token, with rows for Resource, Action, and
-Scope. A scope picker offers All or Selected resources. Start with templates:
+Extend the Permissions area in Create/Edit token with rows for Resource, Action,
+and Scope. A scope picker offers All or Selected resources. Add templates:
 Gateway client (Models Read + Inference Run), Observer (Models/Routing/Telemetry
 Read), and Routing editor (Models Read + Routing Edit). Templates expand to
 visible grants and do not silently acquire new permissions as resources evolve.
@@ -116,10 +131,10 @@ initially. Do not ship inert checkboxes: launch the editor with server enforceme
 
 ## Delivery and acceptance
 
-1. Add a permission catalog, policy schema, token ownership, and a migration.
-   Existing tokens get explicit Models Read + Inference Run grants matching their
-   current behavior. Never interpret absent grants as administrator access.
-2. Add route policies and authorization tests before exposing permission editing.
+1. Extend the implemented permission catalog with a versioned policy schema,
+   token ownership, and resource selection. Migrate the current flat arrays
+   without expanding access. Never interpret absent grants as administrator access.
+2. Extend route policies and authorization tests before exposing scoped grants.
    Test every route/action pair, undeclared routes, filtered collections, Auto/
    pool/failover scope escape, and owner-only management.
 3. Ship templates, resource selection, and effective-access summaries. Test
