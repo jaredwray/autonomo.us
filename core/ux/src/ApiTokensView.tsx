@@ -52,41 +52,46 @@ function PermissionFields({
 		<fieldset className="token-permission-fields">
 			<legend>Permissions</legend>
 			<p className="card-note">
-				Applies across this gateway. Edit includes Read. Run allows chat and
-				decisions. Managing API tokens requires the owner credential.
+				Applies across this gateway. Edit includes Read. Uncheck all permissions
+				for no access. Run allows chat and decisions. Managing API tokens
+				requires the owner credential.
 			</p>
-			<div className="token-permission-grid">
-				{permissionGroups.map((group) => (
-					<div className="form-field" key={group.resource}>
-						<label htmlFor={`token-permission-${group.resource}`}>
-							{group.label}
-						</label>
-						<select
-							id={`token-permission-${group.resource}`}
-							value={
-								[...group.choices]
-									.reverse()
-									.find((permission) => value.includes(permission)) ?? ""
-							}
-							onChange={(event) => {
-								const next = value.filter(
-									(permission) => !permission.startsWith(`${group.resource}:`),
-								);
-								if (event.target.value)
-									next.push(event.target.value as ApiTokenPermission);
-								onChange(next);
-							}}
-						>
-							<option value="">None</option>
-							{group.choices.map((permission) => (
-								<option key={permission} value={permission}>
-									{API_TOKEN_PERMISSIONS[permission].split(": ")[1]}
-								</option>
-							))}
-						</select>
-					</div>
-				))}
-			</div>
+			<ul className="token-permission-list">
+				{permissionGroups.map((group) => {
+					const read = group.choices.find((choice) => choice.endsWith(":read"));
+					const edit = group.choices.find((choice) => choice.endsWith(":edit"));
+					const editing = Boolean(edit && value.includes(edit));
+					return (
+						<li key={group.resource}>
+							<span className="token-permission-resource">{group.label}</span>
+							<div className="token-permission-options">
+								{group.choices.map((permission) => (
+									<label className="token-permission-choice" key={permission}>
+										<input
+											type="checkbox"
+											aria-label={API_TOKEN_PERMISSIONS[permission]}
+											checked={
+												value.includes(permission) ||
+												(permission === read && editing)
+											}
+											disabled={permission === read && editing}
+											onChange={(event) => {
+												const next = value.filter(
+													(item) => !item.startsWith(`${group.resource}:`),
+												);
+												if (event.target.checked) next.push(permission);
+												else if (permission === edit && read) next.push(read);
+												onChange(next);
+											}}
+										/>
+										{API_TOKEN_PERMISSIONS[permission].split(": ")[1]}
+									</label>
+								))}
+							</div>
+						</li>
+					);
+				})}
+			</ul>
 		</fieldset>
 	);
 }

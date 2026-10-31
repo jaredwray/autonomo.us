@@ -623,7 +623,13 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .token-ttl { max-width: 300px; }
 .token-permission-fields { margin: 18px 0; padding: 16px; border: 1px solid var(--hairline); border-radius: 7px; min-width: 0; }
 .token-permission-fields legend { padding: 0 6px; font-weight: 600; }
-.token-permission-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.token-permission-list { list-style: none; margin: 16px 0 0; padding: 0; }
+.token-permission-list > li { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px 24px; padding: 12px 0; border-top: 1px solid var(--hairline); }
+.token-permission-resource { font-size: 13px; font-weight: 500; }
+.token-permission-options { display: flex; align-items: center; gap: 20px; min-width: 160px; }
+.token-permission-choice { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+.token-permission-choice input { width: 16px; height: 16px; margin: 0; accent-color: var(--series-1); }
+.token-permission-choice:has(input:disabled) { color: var(--text-muted); cursor: default; }
 .token-permission-label { display: block; white-space: nowrap; margin-bottom: 4px; }
 .token-description { margin: 6px 0; color: var(--text-secondary); white-space: pre-wrap; overflow-wrap: anywhere; }
 .token-date { display: block; margin-top: 6px; color: var(--text-secondary); }

@@ -196,22 +196,18 @@ it("connects with the owner credential, rejects an invalid credential, and clear
 
 it("saves and edits resource permissions and enforces them on the issued credential", async () => {
 	const server = await start();
-	const permission = (label: string, value: string) =>
-		fireEvent.change(screen.getByRole("combobox", { name: label }), {
-			target: { value },
-		});
+	const permission = (label: string) =>
+		screen.getByRole("checkbox", { name: label }) as HTMLInputElement;
 	await screen.findByText(/No API tokens yet/);
 	fireEvent.click(
 		screen.getByRole("button", { name: "Create token", exact: true }),
 	);
 	change("Name", "Observer");
-	expect(
-		(screen.getByRole("combobox", { name: "Models" }) as HTMLSelectElement)
-			.value,
-	).toBe("models:read");
-	permission("Routing", "routing:read");
-	permission("Inference", "");
-	permission("Telemetry", "telemetry:read");
+	expect(permission("Models: Read").checked).toBe(true);
+	expect(permission("Inference: Run").checked).toBe(true);
+	fireEvent.click(permission("Routing: Read"));
+	fireEvent.click(permission("Inference: Run"));
+	fireEvent.click(permission("Telemetry: Read"));
 	fireEvent.click(
 		within(screen.getByRole("region", { name: "Create API token" })).getByRole(
 			"button",
@@ -253,16 +249,16 @@ it("saves and edits resource permissions and enforces them on the issued credent
 	);
 	await screen.findByText("Routing: Read");
 	fireEvent.click(screen.getByRole("button", { name: "Edit Observer" }));
-	expect(
-		(screen.getByRole("combobox", { name: "Routing" }) as HTMLSelectElement)
-			.value,
-	).toBe("routing:read");
-	expect(
-		(screen.getByRole("combobox", { name: "Inference" }) as HTMLSelectElement)
-			.value,
-	).toBe("");
-	permission("Routing", "routing:edit");
-	permission("Telemetry", "");
+	expect(permission("Routing: Read").checked).toBe(true);
+	expect(permission("Inference: Run").checked).toBe(false);
+	fireEvent.click(permission("Routing: Edit"));
+	expect(permission("Routing: Read").checked).toBe(true);
+	expect(permission("Routing: Read").disabled).toBe(true);
+	fireEvent.click(permission("Routing: Edit"));
+	expect(permission("Routing: Read").checked).toBe(true);
+	expect(permission("Routing: Read").disabled).toBe(false);
+	fireEvent.click(permission("Routing: Edit"));
+	fireEvent.click(permission("Telemetry: Read"));
 	fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
 	await screen.findByText("Token updated.");
 	expect(
@@ -285,8 +281,11 @@ it("saves and edits resource permissions and enforces them on the issued credent
 	fireEvent.click(screen.getByRole("link", { name: "API Tokens" }));
 	await screen.findByText("Routing: Edit");
 	fireEvent.click(screen.getByRole("button", { name: "Edit Observer" }));
-	for (const label of ["Models", "Routing", "Inference", "Telemetry"])
-		permission(label, "");
+	expect(permission("Routing: Edit").checked).toBe(true);
+	expect(permission("Routing: Read").checked).toBe(true);
+	expect(permission("Routing: Read").disabled).toBe(true);
+	for (const label of ["Models: Read", "Routing: Edit", "Routing: Read"])
+		fireEvent.click(permission(label));
 	fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
 	await screen.findByText("Token updated.");
 	expect((await server.inject({ url: "/v1/models", headers })).statusCode).toBe(
