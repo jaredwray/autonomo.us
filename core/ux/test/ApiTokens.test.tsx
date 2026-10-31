@@ -67,6 +67,7 @@ it("creates, edits, rolls with custom overlap, and revokes a token with a bottom
 	).toEqual(["1 day", "7 days", "30 days", "180 days", "Never"]);
 	change("Name", "Production");
 	change("Description", "My gateway client");
+	fireEvent.click(screen.getByRole("checkbox", { name: "Models: Read" }));
 	change("TTL", "never");
 	fireEvent.click(form.getByRole("button", { name: "Create token" }));
 	const first = (
@@ -203,10 +204,10 @@ it("saves and edits resource permissions and enforces them on the issued credent
 		screen.getByRole("button", { name: "Create token", exact: true }),
 	);
 	change("Name", "Observer");
-	expect(permission("Models: Read").checked).toBe(true);
-	expect(permission("Inference: Run").checked).toBe(true);
+	for (const checkbox of screen.getAllByRole("checkbox"))
+		expect((checkbox as HTMLInputElement).checked).toBe(false);
+	fireEvent.click(permission("Models: Read"));
 	fireEvent.click(permission("Routing: Read"));
-	fireEvent.click(permission("Inference: Run"));
 	fireEvent.click(permission("Telemetry: Read"));
 	fireEvent.click(
 		within(screen.getByRole("region", { name: "Create API token" })).getByRole(

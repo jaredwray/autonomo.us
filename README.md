@@ -191,8 +191,9 @@ return 403 before any provider call. There is no per-model or per-pool scope yet
 
 The API accepts permission IDs `models:read`, `models:edit`, `routing:read`,
 `routing:edit`, `inference:run`, and `telemetry:read`. For example, an observer
-can use `["models:read", "routing:read", "telemetry:read"]`. New tokens default
-to Models Read + Inference Run when permissions are omitted. Older stored tokens
+can use `["models:read", "routing:read", "telemetry:read"]`. The dashboard starts
+new tokens with every permission unchecked; select the access each token needs.
+API clients that omit permissions default to Models Read + Inference Run. Older stored tokens
 get those same grants and acquire an explicit permissions field when edited or
 rolled. An explicit empty array grants no access. Rolling preserves permissions;
 editing them applies immediately to every current and overlapping token value

@@ -6,7 +6,6 @@ import {
 	type ApiTokenSecret,
 	type ApiTokenSettings,
 	type ApiTokenTtl,
-	DEFAULT_API_TOKEN_PERMISSIONS,
 } from "@autonomo.us/common";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -109,7 +108,7 @@ function TokenForm({
 	const [name, setName] = useState(token?.name ?? "");
 	const [description, setDescription] = useState(token?.description ?? "");
 	const [permissions, setPermissions] = useState<ApiTokenPermission[]>(() => [
-		...(token?.permissions ?? DEFAULT_API_TOKEN_PERMISSIONS),
+		...(token?.permissions ?? []),
 	]);
 	const [ttl, setTtl] = useState<ApiTokenTtl>(token?.ttlDays ?? 30);
 	const [overlap, setOverlap] = useState("86400");

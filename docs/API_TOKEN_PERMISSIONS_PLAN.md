@@ -34,8 +34,10 @@ route to an action, denies unlisted routes, and returns 403 before provider call
 when a valid credential lacks its required permission.
 
 Stored permissions are a flat array of IDs, such as `models:read` or
-`routing:edit`. New tokens with omitted permissions and legacy stored tokens
-without the field receive `models:read` and `inference:run`. Models Read now also
+`routing:edit`. The dashboard starts new tokens with all permissions unchecked
+and sends the explicit selection, including an empty array when none are chosen.
+API clients that omit permissions and legacy stored tokens without the field
+receive `models:read` and `inference:run`. Models Read now also
 allows viewing provider connection metadata, never secrets. Legacy records gain
 an explicit field when edited or rolled. An explicit empty array grants nothing;
 omitting permissions from a metadata update keeps existing grants. Rolling keeps
