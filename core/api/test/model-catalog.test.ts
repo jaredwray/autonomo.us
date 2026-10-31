@@ -132,6 +132,56 @@ describe("normalizeModels", () => {
 });
 
 describe("buildModelCatalog", () => {
+	it("fetches OpenRouter, Cloudflare, and TypeSafe catalogs using their native formats", async () => {
+		const { fetchImpl, calls } = fakeFetch((url) => {
+			if (url.host === "openrouter.ai")
+				return { data: [{ id: "vendor/chat", created: 1735689600 }] };
+			if (url.host === "api.typesafe.ai")
+				return { models: [{ name: "jev-latest", release_date: "2026-09-15" }] };
+			if (url.host === "api.cloudflare.com") {
+				expect(url.pathname).toBe(
+					`/client/v4/accounts/${"a".repeat(32)}/ai/models/search`,
+				);
+				expect(url.searchParams.get("task")).toBe("Text Generation");
+				return { success: true, result: [{ name: "@cf/meta/chat" }] };
+			}
+			throw new Error(`Unexpected URL ${url}`);
+		});
+		const { catalog } = await buildModelCatalog({
+			env: {
+				OPENROUTER_API_KEY: "router-key",
+				TYPESAFE_API_KEY: "jev-key",
+				CLOUDFLARE_API_TOKEN: "cf-key",
+				CLOUDFLARE_ACCOUNT_ID: "a".repeat(32),
+			},
+			fetchImpl,
+			providers: specs("openrouter", "cloudflare", "typesafe"),
+		});
+		expect(catalog.providers.openrouter.models[0].id).toBe("vendor/chat");
+		expect(catalog.providers.cloudflare.models[0].id).toBe("@cf/meta/chat");
+		expect(catalog.providers.typesafe.models[0].id).toBe("jev-latest");
+		expect(calls.map((call) => call.headers.authorization)).toEqual([
+			"Bearer router-key",
+			"Bearer jev-key",
+			"Bearer cf-key",
+		]);
+	});
+
+	it("maps Cloudflare's public catalog key to the gateway provider name", async () => {
+		const { fetchImpl } = fakeFetch(() => ({
+			"cloudflare-workers-ai": {
+				models: { "@cf/meta/chat": { name: "Chat" } },
+			},
+		}));
+		const { catalog } = await buildModelCatalog({
+			env: {},
+			fetchImpl,
+			providers: specs("cloudflare"),
+		});
+		expect(catalog.providers.cloudflare.models).toEqual([
+			{ id: "@cf/meta/chat", name: "Chat" },
+		]);
+	});
 	it("pages through the Anthropic models API when a key is set", async () => {
 		const { fetchImpl, calls } = fakeFetch((url) => {
 			expect(url.host).toBe("api.anthropic.com");

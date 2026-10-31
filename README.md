@@ -68,6 +68,37 @@ pnpm lint:fix
 
 ## Gateway
 
+The dashboard has a collapsible sidebar with **Dashboard** and **Models** views.
+In **Models**, search active models or choose **Add model** to connect Google
+Gemini, xAI Grok, Anthropic Claude, OpenAI, Groq, Mistral, DeepSeek, OpenRouter,
+Cloudflare Workers AI, or Jev (TypeSafe). Choose a catalog suggestion or enter a
+provider-native model ID and supply your API key. Cloudflare also requires your
+32-character Account ID and a Workers AI API token. Additional models reuse the
+saved key for the selected connection; entering a new key updates only that connection. Active means
+configured for routing; adding a model does not verify provider account access
+or make a billable inference request.
+
+A provider can have multiple named connections, each with its own API key,
+models, and Cloudflare account (where applicable). In **Add model**, choose a
+provider, select **New connection…**, and give it a unique name such as
+`openai-work` or `openai-personal`. Select an existing connection to add models
+using its saved key. Names start with a lowercase letter and contain up to 64
+lowercase letters, numbers, dashes, or underscores.
+
+Route requests and failover targets using `connection/model`, for example
+`openai-work/gpt-5.2`. The same model may be added to both connections. Existing
+`provider/model` IDs keep working as the default connection; no migration is
+needed. Credentials and Cloudflare accounts are never inherited by a new
+connection. Duplicate names are rejected when creating a connection.
+
+With `MONGODB_URL` configured, model settings and credentials are stored in the
+`gateway_providers` collection and restored at startup. Saved provider settings
+take precedence over environment settings for the same connection name. Protect this
+database as a credential store: keys are stored server-side, are never returned
+by management endpoints, and are not saved in browser storage. Without MongoDB,
+the UI identifies changes as lasting only until the API restarts. If configured
+MongoDB is unavailable, changes fail without activating an unsaved model.
+
 The API service routes chat requests to LLM providers via the [Vercel AI SDK](https://ai-sdk.dev),
 records token usage, and ships telemetry to ClickHouse. Providers are configured
 through environment variables:
@@ -75,6 +106,13 @@ through environment variables:
 | Variable | Effect |
 | --- | --- |
 | `ANTHROPIC_API_KEY` | Registers the `anthropic` provider (`ANTHROPIC_MODELS` overrides the advertised list) |
+| `GEMINI_API_KEY` | Registers the native Google Gemini adapter as `google`; `GOOGLE_GENERATIVE_AI_API_KEY` is an alias, and `GEMINI_MODELS` overrides the advertised list (default `gemini-2.5-flash`) |
+| `OPENAI_API_KEY` | Native OpenAI adapter using the Responses API; `OPENAI_MODELS` overrides the list |
+| `GROQ_API_KEY` / `MISTRAL_API_KEY` | Native Groq / Mistral adapters; `GROQ_MODELS` / `MISTRAL_MODELS` override the lists |
+| `DEEPSEEK_API_KEY` / `OPENROUTER_API_KEY` | OpenAI-compatible adapters; `DEEPSEEK_MODELS` / `OPENROUTER_MODELS` override the lists |
+| `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` | Cloudflare Workers AI; `CLOUDFLARE_MODELS` contains native IDs such as `@cf/meta/llama-3.3-70b-instruct-fp8-fast` |
+| `TYPESAFE_API_KEY` | Jev decisions adapter; `TYPESAFE_MODELS` defaults to `jev-latest` |
+| `XAI_API_KEY` | Registers the native xAI Grok adapter as `xai`; `XAI_MODELS` overrides the advertised list (default `grok-4`) |
 | `OPENAI_COMPAT_BASE_URL` | Registers an OpenAI-compatible provider — Ollama, LM Studio, vLLM, llama.cpp (`OPENAI_COMPAT_NAME` defaults to `local`, plus optional `OPENAI_COMPAT_API_KEY` / `OPENAI_COMPAT_MODELS`) |
 | `CLICKHOUSE_URL` | Enables the ClickHouse telemetry sink (defaults match `docker-compose.yml`: database/user/password `autonomous`) |
 | `CORS_ORIGIN` | Comma-separated browser origins allowed by CORS (default: the Vite dev dashboard on `localhost:5173`; set `*` to allow any) |
@@ -88,6 +126,8 @@ through environment variables:
 
 - `POST /v1/chat` — proxy a chat request; body `{ model, messages, stream?, temperature?, maxTokens? }` where `model` is `provider/model` (e.g. `anthropic/claude-opus-4-8`, `local/llama3.3`). Returns the assistant message plus `usage` token counts; with `stream: true` responds with SSE (`text-delta` events, then `finish` with usage).
 - `GET /v1/models` — routable models and providers.
+- `POST /v1/models` — add an active model; body `{ provider, connectionId?, createConnection?, model, apiKey?, accountId? }` (provider IDs: `google`, `xai`, `anthropic`, `openai`, `groq`, `mistral`, `deepseek`, `openrouter`, `cloudflare`, `typesafe`). Omit `connectionId` to use the default provider connection. Set `createConnection: true` to reject an existing name with HTTP 409. The key is required for a new connection and optional for subsequent additions to that connection. Repeated additions are idempotent; replies contain only the model ID and provider.
+- `GET /v1/providers` — supported provider names, a `connections` list with IDs, provider kinds, key-configured flags and Cloudflare account IDs, and the settings persistence mode; never includes credentials.
 - `GET /v1/models/catalog` — the full multi-provider model catalog (refreshed daily at runtime; bundled `models.json` as the fallback).
 - `GET /v1/failover` — current failover policy.
 - `PUT /v1/failover` — update the failover policy; body `{ enabled?, targets?, timeoutMs? }` (partial updates keep omitted fields).
@@ -107,10 +147,40 @@ curl -X POST http://localhost:3000/v1/chat \
   -d '{"model": "local/llama3.3", "messages": [{"role": "user", "content": "Hello"}]}'
 ```
 
+### Jev decisions
+
+Jev is a decision model, marked **Decisions** in Models and excluded from chat
+failover. Add `typesafe/jev-latest` using a key from the
+[TypeSafe console](https://console.typesafe.ai). The adapter calls the official
+[System One API](https://docs.typesafe.ai/api/system-one).
+
+`POST /v1/decisions` accepts native text or JSON state and named `noul`,
+`choice`, or `score` questions. It returns the provider's model name, typed
+answers (including confidence/probabilities), and usage. Requests time out after
+30 seconds. Experimental image/Box inputs and long-context opt-ins are not yet
+supported. Decisions contribute to gateway usage and telemetry.
+
+```sh
+curl http://localhost:3000/v1/decisions -H 'Content-Type: application/json' -d '{
+  "model": "typesafe/jev-latest",
+  "state": "I was charged twice this month.",
+  "questions": {
+    "billing": { "type": "noul", "instructions": "Is this about billing?" }
+  }
+}'
+```
+
+Each new hosted provider also accepts a server-side `<PREFIX>_BASE_URL` override
+for testing or trusted proxies. Cloudflare account IDs and provider credentials
+are reused for additional model additions and survive restarts with MongoDB.
+Catalog refresh uses environment credentials; keys added through Models remain
+in the settings store. Model suggestions fall back to the public or bundled
+catalog and are not an account entitlement check.
+
 ### Model catalog
 
 The gateway tracks the known models across the major providers (Anthropic,
-OpenAI, Google, Mistral, Groq, xAI, DeepSeek) and serves the catalog at
+OpenAI, Google, Mistral, Groq, xAI, DeepSeek, OpenRouter, Cloudflare, TypeSafe) and serves the catalog at
 `GET /v1/models/catalog`. On startup the API queries the model sources itself
 and re-checks daily, keeping the result in [cacheable](https://cacheable.org)
 (in-memory with a one-day TTL by default — hand `ModelCatalogService` a

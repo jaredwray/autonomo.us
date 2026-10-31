@@ -1,7 +1,9 @@
 /// <reference types="vite/client" />
 import type {
+	AddModelRequest,
 	FailoverPolicy,
 	ModelInfo,
+	ProviderSettings,
 	TelemetryEvent,
 	UsageSummary,
 } from "@autonomo.us/common";
@@ -36,6 +38,51 @@ async function getJson<T>(path: string): Promise<T> {
 		throw new Error(`GET ${path} failed with ${response.status}`);
 	}
 	return (await response.json()) as T;
+}
+
+export type ModelsData = {
+	models: ModelInfo[];
+	providers: ProviderInfo[];
+};
+
+export type ModelCatalog = {
+	providers: Record<
+		string,
+		{
+			name: string;
+			models: Array<{ id: string; name: string }>;
+		}
+	>;
+};
+
+export function fetchModels(): Promise<ModelsData> {
+	return getJson<ModelsData>("/v1/models");
+}
+
+export function fetchProviderSettings(): Promise<ProviderSettings> {
+	return getJson<ProviderSettings>("/v1/providers");
+}
+
+export function fetchModelCatalog(): Promise<ModelCatalog> {
+	return getJson<ModelCatalog>("/v1/models/catalog");
+}
+
+export async function addModel(input: AddModelRequest): Promise<ModelInfo> {
+	const response = await fetch(`${apiBase()}/v1/models`, {
+		method: "POST",
+		headers: { "content-type": "application/json", accept: "application/json" },
+		body: JSON.stringify(input),
+	});
+	if (!response.ok) {
+		let message = "Could not add the model. Please try again.";
+		try {
+			const body = await response.json();
+			message =
+				typeof body.error?.message === "string" ? body.error.message : message;
+		} catch {}
+		throw new Error(message);
+	}
+	return response.json();
 }
 
 export async function fetchFailoverPolicy(): Promise<FailoverPolicy> {

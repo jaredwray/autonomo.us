@@ -7,7 +7,9 @@ import {
 	type ProviderRegistry,
 	registryFromConfig,
 } from "./providers/registry.js";
+import { ProviderSettingsStore } from "./providers/settings.js";
 import { chatRoutes } from "./routes/chat.js";
+import { decisionsRoutes } from "./routes/decisions.js";
 import { failoverRoutes } from "./routes/failover.js";
 import { healthRoutes } from "./routes/health.js";
 import { modelsRoutes } from "./routes/models.js";
@@ -32,6 +34,7 @@ export type CreateServerOptions = {
 export function createServer(options: CreateServerOptions = {}) {
 	const config = options.config ?? configFromEnv();
 	const registry = options.registry ?? registryFromConfig(config);
+	const settings = new ProviderSettingsStore(config, registry);
 	const failover = options.failover ?? new FailoverPolicyStore(config.failover);
 	const modelCatalog = options.modelCatalog ?? new ModelCatalogService();
 	const telemetry =
@@ -50,7 +53,7 @@ export function createServer(options: CreateServerOptions = {}) {
 		origin: config.corsOrigins.includes("*") ? true : config.corsOrigins,
 	});
 	server.register(healthRoutes, { config });
-	server.register(modelsRoutes, { registry, catalog: modelCatalog });
+	server.register(modelsRoutes, { registry, catalog: modelCatalog, settings });
 	server.register(failoverRoutes, { failover, registry });
 	server.register(chatRoutes, {
 		registry,
@@ -59,9 +62,21 @@ export function createServer(options: CreateServerOptions = {}) {
 		corsOrigins: config.corsOrigins,
 	});
 	server.register(telemetryRoutes, { telemetry });
+	server.register(decisionsRoutes, { registry, telemetry });
+
+	server.addHook("onReady", async () => {
+		try {
+			await settings.initialize();
+		} catch {
+			server.log.warn(
+				"Saved model settings could not be loaded; environment providers remain available.",
+			);
+		}
+	});
 
 	server.addHook("onClose", async () => {
 		modelCatalog.stop();
+		await settings.close();
 		await telemetry.stop();
 	});
 

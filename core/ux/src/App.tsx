@@ -11,6 +11,8 @@ import {
 	fetchFailoverPolicy,
 	updateFailoverPolicy,
 } from "./api.js";
+import { Icon } from "./Icons.js";
+import { ModelsView } from "./ModelsView.js";
 
 const logoMark = new URL("./assets/logo-mark.svg", import.meta.url).href;
 
@@ -358,7 +360,7 @@ function EventRow(props: { event: TelemetryEvent }) {
 	);
 }
 
-export function App() {
+function Dashboard() {
 	const [data, setData] = useState<DashboardData | null>(null);
 	const [error, setError] = useState<string | null>(null);
 
@@ -388,15 +390,18 @@ export function App() {
 		<div className="dashboard">
 			<header className="dashboard-header">
 				<div>
-					<h1 className="dashboard-brand">
-						<img src={logoMark} alt="" width="45" height="36" />
-						<span>autonomo.us</span>
-					</h1>
+					<p className="eyebrow">Gateway</p>
+					<h1>Dashboard</h1>
+					<p className="page-description">
+						An overview of your gateway activity.
+					</p>
 				</div>
 				<div className="status-chips">
 					<span className="chip">
-						<span className={`dot ${error ? "dot-critical" : "dot-good"}`} />
-						{error ? "API unreachable" : "API connected"}
+						<span
+							className={`dot ${error ? "dot-critical" : data ? "dot-good" : "dot-muted"}`}
+						/>
+						{error ? "API unreachable" : data ? "API connected" : "Connecting…"}
 					</span>
 					<span className="chip">
 						<span
@@ -516,16 +521,108 @@ export function App() {
 					</div>
 				) : (
 					<div className="empty-state">
-						No providers configured. Set <code>ANTHROPIC_API_KEY</code> and/or{" "}
-						<code>OPENAI_COMPAT_BASE_URL</code> for the API service.
+						No providers configured. <a href="#/models">Add a model</a> to get
+						started.
 					</div>
 				)}
 			</section>
 
 			<FailoverCard
 				connected={data !== null && !error}
-				models={data?.models ?? []}
+				models={(data?.models ?? []).filter(
+					(model) => model.capability !== "decisions",
+				)}
 			/>
+		</div>
+	);
+}
+
+export function App() {
+	const [view, setView] = useState(() =>
+		window.location.hash === "#/models" ? "models" : "dashboard",
+	);
+	const [collapsed, setCollapsed] = useState(() => {
+		try {
+			const saved = window.localStorage.getItem("autonomous.sidebar.collapsed");
+			return saved === null ? window.innerWidth < 760 : saved === "true";
+		} catch {
+			return window.innerWidth < 760;
+		}
+	});
+	useEffect(() => {
+		const navigate = () =>
+			setView(window.location.hash === "#/models" ? "models" : "dashboard");
+		window.addEventListener("hashchange", navigate);
+		return () => window.removeEventListener("hashchange", navigate);
+	}, []);
+	const toggle = () => {
+		const next = !collapsed;
+		setCollapsed(next);
+		try {
+			window.localStorage.setItem("autonomous.sidebar.collapsed", String(next));
+		} catch {}
+	};
+	return (
+		<div className={`app-shell ${collapsed ? "sidebar-collapsed" : ""}`}>
+			<button
+				className="skip-link"
+				type="button"
+				onClick={() => {
+					document.getElementById("main-content")?.focus();
+				}}
+			>
+				Skip to content
+			</button>
+			<aside className="sidebar" id="sidebar" aria-label="Sidebar">
+				<a
+					className="sidebar-brand"
+					href="#/dashboard"
+					aria-label="autonomo.us home"
+					title={collapsed ? "autonomo.us" : undefined}
+				>
+					<img src={logoMark} alt="" width="36" height="29" />
+					<span className="sidebar-label">autonomo.us</span>
+				</a>
+				<nav aria-label="Main navigation">
+					{(["dashboard", "models"] as const).map((item) => (
+						<a
+							key={item}
+							href={`#/${item}`}
+							className={`nav-item ${view === item ? "active" : ""}`}
+							aria-current={view === item ? "page" : undefined}
+							aria-label={item === "dashboard" ? "Dashboard" : "Models"}
+							title={
+								collapsed
+									? item === "dashboard"
+										? "Dashboard"
+										: "Models"
+									: undefined
+							}
+							onClick={() => setView(item)}
+						>
+							<Icon name={item} />
+							<span className="sidebar-label">
+								{item === "dashboard" ? "Dashboard" : "Models"}
+							</span>
+						</a>
+					))}
+				</nav>
+				<button
+					type="button"
+					className="sidebar-toggle"
+					onClick={toggle}
+					aria-expanded={!collapsed}
+					aria-controls="sidebar"
+					aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+					title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+				>
+					<Icon name={collapsed ? "expand" : "collapse"} />
+					<span className="sidebar-label">Collapse sidebar</span>
+				</button>
+			</aside>
+			<main id="main-content" tabIndex={-1} className="main-content">
+				{view === "models" ? <ModelsView /> : <Dashboard />}
+			</main>
 		</div>
 	);
 }

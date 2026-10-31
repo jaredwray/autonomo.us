@@ -61,6 +61,27 @@ describe("ProviderRegistry", () => {
 });
 
 describe("configFromEnv + registryFromConfig", () => {
+	it("registers Gemini and Grok using explicit model lists and key aliases", () => {
+		const config = configFromEnv({
+			GEMINI_API_KEY: "google-key",
+			GEMINI_MODELS: "gemini-one, gemini-two",
+			XAI_API_KEY: "xai-key",
+			XAI_MODELS: "grok-one",
+		});
+		const registry = registryFromConfig(config);
+		expect(registry.listModels().map((model) => model.id)).toEqual([
+			"google/gemini-one",
+			"google/gemini-two",
+			"xai/grok-one",
+		]);
+		expect(registry.resolve("google/gemini-one").model.modelId).toBe(
+			"gemini-one",
+		);
+		expect(registry.resolve("xai/grok-one").model.modelId).toBe("grok-one");
+		expect(
+			configFromEnv({ GOOGLE_GENERATIVE_AI_API_KEY: "alias-key" }).providers[0],
+		).toMatchObject({ kind: "google", apiKey: "alias-key" });
+	});
 	it("registers anthropic and openai-compatible providers from env", () => {
 		const config = configFromEnv({
 			ANTHROPIC_API_KEY: "test-key",

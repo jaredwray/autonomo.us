@@ -1,4 +1,4 @@
-import type { FailoverPolicy } from "@autonomo.us/common";
+import type { FailoverPolicy, ManagedProvider } from "@autonomo.us/common";
 import {
 	DEFAULT_FAILOVER_POLICY,
 	MAX_FAILOVER_TIMEOUT_MS,
@@ -24,7 +24,17 @@ export type OpenAICompatibleProviderConfig = {
 
 export type ProviderConfig =
 	| AnthropicProviderConfig
+	| CloudProviderConfig
 	| OpenAICompatibleProviderConfig;
+
+export type CloudProviderConfig = {
+	kind: Exclude<ManagedProvider, "anthropic">;
+	name: string;
+	apiKey?: string;
+	baseURL?: string;
+	accountId?: string;
+	models: string[];
+};
 
 export type ClickHouseConfig = {
 	url: string;
@@ -106,6 +116,66 @@ export function configFromEnv(
 			baseURL: env.OPENAI_COMPAT_BASE_URL,
 			apiKey: env.OPENAI_COMPAT_API_KEY,
 			models: parseModels(env.OPENAI_COMPAT_MODELS, []),
+		});
+	}
+
+	const googleKey = env.GEMINI_API_KEY || env.GOOGLE_GENERATIVE_AI_API_KEY;
+	if (googleKey || env.GOOGLE_BASE_URL) {
+		providers.push({
+			kind: "google",
+			name: "google",
+			apiKey: googleKey,
+			baseURL: env.GOOGLE_BASE_URL,
+			models: parseModels(env.GEMINI_MODELS, ["gemini-2.5-flash"]),
+		});
+	}
+	if (env.XAI_API_KEY || env.XAI_BASE_URL) {
+		providers.push({
+			kind: "xai",
+			name: "xai",
+			apiKey: env.XAI_API_KEY,
+			baseURL: env.XAI_BASE_URL,
+			models: parseModels(env.XAI_MODELS, ["grok-4"]),
+		});
+	}
+
+	const services = [
+		["openai", "OPENAI", "gpt-5.2"],
+		["groq", "GROQ", "llama-3.1-8b-instant"],
+		["mistral", "MISTRAL", "mistral-large-latest"],
+		["deepseek", "DEEPSEEK", "deepseek-flash"],
+		["openrouter", "OPENROUTER", "openai/gpt-5.2"],
+		["typesafe", "TYPESAFE", "jev-latest"],
+	] as const;
+	for (const [kind, prefix, model] of services) {
+		if (env[`${prefix}_API_KEY`] || env[`${prefix}_BASE_URL`]) {
+			providers.push({
+				kind,
+				name: kind,
+				apiKey: env[`${prefix}_API_KEY`],
+				baseURL: env[`${prefix}_BASE_URL`],
+				models: parseModels(env[`${prefix}_MODELS`], [model]),
+			});
+		}
+	}
+	if (env.CLOUDFLARE_API_TOKEN || env.CLOUDFLARE_BASE_URL) {
+		if (
+			!env.CLOUDFLARE_BASE_URL &&
+			!/^[a-fA-F0-9]{32}$/.test(env.CLOUDFLARE_ACCOUNT_ID ?? "")
+		) {
+			throw new Error(
+				"CLOUDFLARE_ACCOUNT_ID must be a 32-character hexadecimal account ID.",
+			);
+		}
+		providers.push({
+			kind: "cloudflare",
+			name: "cloudflare",
+			apiKey: env.CLOUDFLARE_API_TOKEN,
+			accountId: env.CLOUDFLARE_ACCOUNT_ID,
+			baseURL: env.CLOUDFLARE_BASE_URL,
+			models: parseModels(env.CLOUDFLARE_MODELS, [
+				"@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+			]),
 		});
 	}
 

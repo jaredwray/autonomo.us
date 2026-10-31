@@ -14,7 +14,7 @@ export type CatalogProvider = {
 	 * Where this provider's list came from: `api` when fetched from the
 	 * provider's own models endpoint, `models.dev` for the public catalog.
 	 */
-	source: "api" | "models.dev";
+	source: "api" | "models.dev" | "documentation";
 	models: CatalogModel[];
 };
 
@@ -49,7 +49,12 @@ export type ProviderSpec = {
 	name: string;
 	/** Environment variables checked, in order, for this provider's API key. */
 	envKeys: string[];
-	fetchModels(apiKey: string, fetchImpl: FetchLike): Promise<CatalogModel[]>;
+	modelsDevKey?: string;
+	fetchModels(
+		apiKey: string,
+		fetchImpl: FetchLike,
+		env?: Record<string, string | undefined>,
+	): Promise<CatalogModel[]>;
 };
 
 /** Raw model row as collected from a source, before normalization. */
@@ -200,7 +205,12 @@ function openAiStyleModels(endpoint: string): ProviderSpec["fetchModels"] {
 			{ authorization: `Bearer ${apiKey}` },
 			fetchImpl,
 		)) as {
-			data?: Array<{ id?: unknown; display_name?: unknown; created?: unknown }>;
+			data?: Array<{
+				id?: unknown;
+				display_name?: unknown;
+				name?: unknown;
+				created?: unknown;
+			}>;
 		};
 		return normalizeModels(
 			(body.data ?? [])
@@ -215,7 +225,7 @@ function openAiStyleModels(endpoint: string): ProviderSpec["fetchModels"] {
 				)
 				.map((entry) => ({
 					id: entry.id,
-					name: entry.display_name,
+					name: entry.display_name ?? entry.name,
 					released: entry.created,
 				})),
 		);
@@ -238,7 +248,11 @@ export const PROVIDERS: ProviderSpec[] = [
 	{
 		key: "google",
 		name: "Google",
-		envKeys: ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+		envKeys: [
+			"GEMINI_API_KEY",
+			"GOOGLE_GENERATIVE_AI_API_KEY",
+			"GOOGLE_API_KEY",
+		],
 		fetchModels: fetchGoogleModels,
 	},
 	{
@@ -265,6 +279,57 @@ export const PROVIDERS: ProviderSpec[] = [
 		envKeys: ["DEEPSEEK_API_KEY"],
 		fetchModels: openAiStyleModels("https://api.deepseek.com/models"),
 	},
+	{
+		key: "openrouter",
+		name: "OpenRouter",
+		envKeys: ["OPENROUTER_API_KEY"],
+		fetchModels: openAiStyleModels("https://openrouter.ai/api/v1/models"),
+	},
+	{
+		key: "typesafe",
+		name: "Jev (TypeSafe)",
+		envKeys: ["TYPESAFE_API_KEY"],
+		fetchModels: async (apiKey, fetchImpl) => {
+			const body = (await getJson(
+				"https://api.typesafe.ai/v1/models",
+				{ authorization: `Bearer ${apiKey}` },
+				fetchImpl,
+			)) as { models: Array<{ name: string; release_date?: string }> };
+			return normalizeModels(
+				body.models.map((model) => ({
+					id: model.name,
+					released: model.release_date,
+				})),
+			);
+		},
+	},
+	{
+		key: "cloudflare",
+		name: "Cloudflare Workers AI",
+		modelsDevKey: "cloudflare-workers-ai",
+		envKeys: ["CLOUDFLARE_API_TOKEN"],
+		fetchModels: async (apiKey, fetchImpl, env) => {
+			const account = env?.CLOUDFLARE_ACCOUNT_ID;
+			if (!account || !/^[a-fA-F0-9]{32}$/.test(account))
+				throw new Error("Missing Cloudflare account ID");
+			const rows: RawModel[] = [];
+			for (let page = 1; page <= 20; page++) {
+				const body = (await getJson(
+					`https://api.cloudflare.com/client/v4/accounts/${account}/ai/models/search?task=Text%20Generation&per_page=100&page=${page}`,
+					{ authorization: `Bearer ${apiKey}` },
+					fetchImpl,
+				)) as {
+					success: boolean;
+					result: Array<{ name: string; description?: string }>;
+				};
+				if (!body.success || !Array.isArray(body.result))
+					throw new Error("Invalid Cloudflare model catalog");
+				rows.push(...body.result.map((model) => ({ id: model.name })));
+				if (body.result.length < 100) break;
+			}
+			return normalizeModels(rows);
+		},
+	},
 ];
 
 type ModelsDevProvider = {
@@ -289,7 +354,7 @@ function modelsDevEntry(
 	spec: ProviderSpec,
 	catalog: Record<string, ModelsDevProvider>,
 ): CatalogProvider | undefined {
-	const provider = catalog[spec.key];
+	const provider = catalog[spec.modelsDevKey ?? spec.key];
 	if (!provider?.models) return undefined;
 	const models = normalizeModels(
 		Object.entries(provider.models).map(([id, model]) => ({
@@ -405,7 +470,7 @@ export async function buildModelCatalog(
 		let entry: CatalogProvider | undefined;
 		if (apiKey) {
 			try {
-				const models = await spec.fetchModels(apiKey, fetchImpl);
+				const models = await spec.fetchModels(apiKey, fetchImpl, env);
 				if (models.length === 0) {
 					throw new Error("provider API returned no models");
 				}
