@@ -107,7 +107,7 @@ export class ModelRouter {
 		if (target === "auto") {
 			if (!config.auto.enabled)
 				throw new RoutingError(
-					"Auto routing is disabled. Configure it in Model Routing.",
+					"Auto routing is disabled. Configure it in Routing.",
 				);
 			const selection = await this.select(config.auto, body, clientSignal);
 			clientSignal?.throwIfAborted();

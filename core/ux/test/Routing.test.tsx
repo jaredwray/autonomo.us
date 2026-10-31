@@ -62,9 +62,7 @@ function change(label: string, value: string) {
 it("saves a weighted account pool, uses it for a real request, and restores it when navigating back", async () => {
 	const server = await start();
 	expect(
-		screen
-			.getByRole("link", { name: "Model Routing" })
-			.getAttribute("aria-current"),
+		screen.getByRole("link", { name: "Routing" }).getAttribute("aria-current"),
 	).toBe("page");
 	expect(screen.getByText(/Settings are temporary/)).toBeDefined();
 	change("New pool name", "coding");
@@ -94,7 +92,7 @@ it("saves a weighted account pool, uses it for a real request, and restores it w
 	await screen.findByText("Hello there");
 	expect(screen.getByText("work/chat", { selector: "strong" })).toBeDefined();
 	fireEvent.click(screen.getByRole("link", { name: "Models", exact: true }));
-	fireEvent.click(screen.getByRole("link", { name: "Model Routing" }));
+	fireEvent.click(screen.getByRole("link", { name: "Routing" }));
 	await screen.findByLabelText("Weight for work/chat");
 	expect(
 		(screen.getByLabelText("Weight for work/chat") as HTMLInputElement).value,

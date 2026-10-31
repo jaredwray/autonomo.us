@@ -225,7 +225,7 @@ export function RoutingView() {
 			<header className="dashboard-header">
 				<div>
 					<p className="eyebrow">Gateway</p>
-					<h1>Model Routing</h1>
+					<h1>Routing</h1>
 					<p className="page-description">
 						Choose the right model, keep requests moving, and share traffic
 						across accounts.

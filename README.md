@@ -69,7 +69,7 @@ pnpm lint:fix
 ## Gateway
 
 The dashboard has a collapsible sidebar with **Dashboard**, **Models**, and
-**Model Routing** views.
+**Routing** views.
 In **Models**, search active models or choose **Add model** to connect Google
 Gemini, xAI Grok, Anthropic Claude, OpenAI, Groq, Mistral, DeepSeek, OpenRouter,
 Cloudflare Workers AI, or Jev (TypeSafe). Choose a catalog suggestion or enter a
@@ -212,9 +212,9 @@ pnpm --filter @autonomo.us/api models:update
 To collect another provider, add a spec to `PROVIDERS` in
 `core/api/src/model-catalog.ts` (and its key to the workflow env).
 
-### Model Routing
+### Routing
 
-Open **Model Routing** to configure these features and send a test request using
+Open **Routing** to configure these features and send a test request using
 **Auto**, a pool, or a specific model. The tester uses saved settings and makes
 real provider calls. Add models and account connections in **Models** first.
 

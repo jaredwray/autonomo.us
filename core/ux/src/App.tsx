@@ -541,7 +541,7 @@ function Dashboard() {
 const viewLabels = {
 	dashboard: "Dashboard",
 	models: "Models",
-	routing: "Model Routing",
+	routing: "Routing",
 };
 function currentView(): keyof typeof viewLabels {
 	return window.location.hash === "#/models"
