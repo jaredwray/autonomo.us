@@ -134,47 +134,56 @@ export async function chatRoutes(
 		{ schema: { body: chatBodySchema } },
 		async (request, reply) => {
 			const body = request.body as GatewayRequest & { model: string };
+			const client = new AbortController();
+			const disconnected = () => {
+				if (!reply.raw.writableEnded) client.abort();
+			};
+			// Selection can make a provider call before SSE headers are sent.
+			reply.raw.once("close", disconnected);
+			if (reply.raw.destroyed) client.abort();
 
 			let requested: ResolvedModel;
 			let plan: RoutingPlan | undefined;
 			try {
-				plan = await options.router?.plan(body);
-				requested = plan?.candidates[0] ?? registry.resolve(body.model);
-			} catch (error) {
-				if (error instanceof UnknownProviderError) {
-					return reply.status(404).send({
-						error: {
-							type: "unknown_model",
-							message: `${error.message}. See GET /v1/models for available models.`,
-						},
-					});
+				try {
+					plan = await options.router?.plan(body, client.signal);
+					client.signal.throwIfAborted();
+					requested = plan?.candidates[0] ?? registry.resolve(body.model);
+				} catch (error) {
+					if (client.signal.aborted) return reply.hijack();
+					if (error instanceof UnknownProviderError) {
+						return reply.status(404).send({
+							error: {
+								type: "unknown_model",
+								message: `${error.message}. See GET /v1/models for available models.`,
+							},
+						});
+					}
+					throw error;
 				}
-				throw error;
-			}
 
-			// Attempt order: the requested model, then (when failover is on) each
-			// policy target that resolves. Stale targets — providers removed since
-			// the policy was saved — are skipped rather than failing the request.
-			const policy = options.failover?.get() ?? DEFAULT_FAILOVER_POLICY;
-			const candidates = plan?.candidates ?? [requested];
-			if (!plan && policy.enabled) {
-				for (const target of policy.targets) {
-					try {
-						const resolved = registry.resolve(target);
-						if (!candidates.some((c) => c.id === resolved.id)) {
-							candidates.push(resolved);
-						}
-					} catch {}
+				// Attempt order: the requested model, then (when failover is on) each
+				// policy target that resolves. Stale targets — providers removed since
+				// the policy was saved — are skipped rather than failing the request.
+				const policy = options.failover?.get() ?? DEFAULT_FAILOVER_POLICY;
+				const candidates = plan?.candidates ?? [requested];
+				if (!plan && policy.enabled) {
+					for (const target of policy.targets) {
+						try {
+							const resolved = registry.resolve(target);
+							if (!candidates.some((c) => c.id === resolved.id)) {
+								candidates.push(resolved);
+							}
+						} catch {}
+					}
 				}
-			}
-			// Arm the attempt timeout only when there is somewhere to fail over to;
-			// with no usable fallback it would just abort slow-but-successful
-			// requests without buying anything.
-			const attemptTimeoutMs =
-				plan?.timeoutMs ??
-				(policy.enabled && candidates.length > 1 ? policy.timeoutMs : 0);
+				// Arm the attempt timeout only when there is somewhere to fail over to;
+				// with no usable fallback it would just abort slow-but-successful
+				// requests without buying anything.
+				const attemptTimeoutMs =
+					plan?.timeoutMs ??
+					(policy.enabled && candidates.length > 1 ? policy.timeoutMs : 0);
 
-			try {
 				if (body.stream) {
 					return await streamChat(
 						server,
@@ -183,12 +192,14 @@ export async function chatRoutes(
 						candidates,
 						attemptTimeoutMs,
 						options,
+						client.signal,
 						plan,
 					);
 				}
 
 				const attempts: FailoverAttempt[] = [];
 				for (const candidate of candidates) {
+					if (client.signal.aborted) return reply.hijack();
 					const release =
 						candidate === requested
 							? plan?.release
@@ -201,7 +212,9 @@ export async function chatRoutes(
 							...chatPrompt(body),
 							temperature: body.temperature,
 							maxOutputTokens: body.maxTokens,
-							abortSignal: timeout.signal,
+							abortSignal: timeout.signal
+								? AbortSignal.any([client.signal, timeout.signal])
+								: client.signal,
 							// Surface provider failures immediately — retry policy lives in
 							// the gateway's failover loop, not hidden inside the SDK.
 							maxRetries: 0,
@@ -218,6 +231,7 @@ export async function chatRoutes(
 								? { requestedModel: requested.id }
 								: {}),
 						});
+						if (client.signal.aborted) return reply.hijack();
 
 						const response: GatewayResponse = {
 							id: randomUUID(),
@@ -252,6 +266,7 @@ export async function chatRoutes(
 							{ err: error, model: candidate.id },
 							"gateway chat attempt failed",
 						);
+						if (client.signal.aborted) return reply.hijack();
 						attempts.push({ model: candidate.id, error: message });
 					} finally {
 						timeout.clear();
@@ -269,6 +284,7 @@ export async function chatRoutes(
 				});
 			} finally {
 				plan?.release();
+				reply.raw.off("close", disconnected);
 			}
 		},
 	);
@@ -281,12 +297,13 @@ async function streamChat(
 	candidates: ResolvedModel[],
 	attemptTimeoutMs: number,
 	options: ChatRouteOptions,
+	clientSignal: AbortSignal,
 	plan?: RoutingPlan,
 ) {
 	const { telemetry } = options;
 	const requested = candidates[0];
-	const abort = new AbortController();
 	const raw = reply.raw;
+	if (clientSignal.aborted || raw.destroyed) return;
 
 	// reply.hijack() bypasses @fastify/cors, so apply the same allowlist here.
 	const corsOrigin = resolveCorsOrigin(
@@ -303,12 +320,9 @@ async function streamChat(
 			? { "access-control-allow-origin": corsOrigin, vary: "origin" }
 			: {}),
 	});
-	raw.on("close", () => {
-		if (!raw.writableEnded) abort.abort();
-	});
-
 	const send = (payload: unknown) => {
-		raw.write(`data: ${JSON.stringify(payload)}\n\n`);
+		if (!raw.destroyed && !raw.writableEnded)
+			raw.write(`data: ${JSON.stringify(payload)}\n\n`);
 	};
 
 	const id = randomUUID();
@@ -318,6 +332,7 @@ async function streamChat(
 	let finalError: string | undefined;
 
 	for (let index = 0; index < candidates.length; index++) {
+		if (clientSignal.aborted || raw.destroyed) break;
 		const candidate = candidates[index];
 		const release =
 			index === 0 ? plan?.release : options.router?.acquire(candidate.id);
@@ -332,8 +347,8 @@ async function streamChat(
 		// a slow generation is not a timeout, only a slow start is.
 		const attempt = new AbortController();
 		const forwardAbort = () => attempt.abort();
-		abort.signal.addEventListener("abort", forwardAbort);
-		if (abort.signal.aborted) attempt.abort();
+		clientSignal.addEventListener("abort", forwardAbort);
+		if (clientSignal.aborted) attempt.abort();
 		let timedOut = false;
 		const timer =
 			attemptTimeoutMs > 0
@@ -381,7 +396,7 @@ async function streamChat(
 		} finally {
 			disarmTimer();
 			release?.();
-			abort.signal.removeEventListener("abort", forwardAbort);
+			clientSignal.removeEventListener("abort", forwardAbort);
 		}
 
 		telemetry.recordChat({
@@ -400,7 +415,7 @@ async function streamChat(
 		if (!error) {
 			servedBy = candidate.id;
 			finalError = undefined;
-			if (!raw.writableEnded) {
+			if (!raw.writableEnded && !raw.destroyed) {
 				send({
 					type: "finish",
 					id,
@@ -421,7 +436,7 @@ async function streamChat(
 		attempts.push({ model: candidate.id, error });
 		finalError = error;
 		const next = candidates[index + 1];
-		const clientGone = abort.signal.aborted && !timedOut;
+		const clientGone = clientSignal.aborted || raw.destroyed;
 
 		// Fail over only while nothing has been streamed to the client yet; once
 		// output started the response is committed to this model.
@@ -430,7 +445,7 @@ async function streamChat(
 			continue;
 		}
 
-		if (!raw.writableEnded) {
+		if (!raw.writableEnded && !raw.destroyed) {
 			if (!clientGone) {
 				send({ type: "error", error: { message: error } });
 			}

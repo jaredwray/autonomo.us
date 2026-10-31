@@ -35,11 +35,18 @@ let chatCalls: Array<{ model?: string; authorization?: string }>;
 let chosen: string;
 let startedSlow: () => void;
 let slowStarted: Promise<void>;
+let selectorStarted: Promise<void>;
+let markSelectorStarted: () => void;
+let selectorDisconnected: boolean;
 
 beforeEach(async () => {
 	chosen = "work/chat";
 	selectorCalls = [];
 	chatCalls = [];
+	selectorDisconnected = false;
+	selectorStarted = new Promise((resolve) => {
+		markSelectorStarted = resolve;
+	});
 	slowStarted = new Promise((resolve) => {
 		startedSlow = resolve;
 	});
@@ -57,6 +64,10 @@ beforeEach(async () => {
 		for await (const chunk of req) raw += chunk;
 		const body = JSON.parse(raw);
 		selectorCalls.push({ path: req.url ?? "", body });
+		res.once("close", () => {
+			if (!res.writableEnded) selectorDisconnected = true;
+		});
+		markSelectorStarted();
 		if (body.model === "slow") return;
 		if (body.model === "broken") {
 			res.writeHead(503);
@@ -294,6 +305,41 @@ describe("routing settings", () => {
 });
 
 describe("automatic selection", () => {
+	for (const provider of ["jev", "openai"])
+		for (const stream of [true, false]) {
+			it(`cancels ${provider} selection on disconnect without starting a target (stream=${stream})`, async () => {
+				await save({
+					...base,
+					auto: {
+						...base.auto,
+						enabled: true,
+						decisionModel: `${provider}/slow`,
+						timeoutMs: 4000,
+					},
+				});
+				const origin = await server.listen({ port: 0, host: "127.0.0.1" });
+				const client = new AbortController();
+				const request = fetch(`${origin}/v1/chat`, {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({ model: "auto", messages, stream }),
+					signal: client.signal,
+				}).catch((error) => error);
+				await selectorStarted;
+				client.abort();
+				await request;
+				// The upstream socket must close from cancellation, before its 4s timeout.
+				await expect
+					.poll(() => selectorDisconnected, { timeout: 1000 })
+					.toBe(true);
+				await expect
+					.poll(() => telemetry.recentEvents()[0]?.data.error, {
+						timeout: 1000,
+					})
+					.toBe("Routing canceled because the client disconnected.");
+				expect(chatCalls).toHaveLength(0);
+			});
+		}
 	for (const decisionModel of ["jev/selector", "openai/selector"]) {
 		it(`selects an allowed target through ${decisionModel} and records selector usage separately`, async () => {
 			await save({

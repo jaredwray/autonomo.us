@@ -92,8 +92,12 @@ export class ModelRouter {
 		];
 	}
 
-	async plan(body: GatewayRequest & { model: string }): Promise<RoutingPlan> {
+	async plan(
+		body: GatewayRequest & { model: string },
+		clientSignal?: AbortSignal,
+	): Promise<RoutingPlan> {
 		await this.settings.initialize();
+		clientSignal?.throwIfAborted();
 		const config = this.settings.get();
 		for (const id of this.balances.keys())
 			if (!config.pools.some((pool) => pool.id === id))
@@ -105,7 +109,8 @@ export class ModelRouter {
 				throw new RoutingError(
 					"Auto routing is disabled. Configure it in Model Routing.",
 				);
-			const selection = await this.select(config.auto, body);
+			const selection = await this.select(config.auto, body, clientSignal);
+			clientSignal?.throwIfAborted();
 			target = selection.target;
 			decision = {
 				requestedModel: body.model,
@@ -161,6 +166,7 @@ export class ModelRouter {
 	private async select(
 		auto: RoutingConfig["auto"],
 		body: GatewayRequest,
+		clientSignal?: AbortSignal,
 	): Promise<{ target: string; fallback?: boolean }> {
 		const started = performance.now();
 		let usage: TokenUsage = {
@@ -169,6 +175,7 @@ export class ModelRouter {
 			totalTokens: 0,
 		};
 		let failed = false;
+		let canceled = false;
 		let providerName = auto.decisionModel.split("/")[0];
 		try {
 			const resolved = this.registry.resolveProvider(auto.decisionModel);
@@ -179,7 +186,10 @@ export class ModelRouter {
 				auto.targets.map((item) => [item.target, item.description]),
 			);
 			let choice: unknown;
-			const signal = AbortSignal.timeout(auto.timeoutMs);
+			const timeout = AbortSignal.timeout(auto.timeoutMs);
+			const signal = clientSignal
+				? AbortSignal.any([clientSignal, timeout])
+				: timeout;
 			if (resolved.provider.decide) {
 				const result = await resolved.provider.decide(
 					{
@@ -218,6 +228,10 @@ export class ModelRouter {
 				throw new RoutingError("Invalid routing choice.", 502);
 			return { target: choice };
 		} catch {
+			if (clientSignal?.aborted) {
+				canceled = true;
+				clientSignal.throwIfAborted();
+			}
 			failed = true;
 			return { target: auto.fallbackTarget, fallback: true };
 		} finally {
@@ -229,12 +243,14 @@ export class ModelRouter {
 				usage,
 				latencyMs: Math.round(performance.now() - started),
 				requestedModel: "auto",
-				...(failed
-					? {
-							error:
-								"Decision model failed or returned an invalid target; using the configured fallback.",
-						}
-					: {}),
+				...(canceled
+					? { error: "Routing canceled because the client disconnected." }
+					: failed
+						? {
+								error:
+									"Decision model failed or returned an invalid target; using the configured fallback.",
+							}
+						: {}),
 			});
 		}
 	}
