@@ -8,6 +8,7 @@ import type {
 import type { ClickHouseSink } from "./clickhouse.js";
 
 export type ChatTelemetry = {
+	operation?: "chat" | "decisions";
 	/** Canonical routable id, e.g. `anthropic/claude-opus-4-8`. */
 	model: string;
 	provider: string;
@@ -85,7 +86,9 @@ export class TelemetryService {
 	recordChat(chat: ChatTelemetry): TelemetryEvent {
 		const event: TelemetryEvent = {
 			id: randomUUID(),
-			type: chat.error ? "gateway.error" : "gateway.chat",
+			type: chat.error
+				? "gateway.error"
+				: `gateway.${chat.operation ?? "chat"}`,
 			agentId: chat.agentId,
 			data: {
 				model: chat.model,

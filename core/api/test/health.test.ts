@@ -10,7 +10,10 @@ const mocks = vi.hoisted(() => ({
 vi.mock("mongodb", () => ({
 	MongoClient: class {
 		db() {
-			return { command: mocks.mongoPing };
+			return {
+				command: mocks.mongoPing,
+				collection: () => ({ find: () => ({ toArray: async () => [] }) }),
+			};
 		}
 		close = mocks.mongoClose;
 	},
@@ -60,7 +63,8 @@ describe("health route", () => {
 			{ timeoutMS: 1000 },
 		);
 		await servers[0].close();
-		expect(mocks.mongoClose).toHaveBeenCalledOnce();
+		// Health and persisted model settings each own a MongoDB client.
+		expect(mocks.mongoClose).toHaveBeenCalledTimes(2);
 	});
 
 	it("reports failures independently and recovers on a subsequent probe", async () => {

@@ -17,6 +17,21 @@ jobs:
       matrix:
         node-version: ['22.23.4', '24']
     services:
+      mongo:
+        image: mongo:8
+        env:
+          MONGO_INITDB_ROOT_USERNAME: autonomous
+          MONGO_INITDB_ROOT_PASSWORD: autonomous
+          # Use TCMalloc's thread caches to avoid the hosted runner kernel's
+          # rseq incompatibility: https://jira.mongodb.org/browse/SERVER-121912
+          GLIBC_TUNABLES: glibc.pthread.rseq=1
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet -u autonomous -p autonomous --eval 'db.adminCommand({ping:1}).ok'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
       clickhouse:
         image: clickhouse/clickhouse-server:25.8
         env:

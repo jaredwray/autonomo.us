@@ -90,6 +90,8 @@ export type ModelInfo = {
 	id: string;
 	provider: string;
 	model: string;
+	/** Omitted on legacy chat models. */
+	capability?: "chat" | "decisions";
 };
 
 export type ModelUsage = {
@@ -101,6 +103,69 @@ export type ModelUsage = {
 	completionTokens: number;
 	totalTokens: number;
 	avgLatencyMs: number;
+};
+
+export const PROVIDER_NAMES = {
+	google: "Google Gemini",
+	xai: "xAI Grok",
+	anthropic: "Anthropic Claude",
+	openai: "OpenAI",
+	groq: "Groq",
+	mistral: "Mistral",
+	deepseek: "DeepSeek",
+	openrouter: "OpenRouter",
+	cloudflare: "Cloudflare Workers AI",
+	typesafe: "Jev (TypeSafe)",
+} as const;
+
+export type ManagedProvider = keyof typeof PROVIDER_NAMES;
+
+export type DecisionRequest = {
+	model: string;
+	state: string | Record<string, unknown> | unknown[];
+	questions: Record<
+		string,
+		{
+			type: "noul" | "choice" | "score";
+			instructions?: string | Record<string, unknown> | unknown[];
+			criteria?: Record<string, unknown> | unknown[];
+		}
+	>;
+};
+
+export type DecisionResponse = {
+	model: string;
+	answers: Record<string, Record<string, unknown>>;
+	usage: { input_tokens: number; output_tokens: number };
+};
+
+export type AddModelRequest = {
+	provider: ManagedProvider;
+	/** Connection used as the routing prefix. Defaults to the provider ID. */
+	connectionId?: string;
+	/** Reject an existing connection instead of updating its credentials. */
+	createConnection?: boolean;
+	model: string;
+	/** Omit to reuse the server's existing key. Never returned by the API. */
+	apiKey?: string;
+	/** Cloudflare account identifier. Omit to reuse the saved account. */
+	accountId?: string;
+};
+
+export type ProviderSettings = {
+	connections: Array<{
+		id: string;
+		provider: ManagedProvider;
+		configured: boolean;
+		accountId?: string;
+	}>;
+	providers: Array<{
+		id: ManagedProvider;
+		name: string;
+		configured: boolean;
+		accountId?: string;
+	}>;
+	persistence: "mongodb" | "memory";
 };
 
 export type UsageSummary = {

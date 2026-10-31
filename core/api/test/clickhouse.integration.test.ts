@@ -82,6 +82,7 @@ describe.skipIf(!available)("ClickHouseSink (real server)", () => {
 				latencyMs: 100,
 			}),
 			chatEvent("evt-2", {
+				type: "gateway.decisions",
 				model: "stub/chat-model",
 				latencyMs: 200,
 			}),

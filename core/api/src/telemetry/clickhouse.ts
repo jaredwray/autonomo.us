@@ -168,7 +168,7 @@ export class ClickHouseSink {
 				sum(total_tokens) AS total_tokens,
 				round(avgIf(latency_ms, error = '')) AS avg_latency_ms
 			FROM ${this.table} FINAL
-			WHERE type IN ('gateway.chat', 'gateway.error')
+			WHERE type IN ('gateway.chat', 'gateway.decisions', 'gateway.error')
 			GROUP BY model, provider
 			ORDER BY requests DESC
 			FORMAT JSON`,
