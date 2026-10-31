@@ -12,7 +12,10 @@ vi.mock("mongodb", () => ({
 		db() {
 			return {
 				command: mocks.mongoPing,
-				collection: () => ({ find: () => ({ toArray: async () => [] }) }),
+				collection: () => ({
+					find: () => ({ toArray: async () => [] }),
+					findOne: async () => null,
+				}),
 			};
 		}
 		close = mocks.mongoClose;
@@ -63,8 +66,8 @@ describe("health route", () => {
 			{ timeoutMS: 1000 },
 		);
 		await servers[0].close();
-		// Health and persisted model settings each own a MongoDB client.
-		expect(mocks.mongoClose).toHaveBeenCalledTimes(2);
+		// Health, model settings, and routing settings each own a MongoDB client.
+		expect(mocks.mongoClose).toHaveBeenCalledTimes(3);
 	});
 
 	it("reports failures independently and recovers on a subsequent probe", async () => {

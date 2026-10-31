@@ -22,7 +22,10 @@ export type ModelProvider = {
 	/** Models advertised via GET /v1/models. Routing is not limited to this list. */
 	models: string[];
 	capability?: "chat" | "decisions";
-	decide?(request: DecisionRequest): Promise<DecisionResponse>;
+	decide?(
+		request: DecisionRequest,
+		signal?: AbortSignal,
+	): Promise<DecisionResponse>;
 	languageModel(modelId: string): LanguageModel;
 };
 

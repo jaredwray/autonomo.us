@@ -13,8 +13,8 @@ export type AgentConfig = {
 
 export type GatewayRequest = {
 	/**
-	 * Model to route to, in `provider/model` form (e.g. `anthropic/claude-opus-4-8`,
-	 * `local/llama3.3`). Required until agent lookup by `agentId` is implemented.
+	 * A `connection/model` id, `auto`, or `pool/<id>`.
+	 * Required until agent lookup by `agentId` is implemented.
 	 */
 	model?: string;
 	agentId?: string;
@@ -38,6 +38,7 @@ export type GatewayResponse = {
 	usage: TokenUsage;
 	finishReason?: string;
 	createdAt: string;
+	routing?: RoutingDecision;
 	/** Present only when the request was served by a failover target. */
 	failover?: {
 		requestedModel: string;
@@ -69,6 +70,46 @@ export type FailoverPolicy = {
 	 * the timeout off so only provider errors trigger failover.
 	 */
 	timeoutMs: number;
+};
+
+export type RoutingPool = {
+	id: string;
+	strategy: "weighted-round-robin" | "least-requests";
+	members: Array<{ model: string; weight: number }>;
+	/** Try remaining members if the selected member fails. */
+	failover: boolean;
+};
+
+export type RoutingConfig = {
+	auto: {
+		enabled: boolean;
+		/** Jev decision model or any configured chat model used as a selector. */
+		decisionModel: string;
+		targets: Array<{ target: string; description: string }>;
+		/** Used when the selector errors, times out, or returns an invalid choice. */
+		fallbackTarget: string;
+		timeoutMs: number;
+	};
+	pools: RoutingPool[];
+	/** Default failover policy, also exposed by /v1/failover. */
+	failover: FailoverPolicy;
+	/** A matching model or pool rule replaces the default policy. */
+	rules: Array<FailoverPolicy & { model: string }>;
+};
+
+export type RoutingSettings = {
+	config: RoutingConfig;
+	persistence: "mongodb" | "memory";
+};
+
+export type RoutingDecision = {
+	requestedModel: string;
+	selectedModel: string;
+	mode: "auto" | "pool";
+	target: string;
+	decisionModel?: string;
+	/** Selector failed; the configured fallback target was used. */
+	decisionFallback?: boolean;
 };
 
 export type TokenUsage = {

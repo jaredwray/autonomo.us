@@ -68,7 +68,8 @@ pnpm lint:fix
 
 ## Gateway
 
-The dashboard has a collapsible sidebar with **Dashboard** and **Models** views.
+The dashboard has a collapsible sidebar with **Dashboard**, **Models**, and
+**Routing** views.
 In **Models**, search active models or choose **Add model** to connect Google
 Gemini, xAI Grok, Anthropic Claude, OpenAI, Groq, Mistral, DeepSeek, OpenRouter,
 Cloudflare Workers AI, or Jev (TypeSafe). Choose a catalog suggestion or enter a
@@ -84,6 +85,8 @@ provider, select **New connection…**, and give it a unique name such as
 `openai-work` or `openai-personal`. Select an existing connection to add models
 using its saved key. Names start with a lowercase letter and contain up to 64
 lowercase letters, numbers, dashes, or underscores.
+The connection name `pool` is reserved for routing pools. Legacy connections
+with that name keep routing directly, but must be renamed before adding pools.
 
 Route requests and failover targets using `connection/model`, for example
 `openai-work/gpt-5.2`. The same model may be added to both connections. Existing
@@ -124,13 +127,15 @@ through environment variables:
 
 - `GET /health` — API liveness (`status`, `timestamp`) plus `mongodb` and `clickhouse`, each containing `configured` and `connected`. Configured databases are actively probed with bounded timeouts; unavailable databases report `connected: false` while liveness remains HTTP 200. Set `MONGODB_URL` and `CLICKHOUSE_URL` to enable the respective checks.
 
-- `POST /v1/chat` — proxy a chat request; body `{ model, messages, stream?, temperature?, maxTokens? }` where `model` is `provider/model` (e.g. `anthropic/claude-opus-4-8`, `local/llama3.3`). Returns the assistant message plus `usage` token counts; with `stream: true` responds with SSE (`text-delta` events, then `finish` with usage).
+- `POST /v1/chat` — proxy a chat request; body `{ model, messages, stream?, temperature?, maxTokens? }` where `model` is `connection/model`, `auto`, or `pool/<id>`. Returns the assistant message plus `usage` token counts; with `stream: true` responds with SSE (`text-delta` events, then `finish` with usage).
 - `GET /v1/models` — routable models and providers.
 - `POST /v1/models` — add an active model; body `{ provider, connectionId?, createConnection?, model, apiKey?, accountId? }` (provider IDs: `google`, `xai`, `anthropic`, `openai`, `groq`, `mistral`, `deepseek`, `openrouter`, `cloudflare`, `typesafe`). Omit `connectionId` to use the default provider connection. Set `createConnection: true` to reject an existing name with HTTP 409. The key is required for a new connection and optional for subsequent additions to that connection. Repeated additions are idempotent; replies contain only the model ID and provider.
 - `GET /v1/providers` — supported provider names, a `connections` list with IDs, provider kinds, key-configured flags and Cloudflare account IDs, and the settings persistence mode; never includes credentials.
 - `GET /v1/models/catalog` — the full multi-provider model catalog (refreshed daily at runtime; bundled `models.json` as the fallback).
 - `GET /v1/failover` — current failover policy.
 - `PUT /v1/failover` — update the failover policy; body `{ enabled?, targets?, timeoutMs? }` (partial updates keep omitted fields).
+- `GET /v1/routing` — routing `{ config, persistence }`, including Auto selection, pools, the default failover policy, and model/pool rules.
+- `PUT /v1/routing` — replace the full routing configuration; returns `{ config, persistence }`. Invalid settings are rejected before activation.
 - `GET /v1/telemetry/summary` — usage aggregates (ClickHouse when available, in-memory otherwise; `?source=memory|clickhouse` to force).
 - `GET /v1/telemetry/events` — recent gateway events and sink status.
 - `GET /health` — health check.
@@ -206,6 +211,89 @@ pnpm --filter @autonomo.us/api models:update
 
 To collect another provider, add a spec to `PROVIDERS` in
 `core/api/src/model-catalog.ts` (and its key to the workflow env).
+
+### Routing
+
+Open **Routing** to configure these features and send a test request using
+**Auto**, a pool, or a specific model. The tester uses saved settings and makes
+real provider calls. Add models and account connections in **Models** first.
+
+- **Auto mode:** choose Jev or any configured chat model (including OpenAI) as
+  the decision model. Add at least two allowed models or pools, describe the
+  tasks each should handle, and choose a fallback target. Send `model: "auto"`
+  to let the selector inspect the conversation and pick a target. Jev uses a
+  native Choice question; chat selectors return an allowed target ID. Invalid
+  answers, errors, and decision timeouts use the configured fallback. Selection
+  adds one provider call; its token usage appears separately in telemetry.
+- **Load balancing:** create a named pool with concrete `connection/model`
+  members. Different models share work; the same model on different named
+  connections shares work across accounts with independent credentials. Weighted
+  round robin distributes requests in proportion to weights (3:1 gives roughly
+  75%:25%). Least requests chooses the lowest active-request count divided by
+  weight, counting streams until they finish. Send `model: "pool/coding"` to
+  use a pool named `coding`. Balancing state is local to each API process and
+  resets on restart; it is not coordinated across replicas.
+- **Failover rules:** a rule for a pool takes priority over a rule for its
+  selected model, which takes priority over the default policy. Each rule has
+  an enabled switch, ordered fallback models, and an attempt timeout. A disabled
+  rule suppresses the default policy for that route. Pool member failover is a
+  separate switch: when enabled, remaining members are tried first, followed
+  by the applicable rule's targets. Duplicate models are attempted only once.
+  Rules do not recursively follow other rules, and pools cannot contain pools.
+
+For example, after configuring these model IDs on your connections:
+
+```json
+{
+  "auto": {
+    "enabled": true,
+    "decisionModel": "typesafe/jev-latest",
+    "targets": [
+      { "target": "pool/coding", "description": "Complex coding and technical reasoning" },
+      { "target": "anthropic/claude-opus-5-5", "description": "Creative writing and general questions" }
+    ],
+    "fallbackTarget": "pool/coding",
+    "timeoutMs": 10000
+  },
+  "pools": [{
+    "id": "coding",
+    "strategy": "weighted-round-robin",
+    "members": [
+      { "model": "openai-work/gpt-6-astra", "weight": 3 },
+      { "model": "openai-personal/gpt-6-astra", "weight": 1 }
+    ],
+    "failover": true
+  }],
+  "failover": { "enabled": false, "targets": [], "timeoutMs": 30000 },
+  "rules": [{
+    "model": "pool/coding",
+    "enabled": true,
+    "targets": ["anthropic/claude-opus-5-5"],
+    "timeoutMs": 15000
+  }]
+}
+```
+
+PUT this object to `/v1/routing`. Auto can choose the coding pool, distribute
+its requests across the two OpenAI connections, and fall back to Opus if both
+pool members fail. Use provider-native IDs available to your accounts; these
+example IDs are not an entitlement check.
+
+Auto and pool responses include `routing` metadata with the requested route,
+selected model, and target. `decisionFallback: true` indicates a failed selector.
+The response's top-level `model` always identifies the model that answered,
+including after failover. Streams begin with a `routing` event and include the
+same metadata in `finish`. Once text has reached the client, no policy switches
+the stream to another model. Selector calls and model attempts are recorded
+individually in telemetry, so request totals include that extra work.
+
+Routing settings are stored in MongoDB's `gateway_routing` collection when
+`MONGODB_URL` is configured, otherwise in memory until restart. The legacy
+`/v1/failover` endpoint and dashboard card update the same default policy and
+persist it too. Saved policies override environment defaults on startup.
+Writes must succeed before a policy becomes active. If routing settings cannot
+be loaded at startup, chat requests return 503 until MongoDB is available;
+the gateway does not silently bypass saved routing policies.
 
 ### Failover
 

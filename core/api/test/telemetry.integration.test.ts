@@ -84,6 +84,52 @@ describe.skipIf(!available)("TelemetryService + real ClickHouse", () => {
 		expect(summary?.byModel).toEqual([]);
 		await telemetry.stop();
 	});
+	it("includes successful Auto selector calls in the default durable summary", async () => {
+		const telemetry = new TelemetryService({
+			sink: trackedSink("routing"),
+			flushIntervalMs: 60_000,
+		});
+		const server = createServer({
+			config: { providers: [], corsOrigins: [] },
+			telemetry,
+			logger: false,
+		});
+		try {
+			telemetry.recordChat({
+				operation: "routing",
+				model: "jev/selector",
+				provider: "jev",
+				usage: { promptTokens: 20, completionTokens: 2, totalTokens: 22 },
+				latencyMs: 100,
+			});
+			telemetry.recordChat({
+				model: "work/chat",
+				provider: "work",
+				usage,
+				latencyMs: 100,
+			});
+			const summary = (await server.inject("/v1/telemetry/summary")).json();
+			const memory = telemetry.summary();
+			expect(summary).toMatchObject({
+				source: "clickhouse",
+				totalRequests: memory.totalRequests,
+				totalTokens: memory.totalTokens,
+				promptTokens: memory.promptTokens,
+				completionTokens: memory.completionTokens,
+			});
+			expect(summary.totalTokens).toBe(37);
+			expect(summary.byModel).toContainEqual(
+				expect.objectContaining({
+					model: "selector",
+					provider: "jev",
+					requests: 1,
+					totalTokens: 22,
+				}),
+			);
+		} finally {
+			await server.close();
+		}
+	});
 });
 
 describe.skipIf(!available)("gateway → ClickHouse end to end", () => {

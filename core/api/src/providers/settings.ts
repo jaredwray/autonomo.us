@@ -125,6 +125,12 @@ export class ProviderSettingsStore {
 			);
 		}
 		const existing = this.configs.get(connectionId);
+		if (connectionId === "pool" && !existing) {
+			throw new ProviderSettingsError(
+				"The connection name 'pool' is reserved for routing pools.",
+				409,
+			);
+		}
 		if (input.createConnection && existing) {
 			throw new ProviderSettingsError(
 				"A connection with this name already exists. Choose that connection or use a different name.",

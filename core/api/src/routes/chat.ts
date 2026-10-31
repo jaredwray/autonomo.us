@@ -13,6 +13,7 @@ import {
 } from "../failover.js";
 import type { ProviderRegistry, ResolvedModel } from "../providers/registry.js";
 import { UnknownProviderError } from "../providers/registry.js";
+import type { ModelRouter, RoutingPlan } from "../routing/router.js";
 import type { TelemetryService } from "../telemetry/telemetry.js";
 
 export type ChatRouteOptions = {
@@ -20,6 +21,7 @@ export type ChatRouteOptions = {
 	telemetry: TelemetryService;
 	/** Failover policy; treated as disabled when omitted. */
 	failover?: FailoverPolicyStore;
+	router?: ModelRouter;
 	/** Origins allowed on the SSE path; `["*"]` allows any. */
 	corsOrigins?: string[];
 };
@@ -80,6 +82,17 @@ function timeoutMessage(timeoutMs: number): string {
 	return `timed out after ${timeoutMs}ms`;
 }
 
+function chatPrompt(body: GatewayRequest) {
+	return {
+		instructions:
+			body.messages
+				.filter((message) => message.role === "system")
+				.map((message) => message.content)
+				.join("\n\n") || undefined,
+		messages: body.messages.filter((message) => message.role !== "system"),
+	};
+}
+
 const EMPTY_USAGE: TokenUsage = {
 	promptTokens: 0,
 	completionTokens: 0,
@@ -121,128 +134,158 @@ export async function chatRoutes(
 		{ schema: { body: chatBodySchema } },
 		async (request, reply) => {
 			const body = request.body as GatewayRequest & { model: string };
+			const client = new AbortController();
+			const disconnected = () => {
+				if (!reply.raw.writableEnded) client.abort();
+			};
+			// Selection can make a provider call before SSE headers are sent.
+			reply.raw.once("close", disconnected);
+			if (reply.raw.destroyed) client.abort();
 
 			let requested: ResolvedModel;
+			let plan: RoutingPlan | undefined;
 			try {
-				requested = registry.resolve(body.model);
-			} catch (error) {
-				if (error instanceof UnknownProviderError) {
-					return reply.status(404).send({
-						error: {
-							type: "unknown_model",
-							message: `${error.message}. See GET /v1/models for available models.`,
-						},
-					});
-				}
-				throw error;
-			}
-
-			// Attempt order: the requested model, then (when failover is on) each
-			// policy target that resolves. Stale targets — providers removed since
-			// the policy was saved — are skipped rather than failing the request.
-			const policy = options.failover?.get() ?? DEFAULT_FAILOVER_POLICY;
-			const candidates = [requested];
-			if (policy.enabled) {
-				for (const target of policy.targets) {
-					try {
-						const resolved = registry.resolve(target);
-						if (!candidates.some((c) => c.id === resolved.id)) {
-							candidates.push(resolved);
-						}
-					} catch {}
-				}
-			}
-			// Arm the attempt timeout only when there is somewhere to fail over to;
-			// with no usable fallback it would just abort slow-but-successful
-			// requests without buying anything.
-			const attemptTimeoutMs =
-				policy.enabled && candidates.length > 1 ? policy.timeoutMs : 0;
-
-			if (body.stream) {
-				return streamChat(
-					server,
-					reply,
-					body,
-					candidates,
-					attemptTimeoutMs,
-					options,
-				);
-			}
-
-			const attempts: FailoverAttempt[] = [];
-			for (const candidate of candidates) {
-				const started = performance.now();
-				const timeout = startAttemptTimeout(attemptTimeoutMs);
 				try {
-					const result = await generateText({
-						model: candidate.model,
-						messages: body.messages,
-						temperature: body.temperature,
-						maxOutputTokens: body.maxTokens,
-						abortSignal: timeout.signal,
-						// Surface provider failures immediately — retry policy lives in
-						// the gateway's failover loop, not hidden inside the SDK.
-						maxRetries: 0,
-					});
-
-					const usage = toTokenUsage(result.usage);
-					telemetry.recordChat({
-						model: candidate.id,
-						provider: candidate.provider.name,
-						agentId: body.agentId,
-						usage,
-						latencyMs: Math.round(performance.now() - started),
-						...(candidate.id !== requested.id
-							? { requestedModel: requested.id }
-							: {}),
-					});
-
-					const response: GatewayResponse = {
-						id: randomUUID(),
-						model: candidate.id,
-						agentId: body.agentId,
-						message: { role: "assistant", content: result.text },
-						usage,
-						finishReason: result.finishReason,
-						createdAt: new Date().toISOString(),
-						...(attempts.length > 0
-							? { failover: { requestedModel: requested.id, attempts } }
-							: {}),
-					};
-					return response;
+					plan = await options.router?.plan(body, client.signal);
+					client.signal.throwIfAborted();
+					requested = plan?.candidates[0] ?? registry.resolve(body.model);
 				} catch (error) {
-					const message = timeout.timedOut()
-						? timeoutMessage(attemptTimeoutMs)
-						: errorMessage(error);
-					telemetry.recordChat({
-						model: candidate.id,
-						provider: candidate.provider.name,
-						agentId: body.agentId,
-						usage: EMPTY_USAGE,
-						latencyMs: Math.round(performance.now() - started),
-						error: message,
-						...(candidate.id !== requested.id
-							? { requestedModel: requested.id }
-							: {}),
-					});
-					request.log.error(
-						{ err: error, model: candidate.id },
-						"gateway chat attempt failed",
-					);
-					attempts.push({ model: candidate.id, error: message });
-				} finally {
-					timeout.clear();
+					if (client.signal.aborted) return reply.hijack();
+					if (error instanceof UnknownProviderError) {
+						return reply.status(404).send({
+							error: {
+								type: "unknown_model",
+								message: `${error.message}. See GET /v1/models for available models.`,
+							},
+						});
+					}
+					throw error;
 				}
-			}
 
-			const last = attempts[attempts.length - 1];
-			return reply.status(502).send({
-				error: {
-					type: "provider_error",
-					message: last.error,
-					...(attempts.length > 1 ? { attempts } : {}),
-				},
-			});
+				// Attempt order: the requested model, then (when failover is on) each
+				// policy target that resolves. Stale targets — providers removed since
+				// the policy was saved — are skipped rather than failing the request.
+				const policy = options.failover?.get() ?? DEFAULT_FAILOVER_POLICY;
+				const candidates = plan?.candidates ?? [requested];
+				if (!plan && policy.enabled) {
+					for (const target of policy.targets) {
+						try {
+							const resolved = registry.resolve(target);
+							if (!candidates.some((c) => c.id === resolved.id)) {
+								candidates.push(resolved);
+							}
+						} catch {}
+					}
+				}
+				// Arm the attempt timeout only when there is somewhere to fail over to;
+				// with no usable fallback it would just abort slow-but-successful
+				// requests without buying anything.
+				const attemptTimeoutMs =
+					plan?.timeoutMs ??
+					(policy.enabled && candidates.length > 1 ? policy.timeoutMs : 0);
+
+				if (body.stream) {
+					return await streamChat(
+						server,
+						reply,
+						body,
+						candidates,
+						attemptTimeoutMs,
+						options,
+						client.signal,
+						plan,
+					);
+				}
+
+				const attempts: FailoverAttempt[] = [];
+				for (const candidate of candidates) {
+					if (client.signal.aborted) return reply.hijack();
+					const release =
+						candidate === requested
+							? plan?.release
+							: options.router?.acquire(candidate.id);
+					const started = performance.now();
+					const timeout = startAttemptTimeout(attemptTimeoutMs);
+					try {
+						const result = await generateText({
+							model: candidate.model,
+							...chatPrompt(body),
+							temperature: body.temperature,
+							maxOutputTokens: body.maxTokens,
+							abortSignal: timeout.signal
+								? AbortSignal.any([client.signal, timeout.signal])
+								: client.signal,
+							// Surface provider failures immediately — retry policy lives in
+							// the gateway's failover loop, not hidden inside the SDK.
+							maxRetries: 0,
+						});
+
+						const usage = toTokenUsage(result.usage);
+						telemetry.recordChat({
+							model: candidate.id,
+							provider: candidate.provider.name,
+							agentId: body.agentId,
+							usage,
+							latencyMs: Math.round(performance.now() - started),
+							...(candidate.id !== requested.id
+								? { requestedModel: requested.id }
+								: {}),
+						});
+						if (client.signal.aborted) return reply.hijack();
+
+						const response: GatewayResponse = {
+							id: randomUUID(),
+							model: candidate.id,
+							agentId: body.agentId,
+							message: { role: "assistant", content: result.text },
+							usage,
+							finishReason: result.finishReason,
+							createdAt: new Date().toISOString(),
+							...(plan?.decision ? { routing: plan.decision } : {}),
+							...(attempts.length > 0
+								? { failover: { requestedModel: requested.id, attempts } }
+								: {}),
+						};
+						return response;
+					} catch (error) {
+						const message = timeout.timedOut()
+							? timeoutMessage(attemptTimeoutMs)
+							: errorMessage(error);
+						telemetry.recordChat({
+							model: candidate.id,
+							provider: candidate.provider.name,
+							agentId: body.agentId,
+							usage: EMPTY_USAGE,
+							latencyMs: Math.round(performance.now() - started),
+							error: message,
+							...(candidate.id !== requested.id
+								? { requestedModel: requested.id }
+								: {}),
+						});
+						request.log.error(
+							{ err: error, model: candidate.id },
+							"gateway chat attempt failed",
+						);
+						if (client.signal.aborted) return reply.hijack();
+						attempts.push({ model: candidate.id, error: message });
+					} finally {
+						timeout.clear();
+						release?.();
+					}
+				}
+
+				const last = attempts[attempts.length - 1];
+				return reply.status(502).send({
+					error: {
+						type: "provider_error",
+						message: last.error,
+						...(attempts.length > 1 ? { attempts } : {}),
+					},
+				});
+			} finally {
+				plan?.release();
+				reply.raw.off("close", disconnected);
+			}
 		},
 	);
 }
@@ -254,11 +297,13 @@ async function streamChat(
 	candidates: ResolvedModel[],
 	attemptTimeoutMs: number,
 	options: ChatRouteOptions,
+	clientSignal: AbortSignal,
+	plan?: RoutingPlan,
 ) {
 	const { telemetry } = options;
 	const requested = candidates[0];
-	const abort = new AbortController();
 	const raw = reply.raw;
+	if (clientSignal.aborted || raw.destroyed) return;
 
 	// reply.hijack() bypasses @fastify/cors, so apply the same allowlist here.
 	const corsOrigin = resolveCorsOrigin(
@@ -275,21 +320,22 @@ async function streamChat(
 			? { "access-control-allow-origin": corsOrigin, vary: "origin" }
 			: {}),
 	});
-	raw.on("close", () => {
-		if (!raw.writableEnded) abort.abort();
-	});
-
 	const send = (payload: unknown) => {
-		raw.write(`data: ${JSON.stringify(payload)}\n\n`);
+		if (!raw.destroyed && !raw.writableEnded)
+			raw.write(`data: ${JSON.stringify(payload)}\n\n`);
 	};
 
 	const id = randomUUID();
+	if (plan?.decision) send({ type: "routing", ...plan.decision });
 	const attempts: FailoverAttempt[] = [];
 	let servedBy: string | undefined;
 	let finalError: string | undefined;
 
 	for (let index = 0; index < candidates.length; index++) {
+		if (clientSignal.aborted || raw.destroyed) break;
 		const candidate = candidates[index];
+		const release =
+			index === 0 ? plan?.release : options.router?.acquire(candidate.id);
 		const started = performance.now();
 		let usage: TokenUsage = EMPTY_USAGE;
 		let finishReason: string | undefined;
@@ -301,8 +347,8 @@ async function streamChat(
 		// a slow generation is not a timeout, only a slow start is.
 		const attempt = new AbortController();
 		const forwardAbort = () => attempt.abort();
-		abort.signal.addEventListener("abort", forwardAbort);
-		if (abort.signal.aborted) attempt.abort();
+		clientSignal.addEventListener("abort", forwardAbort);
+		if (clientSignal.aborted) attempt.abort();
 		let timedOut = false;
 		const timer =
 			attemptTimeoutMs > 0
@@ -318,7 +364,7 @@ async function streamChat(
 		try {
 			const result = streamText({
 				model: candidate.model,
-				messages: body.messages,
+				...chatPrompt(body),
 				temperature: body.temperature,
 				maxOutputTokens: body.maxTokens,
 				abortSignal: attempt.signal,
@@ -349,7 +395,8 @@ async function streamChat(
 				: errorMessage(streamError);
 		} finally {
 			disarmTimer();
-			abort.signal.removeEventListener("abort", forwardAbort);
+			release?.();
+			clientSignal.removeEventListener("abort", forwardAbort);
 		}
 
 		telemetry.recordChat({
@@ -368,13 +415,14 @@ async function streamChat(
 		if (!error) {
 			servedBy = candidate.id;
 			finalError = undefined;
-			if (!raw.writableEnded) {
+			if (!raw.writableEnded && !raw.destroyed) {
 				send({
 					type: "finish",
 					id,
 					model: candidate.id,
 					usage,
 					finishReason,
+					...(plan?.decision ? { routing: plan.decision } : {}),
 					...(attempts.length > 0
 						? { failover: { requestedModel: requested.id, attempts } }
 						: {}),
@@ -388,7 +436,7 @@ async function streamChat(
 		attempts.push({ model: candidate.id, error });
 		finalError = error;
 		const next = candidates[index + 1];
-		const clientGone = abort.signal.aborted && !timedOut;
+		const clientGone = clientSignal.aborted || raw.destroyed;
 
 		// Fail over only while nothing has been streamed to the client yet; once
 		// output started the response is committed to this model.
@@ -397,7 +445,7 @@ async function streamChat(
 			continue;
 		}
 
-		if (!raw.writableEnded) {
+		if (!raw.writableEnded && !raw.destroyed) {
 			if (!clientGone) {
 				send({ type: "error", error: { message: error } });
 			}

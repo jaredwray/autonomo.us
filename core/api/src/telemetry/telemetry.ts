@@ -8,7 +8,7 @@ import type {
 import type { ClickHouseSink } from "./clickhouse.js";
 
 export type ChatTelemetry = {
-	operation?: "chat" | "decisions";
+	operation?: "chat" | "decisions" | "routing";
 	/** Canonical routable id, e.g. `anthropic/claude-opus-4-8`. */
 	model: string;
 	provider: string;

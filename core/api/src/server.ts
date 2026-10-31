@@ -13,7 +13,10 @@ import { decisionsRoutes } from "./routes/decisions.js";
 import { failoverRoutes } from "./routes/failover.js";
 import { healthRoutes } from "./routes/health.js";
 import { modelsRoutes } from "./routes/models.js";
+import { routingRoutes } from "./routes/routing.js";
 import { telemetryRoutes } from "./routes/telemetry.js";
+import { ModelRouter } from "./routing/router.js";
+import { RoutingSettingsStore } from "./routing/settings.js";
 import { ClickHouseSink } from "./telemetry/clickhouse.js";
 import { TelemetryService } from "./telemetry/telemetry.js";
 
@@ -45,6 +48,12 @@ export function createServer(options: CreateServerOptions = {}) {
 				: undefined,
 		});
 
+	const routing = new RoutingSettingsStore(
+		registry,
+		failover,
+		config.mongodbUrl,
+	);
+	const router = new ModelRouter(registry, routing, telemetry);
 	const server = Fastify({
 		logger: options.logger ?? true,
 	});
@@ -54,11 +63,13 @@ export function createServer(options: CreateServerOptions = {}) {
 	});
 	server.register(healthRoutes, { config });
 	server.register(modelsRoutes, { registry, catalog: modelCatalog, settings });
-	server.register(failoverRoutes, { failover, registry });
+	server.register(failoverRoutes, { failover, registry, routing });
+	server.register(routingRoutes, { routing });
 	server.register(chatRoutes, {
 		registry,
 		telemetry,
 		failover,
+		router,
 		corsOrigins: config.corsOrigins,
 	});
 	server.register(telemetryRoutes, { telemetry });
@@ -72,11 +83,17 @@ export function createServer(options: CreateServerOptions = {}) {
 				"Saved model settings could not be loaded; environment providers remain available.",
 			);
 		}
+		try {
+			await routing.initialize();
+		} catch {
+			server.log.warn("Saved routing settings could not be loaded.");
+		}
 	});
 
 	server.addHook("onClose", async () => {
 		modelCatalog.stop();
 		await settings.close();
+		await routing.close();
 		await telemetry.stop();
 	});
 
