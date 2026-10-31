@@ -525,34 +525,6 @@ export function ApiTokensView() {
 					</div>
 				)}
 			</section>
-			<section className="card" aria-labelledby="token-access-heading">
-				<h2 id="token-access-heading">Token access</h2>
-				<p className="card-note">
-					Current access: model discovery, chat, and decisions. Tokens cannot
-					change gateway settings or manage other tokens.
-				</p>
-				<details>
-					<summary>Planned permissions</summary>
-					<p>
-						Choose a resource, an action, and a scope for each grant. Read
-						allows viewing; Edit includes reading and changing settings. Run is
-						separate for inference. Missing grants deny access.
-					</p>
-					<ul>
-						<li>Models and connections: Read or Edit.</li>
-						<li>Routing: Read or Edit.</li>
-						<li>Inference: Run, scoped to selected models or pools.</li>
-						<li>Telemetry and token action logs: Read.</li>
-						<li>
-							API Tokens: Read or Edit, with no ability to grant more access
-							than the caller holds.
-						</li>
-					</ul>
-					<p className="card-note">
-						These controls are planned and are not configurable yet.
-					</p>
-				</details>
-			</section>
 			<section className="card" aria-labelledby="token-log-heading">
 				<h2 id="token-log-heading">Token action log</h2>
 				<p className="card-note">
