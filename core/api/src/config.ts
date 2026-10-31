@@ -52,10 +52,12 @@ export type ApiConfig = {
 	failover?: FailoverPolicy;
 	clickhouse?: ClickHouseConfig;
 	mongodbUrl?: string;
+	/** Protect /v1 with this owner credential; managed API tokens only get gateway access. */
+	ownerToken?: string;
 	/**
 	 * Browser origins allowed by CORS. `["*"]` allows any origin. The default
 	 * covers the Vite dev dashboard; the gateway holds provider keys and has
-	 * no auth, so arbitrary web pages must not be able to call it.
+	 * optional owner authentication, so arbitrary web pages must not be able to call it.
 	 */
 	corsOrigins: string[];
 };
@@ -218,6 +220,7 @@ export function configFromEnv(
 		failover,
 		clickhouse,
 		mongodbUrl: env.MONGODB_URL,
+		ownerToken: env.OWNER_TOKEN || undefined,
 		corsOrigins,
 	};
 }

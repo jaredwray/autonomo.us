@@ -616,6 +616,30 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 }
 
 .routing-fields { border: 0; padding: 0; margin: 0; min-width: 0; }
+.tokens-view .form-field { margin: 12px 0; }
+.tokens-view textarea { width: 100%; resize: vertical; border: 1px solid var(--hairline); padding: 10px 12px; border-radius: 6px; background: var(--page); color: var(--text-primary); font: inherit; }
+.tokens-view .token-secret textarea { font-family: monospace; overflow-wrap: anywhere; }
+.token-secret { border-color: var(--series-1); }
+.token-ttl { max-width: 300px; }
+.token-description { margin: 6px 0; color: var(--text-secondary); white-space: pre-wrap; overflow-wrap: anywhere; }
+.token-date { display: block; margin-top: 6px; color: var(--text-secondary); }
+.token-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.tokens-table { min-width: 760px; }
+.tokens-table td:first-child { max-width: 320px; overflow-wrap: anywhere; }
+.token-log-table { min-width: 640px; }
+.tokens-table, .token-log-table { width: 100%; border-collapse: collapse; text-align: left; }
+.tokens-table th, .token-log-table th { padding: 12px 10px; color: var(--text-muted); font-size: 11px; font-weight: 500; border-bottom: 1px solid var(--hairline); }
+.tokens-table td, .token-log-table td { padding: 16px 10px; font-size: 12px; vertical-align: top; border-bottom: 1px solid var(--hairline); }
+.tokens-table tr:last-child td, .token-log-table tr:last-child td { border-bottom: 0; }
+.token-log-table td:last-child { min-width: 220px; overflow-wrap: anywhere; }
+.sidebar-lock { margin-top: 18px; }
+.token-status { text-transform: capitalize; display: inline-block; padding: 3px 8px; border-radius: 4px; background: var(--page); }
+.token-status.active { color: var(--success-text); }
+.token-action-name { text-transform: capitalize; }
+.button.danger { color: var(--status-critical); }
+.tokens-view details { margin-top: 12px; }
+.tokens-view summary { cursor: pointer; }
+.owner-access { max-width: 640px; margin: 40px auto; }
 .routing-view .form-field { margin: 12px 0; }
 .routing-view textarea { width: 100%; resize: vertical; border: 1px solid var(--hairline); padding: 10px 12px; border-radius: 6px; background: var(--page); color: var(--text-primary); font: inherit; }
 .routing-add, .routing-target, .routing-subheader, .routing-row-actions { display: flex; align-items: center; gap: 12px; }
@@ -641,3 +665,6 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 	.routing-subcard { padding: 12px; }
 	.routing-row-actions { display: flex; margin: 8px 0 0; }
 }
+
+.tokens-view .header-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.tokens-view textarea:focus-visible { outline: 2px solid var(--series-1); outline-offset: 3px; }

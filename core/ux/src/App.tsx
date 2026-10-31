@@ -5,14 +5,18 @@ import type {
 	TelemetryEvent,
 } from "@autonomo.us/common";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { ApiTokensView } from "./ApiTokensView.js";
 import {
+	clearOwnerCredential,
 	type DashboardData,
 	fetchDashboardData,
 	fetchFailoverPolicy,
+	hasOwnerCredential,
 	updateFailoverPolicy,
 } from "./api.js";
 import { Icon } from "./Icons.js";
 import { ModelsView } from "./ModelsView.js";
+import { OwnerAccess } from "./OwnerAccess.js";
 import { RoutingView } from "./RoutingView.js";
 
 const logoMark = new URL("./assets/logo-mark.svg", import.meta.url).href;
@@ -542,16 +546,31 @@ const viewLabels = {
 	dashboard: "Dashboard",
 	models: "Models",
 	routing: "Routing",
+	"api-tokens": "API Tokens",
 };
 function currentView(): keyof typeof viewLabels {
-	return window.location.hash === "#/models"
-		? "models"
-		: window.location.hash === "#/routing"
-			? "routing"
-			: "dashboard";
+	const view = window.location.hash.slice(2);
+	return Object.hasOwn(viewLabels, view)
+		? (view as keyof typeof viewLabels)
+		: "dashboard";
 }
 
 export function App() {
+	const [needsAuth, setNeedsAuth] = useState(false);
+	const [authenticated, setAuthenticated] = useState(hasOwnerCredential);
+	useEffect(() => {
+		const requireAuth = () => {
+			clearOwnerCredential();
+			setAuthenticated(false);
+			setNeedsAuth(true);
+		};
+		window.addEventListener("autonomous:authentication-required", requireAuth);
+		return () =>
+			window.removeEventListener(
+				"autonomous:authentication-required",
+				requireAuth,
+			);
+	}, []);
 	const [view, setView] = useState(currentView);
 	const [collapsed, setCollapsed] = useState(() => {
 		try {
@@ -595,21 +614,39 @@ export function App() {
 					<span className="sidebar-label">autonomo.us</span>
 				</a>
 				<nav aria-label="Main navigation">
-					{(["dashboard", "models", "routing"] as const).map((item) => (
-						<a
-							key={item}
-							href={`#/${item}`}
-							className={`nav-item ${view === item ? "active" : ""}`}
-							aria-current={view === item ? "page" : undefined}
-							aria-label={viewLabels[item]}
-							title={collapsed ? viewLabels[item] : undefined}
-							onClick={() => setView(item)}
-						>
-							<Icon name={item} />
-							<span className="sidebar-label">{viewLabels[item]}</span>
-						</a>
-					))}
+					{(["dashboard", "models", "routing", "api-tokens"] as const).map(
+						(item) => (
+							<a
+								key={item}
+								href={`#/${item}`}
+								className={`nav-item ${view === item ? "active" : ""}`}
+								aria-current={view === item ? "page" : undefined}
+								aria-label={viewLabels[item]}
+								title={collapsed ? viewLabels[item] : undefined}
+								onClick={() => setView(item)}
+							>
+								<Icon name={item} />
+								<span className="sidebar-label">{viewLabels[item]}</span>
+							</a>
+						),
+					)}
 				</nav>
+				{authenticated && (
+					<button
+						className="button sidebar-lock"
+						type="button"
+						aria-label="Lock dashboard"
+						title={collapsed ? "Lock dashboard" : undefined}
+						onClick={() => {
+							clearOwnerCredential();
+							setAuthenticated(false);
+							setNeedsAuth(true);
+						}}
+					>
+						<Icon name="lock" />
+						<span className="sidebar-label">Lock dashboard</span>
+					</button>
+				)}
 				<button
 					type="button"
 					className="sidebar-toggle"
@@ -624,7 +661,16 @@ export function App() {
 				</button>
 			</aside>
 			<main id="main-content" tabIndex={-1} className="main-content">
-				{view === "models" ? (
+				{needsAuth ? (
+					<OwnerAccess
+						onConnected={() => {
+							setAuthenticated(true);
+							setNeedsAuth(false);
+						}}
+					/>
+				) : view === "api-tokens" ? (
+					<ApiTokensView />
+				) : view === "models" ? (
 					<ModelsView />
 				) : view === "routing" ? (
 					<RoutingView />

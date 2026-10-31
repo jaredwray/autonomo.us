@@ -11,6 +11,7 @@ services:
       CLICKHOUSE_USERNAME: autonomous
       CLICKHOUSE_PASSWORD: autonomous
       MONGODB_URL: mongodb://autonomous:autonomous@mongo:27017/autonomous?authSource=admin
+      OWNER_TOKEN: ${OWNER_TOKEN:-}
       # Register the anthropic provider by exporting ANTHROPIC_API_KEY.
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-${GOOGLE_GENERATIVE_AI_API_KEY:-}}
