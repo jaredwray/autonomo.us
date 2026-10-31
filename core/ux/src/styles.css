@@ -614,3 +614,30 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 @media (prefers-reduced-motion: reduce) {
 	.sidebar, .main-content { transition: none; }
 }
+
+.routing-fields { border: 0; padding: 0; margin: 0; min-width: 0; }
+.routing-view .form-field { margin: 12px 0; }
+.routing-view textarea { width: 100%; resize: vertical; border: 1px solid var(--hairline); padding: 10px 12px; border-radius: 6px; background: var(--page); color: var(--text-primary); font: inherit; }
+.routing-add, .routing-target, .routing-subheader, .routing-row-actions { display: flex; align-items: center; gap: 12px; }
+.routing-add { align-items: flex-end; margin: 14px 0; }
+.routing-add .form-field { flex: 1; margin: 0; min-width: 0; }
+.routing-target { padding: 10px 0; border-bottom: 1px solid var(--hairline); }
+.routing-target > .form-field:first-child { flex: 1; min-width: 0; }
+.routing-target code { flex: 1; overflow-wrap: anywhere; min-width: 0; }
+.routing-weight { max-width: 180px; }
+.routing-subcard { border: 1px solid var(--hairline); padding: 16px; border-radius: 8px; margin-top: 16px; }
+.routing-subheader { justify-content: space-between; }
+.routing-subheader h3 { margin: 0; overflow-wrap: anywhere; min-width: 0; }
+.routing-policy > .form-field { max-width: 260px; }
+.routing-list { padding-left: 24px; }
+.routing-list li { padding: 8px 0; }
+.routing-list code { overflow-wrap: anywhere; }
+.routing-row-actions { display: inline-flex; margin-left: 12px; }
+.routing-save { display: flex; gap: 16px; align-items: center; margin: 0 0 24px; }
+.routing-result { margin-top: 16px; border-top: 1px solid var(--hairline); white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (max-width: 600px) {
+	.routing-add, .routing-target, .routing-subheader { flex-wrap: wrap; }
+	.routing-add .form-field, .routing-target > .form-field:first-child { flex-basis: 100%; }
+	.routing-subcard { padding: 12px; }
+	.routing-row-actions { display: flex; margin: 8px 0 0; }
+}

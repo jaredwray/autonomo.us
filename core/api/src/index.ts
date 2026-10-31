@@ -36,6 +36,12 @@ export {
 	UnknownProviderError,
 } from "./providers/registry.js";
 export { toTokenUsage } from "./routes/chat.js";
+export { ModelRouter, type RoutingPlan } from "./routing/router.js";
+export {
+	defaultRoutingConfig,
+	RoutingError,
+	RoutingSettingsStore,
+} from "./routing/settings.js";
 export { type CreateServerOptions, createServer } from "./server.js";
 export {
 	ClickHouseSink,

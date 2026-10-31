@@ -39,7 +39,10 @@ function validAnswer(
 
 /** TypeSafe's System One protocol is separate from chat completions. */
 export function createTypeSafeDecision(config: CloudProviderConfig) {
-	return async (request: DecisionRequest): Promise<DecisionResponse> => {
+	return async (
+		request: DecisionRequest,
+		signal?: AbortSignal,
+	): Promise<DecisionResponse> => {
 		try {
 			const response = await fetch(
 				`${(config.baseURL ?? "https://api.typesafe.ai/v1").replace(/\/$/, "")}/systemone`,
@@ -50,7 +53,9 @@ export function createTypeSafeDecision(config: CloudProviderConfig) {
 						"content-type": "application/json",
 					},
 					body: JSON.stringify(request),
-					signal: AbortSignal.timeout(30_000),
+					signal: signal
+						? AbortSignal.any([signal, AbortSignal.timeout(30_000)])
+						: AbortSignal.timeout(30_000),
 					redirect: "error",
 				},
 			);

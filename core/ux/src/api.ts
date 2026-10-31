@@ -2,8 +2,11 @@
 import type {
 	AddModelRequest,
 	FailoverPolicy,
+	GatewayResponse,
 	ModelInfo,
 	ProviderSettings,
+	RoutingConfig,
+	RoutingSettings,
 	TelemetryEvent,
 	UsageSummary,
 } from "@autonomo.us/common";
@@ -87,6 +90,44 @@ export async function addModel(input: AddModelRequest): Promise<ModelInfo> {
 
 export async function fetchFailoverPolicy(): Promise<FailoverPolicy> {
 	return getJson<FailoverPolicy>("/v1/failover");
+}
+
+export function fetchRouting(): Promise<RoutingSettings> {
+	return getJson<RoutingSettings>("/v1/routing");
+}
+
+async function postJson<T>(
+	path: string,
+	method: string,
+	body: unknown,
+): Promise<T> {
+	const response = await fetch(`${apiBase()}${path}`, {
+		method,
+		headers: { "content-type": "application/json", accept: "application/json" },
+		body: JSON.stringify(body),
+	});
+	const result = await response.json();
+	if (!response.ok)
+		throw new Error(
+			result.error?.message ??
+				result.message ??
+				`Request failed (${response.status})`,
+		);
+	return result as T;
+}
+
+export function updateRouting(config: RoutingConfig): Promise<RoutingSettings> {
+	return postJson("/v1/routing", "PUT", config);
+}
+
+export function sendChat(
+	model: string,
+	content: string,
+): Promise<GatewayResponse> {
+	return postJson("/v1/chat", "POST", {
+		model,
+		messages: [{ role: "user", content }],
+	});
 }
 
 export async function updateFailoverPolicy(

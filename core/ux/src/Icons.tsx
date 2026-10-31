@@ -4,6 +4,7 @@ export function Icon({
 	name:
 		| "dashboard"
 		| "models"
+		| "routing"
 		| "collapse"
 		| "expand"
 		| "plus"
@@ -13,6 +14,7 @@ export function Icon({
 	const paths = {
 		dashboard: "M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z",
 		models: "m12 3 9 5-9 5-9-5 9-5z M3 12l9 5 9-5 M3 16l9 5 9-5",
+		routing: "M4 12h6 M10 12V5h10 M10 12v7h10 M17 2l3 3-3 3 M17 16l3 3-3 3",
 		collapse: "M9 4H4v16h5 M15 7l-5 5 5 5 M10 12h11",
 		expand: "M9 4H4v16h5 M16 7l5 5-5 5 M10 12h11",
 		plus: "M12 5v14 M5 12h14",

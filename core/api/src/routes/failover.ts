@@ -5,9 +5,11 @@ import {
 	MAX_FAILOVER_TIMEOUT_MS,
 } from "../failover.js";
 import type { ProviderRegistry } from "../providers/registry.js";
+import type { RoutingSettingsStore } from "../routing/settings.js";
 
 export type FailoverRouteOptions = {
 	failover: FailoverPolicyStore;
+	routing?: RoutingSettingsStore;
 	registry: ProviderRegistry;
 };
 
@@ -35,7 +37,10 @@ export async function failoverRoutes(
 ) {
 	const { failover, registry } = options;
 
-	server.get("/v1/failover", async () => failover.get());
+	server.get("/v1/failover", async () => {
+		await options.routing?.initialize();
+		return failover.get();
+	});
 
 	server.put(
 		"/v1/failover",
@@ -60,7 +65,9 @@ export async function failoverRoutes(
 				});
 			}
 
-			return failover.update(patch);
+			return options.routing
+				? options.routing.updateFailover(patch)
+				: failover.update(patch);
 		},
 	);
 }

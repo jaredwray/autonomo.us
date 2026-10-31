@@ -13,6 +13,7 @@ import {
 } from "./api.js";
 import { Icon } from "./Icons.js";
 import { ModelsView } from "./ModelsView.js";
+import { RoutingView } from "./RoutingView.js";
 
 const logoMark = new URL("./assets/logo-mark.svg", import.meta.url).href;
 
@@ -537,10 +538,21 @@ function Dashboard() {
 	);
 }
 
+const viewLabels = {
+	dashboard: "Dashboard",
+	models: "Models",
+	routing: "Model Routing",
+};
+function currentView(): keyof typeof viewLabels {
+	return window.location.hash === "#/models"
+		? "models"
+		: window.location.hash === "#/routing"
+			? "routing"
+			: "dashboard";
+}
+
 export function App() {
-	const [view, setView] = useState(() =>
-		window.location.hash === "#/models" ? "models" : "dashboard",
-	);
+	const [view, setView] = useState(currentView);
 	const [collapsed, setCollapsed] = useState(() => {
 		try {
 			const saved = window.localStorage.getItem("autonomous.sidebar.collapsed");
@@ -550,8 +562,7 @@ export function App() {
 		}
 	});
 	useEffect(() => {
-		const navigate = () =>
-			setView(window.location.hash === "#/models" ? "models" : "dashboard");
+		const navigate = () => setView(currentView());
 		window.addEventListener("hashchange", navigate);
 		return () => window.removeEventListener("hashchange", navigate);
 	}, []);
@@ -584,26 +595,18 @@ export function App() {
 					<span className="sidebar-label">autonomo.us</span>
 				</a>
 				<nav aria-label="Main navigation">
-					{(["dashboard", "models"] as const).map((item) => (
+					{(["dashboard", "models", "routing"] as const).map((item) => (
 						<a
 							key={item}
 							href={`#/${item}`}
 							className={`nav-item ${view === item ? "active" : ""}`}
 							aria-current={view === item ? "page" : undefined}
-							aria-label={item === "dashboard" ? "Dashboard" : "Models"}
-							title={
-								collapsed
-									? item === "dashboard"
-										? "Dashboard"
-										: "Models"
-									: undefined
-							}
+							aria-label={viewLabels[item]}
+							title={collapsed ? viewLabels[item] : undefined}
 							onClick={() => setView(item)}
 						>
 							<Icon name={item} />
-							<span className="sidebar-label">
-								{item === "dashboard" ? "Dashboard" : "Models"}
-							</span>
+							<span className="sidebar-label">{viewLabels[item]}</span>
 						</a>
 					))}
 				</nav>
@@ -621,7 +624,13 @@ export function App() {
 				</button>
 			</aside>
 			<main id="main-content" tabIndex={-1} className="main-content">
-				{view === "models" ? <ModelsView /> : <Dashboard />}
+				{view === "models" ? (
+					<ModelsView />
+				) : view === "routing" ? (
+					<RoutingView />
+				) : (
+					<Dashboard />
+				)}
 			</main>
 		</div>
 	);

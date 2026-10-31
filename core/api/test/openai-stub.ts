@@ -24,7 +24,14 @@ export type OpenAIStub = {
 	close(): Promise<void>;
 };
 
-export async function startOpenAIStub(): Promise<OpenAIStub> {
+export async function startOpenAIStub(
+	options: {
+		onRequest?: (
+			body: { model?: string; stream?: boolean },
+			headers: http.IncomingHttpHeaders,
+		) => void;
+	} = {},
+): Promise<OpenAIStub> {
 	const server = http.createServer((req, res) => {
 		let body = "";
 		req.on("data", (chunk) => {
@@ -40,6 +47,7 @@ export async function startOpenAIStub(): Promise<OpenAIStub> {
 				model?: string;
 				stream?: boolean;
 			};
+			options.onRequest?.(parsed, req.headers);
 			if (
 				parsed.model?.startsWith("broken-") &&
 				parsed.model !== "broken-stream-model"
