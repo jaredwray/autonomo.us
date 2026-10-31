@@ -115,7 +115,7 @@ function TokenForm({
 			>
 				<fieldset className="routing-fields" disabled={busy}>
 					{metadata && (
-						<div className="model-form-grid">
+						<div>
 							<div className="form-field">
 								<label htmlFor="token-name">Name</label>
 								<input
