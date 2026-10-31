@@ -22,6 +22,9 @@ jobs:
         env:
           MONGO_INITDB_ROOT_USERNAME: autonomous
           MONGO_INITDB_ROOT_PASSWORD: autonomous
+          # Use TCMalloc's thread caches to avoid the hosted runner kernel's
+          # rseq incompatibility: https://jira.mongodb.org/browse/SERVER-121912
+          GLIBC_TUNABLES: glibc.pthread.rseq=1
         ports:
           - 27017:27017
         options: >-
