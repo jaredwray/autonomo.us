@@ -579,6 +579,58 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .model-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 14px; }
 .form-field { display: flex; flex-direction: column; gap: 7px; font-size: 12px; font-weight: 500; color: var(--text-primary); }
 .form-field input, .form-field select { width: 100%; min-width: 0; border: 1px solid var(--hairline); padding: 10px 12px; border-radius: 6px; background: var(--page); color: var(--text-primary); font: inherit; font-weight: 400; }
+.form-field select, .failover select {
+	appearance: none;
+	min-height: 42px;
+	padding: 10px 40px 10px 12px;
+	border-radius: 8px;
+	background-color: var(--surface-1);
+	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23898781' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+	background-repeat: no-repeat;
+	background-position: right 12px center;
+	background-size: 16px;
+	box-shadow: 0 1px 2px var(--border);
+	font-size: 13px;
+	line-height: 1.5;
+	text-overflow: ellipsis;
+	cursor: pointer;
+	transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+.form-field select:enabled:hover, .failover select:enabled:hover { border-color: var(--text-muted); }
+.form-field select:focus-visible, .failover select:focus-visible { border-color: var(--series-1); outline-offset: 2px; }
+.form-field select:disabled, .failover select:disabled { background-color: var(--page); color: var(--text-muted); box-shadow: none; cursor: not-allowed; opacity: 0.65; }
+
+/* Enhance native menus where supported; other browsers keep their native picker. */
+@supports (appearance: base-select) {
+	.form-field select, .failover select, select::picker(select) { appearance: base-select; }
+	.form-field select, .failover select { background-image: none; padding-inline-end: 12px; gap: 16px; }
+	select::picker-icon { content: ""; width: 8px; height: 8px; margin: 0 3px 3px auto; flex-shrink: 0; border-right: 1.5px solid var(--text-muted); border-bottom: 1.5px solid var(--text-muted); rotate: 45deg; }
+	select:open::picker-icon { rotate: 225deg; margin-block: 3px 0; }
+	.form-field select:enabled:open, .failover select:enabled:open { border-color: var(--series-1); box-shadow: 0 0 0 3px color-mix(in srgb, var(--series-1) 15%, transparent); }
+	select::picker(select) {
+		margin-block: 6px;
+		padding: 4px;
+		border: 1px solid var(--hairline);
+		border-radius: 10px;
+		background: var(--surface-1);
+		color: var(--text-primary);
+		box-shadow: 0 12px 30px #0002, 0 2px 6px #0001;
+		min-inline-size: anchor-size(self-inline);
+		max-block-size: min(320px, 60vh);
+		position-try-order: normal;
+		overflow: auto;
+		font: inherit;
+	}
+	select option { display: flex; align-items: center; gap: 12px; min-height: 40px; padding: 10px 12px; border-radius: 6px; white-space: normal; overflow-wrap: anywhere; cursor: pointer; }
+	select option:checked { background: color-mix(in srgb, var(--series-1) 10%, var(--surface-1)); font-weight: 600; }
+	select option:hover:not(:disabled), select option:focus { background: color-mix(in srgb, var(--series-1) 16%, var(--surface-1)); }
+	select option:focus-visible { outline: 2px solid var(--series-1); outline-offset: -2px; }
+	select option:disabled { color: var(--text-muted); cursor: not-allowed; }
+	select option::checkmark { order: 1; margin-inline-start: auto; color: var(--series-1); }
+}
+@media (prefers-reduced-motion: reduce) {
+	.form-field select, .failover select { transition: none; }
+}
 .key-field { grid-column: 1 / -1; }
 .field-hint { color: var(--text-secondary); font-size: 11px; font-weight: 400; }
 .form-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 22px; }
