@@ -1,18 +1,24 @@
 /// <reference types="vite/client" />
 import type {
 	AddModelRequest,
+	AgentToken,
+	AgentTokenSecret,
+	AgentTokenSettings,
 	ApiToken,
 	ApiTokenSecret,
 	ApiTokenSettings,
+	CreateAgentTokenRequest,
 	CreateApiTokenRequest,
 	FailoverPolicy,
 	GatewayResponse,
 	ModelInfo,
 	ProviderSettings,
+	RollAgentTokenRequest,
 	RollApiTokenRequest,
 	RoutingConfig,
 	RoutingSettings,
 	TelemetryEvent,
+	UpdateAgentTokenRequest,
 	UpdateApiTokenRequest,
 	UsageSummary,
 } from "@autonomo.us/common";
@@ -235,4 +241,32 @@ export function rollApiToken(
 }
 export function revokeApiToken(id: string): Promise<ApiToken> {
 	return postJson(`/v1/api-tokens/${encodeURIComponent(id)}`, "DELETE", {});
+}
+
+export function fetchAgentTokens(): Promise<AgentTokenSettings> {
+	return getJson("/v1/agent-tokens");
+}
+export function createAgentToken(
+	input: CreateAgentTokenRequest,
+): Promise<AgentTokenSecret> {
+	return postJson("/v1/agent-tokens", "POST", input);
+}
+export function updateAgentToken(
+	id: string,
+	input: UpdateAgentTokenRequest,
+): Promise<AgentToken> {
+	return postJson(`/v1/agent-tokens/${encodeURIComponent(id)}`, "PATCH", input);
+}
+export function rollAgentToken(
+	id: string,
+	input: RollAgentTokenRequest,
+): Promise<AgentTokenSecret> {
+	return postJson(
+		`/v1/agent-tokens/${encodeURIComponent(id)}/roll`,
+		"POST",
+		input,
+	);
+}
+export function revokeAgentToken(id: string): Promise<AgentToken> {
+	return postJson(`/v1/agent-tokens/${encodeURIComponent(id)}`, "DELETE", {});
 }

@@ -1,5 +1,6 @@
 import { API_TOKEN_TTLS, type ApiTokenSecret } from "@autonomo.us/common";
 import { afterEach, describe, expect, it } from "vitest";
+import { AgentTokenStore } from "../src/auth/agent-tokens.js";
 import { ApiTokenStore, tokenHash } from "../src/auth/tokens.js";
 import { configFromEnv } from "../src/config.js";
 import { createServer } from "../src/server.js";
@@ -16,12 +17,12 @@ afterEach(async () => {
 	for (const close of cleanup.splice(0)) await close();
 });
 
-describe("token lifecycle", () => {
+describe.each([ApiTokenStore, AgentTokenStore])("%s lifecycle", (Store) => {
 	it.each(
 		API_TOKEN_TTLS,
 	)("enforces TTL %s at the exact expiry boundary", async (ttlDays) => {
 		let now = Date.parse("2026-10-31T12:00:00Z");
-		const store = new ApiTokenStore(undefined, () => now);
+		const store = new Store(undefined, () => now);
 		const issued = await store.create({ ...input, ttlDays }, actor);
 		expect(await store.authenticate(issued.secret)).toMatchObject({
 			name: input.name,
@@ -41,7 +42,7 @@ describe("token lifecycle", () => {
 	});
 	it("preserves earlier roll deadlines and caps overlap at original expiry", async () => {
 		let now = Date.parse("2026-10-31T12:00:00Z");
-		const store = new ApiTokenStore(undefined, () => now);
+		const store = new Store(undefined, () => now);
 		const first = await store.create({ ...input, ttlDays: 1 }, actor);
 		now += 86_400_000 - 5000;
 		const second = await store.roll(
@@ -71,7 +72,7 @@ describe("token lifecycle", () => {
 	});
 	it("supports immediate rolling, renews expired tokens, and revokes all values", async () => {
 		let now = Date.now();
-		const store = new ApiTokenStore(undefined, () => now);
+		const store = new Store(undefined, () => now);
 		const first = await store.create({ ...input, ttlDays: 1 }, actor);
 		const second = await store.roll(
 			first.token.id,
@@ -118,7 +119,7 @@ describe("token lifecycle", () => {
 	});
 	it("retains redacted bounded history and serializes concurrent edits", async () => {
 		let now = Date.now();
-		const store = new ApiTokenStore(undefined, () => now++);
+		const store = new Store(undefined, () => now++);
 		const token = await store.create(input, actor);
 		await Promise.all([
 			store.update(
@@ -153,7 +154,7 @@ describe("token lifecycle", () => {
 		});
 	});
 	it("bounds overlapping values without invalidating a live version", async () => {
-		const store = new ApiTokenStore();
+		const store = new Store();
 		const first = await store.create(input, actor);
 		for (let i = 0; i < 19; i++)
 			await store.roll(
