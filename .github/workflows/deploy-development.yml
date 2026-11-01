@@ -1,4 +1,4 @@
-name: deploy-dev
+name: deploy-development
 
 # Publishes the dashboard to Cloudflare Workers when commits land on main.
 # The development environment is https://dev.autonomo.us (Worker autonomo-dev).
@@ -21,12 +21,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: deploy-dev
+  group: deploy-development
   cancel-in-progress: true
 
 jobs:
   deploy:
-    name: Deploy development
+    name: deploy-development
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment:

@@ -415,7 +415,7 @@ totals, per-model usage, and recent gateway events.
 
 Merges to `main` deploy the dashboard to Cloudflare Workers as the development
 environment at <https://dev.autonomo.us>. The
-[deploy-dev](.github/workflows/deploy-dev.yml) workflow builds
+[deploy-development](.github/workflows/deploy-development.yml) workflow builds
 `@autonomo.us/ux` and runs `pnpm deploy:dev` (`wrangler deploy --env dev`),
 which publishes the Worker `autonomo-dev` on that custom domain. The
 `autonomo.us` zone must already be on the Cloudflare account. This publishes
