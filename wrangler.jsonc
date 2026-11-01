@@ -1,0 +1,27 @@
+{
+	"$schema": "./node_modules/wrangler/config-schema.json",
+	"name": "autonomo",
+	// Assets-only Worker. `main` is optional when `assets` is set.
+	"compatibility_date": "2026-10-22",
+	// The top-level config is not a public environment. Deploys use `--env dev`.
+	"workers_dev": false,
+	"preview_urls": false,
+	"send_metrics": false,
+	"assets": {
+		"directory": "./core/ux/dist",
+		"not_found_handling": "single-page-application"
+	},
+	"env": {
+		"dev": {
+			// Published Worker name is `autonomo-dev`.
+			"workers_dev": false,
+			"preview_urls": false,
+			"routes": [
+				{
+					"pattern": "dev.autonomo.us",
+					"custom_domain": true
+				}
+			]
+		}
+	}
+}
