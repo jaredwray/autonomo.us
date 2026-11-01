@@ -1,13 +1,19 @@
 /// <reference types="vite/client" />
 import type {
 	AddModelRequest,
+	ApiToken,
+	ApiTokenSecret,
+	ApiTokenSettings,
+	CreateApiTokenRequest,
 	FailoverPolicy,
 	GatewayResponse,
 	ModelInfo,
 	ProviderSettings,
+	RollApiTokenRequest,
 	RoutingConfig,
 	RoutingSettings,
 	TelemetryEvent,
+	UpdateApiTokenRequest,
 	UsageSummary,
 } from "@autonomo.us/common";
 
@@ -33,8 +39,41 @@ function apiBase(): string {
 	return import.meta.env?.VITE_API_URL ?? "";
 }
 
+// Credentials live only in this tab's memory, never in browser storage or a build.
+let ownerCredential = "";
+export function clearOwnerCredential() {
+	ownerCredential = "";
+}
+export function hasOwnerCredential() {
+	return Boolean(ownerCredential);
+}
+export async function connectOwner(credential: string) {
+	const response = await fetch(`${apiBase()}/v1/auth/owner`, {
+		headers: {
+			accept: "application/json",
+			authorization: `Bearer ${credential}`,
+		},
+	});
+	if (!response.ok)
+		throw new Error(
+			response.status === 401 || response.status === 403
+				? "Enter a valid owner credential."
+				: "Could not connect to the API. Please retry.",
+		);
+	ownerCredential = credential;
+}
+async function apiFetch(path: string, options: RequestInit = {}) {
+	const headers = new Headers(options.headers);
+	const credential = ownerCredential;
+	if (credential) headers.set("authorization", `Bearer ${credential}`);
+	const response = await fetch(path, { ...options, headers });
+	if (response.status === 401 && credential === ownerCredential)
+		window.dispatchEvent(new Event("autonomous:authentication-required"));
+	return response;
+}
+
 async function getJson<T>(path: string): Promise<T> {
-	const response = await fetch(`${apiBase()}${path}`, {
+	const response = await apiFetch(`${apiBase()}${path}`, {
 		headers: { accept: "application/json" },
 	});
 	if (!response.ok) {
@@ -71,7 +110,7 @@ export function fetchModelCatalog(): Promise<ModelCatalog> {
 }
 
 export async function addModel(input: AddModelRequest): Promise<ModelInfo> {
-	const response = await fetch(`${apiBase()}/v1/models`, {
+	const response = await apiFetch(`${apiBase()}/v1/models`, {
 		method: "POST",
 		headers: { "content-type": "application/json", accept: "application/json" },
 		body: JSON.stringify(input),
@@ -101,7 +140,7 @@ async function postJson<T>(
 	method: string,
 	body: unknown,
 ): Promise<T> {
-	const response = await fetch(`${apiBase()}${path}`, {
+	const response = await apiFetch(`${apiBase()}${path}`, {
 		method,
 		headers: { "content-type": "application/json", accept: "application/json" },
 		body: JSON.stringify(body),
@@ -133,7 +172,7 @@ export function sendChat(
 export async function updateFailoverPolicy(
 	policy: FailoverPolicy,
 ): Promise<FailoverPolicy> {
-	const response = await fetch(`${apiBase()}/v1/failover`, {
+	const response = await apiFetch(`${apiBase()}/v1/failover`, {
 		method: "PUT",
 		headers: { "content-type": "application/json", accept: "application/json" },
 		body: JSON.stringify(policy),
@@ -168,4 +207,32 @@ export async function fetchDashboardData(): Promise<DashboardData> {
 		models: modelsPayload.models,
 		providers: modelsPayload.providers,
 	};
+}
+
+export function fetchApiTokens(): Promise<ApiTokenSettings> {
+	return getJson("/v1/api-tokens");
+}
+export function createApiToken(
+	input: CreateApiTokenRequest,
+): Promise<ApiTokenSecret> {
+	return postJson("/v1/api-tokens", "POST", input);
+}
+export function updateApiToken(
+	id: string,
+	input: UpdateApiTokenRequest,
+): Promise<ApiToken> {
+	return postJson(`/v1/api-tokens/${encodeURIComponent(id)}`, "PATCH", input);
+}
+export function rollApiToken(
+	id: string,
+	input: RollApiTokenRequest,
+): Promise<ApiTokenSecret> {
+	return postJson(
+		`/v1/api-tokens/${encodeURIComponent(id)}/roll`,
+		"POST",
+		input,
+	);
+}
+export function revokeApiToken(id: string): Promise<ApiToken> {
+	return postJson(`/v1/api-tokens/${encodeURIComponent(id)}`, "DELETE", {});
 }

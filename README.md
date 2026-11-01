@@ -68,8 +68,8 @@ pnpm lint:fix
 
 ## Gateway
 
-The dashboard has a collapsible sidebar with **Dashboard**, **Models**, and
-**Routing** views.
+The dashboard has a collapsible sidebar with **Dashboard**, **Models**,
+**Routing**, and **API Tokens** views.
 In **Models**, search active models or choose **Add model** to connect Google
 Gemini, xAI Grok, Anthropic Claude, OpenAI, Groq, Mistral, DeepSeek, OpenRouter,
 Cloudflare Workers AI, or Jev (TypeSafe). Choose a catalog suggestion or enter a
@@ -127,6 +127,13 @@ through environment variables:
 
 - `GET /health` — API liveness (`status`, `timestamp`) plus `mongodb` and `clickhouse`, each containing `configured` and `connected`. Configured databases are actively probed with bounded timeouts; unavailable databases report `connected: false` while liveness remains HTTP 200. Set `MONGODB_URL` and `CLICKHOUSE_URL` to enable the respective checks.
 
+- `GET /v1/api-tokens` — token metadata, latest 100 lifecycle actions, persistence and authentication mode; never returns secrets or hashes.
+- `GET /v1/auth/owner` — verify owner access without reading MongoDB; returns 204. Managed API tokens cannot use this endpoint.
+- `POST /v1/api-tokens` — create with `{ name, description, ttlDays, permissions? }`, where TTL is `1`, `7`, `30`, `180`, or `"never"`. Returns `{ token, secret }` once.
+- `PATCH /v1/api-tokens/:id` — update `{ name, description, permissions? }`. Omitted permissions stay unchanged; `[]` removes all grants.
+- `POST /v1/api-tokens/:id/roll` — issue a new secret with `{ ttlDays, previousTokenTtlSeconds }`. Overlap is 0–2592000 seconds (30 days), capped at the previous value's original expiry.
+- `DELETE /v1/api-tokens/:id` — revoke the token and all overlapping values; retains its metadata and action history.
+
 - `POST /v1/chat` — proxy a chat request; body `{ model, messages, stream?, temperature?, maxTokens? }` where `model` is `connection/model`, `auto`, or `pool/<id>`. Returns the assistant message plus `usage` token counts; with `stream: true` responds with SSE (`text-delta` events, then `finish` with usage).
 - `GET /v1/models` — routable models and providers.
 - `POST /v1/models` — add an active model; body `{ provider, connectionId?, createConnection?, model, apiKey?, accountId? }` (provider IDs: `google`, `xai`, `anthropic`, `openai`, `groq`, `mistral`, `deepseek`, `openrouter`, `cloudflare`, `typesafe`). Omit `connectionId` to use the default provider connection. Set `createConnection: true` to reject an existing name with HTTP 409. The key is required for a new connection and optional for subsequent additions to that connection. Repeated additions are idempotent; replies contain only the model ID and provider.
@@ -151,6 +158,59 @@ curl -X POST http://localhost:3000/v1/chat \
   -H "content-type: application/json" \
   -d '{"model": "local/llama3.3", "messages": [{"role": "user", "content": "Hello"}]}'
 ```
+
+### API tokens
+
+Open **API Tokens** to create, edit, roll, or revoke gateway credentials. Each
+token has a name, description, and a TTL of 1, 7, 30, or 180 days, or Never.
+Creation and rolling show the secret once; copy it before leaving the page.
+The server stores only its SHA-256 digest. MongoDB persists tokens and their
+actions in `gateway_api_tokens`; without MongoDB they last until API restart.
+
+Set `OWNER_TOKEN` on the API (also passed through Docker Compose) to require
+`Authorization: Bearer <token>` on every `/v1/*` request. The dashboard prompts
+for the owner credential and holds it only in tab memory. Reloading or selecting
+**Lock dashboard** clears it. The owner can manage the gateway; generated tokens
+receive the permissions chosen in Create/Edit token. `/health` stays public.
+Without `OWNER_TOKEN`, the existing unauthenticated local mode remains enabled;
+tokens do not protect the gateway from requests without credentials. The token
+page displays this mode explicitly.
+
+Permissions apply across the gateway for this initial version:
+
+| Resource | Choices | Access |
+| --- | --- | --- |
+| Models | None, Read, Edit | Read lists models, the catalog, and provider connection metadata. Edit also adds models and changes connection credentials; secrets are never returned. |
+| Routing | None, Read, Edit | Read inspects routing and failover. Edit also saves those settings. |
+| Inference | None, Run | Run sends chat and decisions requests, including Auto, pools, and failover. |
+| Telemetry | None, Read | Read views usage and events. |
+
+Edit includes Read for that resource, but never Run. API token management and
+action history remain owner-only. Requests without the required permission
+return 403 before any provider call. There is no per-model or per-pool scope yet.
+
+The API accepts permission IDs `models:read`, `models:edit`, `routing:read`,
+`routing:edit`, `inference:run`, and `telemetry:read`. For example, an observer
+can use `["models:read", "routing:read", "telemetry:read"]`. The dashboard starts
+new tokens with every permission unchecked; select the access each token needs.
+API clients that omit permissions default to Models Read + Inference Run. Older stored tokens
+get those same grants and acquire an explicit permissions field when edited or
+rolled. An explicit empty array grants no access. Rolling preserves permissions;
+editing them applies immediately to every current and overlapping token value
+on new requests and records the change in the action log.
+
+When rolling, choose the new TTL and how long the previous value stays alive:
+immediately expire it, 1 hour, 24 hours, 7 days, or a custom duration up to 30 days.
+The old value never outlives its original expiry. Previously rolled values keep
+their own deadlines; revoked and expired values cannot be revived. Revoking a
+token blocks all its values on new requests; requests already admitted can finish.
+Up to 20 values may overlap. The table shows each previous value's deadline.
+
+The action log at the bottom shows the latest 100 creates, edits, rolls, and
+revocations across tokens, with time, actor, and details. Each token retains its
+latest 100 actions atomically with its metadata. Future resource scopes,
+delegated token management, and a permanent audit log are covered in the
+[API token permissions plan](docs/API_TOKEN_PERMISSIONS_PLAN.md).
 
 ### Jev decisions
 

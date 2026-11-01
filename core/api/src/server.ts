@@ -1,5 +1,7 @@
 import cors from "@fastify/cors";
 import Fastify from "fastify";
+import { registerApiAccess } from "./auth/access.js";
+import { ApiTokenStore } from "./auth/tokens.js";
 import { type ApiConfig, configFromEnv } from "./config.js";
 import { FailoverPolicyStore } from "./failover.js";
 import { ModelCatalogService } from "./model-catalog-service.js";
@@ -8,6 +10,7 @@ import {
 	registryFromConfig,
 } from "./providers/registry.js";
 import { ProviderSettingsStore } from "./providers/settings.js";
+import { apiTokenRoutes } from "./routes/api-tokens.js";
 import { chatRoutes } from "./routes/chat.js";
 import { decisionsRoutes } from "./routes/decisions.js";
 import { failoverRoutes } from "./routes/failover.js";
@@ -54,14 +57,25 @@ export function createServer(options: CreateServerOptions = {}) {
 		config.mongodbUrl,
 	);
 	const router = new ModelRouter(registry, routing, telemetry);
+	const tokens = new ApiTokenStore(config.mongodbUrl);
 	const server = Fastify({
-		logger: options.logger ?? true,
+		logger:
+			options.logger === false
+				? false
+				: { redact: ["req.headers.authorization"] },
 	});
 
 	server.register(cors, {
 		origin: config.corsOrigins.includes("*") ? true : config.corsOrigins,
+		methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
 	});
+	// Install after CORS so browsers can read authentication failures too.
+	server.after(() => registerApiAccess(server, tokens, config.ownerToken));
 	server.register(healthRoutes, { config });
+	server.register(apiTokenRoutes, {
+		tokens,
+		authenticationRequired: Boolean(config.ownerToken),
+	});
 	server.register(modelsRoutes, { registry, catalog: modelCatalog, settings });
 	server.register(failoverRoutes, { failover, registry, routing });
 	server.register(routingRoutes, { routing });
@@ -93,6 +107,7 @@ export function createServer(options: CreateServerOptions = {}) {
 	server.addHook("onClose", async () => {
 		modelCatalog.stop();
 		await settings.close();
+		await tokens.close();
 		await routing.close();
 		await telemetry.stop();
 	});
