@@ -12,6 +12,14 @@ export {
 	type RollAgentTokenRequest,
 	type UpdateAgentTokenRequest,
 } from "./agent-tokens.js";
+export type {
+	AnalyticsBreakdown,
+	AnalyticsQuery,
+	ModelPricing,
+	TelemetryCaller,
+	UsageAnalytics,
+	UsageMetrics,
+} from "./analytics.js";
 export {
 	API_TOKEN_PERMISSIONS,
 	API_TOKEN_TTLS,

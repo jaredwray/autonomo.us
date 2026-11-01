@@ -1,3 +1,4 @@
+import type { ModelPricing } from "@autonomo.us/common";
 import catalogJson from "./models.json" with { type: "json" };
 
 export type CatalogModel = {
@@ -6,6 +7,7 @@ export type CatalogModel = {
 	name: string;
 	/** Release date (`YYYY-MM-DD`, or `YYYY-MM`) when the source reports one. */
 	released?: string;
+	pricing?: ModelPricing;
 };
 
 export type CatalogProvider = {
@@ -336,7 +338,12 @@ type ModelsDevProvider = {
 	name?: unknown;
 	models?: Record<
 		string,
-		{ id?: unknown; name?: unknown; release_date?: unknown }
+		{
+			id?: unknown;
+			name?: unknown;
+			release_date?: unknown;
+			cost?: { input?: unknown; output?: unknown };
+		}
 	>;
 };
 
@@ -494,6 +501,43 @@ export async function buildModelCatalog(
 		}
 		entry ??= previousEntry;
 		if (entry) {
+			// Provider model APIs generally omit prices. Join the public catalog by
+			// exact provider/model id; never guess rates for compatible endpoints.
+			try {
+				const prices = (await modelsDev())[spec.modelsDevKey ?? spec.key]
+					?.models;
+				entry = {
+					...entry,
+					models: entry.models.map((model) => {
+						const cost = prices?.[model.id]?.cost;
+						const valid =
+							typeof cost?.input === "number" &&
+							Number.isFinite(cost.input) &&
+							cost.input >= 0 &&
+							typeof cost.output === "number" &&
+							Number.isFinite(cost.output) &&
+							cost.output >= 0;
+						const pricing = valid
+							? { input: cost.input as number, output: cost.output as number }
+							: undefined;
+						const { pricing: _old, ...rest } = model;
+						return { ...rest, ...(pricing ? { pricing } : {}) };
+					}),
+				};
+			} catch {
+				// Keep known rates on transient catalog failure.
+				entry = {
+					...entry,
+					models: entry.models.map((model) => {
+						const pricing =
+							model.pricing ??
+							previousEntry?.models.find(
+								(previousModel) => previousModel.id === model.id,
+							)?.pricing;
+						return { ...model, ...(pricing ? { pricing } : {}) };
+					}),
+				};
+			}
 			providers[spec.key] = entry;
 		} else {
 			log(`${spec.key}: no source available, provider skipped`);

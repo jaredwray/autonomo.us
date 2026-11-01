@@ -7,6 +7,7 @@ import {
 	expect,
 	it,
 } from "vitest";
+import { configFromEnv } from "../src/config.js";
 import {
 	DEFAULT_FAILOVER_POLICY,
 	FailoverPolicyStore,
@@ -78,6 +79,7 @@ describe("failover policy API", () => {
 
 	beforeEach(() => {
 		server = createServer({
+			config: configFromEnv({}),
 			registry: provider.registry,
 			telemetry: new TelemetryService(),
 			logger: false,
@@ -207,6 +209,7 @@ describe("POST /v1/chat failover", () => {
 
 	function startServer(failover?: FailoverPolicyStore) {
 		server = createServer({
+			config: configFromEnv({}),
 			registry: provider.registry,
 			telemetry,
 			failover,
@@ -406,6 +409,7 @@ describe("POST /v1/chat failover (stream)", () => {
 
 	function startServer(failover: FailoverPolicyStore) {
 		server = createServer({
+			config: configFromEnv({}),
 			registry: provider.registry,
 			telemetry,
 			failover,

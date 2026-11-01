@@ -1,10 +1,20 @@
 import { randomUUID } from "node:crypto";
 import type {
+	AnalyticsQuery,
+	ModelPricing,
 	ModelUsage,
+	TelemetryCaller,
 	TelemetryEvent,
 	TokenUsage,
+	UsageAnalytics,
 	UsageSummary,
 } from "@autonomo.us/common";
+import {
+	bucketMs,
+	buildAnalytics,
+	eventFact,
+	GATEWAY_EVENT_TYPES,
+} from "./analytics.js";
 import type { ClickHouseSink } from "./clickhouse.js";
 
 export type ChatTelemetry = {
@@ -13,6 +23,7 @@ export type ChatTelemetry = {
 	model: string;
 	provider: string;
 	agentId?: string;
+	caller?: TelemetryCaller;
 	usage: TokenUsage;
 	latencyMs: number;
 	stream?: boolean;
@@ -31,6 +42,8 @@ export type TelemetryServiceOptions = {
 	maxPending?: number;
 	/** Max distinct models aggregated in memory; overflow folds into "(other)". */
 	maxModels?: number;
+	/** Separate bounded history for analytics; independent of the recent-event feed. */
+	maxAnalyticsEvents?: number;
 	now?: () => Date;
 };
 
@@ -51,6 +64,14 @@ export class TelemetryService {
 	private readonly maxPending: number;
 	private readonly maxModels: number;
 	private readonly now: () => Date;
+	private readonly maxAnalyticsEvents: number;
+	private readonly analyticsEvents: TelemetryEvent[] = [];
+	private analyticsCursor = 0;
+	private coverageFrom: string;
+	private pricing?: (
+		model: string,
+		provider: string,
+	) => ModelPricing | undefined;
 
 	private readonly recent: TelemetryEvent[] = [];
 	private readonly byModel = new Map<string, MutableModelUsage>();
@@ -66,6 +87,8 @@ export class TelemetryService {
 	private pending: TelemetryEvent[] = [];
 	private timer?: ReturnType<typeof setInterval>;
 	private schemaReady = false;
+	private flushing?: Promise<boolean>;
+	private durableIncomplete = false;
 
 	constructor(options: TelemetryServiceOptions = {}) {
 		this.sink = options.sink;
@@ -74,6 +97,8 @@ export class TelemetryService {
 		this.maxPending = options.maxPending ?? 5000;
 		this.maxModels = options.maxModels ?? 100;
 		this.now = options.now ?? (() => new Date());
+		this.coverageFrom = this.now().toISOString();
+		this.maxAnalyticsEvents = Math.max(1, options.maxAnalyticsEvents ?? 50_000);
 		if (this.sink) {
 			this.timer = setInterval(() => {
 				void this.flush();
@@ -84,6 +109,15 @@ export class TelemetryService {
 
 	/** Records a chat completion (or failure) and returns the stored event. */
 	recordChat(chat: ChatTelemetry): TelemetryEvent {
+		const pricing = this.pricing?.(chat.model, chat.provider);
+		// Failed attempts may have missing or partial usage, so a zero token
+		// fallback cannot establish that the provider charged nothing.
+		const estimatedCostUsd =
+			pricing && !chat.error
+				? (chat.usage.promptTokens * pricing.input +
+						chat.usage.completionTokens * pricing.output) /
+					1_000_000
+				: undefined;
 		const event: TelemetryEvent = {
 			id: randomUUID(),
 			type: chat.error
@@ -91,6 +125,19 @@ export class TelemetryService {
 				: `gateway.${chat.operation ?? "chat"}`,
 			agentId: chat.agentId,
 			data: {
+				operation: chat.operation ?? "chat",
+				...(chat.caller
+					? {
+							callerId: chat.caller.id,
+							callerName: chat.caller.name,
+							callerKind: chat.caller.kind,
+						}
+					: {}),
+				...(estimatedCostUsd !== undefined &&
+				Number.isFinite(estimatedCostUsd) &&
+				estimatedCostUsd >= 0
+					? { estimatedCostUsd, pricing, pricingSource: "models.dev" }
+					: {}),
 				model: chat.model,
 				provider: chat.provider,
 				promptTokens: chat.usage.promptTokens,
@@ -111,6 +158,26 @@ export class TelemetryService {
 
 	/** Stores a raw telemetry event (ring buffer + sink queue). */
 	record(event: TelemetryEvent): void {
+		if (
+			GATEWAY_EVENT_TYPES.includes(event.type) &&
+			Number.isFinite(Date.parse(event.timestamp))
+		) {
+			if (this.analyticsEvents.length < this.maxAnalyticsEvents)
+				this.analyticsEvents.push(event);
+			else {
+				// Inclusive eviction timestamp is outside the complete retained window.
+				const evicted = this.analyticsEvents[this.analyticsCursor];
+				this.coverageFrom = new Date(
+					Math.max(
+						Date.parse(this.coverageFrom),
+						Date.parse(evicted.timestamp) + 1,
+					),
+				).toISOString();
+				this.analyticsEvents[this.analyticsCursor] = event;
+				this.analyticsCursor =
+					(this.analyticsCursor + 1) % this.maxAnalyticsEvents;
+			}
+		}
 		this.recent.push(event);
 		if (this.recent.length > this.maxRecent) {
 			this.recent.splice(0, this.recent.length - this.maxRecent);
@@ -118,9 +185,50 @@ export class TelemetryService {
 		if (this.sink) {
 			this.pending.push(event);
 			if (this.pending.length > this.maxPending) {
+				this.durableIncomplete = true;
 				this.pending.splice(0, this.pending.length - this.maxPending);
 			}
 		}
+	}
+
+	setPricingResolver(
+		resolve: (model: string, provider: string) => ModelPricing | undefined,
+	): void {
+		this.pricing = resolve;
+	}
+
+	async analytics(query: AnalyticsQuery): Promise<UsageAnalytics> {
+		const generatedAt = this.now().toISOString();
+		if (this.sink && (await this.flush()) && !this.durableIncomplete) {
+			try {
+				const facts = await this.sink.queryAnalytics(query);
+				return buildAnalytics(facts, query, {
+					generatedAt,
+					source: "clickhouse",
+					coverageFrom: null,
+					partial: false,
+					durableUnavailable: false,
+				});
+			} catch {
+				/* Explicitly report the reduced memory coverage below. */
+			}
+		}
+		const from = Date.parse(query.from);
+		const to = Date.parse(query.to);
+		const facts = this.analyticsEvents
+			.filter(
+				(event) =>
+					Date.parse(event.timestamp) >= from &&
+					Date.parse(event.timestamp) < to,
+			)
+			.map((event) => eventFact(event, bucketMs(query)));
+		return buildAnalytics(facts, query, {
+			generatedAt,
+			source: "memory",
+			coverageFrom: this.coverageFrom,
+			partial: from < Date.parse(this.coverageFrom),
+			durableUnavailable: Boolean(this.sink),
+		});
 	}
 
 	private aggregate(chat: ChatTelemetry): void {
@@ -233,6 +341,19 @@ export class TelemetryService {
 	 * queued (sink failure); they are retried on the next flush tick.
 	 */
 	async flush(): Promise<boolean> {
+		if (this.flushing) {
+			if (!(await this.flushing)) return false;
+			// Include events queued while a preceding batch was in flight.
+			if (this.pending.length === 0) return true;
+			return this.flush();
+		}
+		this.flushing ??= this.flushPending().finally(() => {
+			this.flushing = undefined;
+		});
+		return this.flushing;
+	}
+
+	private async flushPending(): Promise<boolean> {
 		if (!this.sink) return false;
 		try {
 			await this.ensureSchemaOnce();
@@ -244,6 +365,8 @@ export class TelemetryService {
 				return true;
 			} catch {
 				// Requeue (bounded) and retry on the next flush tick.
+				if (batch.length + this.pending.length > this.maxPending)
+					this.durableIncomplete = true;
 				this.pending = [...batch, ...this.pending].slice(-this.maxPending);
 				return false;
 			}

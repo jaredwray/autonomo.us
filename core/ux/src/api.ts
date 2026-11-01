@@ -4,6 +4,7 @@ import type {
 	AgentToken,
 	AgentTokenSecret,
 	AgentTokenSettings,
+	AnalyticsQuery,
 	ApiToken,
 	ApiTokenSecret,
 	ApiTokenSettings,
@@ -17,10 +18,9 @@ import type {
 	RollApiTokenRequest,
 	RoutingConfig,
 	RoutingSettings,
-	TelemetryEvent,
 	UpdateAgentTokenRequest,
 	UpdateApiTokenRequest,
-	UsageSummary,
+	UsageAnalytics,
 } from "@autonomo.us/common";
 
 export type SinkStatus = {
@@ -31,14 +31,6 @@ export type SinkStatus = {
 export type ProviderInfo = {
 	name: string;
 	kind: string;
-};
-
-export type DashboardData = {
-	summary: UsageSummary;
-	events: TelemetryEvent[];
-	models: ModelInfo[];
-	providers: ProviderInfo[];
-	sink: SinkStatus;
 };
 
 function apiBase(): string {
@@ -197,22 +189,25 @@ export async function updateFailoverPolicy(
 	return (await response.json()) as FailoverPolicy;
 }
 
-export async function fetchDashboardData(): Promise<DashboardData> {
-	const [summary, eventsPayload, modelsPayload] = await Promise.all([
-		getJson<UsageSummary>("/v1/telemetry/summary"),
-		getJson<{ events: TelemetryEvent[]; sink: SinkStatus }>(
-			"/v1/telemetry/events?limit=25",
-		),
-		getJson<{ models: ModelInfo[]; providers: ProviderInfo[] }>("/v1/models"),
-	]);
-
-	return {
-		summary,
-		events: eventsPayload.events,
-		sink: eventsPayload.sink,
-		models: modelsPayload.models,
-		providers: modelsPayload.providers,
-	};
+export async function fetchDashboardData(
+	query: AnalyticsQuery,
+	signal?: AbortSignal,
+): Promise<UsageAnalytics> {
+	const params = new URLSearchParams();
+	for (const [key, value] of Object.entries(query))
+		if (value) params.set(key, value);
+	const response = await apiFetch(
+		`${apiBase()}/v1/telemetry/analytics?${params}`,
+		{
+			signal: signal
+				? AbortSignal.any([signal, AbortSignal.timeout(15000)])
+				: AbortSignal.timeout(15000),
+			headers: { accept: "application/json" },
+		},
+	);
+	if (!response.ok)
+		throw new Error(`Analytics request failed (${response.status})`);
+	return response.json();
 }
 
 export function fetchApiTokens(): Promise<ApiTokenSettings> {

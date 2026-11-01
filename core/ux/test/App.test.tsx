@@ -298,176 +298,133 @@ describe("App", () => {
 		});
 	}
 
-	it("renders usage totals from the telemetry summary", async () => {
+	it("renders usage, reliability and estimated spending without configuration controls", async () => {
 		const app = await startApp();
 		seedTraffic(app.telemetry);
 		render(<App />);
-
-		expect(await screen.findByText("160K")).toBeDefined();
-		expect(screen.getByText("Requests")).toBeDefined();
-		expect(screen.getByText("3")).toBeDefined();
-		expect(screen.getByText("142 ms")).toBeDefined();
-		expect(screen.getByText("120K prompt · 40K completion")).toBeDefined();
+		const totals = await screen.findByRole("region", { name: "Usage totals" });
+		expect(within(totals).getByText("160K")).toBeDefined();
+		expect(within(totals).getByText("142 ms")).toBeDefined();
+		expect(within(totals).getByText("66.7%")).toBeDefined();
+		expect(
+			within(totals).getByText("120K prompt · 40K completion"),
+		).toBeDefined();
+		expect(
+			within(totals).getByText("0 of 3 calls priced · partial"),
+		).toBeDefined();
+		expect(
+			screen.getByRole("heading", { name: "Users & callers" }),
+		).toBeDefined();
+		expect(screen.queryByText("Failover policy")).toBeNull();
+		expect(screen.queryByText("Available models")).toBeNull();
+		expect(screen.queryByLabelText("Enable failover")).toBeNull();
 	});
 
-	it("renders per-model usage with a legend", async () => {
+	it("filters every breakdown by model and caller, then clears the filters", async () => {
 		const app = await startApp();
 		seedTraffic(app.telemetry);
-		render(<App />);
-
-		expect(await screen.findByText("llama3.3")).toBeDefined();
-		expect(screen.getByText("qwen3")).toBeDefined();
-		expect(screen.getByText("Prompt tokens")).toBeDefined();
-		expect(screen.getByText("Completion tokens")).toBeDefined();
-	});
-
-	it("renders recent events with statuses", async () => {
-		const app = await startApp();
-		seedTraffic(app.telemetry);
-		render(<App />);
-
-		const modelCells = await screen.findAllByText("local/llama3.3");
-		expect(modelCells.length).toBeGreaterThan(0);
-		expect(screen.getAllByText("ok").length).toBe(2);
-		expect(screen.getByText("error")).toBeDefined();
-	});
-
-	it("lists available models", async () => {
-		await startApp();
-		render(<App />);
-		const ids = await screen.findAllByText("local/llama3.3");
-		expect(ids.length).toBeGreaterThan(0);
-		// Appears in the models card and in the failover target picker.
-		expect(screen.getAllByText("local/qwen3").length).toBeGreaterThan(0);
-	});
-
-	it("explains routing when a provider has no advertised models", async () => {
-		await startApp({
-			...BASE_CONFIG,
-			providers: [
-				{
-					kind: "openai-compatible",
-					name: "local",
-					baseURL: "http://127.0.0.1:9/v1",
-					models: [],
-				},
-			],
+		app.telemetry.recordChat({
+			model: "local/qwen3",
+			provider: "local",
+			agentId: "support-agent",
+			usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+			latencyMs: 20,
 		});
 		render(<App />);
-		expect(await screen.findByText(/No advertised models, but/)).toBeDefined();
-		expect(screen.queryByText(/No providers configured/)).toBeNull();
-	});
-
-	it("shows an error banner when the API is unreachable", async () => {
-		// Real connection failure: nothing listens on this port.
-		vi.stubEnv("VITE_API_URL", "http://127.0.0.1:9");
-		render(<App />);
-		expect(await screen.findByText("API unreachable")).toBeDefined();
-		expect(screen.getByText("Cannot reach the gateway API.")).toBeDefined();
-	});
-
-	it("loads the failover policy into the card", async () => {
-		await startApp();
-		render(<App />);
-
-		expect(await screen.findByText("Failover policy")).toBeDefined();
-		const toggle = (await screen.findByLabelText(
-			"Enable failover",
-		)) as HTMLInputElement;
-		expect(toggle.checked).toBe(false);
-		const timeout = screen.getByLabelText(
-			/Attempt timeout/,
-		) as HTMLInputElement;
-		expect(timeout.value).toBe("30000");
-	});
-
-	it("saves failover policy changes through the real API", async () => {
-		const app = await startApp();
-		render(<App />);
-
-		const toggle = (await screen.findByLabelText(
-			"Enable failover",
-		)) as HTMLInputElement;
-		fireEvent.click(toggle);
-
-		fireEvent.change(screen.getByLabelText(/Attempt timeout/), {
-			target: { value: "5000" },
+		await screen.findByRole("region", { name: "Usage totals" });
+		fireEvent.change(screen.getByLabelText("Caller"), {
+			target: { value: "agent:support-agent" },
 		});
-
-		fireEvent.change(screen.getByLabelText("Fallback model to add"), {
-			target: { value: "local/qwen3" },
-		});
-		fireEvent.click(screen.getByRole("button", { name: "Add" }));
-
-		fireEvent.click(screen.getByRole("button", { name: "Save policy" }));
-		expect(await screen.findByText("Saved")).toBeDefined();
-
-		// The policy round-tripped through the real gateway API.
-		const response = await fetch(`${app.url}/v1/failover`);
-		expect(await response.json()).toEqual({
-			enabled: true,
-			targets: ["local/qwen3"],
-			timeoutMs: 5000,
-		});
-	});
-
-	it("accepts a typed model id even when the provider advertises none", async () => {
-		// Default Ollama-style setup: provider registered, no advertised models.
-		await startApp({
-			...BASE_CONFIG,
-			providers: [
-				{
-					kind: "openai-compatible",
-					name: "local",
-					baseURL: "http://127.0.0.1:9/v1",
-					models: [],
-				},
-			],
-		});
-		render(<App />);
-
-		fireEvent.change(await screen.findByLabelText("Fallback model to add"), {
-			target: { value: "  local/llama3.3  " },
-		});
-		fireEvent.click(screen.getByRole("button", { name: "Add" }));
-
-		// Trimmed and listed as the first fallback.
-		expect(screen.getByText("1.")).toBeDefined();
-		expect(screen.getAllByText("local/llama3.3").length).toBeGreaterThan(0);
-	});
-
-	it("removes a fallback model from the target list", async () => {
-		await startApp();
-		render(<App />);
-
-		fireEvent.change(await screen.findByLabelText("Fallback model to add"), {
+		await waitFor(() =>
+			expect(
+				screen.getByRole("region", { name: "Usage totals" }).textContent,
+			).toContain("15"),
+		);
+		expect(
+			screen.getByRole("region", { name: "Usage by model" }).textContent,
+		).not.toContain("local/llama3.3");
+		fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+		await waitFor(() =>
+			expect(
+				screen.getByRole("region", { name: "Usage by model" }).textContent,
+			).toContain("local/llama3.3"),
+		);
+		fireEvent.change(screen.getByLabelText("Model"), {
 			target: { value: "local/llama3.3" },
 		});
-		fireEvent.click(screen.getByRole("button", { name: "Add" }));
-		expect(screen.getByText("1.")).toBeDefined();
-
-		fireEvent.click(screen.getByRole("button", { name: "Remove" }));
-		expect(screen.queryByText("1.")).toBeNull();
-		expect(screen.getByText(/No fallback models yet/)).toBeDefined();
+		await waitFor(() =>
+			expect(
+				screen.getByRole("region", { name: "Usage totals" }).textContent,
+			).toContain("80K"),
+		);
+		expect(
+			screen.getByRole("region", { name: "Usage by model" }).textContent,
+		).not.toContain("local/qwen3");
 	});
 
-	it("surfaces API validation errors when saving fails", async () => {
-		// Seed a policy, then remove the provider so saving it back fails
-		// validation against the real registry.
-		await startApp();
-		render(<App />);
-
-		fireEvent.change(await screen.findByLabelText("Fallback model to add"), {
-			target: { value: "local/qwen3" },
+	it("uses date ranges to include older retained events and supports chart metrics", async () => {
+		const app = await startApp();
+		app.telemetry.record({
+			id: "old",
+			type: "gateway.chat",
+			timestamp: new Date(Date.now() - 3 * 86400000).toISOString(),
+			agentId: "older-agent",
+			data: {
+				model: "local/old-model",
+				provider: "local",
+				promptTokens: 50,
+				completionTokens: 10,
+				totalTokens: 60,
+				latencyMs: 10,
+			},
 		});
-		fireEvent.click(screen.getByRole("button", { name: "Add" }));
+		render(<App />);
+		await screen.findByRole("heading", { name: "No activity in this period" });
+		fireEvent.change(screen.getByLabelText("Period"), {
+			target: { value: "7d" },
+		});
+		await waitFor(() =>
+			expect(
+				screen.getByRole("region", { name: "Usage by model" }).textContent,
+			).toContain("local/old-model"),
+		);
+		fireEvent.click(screen.getByRole("button", { name: "Spend", exact: true }));
+		expect(
+			screen
+				.getByRole("button", { name: "Spend", exact: true })
+				.getAttribute("aria-pressed"),
+		).toBe("true");
+		expect(screen.getByText(/Unpriced calls are excluded/)).toBeDefined();
+	});
 
-		// Swap the API for one with no providers registered; startApp points
-		// VITE_API_URL at the new server, so the save lands there.
-		await running.pop()?.close();
-		await startApp({ ...BASE_CONFIG, providers: [] });
+	it("shows unknown costs separately from genuinely free model calls", async () => {
+		const app = await startApp();
+		app.telemetry.setPricingResolver((model) =>
+			model === "local/llama3.3" ? { input: 0, output: 0 } : undefined,
+		);
+		seedTraffic(app.telemetry);
+		render(<App />);
+		const models = await screen.findByRole("region", {
+			name: "Usage by model",
+		});
+		const free = within(models)
+			.getByRole("button", { name: "local/llama3.3" })
+			.closest("tr");
+		const unknown = within(models)
+			.getByRole("button", { name: "local/qwen3" })
+			.closest("tr");
+		expect(free?.textContent).toContain("$0.00");
+		expect(unknown?.textContent).toContain("1 unpriced");
+	});
 
-		fireEvent.click(screen.getByRole("button", { name: "Save policy" }));
-		expect(await screen.findByText(/Unknown failover target/)).toBeDefined();
+	it("shows a retryable error without inventing zero usage when the API is unreachable", async () => {
+		vi.stubEnv("VITE_API_URL", "http://127.0.0.1:9");
+		render(<App />);
+		expect(await screen.findByText("Analytics unavailable")).toBeDefined();
+		expect(screen.getByRole("alert").textContent).toContain(
+			"No report is available",
+		);
+		expect(screen.queryByRole("region", { name: "Usage totals" })).toBeNull();
+		expect(screen.getByRole("button", { name: "Retry" })).toBeDefined();
 	});
 });

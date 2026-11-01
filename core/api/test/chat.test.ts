@@ -7,6 +7,7 @@ import {
 	expect,
 	it,
 } from "vitest";
+import { configFromEnv } from "../src/config.js";
 import { createServer } from "../src/server.js";
 import { TelemetryService } from "../src/telemetry/telemetry.js";
 import { type StubProvider, startStubProvider } from "./helpers.js";
@@ -27,6 +28,7 @@ describe("POST /v1/chat", () => {
 	beforeEach(() => {
 		telemetry = new TelemetryService();
 		server = createServer({
+			config: configFromEnv({}),
 			registry: provider.registry,
 			telemetry,
 			logger: false,

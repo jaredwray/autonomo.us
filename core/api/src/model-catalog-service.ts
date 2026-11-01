@@ -73,7 +73,15 @@ export class ModelCatalogService {
 	 */
 	async getCatalog(): Promise<ModelCatalog> {
 		const cached = await this.cache.get<ModelCatalog>(MODEL_CATALOG_CACHE_KEY);
+		if (cached) this.latest = cached;
 		return cached ?? this.latest ?? this.base;
+	}
+
+	/** Synchronous snapshot for telemetry; recording a call never waits on a network. */
+	getPricing(provider: string, model: string) {
+		return (this.latest ?? this.base).providers[provider]?.models.find(
+			(entry) => entry.id === model,
+		)?.pricing;
 	}
 
 	/**

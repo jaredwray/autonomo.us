@@ -76,6 +76,45 @@ const MODELS_DEV_FIXTURE = {
 	},
 };
 
+it("joins catalog rates to live model IDs and never converts absent or invalid rates to free", async () => {
+	const { fetchImpl, calls } = fakeFetch((url) =>
+		url.host === "models.dev"
+			? {
+					openai: {
+						models: {
+							paid: { cost: { input: 2.5, output: 10 } },
+							free: { cost: { input: 0, output: 0 } },
+							invalid: { cost: { input: -1, output: "10" } },
+						},
+					},
+				}
+			: { data: ["paid", "free", "invalid", "unknown"].map((id) => ({ id })) },
+	);
+	const { catalog } = await buildModelCatalog({
+		env: { OPENAI_API_KEY: "key" },
+		providers: specs("openai"),
+		fetchImpl,
+	});
+	const models = catalog.providers.openai.models;
+	expect(models.find((model) => model.id === "paid")?.pricing).toEqual({
+		input: 2.5,
+		output: 10,
+	});
+	expect(models.find((model) => model.id === "free")?.pricing).toEqual({
+		input: 0,
+		output: 0,
+	});
+	expect(
+		models.find((model) => model.id === "invalid")?.pricing,
+	).toBeUndefined();
+	expect(
+		models.find((model) => model.id === "unknown")?.pricing,
+	).toBeUndefined();
+	expect(calls.filter((call) => call.url.host === "models.dev")).toHaveLength(
+		1,
+	);
+});
+
 describe("toReleaseDate", () => {
 	it("converts epoch seconds and ISO strings to YYYY-MM-DD", () => {
 		expect(toReleaseDate(1735689600)).toBe("2025-01-01");
@@ -160,11 +199,11 @@ describe("buildModelCatalog", () => {
 		expect(catalog.providers.openrouter.models[0].id).toBe("vendor/chat");
 		expect(catalog.providers.cloudflare.models[0].id).toBe("@cf/meta/chat");
 		expect(catalog.providers.typesafe.models[0].id).toBe("jev-latest");
-		expect(calls.map((call) => call.headers.authorization)).toEqual([
-			"Bearer router-key",
-			"Bearer jev-key",
-			"Bearer cf-key",
-		]);
+		expect(
+			calls
+				.filter((call) => call.url.host !== "models.dev")
+				.map((call) => call.headers.authorization),
+		).toEqual(["Bearer router-key", "Bearer jev-key", "Bearer cf-key"]);
 	});
 
 	it("maps Cloudflare's public catalog key to the gateway provider name", async () => {
@@ -233,7 +272,9 @@ describe("buildModelCatalog", () => {
 				},
 			],
 		});
-		expect(calls).toHaveLength(2);
+		expect(
+			calls.filter((call) => call.url.host === "api.anthropic.com"),
+		).toHaveLength(2);
 		expect(calls[0].headers["x-api-key"]).toBe("test-key");
 		expect(calls[0].headers["anthropic-version"]).toBe("2023-06-01");
 		expect(calls[1].url.searchParams.get("after_id")).toBe("claude-opus-4-8");
@@ -354,10 +395,9 @@ describe("buildModelCatalog", () => {
 
 		expect(changed).toBe(false);
 		expect(catalog).toEqual(previous);
-		// The previous entry came from the live API, so models.dev (which may
-		// lag behind it) is not consulted.
+		// The live model list is preserved; models.dev is consulted for prices only.
 		expect(calls.filter((call) => call.url.host === "models.dev")).toHaveLength(
-			0,
+			1,
 		);
 	});
 
