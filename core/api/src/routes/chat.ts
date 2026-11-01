@@ -146,7 +146,11 @@ export async function chatRoutes(
 			let plan: RoutingPlan | undefined;
 			try {
 				try {
-					plan = await options.router?.plan(body, client.signal);
+					plan = await options.router?.plan(
+						body,
+						client.signal,
+						request.telemetryCaller,
+					);
 					client.signal.throwIfAborted();
 					requested = plan?.candidates[0] ?? registry.resolve(body.model);
 				} catch (error) {
@@ -225,6 +229,7 @@ export async function chatRoutes(
 							model: candidate.id,
 							provider: candidate.provider.name,
 							agentId: body.agentId,
+							caller: request.telemetryCaller,
 							usage,
 							latencyMs: Math.round(performance.now() - started),
 							...(candidate.id !== requested.id
@@ -255,6 +260,7 @@ export async function chatRoutes(
 							model: candidate.id,
 							provider: candidate.provider.name,
 							agentId: body.agentId,
+							caller: request.telemetryCaller,
 							usage: EMPTY_USAGE,
 							latencyMs: Math.round(performance.now() - started),
 							error: message,
@@ -403,6 +409,7 @@ async function streamChat(
 			model: candidate.id,
 			provider: candidate.provider.name,
 			agentId: body.agentId,
+			caller: reply.request.telemetryCaller,
 			usage,
 			latencyMs: Math.round(performance.now() - started),
 			stream: true,

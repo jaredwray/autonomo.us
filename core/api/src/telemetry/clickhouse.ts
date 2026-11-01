@@ -1,9 +1,11 @@
 import type {
+	AnalyticsQuery,
 	ModelUsage,
 	TelemetryEvent,
 	UsageSummary,
 } from "@autonomo.us/common";
 import type { ClickHouseConfig } from "../config.js";
+import { type AnalyticsFact, bucketMs } from "./analytics.js";
 
 /** Flattened row shape stored in ClickHouse. */
 export type TelemetryRow = {
@@ -228,5 +230,66 @@ export class ClickHouseSink {
 			byModel,
 			source: "clickhouse",
 		};
+	}
+
+	/** Aggregate in the database, never approximate totals from a recent-event limit. */
+	async queryAnalytics(query: AnalyticsQuery): Promise<AnalyticsFact[]> {
+		const from = Date.parse(query.from);
+		const to = Date.parse(query.to);
+		if (!Number.isFinite(from) || !Number.isFinite(to))
+			throw new Error("Invalid analytics window");
+		const interval = bucketMs(query);
+		const text = await this.request(`SELECT
+			intDiv(toUnixTimestamp64Milli(timestamp), ${interval}) * ${interval} AS bucket_ms,
+			model, provider,
+			if(JSONExtractString(data, 'callerId') != '' AND JSONExtractString(data, 'callerKind') IN ('api-token', 'owner'),
+				JSONExtractString(data, 'callerId'), if(agent_id != '', concat('agent:', agent_id), 'unattributed')) AS caller_id,
+			if(JSONExtractString(data, 'callerId') != '' AND JSONExtractString(data, 'callerKind') IN ('api-token', 'owner'),
+				JSONExtractString(data, 'callerName'), if(agent_id != '', agent_id, 'Unattributed')) AS caller_name,
+			if(JSONExtractString(data, 'callerId') != '' AND JSONExtractString(data, 'callerKind') IN ('api-token', 'owner'),
+				JSONExtractString(data, 'callerKind'), if(agent_id != '', 'agent', 'unattributed')) AS caller_kind,
+			if(JSONExtractString(data, 'operation') != '', JSONExtractString(data, 'operation'),
+				if(type = 'gateway.error', 'unknown', substring(type, 9))) AS operation,
+			count() AS requests,
+			countIf(type = 'gateway.error' OR error != '') AS errors,
+			sum(prompt_tokens) AS prompt_tokens, sum(completion_tokens) AS completion_tokens,
+			sum(total_tokens) AS total_tokens,
+			sumIf(latency_ms, type != 'gateway.error' AND error = '') AS latency_total,
+			sumIf(JSONExtractFloat(data, 'estimatedCostUsd'), JSONType(data, 'estimatedCostUsd') IN ('Int64', 'UInt64', 'Float64') AND JSONExtractFloat(data, 'estimatedCostUsd') >= 0) AS cost_usd,
+			countIf(JSONType(data, 'estimatedCostUsd') IN ('Int64', 'UInt64', 'Float64') AND JSONExtractFloat(data, 'estimatedCostUsd') >= 0) AS priced_requests,
+			max(toUnixTimestamp64Milli(timestamp)) AS last_seen
+		FROM ${this.table} FINAL
+		WHERE type IN ('gateway.chat', 'gateway.decisions', 'gateway.routing', 'gateway.error')
+			AND timestamp >= fromUnixTimestamp64Milli(${from}) AND timestamp < fromUnixTimestamp64Milli(${to})
+		GROUP BY bucket_ms, model, provider, caller_id, caller_name, caller_kind, operation
+		ORDER BY bucket_ms, last_seen
+		LIMIT 100001
+		FORMAT JSON`);
+		const { data } = JSON.parse(text) as {
+			data: Array<Record<string, unknown>>;
+		};
+		// Fail visibly to bounded memory instead of serving silently truncated durable totals.
+		if (data.length > 100_000)
+			throw new Error("Analytics grouping limit exceeded");
+		return data.map((row) => ({
+			timestamp: new Date(asNumber(row.bucket_ms)).toISOString(),
+			model: String(row.model),
+			provider: String(row.provider),
+			caller: {
+				id: String(row.caller_id),
+				name: String(row.caller_name || row.caller_id),
+				kind: row.caller_kind as AnalyticsFact["caller"]["kind"],
+			},
+			operation: String(row.operation),
+			requests: asNumber(row.requests),
+			errors: asNumber(row.errors),
+			promptTokens: asNumber(row.prompt_tokens),
+			completionTokens: asNumber(row.completion_tokens),
+			totalTokens: asNumber(row.total_tokens),
+			estimatedCostUsd: asNumber(row.cost_usd),
+			pricedRequests: asNumber(row.priced_requests),
+			latencyTotal: asNumber(row.latency_total),
+			lastSeen: new Date(asNumber(row.last_seen)).toISOString(),
+		}));
 	}
 }

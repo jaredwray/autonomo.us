@@ -58,6 +58,12 @@ it.each(
 		await server.inject({ url: "/v1/routing", headers: ownerHeaders })
 	).json().config;
 	const cases = [
+		{
+			method: "GET",
+			url: "/v1/telemetry/analytics?from=2026-11-01T00:00:00Z&to=2026-11-02T00:00:00Z",
+			required: "telemetry:read",
+			status: 200,
+		},
 		{ method: "GET", url: "/v1/models", required: "models:read", status: 200 },
 		{ method: "HEAD", url: "/v1/models", required: "models:read", status: 200 },
 		{

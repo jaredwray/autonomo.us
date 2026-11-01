@@ -53,6 +53,17 @@ export function createServer(options: CreateServerOptions = {}) {
 				: undefined,
 		});
 
+	telemetry.setPricingResolver((id, provider) => {
+		const kind = registry
+			.listProviders()
+			.find((connection) => connection.name === provider)?.kind;
+		if (!kind || kind === "openai-compatible") return undefined;
+		const model = id.startsWith(`${provider}/`)
+			? id.slice(provider.length + 1)
+			: id;
+		return modelCatalog.getPricing(kind, model);
+	});
+
 	const routing = new RoutingSettingsStore(
 		registry,
 		failover,

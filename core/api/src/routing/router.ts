@@ -3,6 +3,7 @@ import type {
 	RoutingConfig,
 	RoutingDecision,
 	RoutingPool,
+	TelemetryCaller,
 	TokenUsage,
 } from "@autonomo.us/common";
 import { generateText } from "ai";
@@ -95,6 +96,7 @@ export class ModelRouter {
 	async plan(
 		body: GatewayRequest & { model: string },
 		clientSignal?: AbortSignal,
+		caller?: TelemetryCaller,
 	): Promise<RoutingPlan> {
 		await this.settings.initialize();
 		clientSignal?.throwIfAborted();
@@ -109,7 +111,12 @@ export class ModelRouter {
 				throw new RoutingError(
 					"Auto routing is disabled. Configure it in Routing.",
 				);
-			const selection = await this.select(config.auto, body, clientSignal);
+			const selection = await this.select(
+				config.auto,
+				body,
+				clientSignal,
+				caller,
+			);
 			clientSignal?.throwIfAborted();
 			target = selection.target;
 			decision = {
@@ -167,6 +174,7 @@ export class ModelRouter {
 		auto: RoutingConfig["auto"],
 		body: GatewayRequest,
 		clientSignal?: AbortSignal,
+		caller?: TelemetryCaller,
 	): Promise<{ target: string; fallback?: boolean }> {
 		const started = performance.now();
 		let usage: TokenUsage = {
@@ -237,6 +245,7 @@ export class ModelRouter {
 		} finally {
 			this.telemetry.recordChat({
 				operation: "routing",
+				caller,
 				model: auto.decisionModel,
 				provider: providerName,
 				agentId: body.agentId,

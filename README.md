@@ -151,6 +151,7 @@ through environment variables:
 - `PUT /v1/routing` — replace the full routing configuration; returns `{ config, persistence }`. Invalid settings are rejected before activation.
 - `GET /v1/telemetry/summary` — usage aggregates (ClickHouse when available, in-memory otherwise; `?source=memory|clickhouse` to force).
 - `GET /v1/telemetry/events` — recent gateway events and sink status.
+- `GET /v1/telemetry/analytics?from=<ISO timestamp>&to=<ISO timestamp>` — date-filtered model, connection, caller, and time-series analytics. Optional `model`, `provider` (connection ID), and `caller` filters apply to the entire report. Ranges are start-inclusive, end-exclusive, and limited to 90 days. Requires `telemetry:read` when API authentication is enabled.
 - `GET /health` — health check.
 
 ```bash
@@ -408,12 +409,39 @@ is sent — once output reaches the client the response is committed to that
 model; SSE clients see a `failover` event when the gateway switches models.
 `FAILOVER_*` environment variables seed the policy at boot.
 
-The UX dashboard polls the telemetry endpoints and shows request/token/latency
-totals, per-model usage, and recent gateway events.
+The dashboard reports model calls, token usage, estimated spending, active
+callers, success rates, and successful-call latency. Choose a 24-hour, 7-day,
+30-day, or 90-day window, filter by connection/model/caller, inspect hourly or
+daily trends, sort and page the model/caller tables, or export the filtered
+report as CSV. It refreshes every 30 seconds while visible and preserves the
+last successful report with a stale-data notice if refresh fails. Configuration,
+including failover, remains on the Models and Routing pages.
+
+Calls include chat completions, decisions, routing selectors, and failed
+fallback attempts; they are not a count of end-user requests. Caller attribution
+uses authenticated API token IDs (stable across token rotation), the owner
+credential, or a client-reported `agentId` for unauthenticated traffic. Calls
+without identity are shown as unattributed, not counted as unique users. No
+credentials or prompts are stored in these analytics.
+
+Estimated USD spending uses the catalog's models.dev base input/output rates,
+snapshotted with each call so later price changes do not reprice history.
+Provider connections are matched by their implementation kind and exact model
+ID; custom OpenAI-compatible endpoints remain unpriced. Older events without
+prices also remain unknown. The dashboard shows price coverage, including
+partial totals, and distinguishes unknown costs from zero-priced models.
+Estimates exclude cache discounts, pricing tiers, and other provider fees.
+
+With ClickHouse, analytics aggregate durable records (including prior gateway
+processes) with deduplication. Otherwise the report uses up to 50,000 retained
+events from this process, independently of the short recent-event feed. The
+response and dashboard disclose memory coverage and durable-storage failures;
+missing history is never silently presented as complete. Durable queries that
+exceed 100,000 time/model/caller/operation groups also fall back with this notice.
 
 ## Testing
 
-Tests run against real services, not mocks: chat routes talk to a real
+API integration tests run against real services: chat routes talk to a real
 OpenAI-compatible HTTP server over the production provider wire path, and the
 telemetry suites run against a real ClickHouse (CI provides one as a service
 container). Locally:
