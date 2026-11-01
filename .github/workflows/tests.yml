@@ -63,6 +63,8 @@ jobs:
       - run: sfw pnpm install --frozen-lockfile
       - run: pnpm lint
       - run: pnpm build
+      - name: Check development Worker config
+        run: pnpm exec wrangler deploy --env dev --dry-run --outdir "$RUNNER_TEMP/autonomo-dev"
       - run: pnpm test:ci
         env:
           CLICKHOUSE_URL: http://localhost:8123

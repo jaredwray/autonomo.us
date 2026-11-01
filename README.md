@@ -411,6 +411,23 @@ model; SSE clients see a `failover` event when the gateway switches models.
 The UX dashboard polls the telemetry endpoints and shows request/token/latency
 totals, per-model usage, and recent gateway events.
 
+## Deployment
+
+Merges to `main` deploy the dashboard to Cloudflare Workers as the development
+environment at <https://dev.autonomo.us>. The
+[deploy-dev](.github/workflows/deploy-dev.yml) workflow builds
+`@autonomo.us/ux` and runs `pnpm deploy:dev` (`wrangler deploy --env dev`),
+which publishes the Worker `autonomo-dev` on that custom domain. The
+`autonomo.us` zone must already be on the Cloudflare account. This publishes
+the static dashboard only; the API, MongoDB, and ClickHouse stay on their own
+host.
+
+| Secret | Required | Purpose |
+| --- | --- | --- |
+| `CLOUDFLARE_API_TOKEN` | yes | Token scoped to the account and the `autonomo.us` zone. Permissions: Account → Workers Scripts → Edit, Zone → Workers Routes → Edit, Zone → DNS → Edit. |
+| `CLOUDFLARE_ACCOUNT_ID` | yes | Account that owns the `autonomo.us` zone. |
+| `DEV_API_URL` | no | Absolute API origin baked in as `VITE_API_URL`. When unset, the dashboard calls same-origin `/v1`. A cross-origin API must list `https://dev.autonomo.us` in `CORS_ORIGIN`. |
+
 ## Testing
 
 Tests run against real services, not mocks: chat routes talk to a real
