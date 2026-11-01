@@ -1,6 +1,7 @@
 import cors from "@fastify/cors";
 import Fastify from "fastify";
 import { registerApiAccess } from "./auth/access.js";
+import { AgentTokenStore } from "./auth/agent-tokens.js";
 import { ApiTokenStore } from "./auth/tokens.js";
 import { type ApiConfig, configFromEnv } from "./config.js";
 import { FailoverPolicyStore } from "./failover.js";
@@ -10,6 +11,7 @@ import {
 	registryFromConfig,
 } from "./providers/registry.js";
 import { ProviderSettingsStore } from "./providers/settings.js";
+import { agentTokenRoutes } from "./routes/agent-tokens.js";
 import { apiTokenRoutes } from "./routes/api-tokens.js";
 import { chatRoutes } from "./routes/chat.js";
 import { decisionsRoutes } from "./routes/decisions.js";
@@ -58,6 +60,7 @@ export function createServer(options: CreateServerOptions = {}) {
 	);
 	const router = new ModelRouter(registry, routing, telemetry);
 	const tokens = new ApiTokenStore(config.mongodbUrl);
+	const agentTokens = new AgentTokenStore(config.mongodbUrl);
 	const server = Fastify({
 		logger:
 			options.logger === false
@@ -74,6 +77,10 @@ export function createServer(options: CreateServerOptions = {}) {
 	server.register(healthRoutes, { config });
 	server.register(apiTokenRoutes, {
 		tokens,
+		authenticationRequired: Boolean(config.ownerToken),
+	});
+	server.register(agentTokenRoutes, {
+		tokens: agentTokens,
 		authenticationRequired: Boolean(config.ownerToken),
 	});
 	server.register(modelsRoutes, { registry, catalog: modelCatalog, settings });
@@ -108,6 +115,7 @@ export function createServer(options: CreateServerOptions = {}) {
 		modelCatalog.stop();
 		await settings.close();
 		await tokens.close();
+		await agentTokens.close();
 		await routing.close();
 		await telemetry.stop();
 	});

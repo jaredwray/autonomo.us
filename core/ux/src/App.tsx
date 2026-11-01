@@ -5,6 +5,7 @@ import type {
 	TelemetryEvent,
 } from "@autonomo.us/common";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { AgentTokensView } from "./AgentTokensView.js";
 import { ApiTokensView } from "./ApiTokensView.js";
 import {
 	clearOwnerCredential,
@@ -547,6 +548,7 @@ const viewLabels = {
 	models: "Models",
 	routing: "Routing",
 	"api-tokens": "API Tokens",
+	"agent-tokens": "Agent Tokens",
 };
 function currentView(): keyof typeof viewLabels {
 	const view = window.location.hash.slice(2);
@@ -614,22 +616,28 @@ export function App() {
 					<span className="sidebar-label">autonomo.us</span>
 				</a>
 				<nav aria-label="Main navigation">
-					{(["dashboard", "models", "routing", "api-tokens"] as const).map(
-						(item) => (
-							<a
-								key={item}
-								href={`#/${item}`}
-								className={`nav-item ${view === item ? "active" : ""}`}
-								aria-current={view === item ? "page" : undefined}
-								aria-label={viewLabels[item]}
-								title={collapsed ? viewLabels[item] : undefined}
-								onClick={() => setView(item)}
-							>
-								<Icon name={item} />
-								<span className="sidebar-label">{viewLabels[item]}</span>
-							</a>
-						),
-					)}
+					{(
+						[
+							"dashboard",
+							"models",
+							"routing",
+							"api-tokens",
+							"agent-tokens",
+						] as const
+					).map((item) => (
+						<a
+							key={item}
+							href={`#/${item}`}
+							className={`nav-item ${view === item ? "active" : ""}`}
+							aria-current={view === item ? "page" : undefined}
+							aria-label={viewLabels[item]}
+							title={collapsed ? viewLabels[item] : undefined}
+							onClick={() => setView(item)}
+						>
+							<Icon name={item} />
+							<span className="sidebar-label">{viewLabels[item]}</span>
+						</a>
+					))}
 				</nav>
 				{authenticated && (
 					<button
@@ -670,6 +678,8 @@ export function App() {
 					/>
 				) : view === "api-tokens" ? (
 					<ApiTokensView />
+				) : view === "agent-tokens" ? (
+					<AgentTokensView />
 				) : view === "models" ? (
 					<ModelsView />
 				) : view === "routing" ? (

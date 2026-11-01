@@ -1,4 +1,18 @@
 export {
+	AGENT_TOKEN_PERMISSIONS,
+	AGENT_TOKEN_TTLS,
+	type AgentToken,
+	type AgentTokenAction,
+	type AgentTokenPermission,
+	type AgentTokenSecret,
+	type AgentTokenSettings,
+	type AgentTokenTtl,
+	type CreateAgentTokenRequest,
+	DEFAULT_AGENT_TOKEN_PERMISSIONS,
+	type RollAgentTokenRequest,
+	type UpdateAgentTokenRequest,
+} from "./agent-tokens.js";
+export {
 	API_TOKEN_PERMISSIONS,
 	API_TOKEN_TTLS,
 	type ApiToken,

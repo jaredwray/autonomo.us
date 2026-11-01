@@ -15,11 +15,11 @@ export const DEFAULT_API_TOKEN_PERMISSIONS: readonly ApiTokenPermission[] = [
 	"inference:run",
 ];
 
-export type ApiToken = {
+export type ApiToken<Permission extends string = ApiTokenPermission> = {
 	id: string;
 	name: string;
 	description: string;
-	permissions: ApiTokenPermission[];
+	permissions: Permission[];
 	ttlDays: ApiTokenTtl;
 	prefix: string;
 	createdAt: string;
@@ -30,22 +30,29 @@ export type ApiToken = {
 	previousTokens: Array<{ prefix: string; expiresAt: string }>;
 };
 
-export type CreateApiTokenRequest = {
+export type CreateApiTokenRequest<
+	Permission extends string = ApiTokenPermission,
+> = {
 	name: string;
 	description: string;
 	ttlDays: ApiTokenTtl;
-	/** Omitted by older clients: defaults to model discovery and inference. */
-	permissions?: ApiTokenPermission[];
+	/** Omitted API grants default to model discovery/inference; agent grants default to none. */
+	permissions?: Permission[];
 };
-export type UpdateApiTokenRequest = Pick<
-	CreateApiTokenRequest,
+export type UpdateApiTokenRequest<
+	Permission extends string = ApiTokenPermission,
+> = Pick<
+	CreateApiTokenRequest<Permission>,
 	"name" | "description" | "permissions"
 >;
 export type RollApiTokenRequest = {
 	ttlDays: ApiTokenTtl;
 	previousTokenTtlSeconds: number;
 };
-export type ApiTokenSecret = { token: ApiToken; secret: string };
+export type ApiTokenSecret<Permission extends string = ApiTokenPermission> = {
+	token: ApiToken<Permission>;
+	secret: string;
+};
 export type ApiTokenAction = {
 	id: string;
 	tokenId: string;
@@ -55,8 +62,8 @@ export type ApiTokenAction = {
 	actor: "owner" | "local-admin";
 	detail: string;
 };
-export type ApiTokenSettings = {
-	tokens: ApiToken[];
+export type ApiTokenSettings<Permission extends string = ApiTokenPermission> = {
+	tokens: ApiToken<Permission>[];
 	actions: ApiTokenAction[];
 	persistence: "mongodb" | "memory";
 	authenticationRequired: boolean;

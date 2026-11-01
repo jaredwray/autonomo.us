@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { MongoClient } from "mongodb";
 import { afterAll, describe, expect, it } from "vitest";
+import { AgentTokenStore } from "../src/auth/agent-tokens.js";
 import { ApiTokenStore, tokenHash } from "../src/auth/tokens.js";
 
 const url = new URL(
@@ -26,6 +27,88 @@ afterAll(async () => {
 });
 
 describe.skipIf(!available)("durable API tokens", () => {
+	it("persists agent credentials separately and propagates permission edits and revocation across replicas", async () => {
+		let store = new AgentTokenStore(url.toString());
+		const replica = new AgentTokenStore(url.toString());
+		const api = new ApiTokenStore(url.toString());
+		try {
+			const original = await store.create(
+				{
+					name: "Durable agent",
+					description: "MCP",
+					ttlDays: 30,
+					permissions: ["mcp:read", "mcp:call"],
+				},
+				"owner",
+			);
+			const rolled = await store.roll(
+				original.token.id,
+				{ ttlDays: 7, previousTokenTtlSeconds: 3600 },
+				"owner",
+			);
+			await store.close();
+			store = new AgentTokenStore(url.toString());
+			const raw = await client
+				.db()
+				.collection("gateway_agent_tokens")
+				.findOne({ name: "Durable agent" });
+			for (const issued of [original, rolled]) {
+				expect(JSON.stringify(raw)).not.toContain(issued.secret);
+				expect(JSON.stringify(raw)).toContain(tokenHash(issued.secret));
+				expect(await store.authenticate(issued.secret)).not.toBeNull();
+				expect(await api.authenticate(issued.secret)).toBeNull();
+			}
+			expect(
+				(await api.settings(true)).tokens.some(
+					(token) => token.id === original.token.id,
+				),
+			).toBe(false);
+			await replica.update(
+				original.token.id,
+				{
+					name: "Durable agent",
+					description: "Reduced",
+					permissions: ["mcp:read"],
+				},
+				"owner",
+			);
+			for (const issued of [original, rolled])
+				expect((await store.authenticate(issued.secret))?.permissions).toEqual([
+					"mcp:read",
+				]);
+			const before = await store.settings(true);
+			await client.db().command({
+				collMod: "gateway_agent_tokens",
+				validator: { rejectTestWrites: { $exists: true } },
+				validationLevel: "strict",
+			});
+			try {
+				await expect(
+					replica.roll(
+						original.token.id,
+						{ ttlDays: 7, previousTokenTtlSeconds: 0 },
+						"owner",
+					),
+				).rejects.toMatchObject({ statusCode: 503 });
+				await expect(
+					replica.revoke(original.token.id, "owner"),
+				).rejects.toMatchObject({ statusCode: 503 });
+				expect(await store.settings(true)).toEqual(before);
+			} finally {
+				await client
+					.db()
+					.command({ collMod: "gateway_agent_tokens", validator: {} });
+			}
+			await replica.revoke(original.token.id, "owner");
+			for (const issued of [original, rolled])
+				expect(await store.authenticate(issued.secret)).toBeNull();
+			expect((await store.settings(true)).actions).toHaveLength(4);
+		} finally {
+			await store.close();
+			await replica.close();
+			await api.close();
+		}
+	});
 	it("stores hashes, restores overlap after restart, and propagates revocation across replicas", async () => {
 		let now = Date.now();
 		let store = new ApiTokenStore(url.toString(), () => now);

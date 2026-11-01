@@ -69,7 +69,7 @@ pnpm lint:fix
 ## Gateway
 
 The dashboard has a collapsible sidebar with **Dashboard**, **Models**,
-**Routing**, and **API Tokens** views.
+**Routing**, **API Tokens**, and **Agent Tokens** views.
 In **Models**, search active models or choose **Add model** to connect Google
 Gemini, xAI Grok, Anthropic Claude, OpenAI, Groq, Mistral, DeepSeek, OpenRouter,
 Cloudflare Workers AI, or Jev (TypeSafe). Choose a catalog suggestion or enter a
@@ -133,6 +133,12 @@ through environment variables:
 - `PATCH /v1/api-tokens/:id` — update `{ name, description, permissions? }`. Omitted permissions stay unchanged; `[]` removes all grants.
 - `POST /v1/api-tokens/:id/roll` — issue a new secret with `{ ttlDays, previousTokenTtlSeconds }`. Overlap is 0–2592000 seconds (30 days), capped at the previous value's original expiry.
 - `DELETE /v1/api-tokens/:id` — revoke the token and all overlapping values; retains its metadata and action history.
+
+- `GET /v1/agent-tokens` — agent token metadata, latest 100 lifecycle actions, persistence and authentication mode.
+- `POST /v1/agent-tokens` — create an agent credential with `{ name, description, ttlDays, permissions? }`. Returns `{ token, secret }` once; omitted permissions grant no access.
+- `PATCH /v1/agent-tokens/:id` — update `{ name, description, permissions? }`; omitted permissions stay unchanged and `[]` removes all grants.
+- `POST /v1/agent-tokens/:id/roll` — rotate with `{ ttlDays, previousTokenTtlSeconds }`, using the same TTL and overlap choices as API tokens.
+- `DELETE /v1/agent-tokens/:id` — revoke all current and overlapping values, retaining metadata and history.
 
 - `POST /v1/chat` — proxy a chat request; body `{ model, messages, stream?, temperature?, maxTokens? }` where `model` is `connection/model`, `auto`, or `pool/<id>`. Returns the assistant message plus `usage` token counts; with `stream: true` responds with SSE (`text-delta` events, then `finish` with usage).
 - `GET /v1/models` — routable models and providers.
@@ -211,6 +217,30 @@ revocations across tokens, with time, actor, and details. Each token retains its
 latest 100 actions atomically with its metadata. Future resource scopes,
 delegated token management, and a permanent audit log are covered in the
 [API token permissions plan](docs/API_TOKEN_PERMISSIONS_PLAN.md).
+
+### Agent tokens
+
+Open **Agent Tokens** to prepare credentials for agents connecting through the
+future MCP gateway. The MCP server is not implemented yet; creating a token does
+not establish an MCP connection. Each token supports the same name, description,
+TTL, one-time secret display, rolling with overlap, revocation, and action log as
+API Tokens.
+
+Agent secrets use the `agt_` prefix and store only SHA-256 digests in the separate
+`gateway_agent_tokens` MongoDB collection. Without MongoDB they last until API
+restart. API and agent token lists, histories, permission sets, and authentication
+are isolated: an agent credential cannot authenticate a `/v1/*` request, and an
+API credential cannot authenticate through `AgentTokenStore`. Management requires
+the owner credential when `OWNER_TOKEN` is configured; the existing trusted local
+mode remains available without it.
+
+New agent tokens start with no permissions, both in the dashboard and through the
+API. The reserved MCP grants are `mcp:read` (discover tools and read resources and
+prompts) and `mcp:call` (call tools). They are independent; select both when needed.
+These grants do not authorize any current REST endpoint. The future MCP server
+must authenticate through `AgentTokenStore` and enforce these permissions on each
+operation, together with any tool-specific scope and approval policies.
+Permission edits apply to all overlapping values, and rolling preserves grants.
 
 ### Jev decisions
 
