@@ -430,6 +430,7 @@ Provider connections are matched by their implementation kind and exact model
 ID; custom OpenAI-compatible endpoints remain unpriced. Older events without
 prices also remain unknown. The dashboard shows price coverage, including
 partial totals, and distinguishes unknown costs from zero-priced models.
+Failed attempts remain unpriced because their usage may be missing or partial.
 Estimates exclude cache discounts, pricing tiers, and other provider fees.
 
 With ClickHouse, analytics aggregate durable records (including prior gateway

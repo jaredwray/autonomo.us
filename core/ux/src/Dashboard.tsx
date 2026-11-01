@@ -792,8 +792,8 @@ export function Dashboard() {
 						</a>{" "}
 						input/output rates captured when each call completes. They exclude
 						cache discounts, tiered pricing, and other provider fees. Missing
-						rates and older unpriced activity remain unknown. These estimates
-						are not invoices.
+						rates, failed calls, and older unpriced activity remain unknown.
+						These estimates are not invoices.
 					</p>
 				</>
 			)}

@@ -76,6 +76,69 @@ function seed(telemetry: TelemetryService, setTime: (value: string) => void) {
 }
 
 describe("usage analytics", () => {
+	it.each([
+		{ name: "chat", operation: "chat" as const, stream: false },
+		{ name: "streaming chat", operation: "chat" as const, stream: true },
+		{ name: "decisions", operation: "decisions" as const, stream: false },
+		{ name: "routing selectors", operation: "routing" as const, stream: false },
+	])("keeps failed $name calls unpriced when usage is missing or partial", async ({
+		operation,
+		stream,
+	}) => {
+		const telemetry = new TelemetryService({ now: () => new Date(from) });
+		telemetry.setPricingResolver((model) =>
+			model === "work/free" ? { input: 0, output: 0 } : { input: 2, output: 6 },
+		);
+		const emptyUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+		for (const recordedUsage of [emptyUsage, usage]) {
+			const failed = telemetry.recordChat({
+				operation,
+				stream,
+				model: "work/paid",
+				provider: "work",
+				usage: recordedUsage,
+				latencyMs: 10,
+				error: "Provider failed before completing usage reporting",
+			});
+			expect(failed.data).not.toHaveProperty("estimatedCostUsd");
+			expect(failed.data).not.toHaveProperty("pricing");
+		}
+		telemetry.recordChat({
+			operation,
+			stream,
+			model: "work/paid",
+			provider: "work",
+			usage,
+			latencyMs: 100,
+		});
+		const free = telemetry.recordChat({
+			operation,
+			stream,
+			model: "work/free",
+			provider: "work",
+			usage,
+			latencyMs: 100,
+		});
+		expect(free.data.estimatedCostUsd).toBe(0);
+		const result = await telemetry.analytics(query);
+		expect(result.totals).toMatchObject({
+			requests: 4,
+			errors: 2,
+			pricedRequests: 2,
+			estimatedCostUsd: 5,
+		});
+		expect(result.byModel.find((row) => row.id === "work/paid")).toMatchObject({
+			requests: 3,
+			errors: 2,
+			pricedRequests: 1,
+			estimatedCostUsd: 5,
+		});
+		expect(result.byModel.find((row) => row.id === "work/free")).toMatchObject({
+			pricedRequests: 1,
+			estimatedCostUsd: 0,
+		});
+	});
+
 	it("reconciles money, caller identity, filters, successful latency, and empty time buckets", async () => {
 		let time = from;
 		const telemetry = new TelemetryService({
@@ -302,6 +365,14 @@ describe.skipIf(!available)("durable analytics", () => {
 		seed(durable, (value) => {
 			time = value;
 		});
+		time = "2026-11-01T03:00:00.000Z";
+		durable.recordChat({
+			model: "work/paid",
+			provider: "work",
+			usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+			latencyMs: 50,
+			error: "Provider failed without usage",
+		});
 		for (const event of durable.recentEvents()) memory.record(event);
 		const legacy = {
 			id: "old",
@@ -333,6 +404,11 @@ describe.skipIf(!available)("durable analytics", () => {
 		}
 		const restarted = new TelemetryService({ sink });
 		cleanups.unshift(() => restarted.stop());
-		expect((await restarted.analytics(query)).totals.requests).toBe(5);
+		expect((await restarted.analytics(query)).totals).toMatchObject({
+			requests: 6,
+			errors: 3,
+			pricedRequests: 3,
+			estimatedCostUsd: 10,
+		});
 	});
 });

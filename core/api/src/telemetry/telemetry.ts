@@ -110,11 +110,14 @@ export class TelemetryService {
 	/** Records a chat completion (or failure) and returns the stored event. */
 	recordChat(chat: ChatTelemetry): TelemetryEvent {
 		const pricing = this.pricing?.(chat.model, chat.provider);
-		const estimatedCostUsd = pricing
-			? (chat.usage.promptTokens * pricing.input +
-					chat.usage.completionTokens * pricing.output) /
-				1_000_000
-			: undefined;
+		// Failed attempts may have missing or partial usage, so a zero token
+		// fallback cannot establish that the provider charged nothing.
+		const estimatedCostUsd =
+			pricing && !chat.error
+				? (chat.usage.promptTokens * pricing.input +
+						chat.usage.completionTokens * pricing.output) /
+					1_000_000
+				: undefined;
 		const event: TelemetryEvent = {
 			id: randomUUID(),
 			type: chat.error
