@@ -209,6 +209,8 @@ export class RoutingSettingsStore {
 	}
 	async close() {
 		await this.writes;
-		await this.client?.close();
+		const client = this.client;
+		this.client = undefined;
+		await client?.close();
 	}
 }

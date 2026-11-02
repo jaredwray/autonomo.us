@@ -30,3 +30,6 @@ overrides:
 allowBuilds:
   '@biomejs/biome': true
   esbuild: true
+  # Wrangler deploy uploads assets over the API and does not start workerd.
+  # Deny the postinstall, which downloads a platform binary, instead of approving it.
+  workerd: false

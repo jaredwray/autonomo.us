@@ -1,20 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-	eventToRow,
+	eventToDocument,
 	stripProviderPrefix,
-	toClickHouseDateTime,
-} from "../src/telemetry/clickhouse.js";
-
-// Pure row/format helpers. Sink behavior against a real ClickHouse server
-// lives in clickhouse.integration.test.ts.
-
-describe("toClickHouseDateTime", () => {
-	it("converts ISO timestamps to DateTime64 input format", () => {
-		expect(toClickHouseDateTime("2026-07-17T12:34:56.789Z")).toBe(
-			"2026-07-17 12:34:56.789",
-		);
-	});
-});
+} from "../src/telemetry/mongo.js";
 
 describe("stripProviderPrefix", () => {
 	it("strips only the exact provider prefix", () => {
@@ -33,9 +21,9 @@ describe("stripProviderPrefix", () => {
 	});
 });
 
-describe("eventToRow", () => {
-	it("flattens gateway events into columns", () => {
-		const row = eventToRow({
+describe("eventToDocument", () => {
+	it("flattens gateway events into a telemetry document", () => {
+		const document = eventToDocument({
 			id: "evt-1",
 			type: "gateway.chat",
 			agentId: "agent-1",
@@ -50,39 +38,31 @@ describe("eventToRow", () => {
 			timestamp: "2026-07-17T12:00:00.000Z",
 		});
 
-		expect(row).toEqual({
-			id: "evt-1",
+		expect(document).toEqual({
+			_id: "evt-1",
 			type: "gateway.chat",
-			agent_id: "agent-1",
+			agentId: "agent-1",
 			model: "anthropic/claude-opus-4-8",
 			provider: "anthropic",
-			prompt_tokens: 10,
-			completion_tokens: 5,
-			total_tokens: 15,
-			latency_ms: 123,
+			promptTokens: 10,
+			completionTokens: 5,
+			totalTokens: 15,
+			latencyMs: 123,
 			error: "",
-			data: JSON.stringify({
-				model: "anthropic/claude-opus-4-8",
-				provider: "anthropic",
-				promptTokens: 10,
-				completionTokens: 5,
-				totalTokens: 15,
-				latencyMs: 123,
-			}),
-			timestamp: "2026-07-17 12:00:00.000",
+			timestamp: new Date("2026-07-17T12:00:00.000Z"),
 		});
 	});
 
 	it("defaults missing fields safely", () => {
-		const row = eventToRow({
+		const document = eventToDocument({
 			id: "evt-2",
 			type: "custom",
 			data: { note: "hello" },
 			timestamp: "2026-07-17T12:00:00.000Z",
 		});
-		expect(row.agent_id).toBe("");
-		expect(row.model).toBe("");
-		expect(row.prompt_tokens).toBe(0);
-		expect(row.error).toBe("");
+		expect(document.agentId).toBe("");
+		expect(document.model).toBe("");
+		expect(document.promptTokens).toBe(0);
+		expect(document.error).toBe("");
 	});
 });

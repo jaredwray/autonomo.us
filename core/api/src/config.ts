@@ -36,21 +36,11 @@ export type CloudProviderConfig = {
 	models: string[];
 };
 
-export type ClickHouseConfig = {
-	url: string;
-	database: string;
-	table: string;
-	username: string;
-	password: string;
-	/** Per-request timeout so a hung ClickHouse never blocks API responses. */
-	requestTimeoutMs: number;
-};
-
 export type ApiConfig = {
 	providers: ProviderConfig[];
 	/** Initial failover policy; runtime-mutable via PUT /v1/failover. */
 	failover?: FailoverPolicy;
-	clickhouse?: ClickHouseConfig;
+	/** When set, tokens, routing, provider settings, and telemetry persist here. */
 	mongodbUrl?: string;
 	/** Protect /v1 with this owner credential; managed API tokens only get gateway access. */
 	ownerToken?: string;
@@ -89,9 +79,7 @@ function parseModels(value: string | undefined, fallback: string[]): string[] {
  * - `OPENAI_COMPAT_BASE_URL` registers an OpenAI-compatible provider (Ollama,
  *   LM Studio, vLLM, ...). `OPENAI_COMPAT_NAME` (default `local`),
  *   `OPENAI_COMPAT_API_KEY`, and `OPENAI_COMPAT_MODELS` refine it.
- * - `CLICKHOUSE_URL` enables the telemetry sink. `CLICKHOUSE_DATABASE`,
- *   `CLICKHOUSE_TABLE`, `CLICKHOUSE_USERNAME`, and `CLICKHOUSE_PASSWORD`
- *   default to the docker-compose settings.
+ * - `MONGODB_URL` persists tokens, routing, provider settings, and telemetry.
  * - `FAILOVER_ENABLED`, `FAILOVER_TARGETS` (comma-separated `provider/model`
  *   ids), and `FAILOVER_TIMEOUT_MS` seed the failover policy, which stays
  *   runtime-configurable via PUT /v1/failover and the dashboard.
@@ -181,19 +169,6 @@ export function configFromEnv(
 		});
 	}
 
-	const clickhouse: ClickHouseConfig | undefined = env.CLICKHOUSE_URL
-		? {
-				url: env.CLICKHOUSE_URL,
-				database: env.CLICKHOUSE_DATABASE || "autonomous",
-				table: env.CLICKHOUSE_TABLE || "telemetry_events",
-				// ?? not ||: an explicitly empty username/password is valid
-				// (ClickHouse's default user has no password).
-				username: env.CLICKHOUSE_USERNAME ?? "autonomous",
-				password: env.CLICKHOUSE_PASSWORD ?? "autonomous",
-				requestTimeoutMs: Number(env.CLICKHOUSE_TIMEOUT_MS) || 3000,
-			}
-		: undefined;
-
 	const corsOrigins = env.CORS_ORIGIN
 		? env.CORS_ORIGIN.split(",")
 				.map((origin) => origin.trim())
@@ -218,7 +193,6 @@ export function configFromEnv(
 	return {
 		providers,
 		failover,
-		clickhouse,
 		mongodbUrl: env.MONGODB_URL,
 		ownerToken: env.OWNER_TOKEN || undefined,
 		corsOrigins,

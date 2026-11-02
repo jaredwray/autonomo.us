@@ -1,11 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { createServer } from "../src/server.js";
-import { ClickHouseSink } from "../src/telemetry/clickhouse.js";
+import { MongoTelemetrySink } from "../src/telemetry/mongo.js";
 import { TelemetryService } from "../src/telemetry/telemetry.js";
-import { clickhouseTestConfig } from "./clickhouse-env.js";
 
 // In-memory aggregation and route behavior without a sink. Sink behavior
-// against a real ClickHouse server lives in telemetry.integration.test.ts.
+// against a real MongoDB server lives in telemetry.integration.test.ts.
 
 const usage = { promptTokens: 10, completionTokens: 5, totalTokens: 15 };
 
@@ -89,11 +88,10 @@ describe("TelemetryService", () => {
 
 	it("falls back to memory when the sink is unreachable", async () => {
 		// Real network failure: nothing listens on port 9.
-		const sink = new ClickHouseSink({
-			...clickhouseTestConfig("unreachable"),
-			url: "http://127.0.0.1:9",
-			requestTimeoutMs: 500,
-		});
+		const sink = new MongoTelemetrySink(
+			"mongodb://127.0.0.1:9/unreachable",
+			500,
+		);
 		const telemetry = new TelemetryService({ sink, flushIntervalMs: 60_000 });
 
 		telemetry.recordChat({
@@ -140,11 +138,11 @@ describe("telemetry routes (no sink)", () => {
 		});
 		expect(JSON.parse(memoryResponse.body).source).toBe("memory");
 
-		const clickhouseResponse = await server.inject({
+		const mongoResponse = await server.inject({
 			method: "GET",
-			url: "/v1/telemetry/summary?source=clickhouse",
+			url: "/v1/telemetry/summary?source=mongodb",
 		});
-		expect(clickhouseResponse.statusCode).toBe(503);
+		expect(mongoResponse.statusCode).toBe(503);
 
 		const eventsResponse = await server.inject({
 			method: "GET",

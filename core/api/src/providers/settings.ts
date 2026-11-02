@@ -204,6 +204,8 @@ export class ProviderSettingsStore {
 
 	async close(): Promise<void> {
 		await this.writes;
-		await this.client?.close();
+		const client = this.client;
+		this.client = undefined;
+		await client?.close();
 	}
 }
