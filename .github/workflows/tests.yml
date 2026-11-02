@@ -32,19 +32,6 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
-      clickhouse:
-        image: clickhouse/clickhouse-server:25.8
-        env:
-          CLICKHOUSE_USER: autonomous
-          CLICKHOUSE_PASSWORD: autonomous
-          CLICKHOUSE_DB: autonomous
-        ports:
-          - 8123:8123
-        options: >-
-          --health-cmd "clickhouse-client --user autonomous --password autonomous --query 'SELECT 1'"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -64,13 +51,12 @@ jobs:
       - run: pnpm lint
       - run: pnpm build
       - name: Check development Worker config
-        run: pnpm exec wrangler deploy --env dev --dry-run --outdir "$RUNNER_TEMP/autonomo-dev"
+        run: |
+          pnpm exec wrangler deploy -c core/ux/wrangler.jsonc --dry-run --outdir "$RUNNER_TEMP/ux"
+          pnpm exec wrangler deploy -c core/api/wrangler.jsonc --dry-run --outdir "$RUNNER_TEMP/api"
+      # Suites that need MongoDB default to the service above. Leaving
+      # MONGODB_URL unset keeps createServer() in-memory for the other tests.
       - run: pnpm test:ci
-        env:
-          CLICKHOUSE_URL: http://localhost:8123
-          CLICKHOUSE_USERNAME: autonomous
-          CLICKHOUSE_PASSWORD: autonomous
-          CLICKHOUSE_DATABASE: autonomous
 
   docker:
     runs-on: ubuntu-latest

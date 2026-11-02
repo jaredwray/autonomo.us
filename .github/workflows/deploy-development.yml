@@ -1,7 +1,8 @@
 name: deploy-development
 
-# Publishes the dashboard to Cloudflare Workers when commits land on main.
-# The development environment is https://dev.autonomo.us (Worker autonomo-dev).
+# Publishes the development environment to Cloudflare Workers on main.
+#   autonomous-ux-development  → https://dev.autonomo.us
+#   autonomous-api-development → https://dev-api.autonomo.us
 #
 # Repository secrets:
 #   CLOUDFLARE_API_TOKEN  — required. Account → Workers Scripts → Edit,
@@ -9,9 +10,9 @@ name: deploy-development
 #                           Scope the token to the account that owns autonomo.us
 #                           and to that zone.
 #   CLOUDFLARE_ACCOUNT_ID — required. The same account.
-#   DEV_API_URL           — optional. Baked in as VITE_API_URL. When unset, the
-#                           dashboard calls same-origin /v1. A cross-origin API
-#                           must allow https://dev.autonomo.us via CORS_ORIGIN.
+#
+# MongoDB is not created here. After the first deploy, set it on the API worker:
+#   pnpm exec wrangler secret put MONGODB_URL -c core/api/wrangler.jsonc
 on:
   workflow_dispatch:
   push:
@@ -67,9 +68,9 @@ jobs:
       - name: Build the dashboard
         run: pnpm --filter @autonomo.us/ux... build
         env:
-          VITE_API_URL: ${{ secrets.DEV_API_URL }}
-      - name: Deploy to Cloudflare Workers
-        run: pnpm deploy:dev
+          VITE_API_URL: https://dev-api.autonomo.us
+      - name: Deploy development Workers
+        run: pnpm deploy:development
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

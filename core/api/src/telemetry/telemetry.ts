@@ -5,7 +5,7 @@ import type {
 	TokenUsage,
 	UsageSummary,
 } from "@autonomo.us/common";
-import type { ClickHouseSink } from "./clickhouse.js";
+import type { MongoTelemetrySink } from "./mongo.js";
 
 export type ChatTelemetry = {
 	operation?: "chat" | "decisions" | "routing";
@@ -22,10 +22,14 @@ export type ChatTelemetry = {
 };
 
 export type TelemetryServiceOptions = {
-	sink?: ClickHouseSink;
+	sink?: MongoTelemetrySink;
 	/** How many events to keep in the in-memory ring buffer. */
 	maxRecent?: number;
-	/** Flush cadence for the ClickHouse sink. */
+	/**
+	 * Flush cadence for the MongoDB sink. `0` flushes after each recorded
+	 * event instead of on a timer, which is what the Worker entry uses:
+	 * a timer would run outside a request, where Workers forbid I/O.
+	 */
 	flushIntervalMs?: number;
 	/** Max events buffered for the sink before oldest are dropped. */
 	maxPending?: number;
@@ -41,11 +45,11 @@ type MutableModelUsage = ModelUsage & { successLatencyTotal: number };
 
 /**
  * Records gateway telemetry. Aggregates live in memory (so the dashboard works
- * with zero infrastructure) and every event is also batched to ClickHouse when
+ * with zero infrastructure) and every event is also batched to MongoDB when
  * a sink is configured. Sink failures never break request handling.
  */
 export class TelemetryService {
-	private readonly sink?: ClickHouseSink;
+	private readonly sink?: MongoTelemetrySink;
 	private readonly maxRecent: number;
 	private readonly flushIntervalMs: number;
 	private readonly maxPending: number;
@@ -66,6 +70,7 @@ export class TelemetryService {
 	private pending: TelemetryEvent[] = [];
 	private timer?: ReturnType<typeof setInterval>;
 	private schemaReady = false;
+	private flushChain: Promise<boolean> = Promise.resolve(true);
 
 	constructor(options: TelemetryServiceOptions = {}) {
 		this.sink = options.sink;
@@ -74,9 +79,9 @@ export class TelemetryService {
 		this.maxPending = options.maxPending ?? 5000;
 		this.maxModels = options.maxModels ?? 100;
 		this.now = options.now ?? (() => new Date());
-		if (this.sink) {
+		if (this.sink && this.flushIntervalMs > 0) {
 			this.timer = setInterval(() => {
-				void this.flush();
+				this.scheduleFlush();
 			}, this.flushIntervalMs);
 			this.timer.unref?.();
 		}
@@ -120,6 +125,7 @@ export class TelemetryService {
 			if (this.pending.length > this.maxPending) {
 				this.pending.splice(0, this.pending.length - this.maxPending);
 			}
+			if (this.flushIntervalMs === 0) this.scheduleFlush();
 		}
 	}
 
@@ -193,7 +199,7 @@ export class TelemetryService {
 	}
 
 	/**
-	 * Durable summary from ClickHouse; returns undefined when no sink is
+	 * Durable summary from MongoDB; returns undefined when no sink is
 	 * configured, pending events cannot be flushed, or the query fails —
 	 * callers fall back to the complete in-memory summary in every case.
 	 */
@@ -201,7 +207,7 @@ export class TelemetryService {
 		if (!this.sink) return undefined;
 		// A failed flush means the durable store is missing events we hold in
 		// memory — serving its summary would silently under-report.
-		if (!(await this.flush())) return undefined;
+		if (!(await this.drain())) return undefined;
 		try {
 			return await this.sink.querySummary();
 		} catch {
@@ -221,16 +227,30 @@ export class TelemetryService {
 		return this.sink !== undefined;
 	}
 
-	/** Bootstraps the ClickHouse schema once (also needed before queries). */
+	/** Bootstraps the MongoDB indexes once (also needed before queries). */
 	private async ensureSchemaOnce(): Promise<void> {
 		if (!this.sink || this.schemaReady) return;
 		await this.sink.ensureSchema();
 		this.schemaReady = true;
 	}
 
+	private scheduleFlush(): void {
+		this.flushChain = this.flushChain.then(() => this.flush());
+	}
+
+	/** Waits until queued flushes have finished. False when events remain. */
+	async drain(): Promise<boolean> {
+		let ok = await this.flushChain;
+		if (this.pending.length > 0) {
+			this.scheduleFlush();
+			ok = await this.flushChain;
+		}
+		return ok && this.pending.length === 0;
+	}
+
 	/**
-	 * Ships pending events to ClickHouse. Returns false when events remain
-	 * queued (sink failure); they are retried on the next flush tick.
+	 * Ships pending events to MongoDB. Returns false when events remain
+	 * queued (sink failure); they are retried on the next flush.
 	 */
 	async flush(): Promise<boolean> {
 		if (!this.sink) return false;
@@ -257,6 +277,12 @@ export class TelemetryService {
 			clearInterval(this.timer);
 			this.timer = undefined;
 		}
-		await this.flush().catch(() => {});
+		await this.drain().catch(() => false);
+	}
+
+	/** Drops the MongoDB socket so the next request can open a new one. */
+	async close(): Promise<void> {
+		await this.stop();
+		await this.sink?.close();
 	}
 }

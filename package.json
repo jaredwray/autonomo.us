@@ -12,7 +12,7 @@
 		"lint": "npx @biomejs/biome check .",
 		"lint:fix": "npx @biomejs/biome check --write .",
 		"clean": "pnpm run --recursive clean",
-		"deploy:dev": "wrangler deploy --env dev"
+		"deploy:development": "wrangler deploy -c core/ux/wrangler.jsonc && wrangler deploy -c core/api/wrangler.jsonc"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.4.11",

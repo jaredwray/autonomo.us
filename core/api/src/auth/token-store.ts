@@ -398,6 +398,8 @@ export class TokenStore<Permission extends string> {
 			: null;
 	}
 	async close() {
-		await this.client?.close();
+		const client = this.client;
+		this.client = undefined;
+		await client?.close();
 	}
 }
