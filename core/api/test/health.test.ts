@@ -15,6 +15,10 @@ vi.mock("mongodb", () => ({
 				collection: () => ({
 					find: () => ({ toArray: async () => [] }),
 					findOne: async () => null,
+					findOneAndUpdate: async (
+						_filter: unknown,
+						update: { $setOnInsert: { config: unknown } },
+					) => ({ _id: "default", ...update.$setOnInsert }),
 				}),
 			};
 		}
