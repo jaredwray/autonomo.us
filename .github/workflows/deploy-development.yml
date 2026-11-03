@@ -11,8 +11,10 @@ name: deploy-development
 #                           and to that zone.
 #   CLOUDFLARE_ACCOUNT_ID — required. The same account.
 #
-# MongoDB is not created here. After the first deploy, set it on the API worker:
-#   pnpm exec wrangler secret put MONGODB_URL -c core/api/wrangler.jsonc
+# Provision a MongoDB server and set its URL on the API worker:
+#   pnpm exec wrangler secret put MONGODB_URI -c core/api/wrangler.jsonc
+# The API creates its configuration database on its first request. The health
+# check fails until the secret is set and configuration initialization succeeds.
 on:
   workflow_dispatch:
   push:
@@ -74,3 +76,5 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Verify API health and MongoDB initialization
+        run: pnpm check:deployment

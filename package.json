@@ -9,6 +9,8 @@
 		"build": "pnpm run --recursive --sequential build",
 		"test": "vitest run --coverage",
 		"test:ci": "vitest run --coverage",
+		"test:worker": "pnpm --filter @autonomo.us/api exec tsx scripts/test-worker.ts",
+		"check:deployment": "pnpm --filter @autonomo.us/api exec tsx scripts/check-deployment.ts",
 		"lint": "npx @biomejs/biome check .",
 		"lint:fix": "npx @biomejs/biome check --write .",
 		"clean": "pnpm run --recursive clean",

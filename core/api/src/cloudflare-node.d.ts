@@ -4,6 +4,10 @@ interface ExecutionContext {
 	passThroughOnException(): void;
 }
 
+declare module "cloudflare:workers" {
+	export const env: Record<string, string | undefined>;
+}
+
 declare module "cloudflare:node" {
 	export function httpServerHandler(options: { port: number }): {
 		fetch(

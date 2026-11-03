@@ -42,7 +42,7 @@ async function health(env: Record<string, string> = {}) {
 }
 
 const configuredEnv = {
-	MONGODB_URL: "mongodb://localhost:27017/autonomous",
+	MONGODB_URI: "mongodb://localhost:27017/autonomous",
 };
 
 describe("health route", () => {
@@ -50,7 +50,11 @@ describe("health route", () => {
 		const body = await health();
 		expect(body.status).toBe("ok");
 		expect(body.timestamp).toBeDefined();
-		expect(body.mongodb).toEqual({ configured: false, connected: false });
+		expect(body.mongodb).toEqual({
+			configured: false,
+			connected: false,
+			initialized: false,
+		});
 		expect(mocks.mongoPing).not.toHaveBeenCalled();
 		const healthz = await servers[0].inject("/healthz");
 		expect(healthz.statusCode).toBe(200);
@@ -75,7 +79,11 @@ describe("health route", () => {
 
 	it("reports a successful probe and closes MongoDB clients", async () => {
 		const body = await health(configuredEnv);
-		expect(body.mongodb).toEqual({ configured: true, connected: true });
+		expect(body.mongodb).toEqual({
+			configured: true,
+			connected: true,
+			initialized: true,
+		});
 		expect(mocks.mongoPing).toHaveBeenCalledWith({ ping: 1 });
 		await servers[0].close();
 		// The probe closes its own client. Model settings and routing each

@@ -5,7 +5,8 @@ import { configFromEnv } from "../src/config.js";
 import { createServer } from "../src/server.js";
 
 const url = new URL(
-	process.env.MONGODB_URL ??
+	process.env.MONGODB_URI ??
+		process.env.MONGODB_URL ??
 		"mongodb://autonomous:autonomous@localhost:27017/autonomous?authSource=admin",
 );
 url.pathname = `/autonomous_models_test_${randomUUID().replaceAll("-", "")}`;

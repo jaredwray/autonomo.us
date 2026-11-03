@@ -3,6 +3,7 @@ import { MongoClient } from "mongodb";
 
 /** Real MongoDB used by integration tests. Suites skip when it is absent. */
 export const MONGODB_TEST_URL =
+	process.env.MONGODB_URI ??
 	process.env.MONGODB_URL ??
 	"mongodb://autonomous:autonomous@localhost:27017/autonomous?authSource=admin";
 

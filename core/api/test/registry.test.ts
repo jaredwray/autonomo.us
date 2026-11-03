@@ -129,6 +129,20 @@ describe("configFromEnv + registryFromConfig", () => {
 		);
 	});
 
+	it("uses MONGODB_URI before the legacy MONGODB_URL", () => {
+		const uri = "mongodb://localhost:27017/configured";
+		expect(configFromEnv({ MONGODB_URI: uri }).mongodbUrl).toBe(uri);
+		expect(
+			configFromEnv({
+				MONGODB_URI: uri,
+				MONGODB_URL: "mongodb://localhost:27017/legacy",
+			}).mongodbUrl,
+		).toBe(uri);
+		expect(
+			configFromEnv({ MONGODB_URI: "", MONGODB_URL: uri }).mongodbUrl,
+		).toBe(uri);
+	});
+
 	it("parses the failover policy from env with safe defaults", () => {
 		expect(configFromEnv({}).failover).toEqual({
 			enabled: false,

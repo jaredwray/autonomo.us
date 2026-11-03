@@ -6,15 +6,16 @@ import {
 } from "@autonomo.us/common";
 import { MongoClient } from "mongodb";
 import type { ApiConfig, ProviderConfig } from "../config.js";
-import { mongoOperationDeadlines } from "../mongo.js";
+import { mongoOperationDeadlines, requestMongoClient } from "../mongo.js";
 import { type ProviderRegistry, providerFromConfig } from "./registry.js";
 
 export class ProviderSettingsError extends Error {
 	constructor(
 		message: string,
 		readonly statusCode: number,
+		options?: ErrorOptions,
 	) {
-		super(message);
+		super(message, options);
 	}
 }
 
@@ -35,11 +36,17 @@ export class ProviderSettingsStore {
 	}
 
 	private collection() {
-		this.client ??= new MongoClient(this.config.mongodbUrl as string, {
-			serverSelectionTimeoutMS: 1500,
-			...mongoOperationDeadlines(3000),
-		});
-		return this.client
+		const create = () =>
+			new MongoClient(this.config.mongodbUrl as string, {
+				serverSelectionTimeoutMS: 1500,
+				...mongoOperationDeadlines(3000),
+			});
+		let client = requestMongoClient(this, create);
+		if (!client) {
+			this.client ??= create();
+			client = this.client;
+		}
+		return client
 			.db()
 			.collection<{ _id: string; config: ProviderConfig }>("gateway_providers");
 	}
@@ -60,10 +67,11 @@ export class ProviderSettingsStore {
 					this.registry.register(providerFromConfig(config));
 					this.configs.set(config.name, config);
 				}
-			} catch {
+			} catch (error) {
 				throw new ProviderSettingsError(
 					"Model settings are unavailable. Check the MongoDB connection and retry.",
 					503,
+					{ cause: error },
 				);
 			}
 		}

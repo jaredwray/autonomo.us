@@ -38,7 +38,7 @@ For Codespaces or VS Code Dev Containers, rebuild the container after changing
 and Compose (Docker CE, `"moby": false`, because the Debian trixie base image has
 no Moby packages; with Moby the build fails and Codespaces starts in recovery
 mode). Container startup launches MongoDB with a persistent volume. New
-terminals inherit `MONGODB_URL` for the host-run API. Start the API and UX using
+terminals inherit `MONGODB_URI` for the host-run API. Start the API and UX using
 the development commands below; the dashboard
 uses forwarded port 5173. Port 8080 is also forwarded for the full Compose stack.
 
@@ -94,7 +94,7 @@ Route requests and failover targets using `connection/model`, for example
 needed. Credentials and Cloudflare accounts are never inherited by a new
 connection. Duplicate names are rejected when creating a connection.
 
-With `MONGODB_URL` configured, model settings and credentials are stored in the
+With `MONGODB_URI` configured, model settings and credentials are stored in the
 `gateway_providers` collection and restored at startup. Saved provider settings
 take precedence over environment settings for the same connection name. Protect this
 database as a credential store: keys are stored server-side, are never returned
@@ -117,7 +117,7 @@ through environment variables:
 | `TYPESAFE_API_KEY` | Jev decisions adapter; `TYPESAFE_MODELS` defaults to `jev-latest` |
 | `XAI_API_KEY` | Registers the native xAI Grok adapter as `xai`; `XAI_MODELS` overrides the advertised list (default `grok-4`) |
 | `OPENAI_COMPAT_BASE_URL` | Registers an OpenAI-compatible provider — Ollama, LM Studio, vLLM, llama.cpp (`OPENAI_COMPAT_NAME` defaults to `local`, plus optional `OPENAI_COMPAT_API_KEY` / `OPENAI_COMPAT_MODELS`) |
-| `MONGODB_URL` | Persists API tokens, agent tokens, provider settings, routing, and telemetry. Compose uses `mongodb://autonomous:autonomous@mongo:27017/autonomous?authSource=admin` |
+| `MONGODB_URI` | Persists API tokens, agent tokens, provider settings, routing, and telemetry. Compose uses `mongodb://autonomous:autonomous@mongo:27017/autonomous?authSource=admin` |
 | `CORS_ORIGIN` | Comma-separated browser origins allowed by CORS (default: the Vite dev dashboard on `localhost:5173`; set `*` to allow any) |
 | `FAILOVER_ENABLED` | Seeds the failover policy switch (`true`/`1`; default off) — see [Failover](#failover) |
 | `FAILOVER_TARGETS` | Comma-separated `provider/model` ids tried, in order, when a request fails |
@@ -125,7 +125,7 @@ through environment variables:
 
 ### Endpoints
 
-- `GET /health` and `GET /healthz` — API liveness (`status`, `timestamp`) plus `mongodb`, containing `configured` and `connected`. A configured database is probed with a bounded timeout; an unavailable database reports `connected: false` while liveness remains HTTP 200. Set `MONGODB_URL` to enable the check.
+- `GET /health` and `GET /healthz` — API liveness (`status`, `timestamp`) plus `mongodb`, containing `configured`, `connected`, and `initialized`. The last field confirms saved settings loaded and the default routing document exists. A configured database is probed with a bounded timeout; an unavailable database reports `connected: false` while liveness remains HTTP 200. Set `MONGODB_URI` to enable the check.
 
 - `GET /v1/api-tokens` — token metadata, latest 100 lifecycle actions, persistence and authentication mode; never returns secrets or hashes.
 - `GET /v1/auth/owner` — verify owner access without reading MongoDB; returns 204. Managed API tokens cannot use this endpoint.
@@ -157,7 +157,7 @@ through environment variables:
 # Host-run API against the compose services
 docker compose up -d mongo
 OPENAI_COMPAT_BASE_URL=http://localhost:11434/v1 \
-MONGODB_URL='mongodb://autonomous:autonomous@localhost:27017/autonomous?authSource=admin' \
+MONGODB_URI='mongodb://autonomous:autonomous@localhost:27017/autonomous?authSource=admin' \
 pnpm --filter @autonomo.us/api dev
 
 curl -X POST http://localhost:3000/v1/chat \
@@ -378,11 +378,11 @@ the stream to another model. Selector calls and model attempts are recorded
 individually in telemetry, so request totals include that extra work.
 
 Routing settings are stored in MongoDB's `gateway_routing` collection when
-`MONGODB_URL` is configured, otherwise in memory until restart. The legacy
+`MONGODB_URI` is configured, otherwise in memory until restart. The legacy
 `/v1/failover` endpoint and dashboard card update the same default policy and
 persist it too. Saved policies override environment defaults on startup.
 On first startup, the gateway saves the default configuration if it is missing.
-This creates the database named in `MONGODB_URL` and the routing collection;
+This creates the database named in `MONGODB_URI` and the routing collection;
 other collections are created as their data is saved. The MongoDB user needs
 write access to that database. Restarts and concurrent startups preserve the
 configuration already stored there.
@@ -462,8 +462,35 @@ Provision a MongoDB server or managed cluster outside this workflow. After the
 first API deploy, store the connection string as a Worker secret:
 
 ```bash
-pnpm exec wrangler secret put MONGODB_URL -c core/api/wrangler.jsonc
+pnpm exec wrangler secret put MONGODB_URI -c core/api/wrangler.jsonc
 ```
+
+Include the application database name in the connection string. The MongoDB
+user needs read/write access to that database, and the cluster must accept
+connections from the Worker. A GitHub or local environment secret alone does
+not configure this Worker binding. On the first request, the API creates the
+database's `gateway_routing` collection and its default configuration.
+`MONGODB_URI` takes precedence; `MONGODB_URL` is accepted as a compatibility
+fallback for existing installations.
+
+The deployment workflow runs `pnpm check:deployment` after uploading. It fails
+unless `/healthz` responds successfully and MongoDB is configured, connected,
+and initialized. For an initial deployment, set the Worker secret and rerun
+the workflow. Database write failures remain visible even when a ping succeeds.
+
+Worker logs are enabled in `core/api/wrangler.jsonc`. View them in Cloudflare's
+Worker observability page or with:
+
+```bash
+pnpm exec wrangler tail -c core/api/wrangler.jsonc
+```
+
+`gateway.request` records method, path, status, and duration. Persistence emits
+`gateway.persistence_ready`, `gateway.mongodb_unconfigured`, or
+`gateway.persistence_failed` with a store name and diagnostic error type/code.
+Logs omit request bodies, authorization headers, connection strings, and driver
+messages. For example, MongoDB code 13 indicates insufficient permissions and
+code 18 indicates authentication failure.
 
 | Secret | Required | Purpose |
 | --- | --- | --- |
@@ -480,7 +507,14 @@ container). Locally:
 ```bash
 docker compose up -d mongo
 pnpm test
+pnpm test:worker
 ```
+
+`test:worker` starts the production entry in the actual Workers runtime and
+requires MongoDB. It checks cold startup, both health endpoints, schema
+validation, logging, automatic configuration creation, concurrent requests,
+database writes, and failure recovery. It uses temporary databases and removes
+them afterward. Set `MONGODB_TEST_URL` to use a different test MongoDB server.
 
 Without a reachable MongoDB the integration suites skip with a warning;
 everything else still runs. The default test URL is

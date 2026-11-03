@@ -5,15 +5,16 @@ import type {
 } from "@autonomo.us/common";
 import { MongoClient } from "mongodb";
 import type { FailoverPolicyStore } from "../failover.js";
-import { mongoOperationDeadlines } from "../mongo.js";
+import { mongoOperationDeadlines, requestMongoClient } from "../mongo.js";
 import type { ProviderRegistry } from "../providers/registry.js";
 
 export class RoutingError extends Error {
 	constructor(
 		message: string,
 		readonly statusCode = 400,
+		options?: ErrorOptions,
 	) {
-		super(message);
+		super(message, options);
 	}
 }
 
@@ -125,11 +126,17 @@ export class RoutingSettingsStore {
 		this.config = defaultRoutingConfig(failover.get());
 	}
 	private collection() {
-		this.client ??= new MongoClient(this.mongodbUrl as string, {
-			serverSelectionTimeoutMS: 1500,
-			...mongoOperationDeadlines(3000),
-		});
-		return this.client
+		const create = () =>
+			new MongoClient(this.mongodbUrl as string, {
+				serverSelectionTimeoutMS: 1500,
+				...mongoOperationDeadlines(3000),
+			});
+		let client = requestMongoClient(this, create);
+		if (!client) {
+			this.client ??= create();
+			client = this.client;
+		}
+		return client
 			.db()
 			.collection<{ _id: string; config: RoutingConfig }>("gateway_routing");
 	}
@@ -153,10 +160,11 @@ export class RoutingSettingsStore {
 					this.failover.update(saved.config.failover);
 				}
 				this.loaded = true;
-			} catch {
+			} catch (error) {
 				throw new RoutingError(
 					"Routing settings are unavailable. Check MongoDB and retry.",
 					503,
+					{ cause: error },
 				);
 			}
 		})().finally(() => {
