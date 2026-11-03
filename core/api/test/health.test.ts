@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { configFromEnv } from "../src/config.js";
 import { createServer } from "../src/server.js";
+import { scheduleTicksAsMicrotasks } from "../src/worker-requests.js";
 
 const mocks = vi.hoisted(() => ({
 	mongoPing: vi.fn(),
@@ -47,6 +48,25 @@ describe("health route", () => {
 		expect(body.timestamp).toBeDefined();
 		expect(body.mongodb).toEqual({ configured: false, connected: false });
 		expect(mocks.mongoPing).not.toHaveBeenCalled();
+		const healthz = await servers[0].inject("/healthz");
+		expect(healthz.statusCode).toBe(200);
+		expect(healthz.json()).toMatchObject({
+			status: "ok",
+			mongodb: { configured: false, connected: false },
+		});
+	});
+
+	it("boots with the Worker timer settings", async () => {
+		const restore = scheduleTicksAsMicrotasks();
+		try {
+			const server = createServer({ logger: false, pluginTimeout: 0 });
+			servers.push(server);
+			const response = await server.inject("/healthz");
+			expect(response.statusCode).toBe(200);
+			expect(response.json().status).toBe("ok");
+		} finally {
+			restore();
+		}
 	});
 
 	it("reports a successful probe and closes MongoDB clients", async () => {

@@ -44,6 +44,11 @@ export type CreateServerOptions = {
 	 * entry closes clients after each request and flushes telemetry immediately.
 	 */
 	releaseMongoPerRequest?: boolean;
+	/**
+	 * Avvio's per-plugin timer. `0` disables it. The Worker sets that because
+	 * a pending timer there keeps `process.nextTick` from finishing boot.
+	 */
+	pluginTimeout?: number;
 };
 
 export function createServer(options: CreateServerOptions = {}) {
@@ -70,6 +75,7 @@ export function createServer(options: CreateServerOptions = {}) {
 	const tokens = new ApiTokenStore(config.mongodbUrl);
 	const agentTokens = new AgentTokenStore(config.mongodbUrl);
 	const server = Fastify({
+		pluginTimeout: options.pluginTimeout,
 		logger:
 			options.logger === false
 				? false

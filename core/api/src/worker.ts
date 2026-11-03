@@ -2,7 +2,11 @@ import { httpServerHandler } from "cloudflare:node";
 import { configFromEnv } from "./config.js";
 import { ModelCatalogService } from "./model-catalog-service.js";
 import { createServer, releaseRequestResources } from "./server.js";
-import { RequestTracker, releaseAfterResponse } from "./worker-requests.js";
+import {
+	RequestTracker,
+	releaseAfterResponse,
+	scheduleTicksAsMicrotasks,
+} from "./worker-requests.js";
 
 const PORT = 3000;
 
@@ -42,20 +46,28 @@ async function ensureStarted(env: WorkerEnv, ctx: ExecutionContext) {
 }
 
 async function start(env: WorkerEnv, ctx: ExecutionContext) {
-	const modelCatalog = new ModelCatalogService({ env });
-	const created = createServer({
-		config: configFromEnv({
-			...env,
-			CORS_ORIGIN: env.CORS_ORIGIN ?? "https://dev.autonomo.us",
-		}),
-		modelCatalog,
-		logger: false,
-		releaseMongoPerRequest: true,
-	});
-	await created.listen({ port: PORT, host: "127.0.0.1" });
-	server = created;
-	handler = httpServerHandler({ port: PORT });
-	ctx.waitUntil(modelCatalog.refresh());
+	// Before Fastify: its constructor schedules the first boot turn immediately.
+	// Restored after listen so later MongoDB I/O uses the native queue.
+	const restoreTicks = scheduleTicksAsMicrotasks();
+	try {
+		const modelCatalog = new ModelCatalogService({ env });
+		const created = createServer({
+			config: configFromEnv({
+				...env,
+				CORS_ORIGIN: env.CORS_ORIGIN ?? "https://dev.autonomo.us",
+			}),
+			modelCatalog,
+			logger: false,
+			releaseMongoPerRequest: true,
+			pluginTimeout: 0,
+		});
+		await created.listen({ port: PORT, host: "127.0.0.1" });
+		server = created;
+		handler = httpServerHandler({ port: PORT });
+		ctx.waitUntil(modelCatalog.refresh());
+	} finally {
+		restoreTicks();
+	}
 }
 
 export default {

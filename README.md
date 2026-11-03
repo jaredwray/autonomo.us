@@ -125,7 +125,7 @@ through environment variables:
 
 ### Endpoints
 
-- `GET /health` — API liveness (`status`, `timestamp`) plus `mongodb`, containing `configured` and `connected`. A configured database is probed with a bounded timeout; an unavailable database reports `connected: false` while liveness remains HTTP 200. Set `MONGODB_URL` to enable the check.
+- `GET /health` and `GET /healthz` — API liveness (`status`, `timestamp`) plus `mongodb`, containing `configured` and `connected`. A configured database is probed with a bounded timeout; an unavailable database reports `connected: false` while liveness remains HTTP 200. Set `MONGODB_URL` to enable the check.
 
 - `GET /v1/api-tokens` — token metadata, latest 100 lifecycle actions, persistence and authentication mode; never returns secrets or hashes.
 - `GET /v1/auth/owner` — verify owner access without reading MongoDB; returns 204. Managed API tokens cannot use this endpoint.

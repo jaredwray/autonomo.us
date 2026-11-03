@@ -1,4 +1,26 @@
 /**
+ * Avvio finishes plugin callbacks through `process.nextTick`. On Workers the
+ * native queue does not drain while Avvio's 10s plugin timer is pending, so
+ * boot dies with `AVV_ERR_PLUGIN_EXEC_TIMEOUT` after ~10s of wall time.
+ * Microtasks drain before that wait. The returned function puts the native
+ * queue back so the MongoDB driver keeps its usual ordering after listen.
+ */
+export function scheduleTicksAsMicrotasks(): () => void {
+	const original = process.nextTick;
+	process.nextTick = ((
+		callback: (...args: unknown[]) => void,
+		...args: unknown[]
+	) => {
+		queueMicrotask(() => {
+			callback(...args);
+		});
+	}) as typeof process.nextTick;
+	return () => {
+		process.nextTick = original;
+	};
+}
+
+/**
  * Request bookkeeping for the Worker entry. One Fastify instance serves
  * overlapping requests in an isolate, and a streamed response outlives the
  * handler that produced it, so MongoDB clients are released only after the
