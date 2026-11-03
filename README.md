@@ -381,9 +381,14 @@ Routing settings are stored in MongoDB's `gateway_routing` collection when
 `MONGODB_URL` is configured, otherwise in memory until restart. The legacy
 `/v1/failover` endpoint and dashboard card update the same default policy and
 persist it too. Saved policies override environment defaults on startup.
+On first startup, the gateway saves the default configuration if it is missing.
+This creates the database named in `MONGODB_URL` and the routing collection;
+other collections are created as their data is saved. The MongoDB user needs
+write access to that database. Restarts and concurrent startups preserve the
+configuration already stored there.
 Writes must succeed before a policy becomes active. If routing settings cannot
-be loaded at startup, chat requests return 503 until MongoDB is available;
-the gateway does not silently bypass saved routing policies.
+be initialized or loaded at startup, chat requests return 503 until MongoDB is
+available; the gateway does not silently bypass saved routing policies.
 
 ### Failover
 
@@ -453,8 +458,8 @@ origin; these Workers split them.
 | `autonomous-ux-development` | <https://dev.autonomo.us> | Static dashboard. API calls go to `https://dev-api.autonomo.us`. |
 | `autonomous-api-development` | <https://dev-api.autonomo.us> | API gateway. `CORS_ORIGIN` is `https://dev.autonomo.us`. |
 
-MongoDB is created outside this workflow. After the first API deploy, store the
-connection string as a Worker secret:
+Provision a MongoDB server or managed cluster outside this workflow. After the
+first API deploy, store the connection string as a Worker secret:
 
 ```bash
 pnpm exec wrangler secret put MONGODB_URL -c core/api/wrangler.jsonc

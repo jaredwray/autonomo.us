@@ -138,11 +138,19 @@ export class RoutingSettingsStore {
 		this.loading ??= (async () => {
 			try {
 				if (this.mongodbUrl) {
-					const saved = await this.collection().findOne({ _id: "default" });
-					if (saved) {
-						this.config = saved.config;
-						this.failover.update(saved.config.failover);
-					}
+					const collection = this.collection();
+					// The first write creates the configured database and collection.
+					// Concurrent startups must use whichever defaults were saved first.
+					const saved =
+						(await collection.findOne({ _id: "default" })) ??
+						(await collection.findOneAndUpdate(
+							{ _id: "default" },
+							{ $setOnInsert: { config: this.config } },
+							{ upsert: true, returnDocument: "after" },
+						));
+					if (!saved) throw new Error("Could not initialize routing settings.");
+					this.config = saved.config;
+					this.failover.update(saved.config.failover);
 				}
 				this.loaded = true;
 			} catch {
