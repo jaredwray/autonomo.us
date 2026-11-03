@@ -50,16 +50,16 @@ jobs:
       contents: read
       id-token: write
     services:
-      clickhouse:
-        image: clickhouse/clickhouse-server:25.8
+      mongo:
+        image: mongo:8
         env:
-          CLICKHOUSE_USER: autonomous
-          CLICKHOUSE_PASSWORD: autonomous
-          CLICKHOUSE_DB: autonomous
+          MONGO_INITDB_ROOT_USERNAME: autonomous
+          MONGO_INITDB_ROOT_PASSWORD: autonomous
+          GLIBC_TUNABLES: glibc.pthread.rseq=1
         ports:
-          - 8123:8123
+          - 27017:27017
         options: >-
-          --health-cmd "clickhouse-client --user autonomous --password autonomous --query 'SELECT 1'"
+          --health-cmd "mongosh --quiet -u autonomous -p autonomous --eval 'db.adminCommand({ping:1}).ok'"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
@@ -90,13 +90,9 @@ jobs:
       - name: Build
         run: pnpm build
 
+      # Suites that need MongoDB default to the service above.
       - name: Testing
         run: pnpm test:ci
-        env:
-          CLICKHOUSE_URL: http://localhost:8123
-          CLICKHOUSE_USERNAME: autonomous
-          CLICKHOUSE_PASSWORD: autonomous
-          CLICKHOUSE_DATABASE: autonomous
 
       - name: Pack
         run: |

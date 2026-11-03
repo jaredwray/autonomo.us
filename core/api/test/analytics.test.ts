@@ -1,16 +1,12 @@
 import type { AnalyticsQuery } from "@autonomo.us/common";
+import { MongoClient } from "mongodb";
 import { afterEach, describe, expect, it } from "vitest";
 import { ModelCatalogService } from "../src/model-catalog-service.js";
 import { createServer } from "../src/server.js";
-import { ClickHouseSink } from "../src/telemetry/clickhouse.js";
+import { MongoTelemetrySink } from "../src/telemetry/mongo.js";
 import { TelemetryService } from "../src/telemetry/telemetry.js";
-import {
-	clickhouseAvailable,
-	clickhouseQuery,
-	clickhouseTestConfig,
-	uniqueTable,
-} from "./clickhouse-env.js";
 import { startStubProvider } from "./helpers.js";
+import { mongoAvailable, uniqueMongoUrl } from "./mongo-env.js";
 
 const from = "2026-11-01T00:00:00.000Z";
 const to = "2026-11-02T00:00:00.000Z";
@@ -198,18 +194,17 @@ describe("usage analytics", () => {
 
 	it("reports bounded history eviction and falls back when durable storage fails", async () => {
 		let time = from;
-		const sink = new ClickHouseSink({
-			...clickhouseTestConfig("unreachable"),
-			url: "http://127.0.0.1:9",
-			requestTimeoutMs: 100,
-		});
+		const sink = new MongoTelemetrySink(
+			"mongodb://127.0.0.1:9/unreachable",
+			500,
+		);
 		const telemetry = new TelemetryService({
 			maxAnalyticsEvents: 2,
 			now: () => new Date(time),
 			sink,
 			flushIntervalMs: 60_000,
 		});
-		cleanups.push(() => telemetry.stop());
+		cleanups.push(() => telemetry.close());
 		seed(telemetry, (value) => {
 			time = value;
 		});
@@ -342,26 +337,27 @@ describe("usage analytics", () => {
 	});
 });
 
-const available = await clickhouseAvailable();
+const available = await mongoAvailable();
 describe.skipIf(!available)("durable analytics", () => {
 	it("matches memory across grouped filters, old events, deduplication, and priced zero", async () => {
 		let time = from;
-		const config = clickhouseTestConfig(uniqueTable("analytics"));
-		const sink = new ClickHouseSink(config);
+		const url = uniqueMongoUrl("analytics");
+		const sink = new MongoTelemetrySink(url);
 		const durable = new TelemetryService({
 			sink,
 			now: () => new Date(time),
 			flushIntervalMs: 60_000,
 		});
 		const memory = new TelemetryService({ now: () => new Date(time) });
-		cleanups.push(
-			() => durable.stop(),
-			() =>
-				clickhouseQuery(
-					config,
-					`DROP TABLE IF EXISTS ${config.database}.${config.table}`,
-				),
-		);
+		cleanups.push(async () => {
+			await durable.close();
+			const client = new MongoClient(url, { serverSelectionTimeoutMS: 1500 });
+			try {
+				await client.db().dropDatabase();
+			} finally {
+				await client.close();
+			}
+		});
 		seed(durable, (value) => {
 			time = value;
 		});
@@ -391,7 +387,7 @@ describe.skipIf(!available)("durable analytics", () => {
 		]) {
 			const result = await durable.analytics({ ...query, ...filters });
 			const expected = await memory.analytics({ ...query, ...filters });
-			expect(result.source).toBe("clickhouse");
+			expect(result.source).toBe("mongodb");
 			for (const key of [
 				"totals",
 				"byModel",
@@ -402,8 +398,11 @@ describe.skipIf(!available)("durable analytics", () => {
 			] as const)
 				expect(result[key]).toEqual(expected[key]);
 		}
-		const restarted = new TelemetryService({ sink });
-		cleanups.unshift(() => restarted.stop());
+		const restarted = new TelemetryService({
+			sink,
+			flushIntervalMs: 60_000,
+		});
+		cleanups.unshift(() => restarted.close());
 		expect((await restarted.analytics(query)).totals).toMatchObject({
 			requests: 6,
 			errors: 3,

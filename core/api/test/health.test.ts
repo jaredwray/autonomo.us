@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { configFromEnv } from "../src/config.js";
 import { createServer } from "../src/server.js";
+import { scheduleTicksAsMicrotasks } from "../src/worker-requests.js";
 
 const mocks = vi.hoisted(() => ({
 	mongoPing: vi.fn(),
 	mongoClose: vi.fn(),
-	clickhousePing: vi.fn(),
 }));
 vi.mock("mongodb", () => ({
 	MongoClient: class {
@@ -20,11 +20,7 @@ vi.mock("mongodb", () => ({
 		}
 		close = mocks.mongoClose;
 	},
-}));
-vi.mock("../src/telemetry/clickhouse.js", () => ({
-	ClickHouseSink: class {
-		ping = mocks.clickhousePing;
-	},
+	MongoBulkWriteError: class MongoBulkWriteError extends Error {},
 }));
 
 const servers: ReturnType<typeof createServer>[] = [];
@@ -43,41 +39,51 @@ async function health(env: Record<string, string> = {}) {
 
 const configuredEnv = {
 	MONGODB_URL: "mongodb://localhost:27017/autonomous",
-	CLICKHOUSE_URL: "http://localhost:8123",
 };
 
 describe("health route", () => {
-	it("reports unconfigured databases without probing", async () => {
+	it("reports an unconfigured database without probing", async () => {
 		const body = await health();
 		expect(body.status).toBe("ok");
 		expect(body.timestamp).toBeDefined();
 		expect(body.mongodb).toEqual({ configured: false, connected: false });
-		expect(body.clickhouse).toEqual({ configured: false, connected: false });
 		expect(mocks.mongoPing).not.toHaveBeenCalled();
-		expect(mocks.clickhousePing).not.toHaveBeenCalled();
+		const healthz = await servers[0].inject("/healthz");
+		expect(healthz.statusCode).toBe(200);
+		expect(healthz.json()).toMatchObject({
+			status: "ok",
+			mongodb: { configured: false, connected: false },
+		});
 	});
 
-	it("reports successful authenticated probes and closes MongoDB", async () => {
+	it("boots with the Worker timer settings", async () => {
+		const restore = scheduleTicksAsMicrotasks();
+		try {
+			const server = createServer({ logger: false, pluginTimeout: 0 });
+			servers.push(server);
+			const response = await server.inject("/healthz");
+			expect(response.statusCode).toBe(200);
+			expect(response.json().status).toBe("ok");
+		} finally {
+			restore();
+		}
+	});
+
+	it("reports a successful probe and closes MongoDB clients", async () => {
 		const body = await health(configuredEnv);
 		expect(body.mongodb).toEqual({ configured: true, connected: true });
-		expect(body.clickhouse).toEqual({ configured: true, connected: true });
-		expect(mocks.mongoPing).toHaveBeenCalledWith(
-			{ ping: 1 },
-			{ timeoutMS: 1000 },
-		);
+		expect(mocks.mongoPing).toHaveBeenCalledWith({ ping: 1 });
 		await servers[0].close();
-		// Health, model settings, and routing settings each own a MongoDB client.
+		// The probe closes its own client. Model settings and routing each
+		// close the client they opened while loading.
 		expect(mocks.mongoClose).toHaveBeenCalledTimes(3);
 	});
 
-	it("reports failures independently and recovers on a subsequent probe", async () => {
+	it("reports a failed probe and recovers on the next request", async () => {
 		mocks.mongoPing.mockRejectedValueOnce(new Error("unavailable"));
 		const body = await health(configuredEnv);
 		expect(body.mongodb.connected).toBe(false);
-		expect(body.clickhouse.connected).toBe(true);
-		mocks.clickhousePing.mockRejectedValueOnce(new Error("unauthorized"));
 		const recovered = (await servers[0].inject("/health")).json();
 		expect(recovered.mongodb.connected).toBe(true);
-		expect(recovered.clickhouse.connected).toBe(false);
 	});
 });

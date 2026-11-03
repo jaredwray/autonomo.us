@@ -5,6 +5,7 @@ import type {
 } from "@autonomo.us/common";
 import { MongoClient } from "mongodb";
 import type { FailoverPolicyStore } from "../failover.js";
+import { mongoOperationDeadlines } from "../mongo.js";
 import type { ProviderRegistry } from "../providers/registry.js";
 
 export class RoutingError extends Error {
@@ -126,7 +127,7 @@ export class RoutingSettingsStore {
 	private collection() {
 		this.client ??= new MongoClient(this.mongodbUrl as string, {
 			serverSelectionTimeoutMS: 1500,
-			timeoutMS: 3000,
+			...mongoOperationDeadlines(3000),
 		});
 		return this.client
 			.db()
@@ -209,6 +210,8 @@ export class RoutingSettingsStore {
 	}
 	async close() {
 		await this.writes;
-		await this.client?.close();
+		const client = this.client;
+		this.client = undefined;
+		await client?.close();
 	}
 }

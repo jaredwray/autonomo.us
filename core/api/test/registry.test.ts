@@ -113,22 +113,20 @@ describe("configFromEnv + registryFromConfig", () => {
 		});
 	});
 
-	it("registers no providers and no sink for an empty env", () => {
+	it("registers no providers and no database for an empty env", () => {
 		const config = configFromEnv({});
 		expect(config.providers).toEqual([]);
-		expect(config.clickhouse).toBeUndefined();
+		expect(config.mongodbUrl).toBeUndefined();
 	});
 
-	it("configures clickhouse from env with docker-compose defaults", () => {
-		const config = configFromEnv({ CLICKHOUSE_URL: "http://localhost:8123" });
-		expect(config.clickhouse).toEqual({
-			url: "http://localhost:8123",
-			database: "autonomous",
-			table: "telemetry_events",
-			username: "autonomous",
-			password: "autonomous",
-			requestTimeoutMs: 3000,
+	it("reads the MongoDB URL used for tokens, settings, and telemetry", () => {
+		const config = configFromEnv({
+			MONGODB_URL:
+				"mongodb://autonomous:autonomous@localhost:27017/autonomous?authSource=admin",
 		});
+		expect(config.mongodbUrl).toBe(
+			"mongodb://autonomous:autonomous@localhost:27017/autonomous?authSource=admin",
+		);
 	});
 
 	it("parses the failover policy from env with safe defaults", () => {

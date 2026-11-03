@@ -42,7 +42,7 @@ export type AnalyticsBreakdown = UsageMetrics & {
 export type UsageAnalytics = {
 	query: AnalyticsQuery;
 	generatedAt: string;
-	source: "memory" | "clickhouse";
+	source: "memory" | "mongodb";
 	/** Memory only: earliest retained coverage, including process restarts. */
 	coverageFrom: string | null;
 	partial: boolean;

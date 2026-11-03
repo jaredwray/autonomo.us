@@ -22,8 +22,10 @@ import { routingRoutes } from "./routes/routing.js";
 import { telemetryRoutes } from "./routes/telemetry.js";
 import { ModelRouter } from "./routing/router.js";
 import { RoutingSettingsStore } from "./routing/settings.js";
-import { ClickHouseSink } from "./telemetry/clickhouse.js";
+import { MongoTelemetrySink } from "./telemetry/mongo.js";
 import { TelemetryService } from "./telemetry/telemetry.js";
+
+const releases = new WeakMap<ReturnType<typeof Fastify>, () => Promise<void>>();
 
 export type CreateServerOptions = {
 	config?: ApiConfig;
@@ -37,6 +39,16 @@ export type CreateServerOptions = {
 	 */
 	modelCatalog?: ModelCatalogService;
 	logger?: boolean;
+	/**
+	 * Workers cannot reuse a MongoDB socket across requests. The Worker
+	 * entry closes clients after each request and flushes telemetry immediately.
+	 */
+	releaseMongoPerRequest?: boolean;
+	/**
+	 * Avvio's per-plugin timer. `0` disables it. The Worker sets that because
+	 * a pending timer there keeps `process.nextTick` from finishing boot.
+	 */
+	pluginTimeout?: number;
 };
 
 export function createServer(options: CreateServerOptions = {}) {
@@ -48,9 +60,10 @@ export function createServer(options: CreateServerOptions = {}) {
 	const telemetry =
 		options.telemetry ??
 		new TelemetryService({
-			sink: config.clickhouse
-				? new ClickHouseSink(config.clickhouse)
+			sink: config.mongodbUrl
+				? new MongoTelemetrySink(config.mongodbUrl)
 				: undefined,
+			flushIntervalMs: options.releaseMongoPerRequest ? 0 : undefined,
 		});
 
 	telemetry.setPricingResolver((id, provider) => {
@@ -73,6 +86,7 @@ export function createServer(options: CreateServerOptions = {}) {
 	const tokens = new ApiTokenStore(config.mongodbUrl);
 	const agentTokens = new AgentTokenStore(config.mongodbUrl);
 	const server = Fastify({
+		pluginTimeout: options.pluginTimeout,
 		logger:
 			options.logger === false
 				? false
@@ -128,8 +142,34 @@ export function createServer(options: CreateServerOptions = {}) {
 		await tokens.close();
 		await agentTokens.close();
 		await routing.close();
-		await telemetry.stop();
+		await telemetry.close();
 	});
 
+	if (options.releaseMongoPerRequest) {
+		releases.set(server, async () => {
+			// Every store drops its client even when another one fails to close;
+			// a client left behind would be reused from a later request.
+			const results = await Promise.allSettled([
+				telemetry.close(),
+				settings.close(),
+				tokens.close(),
+				agentTokens.close(),
+				routing.close(),
+			]);
+			const failed = results.find(
+				(result): result is PromiseRejectedResult =>
+					result.status === "rejected",
+			);
+			if (failed) throw failed.reason;
+		});
+	}
+
 	return server;
+}
+
+/** Closes MongoDB sockets opened while handling one Worker request. */
+export async function releaseRequestResources(
+	server: ReturnType<typeof Fastify>,
+): Promise<void> {
+	await releases.get(server)?.();
 }

@@ -60,24 +60,24 @@ export async function telemetryRoutes(
 					type: "object",
 					additionalProperties: false,
 					properties: {
-						source: { enum: ["auto", "memory", "clickhouse"] },
+						source: { enum: ["auto", "memory", "mongodb"] },
 					},
 				},
 			},
 		},
 		async (request, reply) => {
 			const { source = "auto" } = request.query as {
-				source?: "auto" | "memory" | "clickhouse";
+				source?: "auto" | "memory" | "mongodb";
 			};
 
-			if (source === "clickhouse") {
+			if (source === "mongodb") {
 				const summary = await telemetry.summaryFromSink();
 				if (!summary) {
 					return reply.status(503).send({
 						error: {
-							type: "clickhouse_unavailable",
+							type: "mongodb_unavailable",
 							message:
-								"ClickHouse is not configured or not reachable. Set CLICKHOUSE_URL and start docker-compose.",
+								"MongoDB is not configured or not reachable. Set MONGODB_URL.",
 						},
 					});
 				}

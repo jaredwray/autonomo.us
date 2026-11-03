@@ -6,10 +6,6 @@ services:
     ports:
       - "3000:3000"
     environment:
-      CLICKHOUSE_URL: http://clickhouse:8123
-      CLICKHOUSE_DATABASE: autonomous
-      CLICKHOUSE_USERNAME: autonomous
-      CLICKHOUSE_PASSWORD: autonomous
       MONGODB_URL: mongodb://autonomous:autonomous@mongo:27017/autonomous?authSource=admin
       OWNER_TOKEN: ${OWNER_TOKEN:-}
       # Register the anthropic provider by exporting ANTHROPIC_API_KEY.
@@ -44,8 +40,6 @@ services:
       FAILOVER_TARGETS: ${FAILOVER_TARGETS:-}
       FAILOVER_TIMEOUT_MS: ${FAILOVER_TIMEOUT_MS:-}
     depends_on:
-      clickhouse:
-        condition: service_healthy
       mongo:
         condition: service_healthy
     healthcheck:
@@ -87,24 +81,6 @@ services:
       retries: 5
       start_period: 10s
 
-  clickhouse:
-    image: clickhouse/clickhouse-server:25.8
-    ports:
-      - "8123:8123"
-      - "9000:9000"
-    environment:
-      CLICKHOUSE_USER: autonomous
-      CLICKHOUSE_PASSWORD: autonomous
-      CLICKHOUSE_DB: autonomous
-    volumes:
-      - clickhouse_data:/var/lib/clickhouse
-    healthcheck:
-      test: ["CMD", "clickhouse-client", "--user", "autonomous", "--password", "autonomous", "--query", "SELECT 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-
   # Real local LLM for the gateway's OpenAI-compatible provider.
   # Start with: docker compose --profile llm up -d
   # Then pull a model: docker compose exec ollama ollama pull llama3.2
@@ -118,5 +94,4 @@ services:
 
 volumes:
   mongo_data:
-  clickhouse_data:
   ollama_data:

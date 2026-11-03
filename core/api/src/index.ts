@@ -1,6 +1,5 @@
 export {
 	type ApiConfig,
-	type ClickHouseConfig,
 	configFromEnv,
 	DEFAULT_ANTHROPIC_MODELS,
 	type ProviderConfig,
@@ -42,13 +41,17 @@ export {
 	RoutingError,
 	RoutingSettingsStore,
 } from "./routing/settings.js";
-export { type CreateServerOptions, createServer } from "./server.js";
 export {
-	ClickHouseSink,
-	eventToRow,
-	type TelemetryRow,
-	toClickHouseDateTime,
-} from "./telemetry/clickhouse.js";
+	type CreateServerOptions,
+	createServer,
+	releaseRequestResources,
+} from "./server.js";
+export {
+	eventToDocument,
+	MongoTelemetrySink,
+	stripProviderPrefix,
+	TELEMETRY_COLLECTION,
+} from "./telemetry/mongo.js";
 export {
 	type ChatTelemetry,
 	TelemetryService,

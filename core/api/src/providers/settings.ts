@@ -6,6 +6,7 @@ import {
 } from "@autonomo.us/common";
 import { MongoClient } from "mongodb";
 import type { ApiConfig, ProviderConfig } from "../config.js";
+import { mongoOperationDeadlines } from "../mongo.js";
 import { type ProviderRegistry, providerFromConfig } from "./registry.js";
 
 export class ProviderSettingsError extends Error {
@@ -36,7 +37,7 @@ export class ProviderSettingsStore {
 	private collection() {
 		this.client ??= new MongoClient(this.config.mongodbUrl as string, {
 			serverSelectionTimeoutMS: 1500,
-			timeoutMS: 3000,
+			...mongoOperationDeadlines(3000),
 		});
 		return this.client
 			.db()
@@ -204,6 +205,8 @@ export class ProviderSettingsStore {
 
 	async close(): Promise<void> {
 		await this.writes;
-		await this.client?.close();
+		const client = this.client;
+		this.client = undefined;
+		await client?.close();
 	}
 }

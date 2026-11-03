@@ -218,5 +218,5 @@ export type UsageSummary = {
 	avgLatencyMs: number;
 	byModel: ModelUsage[];
 	/** Which store answered the query. */
-	source: "memory" | "clickhouse";
+	source: "memory" | "mongodb";
 };

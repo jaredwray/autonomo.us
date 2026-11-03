@@ -18,7 +18,7 @@ AI platform for gateway, agents, and management.
 
 ## Getting Started
 
-Run the whole platform with docker compose — API gateway, dashboard, ClickHouse, and MongoDB:
+Run the whole platform with docker compose — API gateway, dashboard, and MongoDB:
 
 ```bash
 docker compose up --build
@@ -37,9 +37,9 @@ For Codespaces or VS Code Dev Containers, rebuild the container after changing
 `.devcontainer/devcontainer.json`. The Docker-in-Docker feature supplies Docker
 and Compose (Docker CE, `"moby": false`, because the Debian trixie base image has
 no Moby packages; with Moby the build fails and Codespaces starts in recovery
-mode). Container startup launches MongoDB and ClickHouse with persistent
-volumes. New terminals inherit the database URLs and credentials for the host-run
-API. Start the API and UX using the development commands below; the dashboard
+mode). Container startup launches MongoDB with a persistent volume. New
+terminals inherit `MONGODB_URL` for the host-run API. Start the API and UX using
+the development commands below; the dashboard
 uses forwarded port 5173. Port 8080 is also forwarded for the full Compose stack.
 
 For development on the host:
@@ -103,7 +103,7 @@ the UI identifies changes as lasting only until the API restarts. If configured
 MongoDB is unavailable, changes fail without activating an unsaved model.
 
 The API service routes chat requests to LLM providers via the [Vercel AI SDK](https://ai-sdk.dev),
-records token usage, and ships telemetry to ClickHouse. Providers are configured
+records token usage, and ships telemetry to MongoDB. Providers are configured
 through environment variables:
 
 | Variable | Effect |
@@ -117,7 +117,7 @@ through environment variables:
 | `TYPESAFE_API_KEY` | Jev decisions adapter; `TYPESAFE_MODELS` defaults to `jev-latest` |
 | `XAI_API_KEY` | Registers the native xAI Grok adapter as `xai`; `XAI_MODELS` overrides the advertised list (default `grok-4`) |
 | `OPENAI_COMPAT_BASE_URL` | Registers an OpenAI-compatible provider — Ollama, LM Studio, vLLM, llama.cpp (`OPENAI_COMPAT_NAME` defaults to `local`, plus optional `OPENAI_COMPAT_API_KEY` / `OPENAI_COMPAT_MODELS`) |
-| `CLICKHOUSE_URL` | Enables the ClickHouse telemetry sink (defaults match `docker-compose.yml`: database/user/password `autonomous`) |
+| `MONGODB_URL` | Persists API tokens, agent tokens, provider settings, routing, and telemetry. Compose uses `mongodb://autonomous:autonomous@mongo:27017/autonomous?authSource=admin` |
 | `CORS_ORIGIN` | Comma-separated browser origins allowed by CORS (default: the Vite dev dashboard on `localhost:5173`; set `*` to allow any) |
 | `FAILOVER_ENABLED` | Seeds the failover policy switch (`true`/`1`; default off) — see [Failover](#failover) |
 | `FAILOVER_TARGETS` | Comma-separated `provider/model` ids tried, in order, when a request fails |
@@ -125,7 +125,7 @@ through environment variables:
 
 ### Endpoints
 
-- `GET /health` — API liveness (`status`, `timestamp`) plus `mongodb` and `clickhouse`, each containing `configured` and `connected`. Configured databases are actively probed with bounded timeouts; unavailable databases report `connected: false` while liveness remains HTTP 200. Set `MONGODB_URL` and `CLICKHOUSE_URL` to enable the respective checks.
+- `GET /health` and `GET /healthz` — API liveness (`status`, `timestamp`) plus `mongodb`, containing `configured` and `connected`. A configured database is probed with a bounded timeout; an unavailable database reports `connected: false` while liveness remains HTTP 200. Set `MONGODB_URL` to enable the check.
 
 - `GET /v1/api-tokens` — token metadata, latest 100 lifecycle actions, persistence and authentication mode; never returns secrets or hashes.
 - `GET /v1/auth/owner` — verify owner access without reading MongoDB; returns 204. Managed API tokens cannot use this endpoint.
@@ -149,16 +149,15 @@ through environment variables:
 - `PUT /v1/failover` — update the failover policy; body `{ enabled?, targets?, timeoutMs? }` (partial updates keep omitted fields).
 - `GET /v1/routing` — routing `{ config, persistence }`, including Auto selection, pools, the default failover policy, and model/pool rules.
 - `PUT /v1/routing` — replace the full routing configuration; returns `{ config, persistence }`. Invalid settings are rejected before activation.
-- `GET /v1/telemetry/summary` — usage aggregates (ClickHouse when available, in-memory otherwise; `?source=memory|clickhouse` to force).
+- `GET /v1/telemetry/summary` — usage aggregates (MongoDB when available, in-memory otherwise; `?source=memory|mongodb` to force).
 - `GET /v1/telemetry/events` — recent gateway events and sink status.
 - `GET /v1/telemetry/analytics?from=<ISO timestamp>&to=<ISO timestamp>` — date-filtered model, connection, caller, and time-series analytics. Optional `model`, `provider` (connection ID), and `caller` filters apply to the entire report. Ranges are start-inclusive, end-exclusive, and limited to 90 days. Requires `telemetry:read` when API authentication is enabled.
-- `GET /health` — health check.
 
 ```bash
 # Host-run API against the compose services
-docker compose up -d clickhouse mongo
+docker compose up -d mongo
 OPENAI_COMPAT_BASE_URL=http://localhost:11434/v1 \
-CLICKHOUSE_URL=http://localhost:8123 \
+MONGODB_URL='mongodb://autonomous:autonomous@localhost:27017/autonomous?authSource=admin' \
 pnpm --filter @autonomo.us/api dev
 
 curl -X POST http://localhost:3000/v1/chat \
@@ -433,27 +432,54 @@ partial totals, and distinguishes unknown costs from zero-priced models.
 Failed attempts remain unpriced because their usage may be missing or partial.
 Estimates exclude cache discounts, pricing tiers, and other provider fees.
 
-With ClickHouse, analytics aggregate durable records (including prior gateway
+With MongoDB, analytics aggregate durable records (including prior gateway
 processes) with deduplication. Otherwise the report uses up to 50,000 retained
 events from this process, independently of the short recent-event feed. The
 response and dashboard disclose memory coverage and durable-storage failures;
 missing history is never silently presented as complete. Durable queries that
 exceed 100,000 time/model/caller/operation groups also fall back with this notice.
 
+## Deployment
+
+Merges to `main` deploy the development environment to two Cloudflare Workers.
+The [deploy-development](.github/workflows/deploy-development.yml) workflow
+builds `@autonomo.us/ux` with `VITE_API_URL=https://dev-api.autonomo.us` and
+runs `pnpm deploy:development`. The `autonomo.us` zone must already be on the
+Cloudflare account. Local Compose still serves the dashboard and API on one
+origin; these Workers split them.
+
+| Worker | URL | What it serves |
+| --- | --- | --- |
+| `autonomous-ux-development` | <https://dev.autonomo.us> | Static dashboard. API calls go to `https://dev-api.autonomo.us`. |
+| `autonomous-api-development` | <https://dev-api.autonomo.us> | API gateway. `CORS_ORIGIN` is `https://dev.autonomo.us`. |
+
+MongoDB is created outside this workflow. After the first API deploy, store the
+connection string as a Worker secret:
+
+```bash
+pnpm exec wrangler secret put MONGODB_URL -c core/api/wrangler.jsonc
+```
+
+| Secret | Required | Purpose |
+| --- | --- | --- |
+| `CLOUDFLARE_API_TOKEN` | yes | Token scoped to the account and the `autonomo.us` zone. Permissions: Account → Workers Scripts → Edit, Zone → Workers Routes → Edit, Zone → DNS → Edit. |
+| `CLOUDFLARE_ACCOUNT_ID` | yes | Account that owns the `autonomo.us` zone. |
+
 ## Testing
 
 API integration tests run against real services: chat routes talk to a real
 OpenAI-compatible HTTP server over the production provider wire path, and the
-telemetry suites run against a real ClickHouse (CI provides one as a service
+telemetry suites run against a real MongoDB (CI provides one as a service
 container). Locally:
 
 ```bash
-docker compose up -d clickhouse
-CLICKHOUSE_USERNAME=autonomous CLICKHOUSE_PASSWORD=autonomous pnpm test
+docker compose up -d mongo
+pnpm test
 ```
 
-Without a reachable ClickHouse the integration suites skip with a warning;
-everything else still runs.
+Without a reachable MongoDB the integration suites skip with a warning;
+everything else still runs. The default test URL is
+`mongodb://autonomous:autonomous@localhost:27017/autonomous?authSource=admin`.
 
 ## License
 

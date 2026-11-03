@@ -1,47 +1,44 @@
+import { MongoClient } from "mongodb";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createServer } from "../src/server.js";
-import { ClickHouseSink } from "../src/telemetry/clickhouse.js";
+import { configFromEnv } from "../src/config.js";
+import { createServer, releaseRequestResources } from "../src/server.js";
+import { MongoTelemetrySink } from "../src/telemetry/mongo.js";
 import { TelemetryService } from "../src/telemetry/telemetry.js";
-import {
-	clickhouseAvailable,
-	clickhouseQuery,
-	clickhouseTestConfig,
-	uniqueTable,
-} from "./clickhouse-env.js";
 import { type StubProvider, startStubProvider } from "./helpers.js";
+import { mongoAvailable, uniqueMongoUrl } from "./mongo-env.js";
 
-// Full telemetry pipeline against a real ClickHouse server (and the real
+// Full telemetry pipeline against a real MongoDB server (and the real
 // OpenAI-compatible stub provider for the end-to-end route test).
-const available = await clickhouseAvailable();
+const available = await mongoAvailable();
 if (!available) {
 	console.warn(
-		"[telemetry.integration] no ClickHouse at CLICKHOUSE_URL — skipping. Start it with: docker compose up -d clickhouse",
+		"[telemetry.integration] no MongoDB at MONGODB_URL — skipping. Start it with: docker compose up -d mongo",
 	);
 }
 
 const usage = { promptTokens: 10, completionTokens: 5, totalTokens: 15 };
 
-describe.skipIf(!available)("TelemetryService + real ClickHouse", () => {
-	const cleanups: Array<() => Promise<unknown>> = [];
+describe.skipIf(!available)("TelemetryService + real MongoDB", () => {
+	const urls: string[] = [];
 
 	afterAll(async () => {
-		for (const cleanup of cleanups) {
-			await cleanup().catch(() => {});
+		for (const url of urls) {
+			const client = new MongoClient(url, { serverSelectionTimeoutMS: 1500 });
+			try {
+				await client.db().dropDatabase();
+			} finally {
+				await client.close().catch(() => {});
+			}
 		}
 	});
 
 	function trackedSink(prefix: string) {
-		const config = clickhouseTestConfig(uniqueTable(prefix));
-		cleanups.push(() =>
-			clickhouseQuery(
-				config,
-				`DROP TABLE IF EXISTS ${config.database}.${config.table}`,
-			),
-		);
-		return new ClickHouseSink(config);
+		const url = uniqueMongoUrl(prefix);
+		urls.push(url);
+		return new MongoTelemetrySink(url);
 	}
 
-	it("flushes recorded chats into ClickHouse and reads them back", async () => {
+	it("flushes recorded chats into MongoDB and reads them back", async () => {
 		const sink = trackedSink("flush");
 		const telemetry = new TelemetryService({ sink, flushIntervalMs: 60_000 });
 
@@ -61,7 +58,7 @@ describe.skipIf(!available)("TelemetryService + real ClickHouse", () => {
 		expect(await telemetry.flush()).toBe(true);
 
 		const summary = await telemetry.summaryFromSink();
-		expect(summary?.source).toBe("clickhouse");
+		expect(summary?.source).toBe("mongodb");
 		expect(summary?.totalRequests).toBe(2);
 		expect(summary?.totalTokens).toBe(30);
 		expect(summary?.avgLatencyMs).toBe(150);
@@ -70,20 +67,36 @@ describe.skipIf(!available)("TelemetryService + real ClickHouse", () => {
 			provider: "stub",
 		});
 		expect(telemetry.sinkHealthy).toBe(true);
-		await telemetry.stop();
+		await telemetry.close();
 	});
 
 	it("bootstraps the schema before querying an empty sink", async () => {
 		const sink = trackedSink("fresh");
 		const telemetry = new TelemetryService({ sink, flushIntervalMs: 60_000 });
 
-		// No traffic yet — the query path must still create the table.
 		const summary = await telemetry.summaryFromSink();
-		expect(summary?.source).toBe("clickhouse");
+		expect(summary?.source).toBe("mongodb");
 		expect(summary?.totalRequests).toBe(0);
 		expect(summary?.byModel).toEqual([]);
-		await telemetry.stop();
+		await telemetry.close();
 	});
+
+	it("flushes inside the recording call when the interval is zero", async () => {
+		const sink = trackedSink("immediate");
+		const telemetry = new TelemetryService({ sink, flushIntervalMs: 0 });
+		telemetry.recordChat({
+			model: "stub/chat-model",
+			provider: "stub",
+			usage,
+			latencyMs: 40,
+		});
+		expect(await telemetry.drain()).toBe(true);
+		const summary = await sink.querySummary();
+		expect(summary.totalRequests).toBe(1);
+		expect(summary.source).toBe("mongodb");
+		await telemetry.close();
+	});
+
 	it("includes successful Auto selector calls in the default durable summary", async () => {
 		const telemetry = new TelemetryService({
 			sink: trackedSink("routing"),
@@ -111,7 +124,7 @@ describe.skipIf(!available)("TelemetryService + real ClickHouse", () => {
 			const summary = (await server.inject("/v1/telemetry/summary")).json();
 			const memory = telemetry.summary();
 			expect(summary).toMatchObject({
-				source: "clickhouse",
+				source: "mongodb",
 				totalRequests: memory.totalRequests,
 				totalTokens: memory.totalTokens,
 				promptTokens: memory.promptTokens,
@@ -132,8 +145,9 @@ describe.skipIf(!available)("TelemetryService + real ClickHouse", () => {
 	});
 });
 
-describe.skipIf(!available)("gateway → ClickHouse end to end", () => {
+describe.skipIf(!available)("gateway → MongoDB end to end", () => {
 	let provider: StubProvider;
+	const databaseUrls: string[] = [];
 
 	beforeAll(async () => {
 		provider = await startStubProvider();
@@ -141,11 +155,20 @@ describe.skipIf(!available)("gateway → ClickHouse end to end", () => {
 
 	afterAll(async () => {
 		await provider.close();
+		for (const url of databaseUrls) {
+			const client = new MongoClient(url, { serverSelectionTimeoutMS: 1500 });
+			try {
+				await client.db().dropDatabase();
+			} finally {
+				await client.close().catch(() => {});
+			}
+		}
 	});
 
-	it("serves ClickHouse-backed summaries for real chat traffic", async () => {
-		const config = clickhouseTestConfig(uniqueTable("e2e"));
-		const sink = new ClickHouseSink(config);
+	it("serves MongoDB-backed summaries for real chat traffic", async () => {
+		const databaseUrl = uniqueMongoUrl("e2e");
+		databaseUrls.push(databaseUrl);
+		const sink = new MongoTelemetrySink(databaseUrl);
 		const telemetry = new TelemetryService({ sink, flushIntervalMs: 60_000 });
 		const server = createServer({
 			registry: provider.registry,
@@ -163,14 +186,13 @@ describe.skipIf(!available)("gateway → ClickHouse end to end", () => {
 		});
 		expect(chat.statusCode).toBe(200);
 
-		// Auto source flushes pending events and prefers the durable store.
 		const response = await server.inject({
 			method: "GET",
 			url: "/v1/telemetry/summary",
 		});
 		expect(response.statusCode).toBe(200);
 		const summary = JSON.parse(response.body);
-		expect(summary.source).toBe("clickhouse");
+		expect(summary.source).toBe("mongodb");
 		expect(summary.totalRequests).toBe(1);
 		expect(summary.totalTokens).toBe(15);
 		expect(summary.byModel[0]).toMatchObject({
@@ -188,9 +210,61 @@ describe.skipIf(!available)("gateway → ClickHouse end to end", () => {
 		});
 
 		await server.close();
-		await clickhouseQuery(
-			config,
-			`DROP TABLE IF EXISTS ${config.database}.${config.table}`,
-		).catch(() => {});
+	});
+
+	it("persists each request's telemetry before releasing the Worker's clients", async () => {
+		const databaseUrl = uniqueMongoUrl("worker");
+		databaseUrls.push(databaseUrl);
+		const server = createServer({
+			config: configFromEnv({ MONGODB_URL: databaseUrl }),
+			registry: provider.registry,
+			logger: false,
+			releaseMongoPerRequest: true,
+		});
+		const payload = {
+			model: "stub/chat-model",
+			messages: [{ role: "user", content: "Hi" }],
+		};
+		// Reads through its own client so nothing leaks from the server's.
+		const observer = new MongoTelemetrySink(databaseUrl);
+
+		// The JSON route records telemetry inside the handler; the release must
+		// wait for that flush before it closes the sink's client.
+		const chat = await server.inject({
+			method: "POST",
+			url: "/v1/chat",
+			payload,
+		});
+		expect(chat.statusCode).toBe(200);
+		await releaseRequestResources(server);
+		expect((await observer.querySummary()).totalRequests).toBe(1);
+
+		// A streamed chat records telemetry after the headers went out, and the
+		// sink reopens a client after the previous release closed it.
+		const stream = await server.inject({
+			method: "POST",
+			url: "/v1/chat",
+			payload: { ...payload, stream: true },
+		});
+		expect(stream.statusCode).toBe(200);
+		expect(stream.body).toContain("data: [DONE]");
+		await releaseRequestResources(server);
+		expect((await observer.querySummary()).totalRequests).toBe(2);
+
+		const summary = await server.inject({
+			method: "GET",
+			url: "/v1/telemetry/summary",
+		});
+		expect(summary.json()).toMatchObject({
+			source: "mongodb",
+			totalRequests: 2,
+			totalTokens: 30,
+		});
+		await releaseRequestResources(server);
+		// Releasing with nothing open is a no-op rather than an error.
+		await releaseRequestResources(server);
+
+		await observer.close();
+		await server.close();
 	});
 });

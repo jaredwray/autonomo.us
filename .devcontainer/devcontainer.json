@@ -25,11 +25,7 @@
 		}
 	},
 	"remoteEnv": {
-		"CLICKHOUSE_URL": "http://localhost:8123",
-		"CLICKHOUSE_DATABASE": "autonomous",
-		"CLICKHOUSE_USERNAME": "autonomous",
-		"CLICKHOUSE_PASSWORD": "autonomous",
 		"MONGODB_URL": "mongodb://autonomous:autonomous@localhost:27017/autonomous?authSource=admin"
 	},
-	"postStartCommand": "docker compose up -d --wait mongo clickhouse"
+	"postStartCommand": "docker compose up -d --wait mongo"
 }

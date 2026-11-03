@@ -631,7 +631,7 @@ export function Dashboard() {
 				<>
 					<div className="analytics-meta">
 						<span>
-							{current.source === "clickhouse"
+							{current.source === "mongodb"
 								? "Durable history"
 								: "In-memory history"}{" "}
 							· Updated {dateTime(current.generatedAt)}

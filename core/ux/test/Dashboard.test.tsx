@@ -29,7 +29,7 @@ const metrics: UsageMetrics = {
 const report = (requests = 10): UsageAnalytics => ({
 	query: { from: "2026-11-01T00:00:00Z", to: "2026-11-02T00:00:00Z" },
 	generatedAt: "2026-11-02T00:00:00Z",
-	source: "clickhouse",
+	source: "mongodb",
 	partial: false,
 	coverageFrom: null,
 	durableUnavailable: false,
@@ -62,7 +62,7 @@ it("retains the last successful report on refresh failure and labels it stale", 
 		.mockResolvedValueOnce(report())
 		.mockRejectedValueOnce(new Error("offline"));
 	render(<Dashboard />);
-	await screen.findByRole("region", { name: "Usage totals" });
+	expect(await screen.findByText(/Durable history/)).toBeTruthy();
 	await waitFor(() =>
 		expect(
 			(screen.getByRole("button", { name: "Refresh" }) as HTMLButtonElement)
