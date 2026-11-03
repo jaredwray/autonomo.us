@@ -102,6 +102,7 @@ export async function decisionsRoutes(
 				});
 				options.telemetry.recordChat({
 					operation: "decisions",
+					caller: request.telemetryCaller,
 					model: resolved.id,
 					provider: resolved.provider.name,
 					latencyMs: Date.now() - started,
@@ -119,6 +120,7 @@ export async function decisionsRoutes(
 						: "Decision request failed.";
 				options.telemetry.recordChat({
 					operation: "decisions",
+					caller: request.telemetryCaller,
 					model: resolved.id,
 					provider: resolved.provider.name,
 					latencyMs: Date.now() - started,

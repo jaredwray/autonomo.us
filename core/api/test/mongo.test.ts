@@ -53,6 +53,47 @@ describe("eventToDocument", () => {
 		});
 	});
 
+	it("keeps priced calls and omits failed or unknown prices", () => {
+		const priced = eventToDocument({
+			id: "evt-priced",
+			type: "gateway.chat",
+			data: {
+				model: "work/paid",
+				provider: "work",
+				operation: "chat",
+				callerId: "api-token:1",
+				callerName: "Product team",
+				callerKind: "api-token",
+				estimatedCostUsd: 0,
+				promptTokens: 1,
+				completionTokens: 0,
+				totalTokens: 1,
+				latencyMs: 10,
+			},
+			timestamp: "2026-11-01T01:00:00.000Z",
+		});
+		expect(priced).toMatchObject({
+			operation: "chat",
+			callerId: "api-token:1",
+			callerName: "Product team",
+			callerKind: "api-token",
+			estimatedCostUsd: 0,
+		});
+		const failed = eventToDocument({
+			id: "evt-failed",
+			type: "gateway.error",
+			data: {
+				model: "work/paid",
+				provider: "work",
+				error: "failed",
+			},
+			timestamp: "2026-11-01T01:00:00.000Z",
+		});
+		expect(failed).not.toHaveProperty("estimatedCostUsd");
+		expect(failed).not.toHaveProperty("callerId");
+		expect(failed.error).toBe("failed");
+	});
+
 	it("defaults missing fields safely", () => {
 		const document = eventToDocument({
 			id: "evt-2",

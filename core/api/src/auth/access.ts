@@ -1,9 +1,16 @@
 import {
 	API_TOKEN_PERMISSIONS,
 	type ApiTokenPermission,
+	type TelemetryCaller,
 } from "@autonomo.us/common";
 import type { FastifyInstance } from "fastify";
 import { type ApiTokenStore, secretMatches, tokenHash } from "./tokens.js";
+
+declare module "fastify" {
+	interface FastifyRequest {
+		telemetryCaller?: TelemetryCaller;
+	}
+}
 
 // Exact routes and actions: new endpoints are denied until explicitly listed.
 const routePermissions = new Map<string, ApiTokenPermission>([
@@ -19,6 +26,7 @@ const routePermissions = new Map<string, ApiTokenPermission>([
 	["POST /v1/decisions", "inference:run"],
 	["GET /v1/telemetry/summary", "telemetry:read"],
 	["GET /v1/telemetry/events", "telemetry:read"],
+	["GET /v1/telemetry/analytics", "telemetry:read"],
 ]);
 
 export function registerApiAccess(
@@ -27,6 +35,7 @@ export function registerApiAccess(
 	ownerToken?: string,
 ) {
 	const ownerHash = ownerToken ? tokenHash(ownerToken) : null;
+	server.decorateRequest("telemetryCaller", undefined);
 	server.addHook("onRequest", async (request, reply) => {
 		// Fastify decodes paths before matching. Use its matched route so an
 		// encoded /v1 prefix cannot bypass authentication or permission checks.
@@ -36,7 +45,10 @@ export function registerApiAccess(
 		// Preserve the existing trusted local setup when no owner is configured.
 		if (!authorization && !ownerHash) return;
 		const match = /^Bearer (\S+)$/i.exec(authorization ?? "");
-		if (match && ownerHash && secretMatches(match[1], ownerHash)) return;
+		if (match && ownerHash && secretMatches(match[1], ownerHash)) {
+			request.telemetryCaller = { id: "owner", name: "Owner", kind: "owner" };
+			return;
+		}
 		const token = match ? await tokens.authenticate(match[1]) : null;
 		if (!token) {
 			reply.header("www-authenticate", "Bearer");
@@ -45,6 +57,11 @@ export function registerApiAccess(
 				.send({ error: { message: "A valid API token is required." } });
 		}
 		const method = request.method === "HEAD" ? "GET" : request.method;
+		request.telemetryCaller = {
+			id: `api-token:${token.id}`,
+			name: token.name,
+			kind: "api-token",
+		};
 		const required = routePermissions.get(`${method} ${path}`);
 		const allowed =
 			required &&
