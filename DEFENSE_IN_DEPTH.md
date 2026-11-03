@@ -14,7 +14,7 @@ Profile: npm library · public
 
 ## 3. Dependencies (pnpm)
 - [x] `packageManager: pnpm@11.3+` pinned in `package.json` — PR #9
-- [x] 7-day cooldown: `minimumReleaseAge: 10080`, `minimumReleaseAgeStrict: true`, `minimumReleaseAgeIgnoreMissingTime: false`; no first-party `minimumReleaseAgeExclude` — PR #9
+- [x] 7-day cooldown: `minimumReleaseAge: 10080`, `minimumReleaseAgeStrict: true`, `minimumReleaseAgeIgnoreMissingTime: false` — PR #9. Exact `minimumReleaseAgeExclude` entry `mongodb@7.8.0` covers CVE-2026-119179 (published 2026-10-30, still inside the cooldown) and needs Jared's sign-off.
 - [x] `trustPolicy: no-downgrade`; no first-party `trustPolicyExclude` — PR #9
 - [x] Lifecycle scripts blocked: `strictDepBuilds: true`, `dangerouslyAllowAllBuilds: false`, `allowBuilds: {}` baseline — PR #9 (`allowBuilds` exceptions: `@biomejs/biome`, `esbuild`; `workerd` is explicitly `false` because `wrangler deploy` does not need its binary download)
 - [x] `blockExoticSubdeps: true` — PR #9

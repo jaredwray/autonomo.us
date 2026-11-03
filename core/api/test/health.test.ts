@@ -72,10 +72,7 @@ describe("health route", () => {
 	it("reports a successful probe and closes MongoDB clients", async () => {
 		const body = await health(configuredEnv);
 		expect(body.mongodb).toEqual({ configured: true, connected: true });
-		expect(mocks.mongoPing).toHaveBeenCalledWith(
-			{ ping: 1 },
-			{ timeoutMS: 1000 },
-		);
+		expect(mocks.mongoPing).toHaveBeenCalledWith({ ping: 1 });
 		await servers[0].close();
 		// The probe closes its own client. Model settings and routing each
 		// close the client they opened while loading.

@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { MongoClient } from "mongodb";
 import type { ApiConfig } from "../config.js";
+import { mongoOperationDeadlines } from "../mongo.js";
 
 type DependencyStatus = { configured: boolean; connected: boolean };
 
@@ -27,11 +28,10 @@ export async function healthRoutes(
 				// prevent the API from starting.
 				const mongo = new MongoClient(config.mongodbUrl as string, {
 					serverSelectionTimeoutMS: 1000,
-					connectTimeoutMS: 1000,
-					socketTimeoutMS: 1000,
+					...mongoOperationDeadlines(1000),
 				});
 				try {
-					await mongo.db().command({ ping: 1 }, { timeoutMS: 1000 });
+					await mongo.db().command({ ping: 1 });
 				} finally {
 					await mongo.close();
 				}

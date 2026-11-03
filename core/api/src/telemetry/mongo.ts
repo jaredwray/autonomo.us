@@ -4,6 +4,7 @@ import type {
 	UsageSummary,
 } from "@autonomo.us/common";
 import { type Collection, MongoBulkWriteError, MongoClient } from "mongodb";
+import { mongoOperationDeadlines } from "../mongo.js";
 
 const GATEWAY_TYPES = [
 	"gateway.chat",
@@ -83,8 +84,7 @@ export class MongoTelemetrySink {
 	private collection(): Collection<TelemetryDocument> {
 		this.client ??= new MongoClient(this.url, {
 			serverSelectionTimeoutMS: this.timeoutMs,
-			connectTimeoutMS: this.timeoutMs,
-			socketTimeoutMS: this.timeoutMs,
+			...mongoOperationDeadlines(this.timeoutMs),
 		});
 		return this.client.db().collection<TelemetryDocument>(TELEMETRY_COLLECTION);
 	}
@@ -96,10 +96,7 @@ export class MongoTelemetrySink {
 
 	async ping(): Promise<void> {
 		try {
-			await this.collection().db.command(
-				{ ping: 1 },
-				{ timeoutMS: this.timeoutMs },
-			);
+			await this.collection().db.command({ ping: 1 });
 			this.healthy = true;
 		} catch (error) {
 			this.fail(error);
