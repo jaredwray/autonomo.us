@@ -8,6 +8,11 @@ packages:
 minimumReleaseAge: 10080 # 7 days, in minutes
 minimumReleaseAgeStrict: true
 minimumReleaseAgeIgnoreMissingTime: false
+# CVE-2026-119179: mongodb@7.8.0 is the first fixed 7.x driver and is still
+# inside the 7-day cooldown (published 2026-10-30). Exact version only.
+# Needs Jared's sign-off.
+minimumReleaseAgeExclude:
+  - mongodb@7.8.0
 blockExoticSubdeps: true
 strictDepBuilds: true
 dangerouslyAllowAllBuilds: false
