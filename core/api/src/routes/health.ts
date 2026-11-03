@@ -38,7 +38,7 @@ export async function healthRoutes(
 			}
 		: undefined;
 
-	server.get("/health", async () => {
+	const report = async () => {
 		const mongodb = await check(pingMongo);
 		return {
 			// This remains a liveness endpoint; an optional database outage
@@ -47,5 +47,7 @@ export async function healthRoutes(
 			timestamp: new Date().toISOString(),
 			mongodb,
 		};
-	});
+	};
+	server.get("/health", report);
+	server.get("/healthz", report);
 }
