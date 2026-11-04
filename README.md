@@ -533,9 +533,13 @@ The dashboard calls the API on its own origin, so the build needs no
 
 Cutting over from the retired Workers (`autonomous-ux-development` and
 `autonomous-api-development`) is a one-time step. Secrets belong to a Worker,
-so set them on the new name before the first deploy; Wrangler creates the
-Worker as a placeholder when it does not exist yet. Then delete the retired
-Workers so `dev-api.autonomo.us` stops serving the old code:
+so set them on the new name **before** merging the change that first deploys
+it; Wrangler creates the Worker as a placeholder when it does not exist yet.
+Never deploy a new Worker to a public hostname without them: with no
+`SETUP_TOKEN`, first-run setup is open to whoever reaches `POST /v1/setup`
+first, and with no `MONGODB_URI` that owner lives in memory until the next
+deploy. Once the new Worker is healthy, delete the retired Workers so
+`dev-api.autonomo.us` stops serving the old code:
 
 ```bash
 pnpm exec wrangler secret put MONGODB_URI -c core/server/wrangler.jsonc
