@@ -17,8 +17,8 @@ import {
 } from "./api.js";
 import { Dashboard } from "./Dashboard.js";
 import { Icon } from "./Icons.js";
-import { ProfileView } from "./ProfileView.js";
 import { ModelsView } from "./ModelsView.js";
+import { ProfileView } from "./ProfileView.js";
 import { RoutingView } from "./RoutingView.js";
 import { TeamView } from "./TeamView.js";
 
@@ -120,7 +120,7 @@ export function App() {
 			if (!accountRef.current?.contains(event.target as Node))
 				setAccountOpen(false);
 		};
-		const escape = (event: KeyboardEvent) => {
+		const handleEscape = (event: KeyboardEvent) => {
 			if (event.key === "Escape") {
 				setAccountOpen(false);
 				if (accountRef.current?.contains(document.activeElement))
@@ -128,10 +128,10 @@ export function App() {
 			}
 		};
 		document.addEventListener("pointerdown", dismiss);
-		document.addEventListener("keydown", escape);
+		document.addEventListener("keydown", handleEscape);
 		return () => {
 			document.removeEventListener("pointerdown", dismiss);
-			document.removeEventListener("keydown", escape);
+			document.removeEventListener("keydown", handleEscape);
 		};
 	}, []);
 	const [view, setView] = useState(currentView);
@@ -281,7 +281,7 @@ export function App() {
 					{accountOpen && (
 						<div className="account-menu" id="account-menu">
 							<a
-								href="#/profile"
+								href={`${window.location.pathname}${window.location.search}#/profile`}
 								onClick={() => {
 									go("profile");
 									setAccountOpen(false);
