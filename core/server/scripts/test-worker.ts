@@ -191,6 +191,8 @@ await withWorker("", async (request, logs, base) => {
 	}
 	// No unauthenticated mode, even before setup.
 	await request("/v1/models", 401);
+	// The bare namespace reaches the API (a JSON 404), not the dashboard.
+	await request("/v1", 404);
 	const auth = await setUp(request);
 	await request("/v1/models", 200, { headers: auth });
 	await request("/v1/routing", 400, {
