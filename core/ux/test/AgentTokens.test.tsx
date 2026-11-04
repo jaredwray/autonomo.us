@@ -10,26 +10,29 @@ import {
 import { StrictMode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { App } from "../src/App.js";
-import { clearOwnerCredential } from "../src/api.js";
+import { clearCredential } from "../src/api.js";
+import { setUpOwner } from "./session.js";
 
 const closers: Array<() => Promise<void>> = [];
 afterEach(async () => {
 	cleanup();
-	clearOwnerCredential();
+	clearCredential();
 	for (const close of closers.splice(0)) await close();
 	vi.unstubAllEnvs();
 	window.history.replaceState(null, "", "/");
 	window.localStorage.clear();
 	window.sessionStorage.clear();
 });
-async function start(ownerToken?: string) {
+let owner: Record<string, string> = {};
+async function start() {
 	const server = createServer({
-		config: { providers: [], corsOrigins: ["*"], ownerToken },
+		config: { providers: [], corsOrigins: ["*"] },
 		logger: false,
 	});
 	const url = await server.listen({ host: "127.0.0.1", port: 0 });
 	closers.push(() => server.close());
 	vi.stubEnv("VITE_API_URL", url);
+	owner = { authorization: `Bearer ${await setUpOwner(url)}` };
 	window.history.replaceState(null, "", "#/agent-tokens");
 	render(
 		<StrictMode>
@@ -113,7 +116,9 @@ it("manages agent tokens with independent MCP permissions and a separate action 
 			screen.getByRole("region", { name: "Your tokens" }).textContent,
 		).toContain("Previous"),
 	);
-	const stored = (await server.inject("/v1/agent-tokens")).json();
+	const stored = (
+		await server.inject({ url: "/v1/agent-tokens", headers: owner })
+	).json();
 	expect(stored.tokens[0]).toMatchObject({
 		name: "Research assistant",
 		permissions: ["mcp:read"],
@@ -161,11 +166,8 @@ it("clears an unsaved agent secret when navigating to API Tokens", async () => {
 	expect(screen.queryByLabelText("New agent token")).toBeNull();
 });
 
-it("requires owner sign-in and clears agent secrets when the dashboard locks", async () => {
-	await start("owner-for-agents");
-	await screen.findByLabelText("Owner credential");
-	change("Owner credential", "owner-for-agents");
-	fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+it("clears agent secrets when the member signs out", async () => {
+	await start();
 	await screen.findByText(/No agent tokens yet/);
 	fireEvent.click(screen.getByRole("button", { name: "Create token" }));
 	change("Name", "Owner agent");
@@ -173,8 +175,8 @@ it("requires owner sign-in and clears agent secrets when the dashboard locks", a
 	const secret = (
 		(await screen.findByLabelText("New agent token")) as HTMLTextAreaElement
 	).value;
-	fireEvent.click(screen.getByRole("button", { name: "Lock dashboard" }));
-	await screen.findByLabelText("Owner credential");
+	fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+	await screen.findByRole("heading", { name: "Sign in" });
 	expect(screen.queryByLabelText("New agent token")).toBeNull();
 	expect(document.body.textContent).not.toContain(secret);
 });

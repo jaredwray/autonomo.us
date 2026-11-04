@@ -1,6 +1,7 @@
 import cors from "@fastify/cors";
 import Fastify from "fastify";
 import { registerApiAccess } from "./auth/access.js";
+import { AccountStore } from "./auth/accounts.js";
 import { AgentTokenStore } from "./auth/agent-tokens.js";
 import { ApiTokenStore } from "./auth/tokens.js";
 import { type ApiConfig, configFromEnv } from "./config.js";
@@ -14,12 +15,14 @@ import {
 import { ProviderSettingsStore } from "./providers/settings.js";
 import { agentTokenRoutes } from "./routes/agent-tokens.js";
 import { apiTokenRoutes } from "./routes/api-tokens.js";
+import { authRoutes } from "./routes/auth.js";
 import { chatRoutes } from "./routes/chat.js";
 import { decisionsRoutes } from "./routes/decisions.js";
 import { failoverRoutes } from "./routes/failover.js";
 import { healthRoutes } from "./routes/health.js";
 import { modelsRoutes } from "./routes/models.js";
 import { routingRoutes } from "./routes/routing.js";
+import { teamRoutes } from "./routes/team.js";
 import { telemetryRoutes } from "./routes/telemetry.js";
 import { ModelRouter } from "./routing/router.js";
 import { RoutingSettingsStore } from "./routing/settings.js";
@@ -96,6 +99,7 @@ export function createServer(options: CreateServerOptions = {}) {
 	const router = new ModelRouter(registry, routing, telemetry);
 	const tokens = new ApiTokenStore(config.mongodbUrl);
 	const agentTokens = new AgentTokenStore(config.mongodbUrl);
+	const accounts = new AccountStore({ mongodbUrl: config.mongodbUrl });
 	let persistenceInitialized = false;
 	const server = Fastify({
 		pluginTimeout: options.pluginTimeout,
@@ -110,19 +114,20 @@ export function createServer(options: CreateServerOptions = {}) {
 		methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
 	});
 	// Install after CORS so browsers can read authentication failures too.
-	server.after(() => registerApiAccess(server, tokens, config.ownerToken));
+	server.after(() =>
+		registerApiAccess(server, tokens, accounts, config.setupToken),
+	);
 	server.register(healthRoutes, {
 		config,
 		persistenceInitialized: () => persistenceInitialized,
 	});
-	server.register(apiTokenRoutes, {
-		tokens,
-		authenticationRequired: Boolean(config.ownerToken),
+	server.register(authRoutes, {
+		accounts,
+		setupTokenConfigured: Boolean(config.setupToken),
 	});
-	server.register(agentTokenRoutes, {
-		tokens: agentTokens,
-		authenticationRequired: Boolean(config.ownerToken),
-	});
+	server.register(teamRoutes, { accounts });
+	server.register(apiTokenRoutes, { tokens });
+	server.register(agentTokenRoutes, { tokens: agentTokens });
 	server.register(modelsRoutes, { registry, catalog: modelCatalog, settings });
 	server.register(failoverRoutes, { failover, registry, routing });
 	server.register(routingRoutes, { routing });
@@ -172,6 +177,7 @@ export function createServer(options: CreateServerOptions = {}) {
 		await settings.close();
 		await tokens.close();
 		await agentTokens.close();
+		await accounts.close();
 		await routing.close();
 		await telemetry.close();
 	});
@@ -185,6 +191,7 @@ export function createServer(options: CreateServerOptions = {}) {
 				settings.close(),
 				tokens.close(),
 				agentTokens.close(),
+				accounts.close(),
 				routing.close(),
 			]);
 			const failed = results.find(

@@ -11,14 +11,18 @@ import { StrictMode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { startOpenAIStub } from "../../api/test/openai-stub.js";
 import { App } from "../src/App.js";
+import { clearCredential } from "../src/api.js";
+import { setUpOwner } from "./session.js";
 
 const cleanupTasks: Array<() => Promise<void>> = [];
 afterEach(async () => {
 	cleanup();
+	clearCredential();
 	for (const task of cleanupTasks.splice(0)) await task();
 	vi.unstubAllEnvs();
 	window.history.replaceState(null, "", "/");
 });
+let owner: Record<string, string> = {};
 async function start() {
 	const provider = await startOpenAIStub();
 	const config: ApiConfig = {
@@ -46,6 +50,7 @@ async function start() {
 		() => provider.close(),
 	);
 	vi.stubEnv("VITE_API_URL", url);
+	owner = { authorization: `Bearer ${await setUpOwner(url)}` };
 	window.history.replaceState(null, "", "#/routing");
 	render(
 		<StrictMode>
@@ -78,7 +83,8 @@ it("saves a weighted account pool, uses it for a real request, and restores it w
 	fireEvent.click(screen.getByRole("button", { name: "Save routing" }));
 	await screen.findByText("Routing saved");
 	expect(
-		(await server.inject("/v1/routing")).json().config.pools[0],
+		(await server.inject({ url: "/v1/routing", headers: owner })).json().config
+			.pools[0],
 	).toMatchObject({
 		id: "coding",
 		members: [
@@ -118,13 +124,14 @@ it("selects Jev for Auto, limits its targets, and surfaces API validation failur
 	change("If the decision model fails, use", "personal/chat");
 	fireEvent.click(screen.getByRole("button", { name: "Save routing" }));
 	await screen.findByText("Routing saved");
-	expect((await server.inject("/v1/routing")).json().config.auto).toMatchObject(
-		{
-			enabled: true,
-			decisionModel: "jev/selector",
-			fallbackTarget: "personal/chat",
-		},
-	);
+	expect(
+		(await server.inject({ url: "/v1/routing", headers: owner })).json().config
+			.auto,
+	).toMatchObject({
+		enabled: true,
+		decisionModel: "jev/selector",
+		fallbackTarget: "personal/chat",
+	});
 	const options = within(screen.getByLabelText("Allowed target")).queryByRole(
 		"option",
 		{ name: "jev/selector" },
@@ -148,7 +155,9 @@ it("saves an ordered model failover rule independently of the default", async ()
 	});
 	fireEvent.click(screen.getByRole("button", { name: "Save routing" }));
 	await waitFor(() => expect(screen.getByText("Routing saved")).toBeDefined());
-	const config = (await server.inject("/v1/routing")).json().config;
+	const config = (
+		await server.inject({ url: "/v1/routing", headers: owner })
+	).json().config;
 	expect(config.rules).toEqual([
 		{
 			model: "work/chat",

@@ -1,8 +1,9 @@
-/** Caller identities are credentials or reported agents, not unique people. */
+/** Caller identities are credentials, team members, or reported agents. */
 export type TelemetryCaller = {
 	id: string;
 	name: string;
-	kind: "api-token" | "owner" | "agent" | "unattributed";
+	/** `owner` appears only in history from before team accounts. */
+	kind: "api-token" | "owner" | "user" | "agent" | "unattributed";
 };
 
 export type ModelPricing = {

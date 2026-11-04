@@ -225,6 +225,7 @@ export class TokenStore<Permission extends string> {
 		action: ApiTokenAction["action"],
 		actor: ApiTokenAction["actor"],
 		detail: string,
+		actorName?: string,
 	) {
 		record.actions.unshift({
 			id: randomUUID(),
@@ -233,6 +234,7 @@ export class TokenStore<Permission extends string> {
 			action,
 			timestamp: record.updatedAt,
 			actor,
+			...(actor === "user" && actorName ? { actorName } : {}),
 			detail,
 		});
 		// Bound each document; settings returns the latest 100 actions overall.
@@ -241,6 +243,7 @@ export class TokenStore<Permission extends string> {
 	async create(
 		input: CreateApiTokenRequest<Permission>,
 		actor: ApiTokenAction["actor"],
+		actorName?: string,
 	): Promise<ApiTokenSecret<Permission>> {
 		const now = this.now();
 		const id = randomUUID();
@@ -271,6 +274,7 @@ export class TokenStore<Permission extends string> {
 			"created",
 			actor,
 			`${expiry ? `Expires ${expiry}.` : "Never expires."} Permissions: ${permissionSummary(effectivePermissions(record, this.profile), this.profile)}.`,
+			actorName,
 		);
 		if (this.mongodbUrl)
 			await this.storage(() => this.collection().insertOne(record));
@@ -309,6 +313,7 @@ export class TokenStore<Permission extends string> {
 		id: string,
 		input: UpdateApiTokenRequest<Permission>,
 		actor: ApiTokenAction["actor"],
+		actorName?: string,
 	) {
 		return this.mutate(id, (record, now) => {
 			if (record.revokedAt)
@@ -328,6 +333,7 @@ export class TokenStore<Permission extends string> {
 				changed
 					? `Permissions changed from ${permissionSummary(before, this.profile)} to ${permissionSummary(record.permissions, this.profile)}. Name and description saved.`
 					: "Name and description updated.",
+				actorName,
 			);
 			return publicToken(record, now, this.profile);
 		});
@@ -336,6 +342,7 @@ export class TokenStore<Permission extends string> {
 		id: string,
 		input: RollApiTokenRequest,
 		actor: ApiTokenAction["actor"],
+		actorName?: string,
 	): Promise<ApiTokenSecret<Permission>> {
 		return this.mutate(id, (record, now) => {
 			if (record.revokedAt)
@@ -371,11 +378,12 @@ export class TokenStore<Permission extends string> {
 				"rolled",
 				actor,
 				`Previous token overlap: ${input.previousTokenTtlSeconds} seconds (never beyond its existing expiry). New token ${expiry ? `expires ${expiry}` : "never expires"}.`,
+				actorName,
 			);
 			return { token: publicToken(record, now, this.profile), secret };
 		});
 	}
-	revoke(id: string, actor: ApiTokenAction["actor"]) {
+	revoke(id: string, actor: ApiTokenAction["actor"], actorName?: string) {
 		return this.mutate(id, (record, now) => {
 			if (!record.revokedAt) {
 				record.revokedAt = record.updatedAt;
@@ -385,6 +393,7 @@ export class TokenStore<Permission extends string> {
 					"revoked",
 					actor,
 					"All current and previous token values revoked immediately.",
+					actorName,
 				);
 			}
 			return publicToken(record, now, this.profile);

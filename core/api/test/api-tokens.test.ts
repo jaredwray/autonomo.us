@@ -4,6 +4,7 @@ import { AgentTokenStore } from "../src/auth/agent-tokens.js";
 import { ApiTokenStore, tokenHash } from "../src/auth/tokens.js";
 import { configFromEnv } from "../src/config.js";
 import { createServer } from "../src/server.js";
+import { completeSetup } from "./auth-helpers.js";
 import { startStubProvider } from "./helpers.js";
 
 const input = {
@@ -175,22 +176,21 @@ describe.each([ApiTokenStore, AgentTokenStore])("%s lifecycle", (Store) => {
 });
 
 describe("token API access", () => {
-	const owner = "test-owner-credential";
-	const headers = { authorization: `Bearer ${owner}` };
-	const start = () => {
+	/** The signed-in owner's session, set by start(). */
+	let headers: Record<string, string> = {};
+	const start = async () => {
 		const server = createServer({
-			config: {
-				providers: [],
-				corsOrigins: ["http://localhost:5173"],
-				ownerToken: owner,
-			},
+			config: { providers: [], corsOrigins: ["http://localhost:5173"] },
 			logger: false,
 		});
 		cleanup.push(() => server.close());
+		headers = {
+			authorization: `Bearer ${(await completeSetup(server)).token}`,
+		};
 		return server;
 	};
-	it("requires the owner for management, issues once, and rejects invalid/revoked tokens", async () => {
-		const server = start();
+	it("requires a signed-in member for management, issues once, and rejects invalid/revoked tokens", async () => {
+		const server = await start();
 		expect((await server.inject("/health")).statusCode).toBe(200);
 		const unauthorized = await server.inject({
 			url: "/v1/api-tokens",
@@ -298,11 +298,14 @@ describe("token API access", () => {
 		const provider = await startStubProvider();
 		cleanup.push(provider.close);
 		const server = createServer({
-			config: { providers: [], corsOrigins: [], ownerToken: owner },
+			config: { providers: [], corsOrigins: [] },
 			registry: provider.registry,
 			logger: false,
 		});
 		cleanup.push(() => server.close());
+		headers = {
+			authorization: `Bearer ${(await completeSetup(server)).token}`,
+		};
 		const { secret, token } = (
 			await server.inject({
 				method: "POST",
@@ -329,7 +332,7 @@ describe("token API access", () => {
 		expect((await server.inject(request)).statusCode).toBe(401);
 	});
 	it("validates metadata, TTL and overlap without logging failed writes", async () => {
-		const server = start();
+		const server = await start();
 		for (const patch of [
 			{ name: "  " },
 			{ name: "a".repeat(101) },
@@ -381,17 +384,16 @@ describe("token API access", () => {
 			).statusCode,
 		).toBe(200);
 	});
-	it("retains explicit local mode and reads the owner environment setting", async () => {
-		expect(configFromEnv({ OWNER_TOKEN: owner }).ownerToken).toBe(owner);
+	it("requires sign-in before and after setup and reads SETUP_TOKEN", async () => {
+		expect(configFromEnv({ SETUP_TOKEN: "setup" }).setupToken).toBe("setup");
+		expect(configFromEnv({ OWNER_TOKEN: "legacy" }).setupToken).toBeUndefined();
 		const server = createServer({
 			config: { providers: [], corsOrigins: [] },
 			logger: false,
 		});
 		cleanup.push(() => server.close());
-		expect((await server.inject("/v1/api-tokens")).json()).toMatchObject({
-			persistence: "memory",
-			authenticationRequired: false,
-		});
+		// No unauthenticated mode, even before first-run setup.
+		expect((await server.inject("/v1/api-tokens")).statusCode).toBe(401);
 		expect(
 			(
 				await server.inject({
@@ -400,9 +402,21 @@ describe("token API access", () => {
 					payload: input,
 				})
 			).statusCode,
-		).toBe(201);
+		).toBe(401);
+		const { token } = await completeSetup(server);
+		const auth = { authorization: `Bearer ${token}` };
+		await server.inject({
+			method: "POST",
+			url: "/v1/api-tokens",
+			headers: auth,
+			payload: input,
+		});
 		expect(
-			(await server.inject("/v1/api-tokens")).json().actions[0].actor,
-		).toBe("local-admin");
+			(await server.inject({ url: "/v1/api-tokens", headers: auth })).json(),
+		).toMatchObject({
+			persistence: "memory",
+			authenticationRequired: true,
+			actions: [{ actor: "user", actorName: "Founder" }],
+		});
 	});
 });

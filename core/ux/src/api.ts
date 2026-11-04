@@ -1,6 +1,8 @@
 /// <reference types="vite/client" />
 import type {
+	AcceptInviteRequest,
 	AddModelRequest,
+	AddTeamMemberRequest,
 	AgentToken,
 	AgentTokenSecret,
 	AgentTokenSettings,
@@ -8,18 +10,29 @@ import type {
 	ApiToken,
 	ApiTokenSecret,
 	ApiTokenSettings,
+	AuthSession,
+	AuthStatus,
 	CreateAgentTokenRequest,
 	CreateApiTokenRequest,
+	CreateTeamInviteRequest,
+	CurrentSession,
 	FailoverPolicy,
 	GatewayResponse,
+	InvitePreview,
 	ModelInfo,
 	ProviderSettings,
 	RollAgentTokenRequest,
 	RollApiTokenRequest,
 	RoutingConfig,
 	RoutingSettings,
+	SetupRequest,
+	TeamInvite,
+	TeamInviteSecret,
+	TeamMember,
+	TeamSettings,
 	UpdateAgentTokenRequest,
 	UpdateApiTokenRequest,
+	UpdateTeamMemberRequest,
 	UsageAnalytics,
 } from "@autonomo.us/common";
 
@@ -37,37 +50,157 @@ function apiBase(): string {
 	return import.meta.env?.VITE_API_URL ?? "";
 }
 
-// Credentials live only in this tab's memory, never in browser storage or a build.
-let ownerCredential = "";
-export function clearOwnerCredential() {
-	ownerCredential = "";
+/**
+ * A team member's session is revocable and expires, so it is kept in
+ * localStorage to survive reloads; signing out deletes it on the server and
+ * in the browser. A SETUP_TOKEN, used only during first-run setup, stays in
+ * this tab's memory.
+ */
+const SESSION_KEY = "autonomous.session";
+type Credential = { kind: "setup" | "session"; value: string };
+let credential: Credential | null | undefined;
+function current(): Credential | null {
+	if (credential === undefined) {
+		credential = null;
+		try {
+			const value = window.localStorage.getItem(SESSION_KEY);
+			if (value) credential = { kind: "session", value };
+		} catch {}
+	}
+	return credential;
 }
-export function hasOwnerCredential() {
-	return Boolean(ownerCredential);
+export function clearCredential() {
+	credential = null;
+	try {
+		window.localStorage.removeItem(SESSION_KEY);
+	} catch {}
 }
-export async function connectOwner(credential: string) {
-	const response = await fetch(`${apiBase()}/v1/auth/owner`, {
+export function credentialKind(): Credential["kind"] | null {
+	return current()?.kind ?? null;
+}
+export function setSessionToken(token: string) {
+	credential = { kind: "session", value: token };
+	try {
+		window.localStorage.setItem(SESSION_KEY, token);
+	} catch {}
+}
+export async function verifySetupToken(value: string) {
+	const response = await fetch(`${apiBase()}/v1/setup/token`, {
 		headers: {
 			accept: "application/json",
-			authorization: `Bearer ${credential}`,
+			authorization: `Bearer ${value}`,
 		},
 	});
 	if (!response.ok)
 		throw new Error(
-			response.status === 401 || response.status === 403
-				? "Enter a valid owner credential."
-				: "Could not connect to the API. Please retry.",
+			response.status === 401
+				? "Enter the SETUP_TOKEN configured on the API."
+				: await errorMessage(
+						response,
+						"Could not reach the API. Please retry.",
+					),
 		);
-	ownerCredential = credential;
+	clearCredential();
+	credential = { kind: "setup", value };
+}
+function authorize(headers: Headers) {
+	const active = current();
+	if (active) headers.set("authorization", `Bearer ${active.value}`);
+	return active;
 }
 async function apiFetch(path: string, options: RequestInit = {}) {
 	const headers = new Headers(options.headers);
-	const credential = ownerCredential;
-	if (credential) headers.set("authorization", `Bearer ${credential}`);
+	const active = authorize(headers);
 	const response = await fetch(path, { ...options, headers });
-	if (response.status === 401 && credential === ownerCredential)
+	if (response.status === 401 && active === credential) {
+		clearCredential();
 		window.dispatchEvent(new Event("autonomous:authentication-required"));
+	}
 	return response;
+}
+
+async function errorMessage(response: Response, fallback: string) {
+	try {
+		const body = await response.json();
+		return body.error?.message ?? body.message ?? fallback;
+	} catch {
+		return fallback;
+	}
+}
+
+/** Sign-in calls report errors inline instead of resetting the dashboard. */
+async function authRequest<T>(
+	path: string,
+	method: string,
+	body?: unknown,
+): Promise<T> {
+	const headers = new Headers({ accept: "application/json" });
+	if (body !== undefined) headers.set("content-type", "application/json");
+	authorize(headers);
+	const response = await fetch(`${apiBase()}${path}`, {
+		method,
+		headers,
+		body: body === undefined ? undefined : JSON.stringify(body),
+	});
+	if (!response.ok)
+		throw new Error(
+			await errorMessage(response, `Request failed (${response.status})`),
+		);
+	return (response.status === 204 ? undefined : await response.json()) as T;
+}
+
+export async function fetchAuthStatus(): Promise<AuthStatus> {
+	const response = await fetch(`${apiBase()}/v1/auth/status`, {
+		headers: { accept: "application/json" },
+	});
+	if (!response.ok)
+		throw new Error(
+			await errorMessage(
+				response,
+				`The gateway did not respond (${response.status}).`,
+			),
+		);
+	return response.json();
+}
+export async function completeSetup(input: SetupRequest) {
+	const session = await authRequest<AuthSession>("/v1/setup", "POST", input);
+	setSessionToken(session.token);
+	return session;
+}
+export async function signIn(email: string, password: string) {
+	const session = await authRequest<AuthSession>("/v1/auth/session", "POST", {
+		email,
+		password,
+	});
+	setSessionToken(session.token);
+	return session;
+}
+export function previewInvite(token: string) {
+	return authRequest<InvitePreview>("/v1/invites/preview", "POST", { token });
+}
+export async function acceptInvite(input: AcceptInviteRequest) {
+	const session = await authRequest<AuthSession>(
+		"/v1/invites/accept",
+		"POST",
+		input,
+	);
+	setSessionToken(session.token);
+	return session;
+}
+export function changePassword(currentPassword: string, newPassword: string) {
+	return authRequest<void>("/v1/auth/password", "PUT", {
+		currentPassword,
+		newPassword,
+	});
+}
+export function fetchCurrentSession(): Promise<CurrentSession> {
+	return getJson("/v1/auth/session");
+}
+/** Ends the session on the server when possible; the browser forgets it either way. */
+export async function signOut() {
+	if (current()?.kind === "session")
+		await authRequest("/v1/auth/session", "DELETE").catch(() => {});
+	clearCredential();
 }
 
 async function getJson<T>(path: string): Promise<T> {
@@ -143,14 +276,11 @@ async function postJson<T>(
 		headers: { "content-type": "application/json", accept: "application/json" },
 		body: JSON.stringify(body),
 	});
-	const result = await response.json();
 	if (!response.ok)
 		throw new Error(
-			result.error?.message ??
-				result.message ??
-				`Request failed (${response.status})`,
+			await errorMessage(response, `Request failed (${response.status})`),
 		);
-	return result as T;
+	return (await response.json()) as T;
 }
 
 export function updateRouting(config: RoutingConfig): Promise<RoutingSettings> {
@@ -264,4 +394,37 @@ export function rollAgentToken(
 }
 export function revokeAgentToken(id: string): Promise<AgentToken> {
 	return postJson(`/v1/agent-tokens/${encodeURIComponent(id)}`, "DELETE", {});
+}
+
+export function fetchTeam(): Promise<TeamSettings> {
+	return getJson("/v1/team");
+}
+export function addTeamMember(
+	input: AddTeamMemberRequest,
+): Promise<TeamMember> {
+	return postJson("/v1/team", "POST", input);
+}
+export function updateTeamMember(
+	id: string,
+	input: UpdateTeamMemberRequest,
+): Promise<TeamMember> {
+	return postJson(`/v1/team/${encodeURIComponent(id)}`, "PATCH", input);
+}
+export async function resetTeamPassword(id: string, password: string) {
+	return postJson<TeamMember>(
+		`/v1/team/${encodeURIComponent(id)}/password`,
+		"PUT",
+		{ password },
+	);
+}
+export function createTeamInvite(
+	input: CreateTeamInviteRequest,
+): Promise<TeamInviteSecret> {
+	return postJson("/v1/team/invites", "POST", input);
+}
+export function revokeTeamInvite(id: string): Promise<TeamInvite> {
+	return postJson(`/v1/team/invites/${encodeURIComponent(id)}`, "DELETE", {});
+}
+export function removeTeamMember(id: string): Promise<TeamMember> {
+	return postJson(`/v1/team/${encodeURIComponent(id)}`, "DELETE", {});
 }

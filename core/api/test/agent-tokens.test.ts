@@ -4,8 +4,10 @@ import { afterEach, expect, it } from "vitest";
 import { AgentTokenStore } from "../src/auth/agent-tokens.js";
 import { ApiTokenStore, tokenHash } from "../src/auth/tokens.js";
 import { createServer } from "../src/server.js";
+import { completeSetup } from "./auth-helpers.js";
 
-const headers = { authorization: "Bearer agent-test-owner" };
+/** The signed-in owner's session, set by start(). */
+let headers: Record<string, string> = {};
 const input = {
 	name: "Research agent",
 	description: "MCP connection",
@@ -15,12 +17,13 @@ const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
 	for (const close of cleanups.splice(0)) await close();
 });
-function start(ownerToken: string | undefined = "agent-test-owner") {
+async function start() {
 	const server = createServer({
-		config: { providers: [], corsOrigins: [], ownerToken },
+		config: { providers: [], corsOrigins: [] },
 		logger: false,
 	});
 	cleanups.push(() => server.close());
+	headers = { authorization: `Bearer ${(await completeSetup(server)).token}` };
 	return server;
 }
 
@@ -62,8 +65,8 @@ it("keeps agent authentication separate, defaults to no grants, and applies perm
 	).toBe(true);
 });
 
-it("provides an isolated owner-managed lifecycle and never lists secrets or hashes", async () => {
-	const server = start();
+it("provides an isolated member-managed lifecycle and never lists secrets or hashes", async () => {
+	const server = await start();
 	const created = await server.inject({
 		method: "POST",
 		url: "/v1/agent-tokens",
@@ -121,7 +124,7 @@ it("provides an isolated owner-managed lifecycle and never lists secrets or hash
 	}
 	for (const url of [
 		"/v1/models",
-		"/v1/auth/owner",
+		"/v1/team",
 		"/v1/api-tokens",
 		"/v1/routing",
 		"/v1/telemetry/events",
@@ -212,7 +215,7 @@ it("provides an isolated owner-managed lifecycle and never lists secrets or hash
 });
 
 it("rejects API grants and malformed agent grants without changing stored tokens or history", async () => {
-	const server = start();
+	const server = await start();
 	const issued = (
 		await server.inject({
 			method: "POST",
@@ -263,25 +266,28 @@ it("rejects API grants and malformed agent grants without changing stored tokens
 	expect(settings.tokens[0].permissions).toEqual([]);
 });
 
-it("retains explicit local management mode without accepting agent credentials for the API", async () => {
-	const server = createServer({
-		config: { providers: [], corsOrigins: [] },
-		logger: false,
-	});
-	cleanups.push(() => server.close());
+it("records the signed-in member and never accepts agent credentials for the API", async () => {
+	const server = await start();
+	expect((await server.inject("/v1/agent-tokens")).statusCode).toBe(401);
 	const issued = (
 		await server.inject({
 			method: "POST",
 			url: "/v1/agent-tokens",
+			headers,
 			payload: input,
 		})
 	).json<AgentTokenSecret>();
-	const settings = (await server.inject("/v1/agent-tokens")).json();
+	const settings = (
+		await server.inject({ url: "/v1/agent-tokens", headers })
+	).json();
 	expect(settings).toMatchObject({
 		persistence: "memory",
-		authenticationRequired: false,
+		authenticationRequired: true,
 	});
-	expect(settings.actions[0].actor).toBe("local-admin");
+	expect(settings.actions[0]).toMatchObject({
+		actor: "user",
+		actorName: "Founder",
+	});
 	expect(
 		(
 			await server.inject({

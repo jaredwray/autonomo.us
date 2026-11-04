@@ -1,3 +1,4 @@
+export { AccountError, AccountStore } from "./auth/accounts.js";
 export {
 	type ApiConfig,
 	configFromEnv,

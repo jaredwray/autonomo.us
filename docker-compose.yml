@@ -7,7 +7,8 @@ services:
       - "3000:3000"
     environment:
       MONGODB_URI: mongodb://autonomous:autonomous@mongo:27017/autonomous?authSource=admin
-      OWNER_TOKEN: ${OWNER_TOKEN:-}
+      # Required to complete first-run setup when set; grants nothing afterwards.
+      SETUP_TOKEN: ${SETUP_TOKEN:-}
       # Register the anthropic provider by exporting ANTHROPIC_API_KEY.
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-${GOOGLE_GENERATIVE_AI_API_KEY:-}}

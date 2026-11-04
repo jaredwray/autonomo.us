@@ -5,9 +5,11 @@ import {
 } from "@autonomo.us/common";
 import { afterEach, expect, it } from "vitest";
 import { createServer } from "../src/server.js";
+import { completeSetup } from "./auth-helpers.js";
 import { startOpenAIStub } from "./openai-stub.js";
 
-const ownerHeaders = { authorization: "Bearer owner-permissions-test" };
+/** The owner account's session, set by start(). */
+let ownerHeaders: Record<string, string> = {};
 const input = { name: "Client", description: "Permissions test", ttlDays: 30 };
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -22,7 +24,6 @@ async function start() {
 	});
 	const server = createServer({
 		config: {
-			ownerToken: "owner-permissions-test",
 			corsOrigins: [],
 			providers: [
 				{
@@ -37,6 +38,9 @@ async function start() {
 	});
 	server.get("/v1/unlisted", () => ({ secret: "must not be exposed" }));
 	cleanups.push(() => server.close(), stub.close);
+	ownerHeaders = {
+		authorization: `Bearer ${(await completeSetup(server)).token}`,
+	};
 	return { server, calls: () => calls };
 }
 
@@ -167,7 +171,8 @@ it.each(
 	expect(calls()).toBe(permission === "inference:run" ? 1 : 0);
 	for (const [method, url, payload] of [
 		["GET", "/v1/api-tokens", undefined],
-		["GET", "/v1/auth/owner", undefined],
+		["GET", "/v1/team", undefined],
+		["GET", "/v1/auth/session", undefined],
 		["POST", "/v1/api-tokens", { ...input, permissions: ["models:edit"] }],
 		[
 			"PATCH",
@@ -393,36 +398,27 @@ it("uses normalized routes to protect encoded API URLs", async () => {
 		expect(
 			(
 				await server.inject({
-					url: `${prefix}/auth/owner`,
+					url: `${prefix}/auth/session`,
 					headers: ownerHeaders,
 				})
 			).statusCode,
-		).toBe(204);
+		).toBe(200);
 	}
 });
 
-it("verifies the owner without requiring the token database", async () => {
+it("refuses requests without credentials without touching the database", async () => {
 	const server = createServer({
 		config: {
 			providers: [],
 			corsOrigins: [],
-			ownerToken: "owner-permissions-test",
 			mongodbUrl: "mongodb://127.0.0.1:1/unavailable",
 		},
 		logger: false,
 	});
 	cleanups.push(() => server.close());
-	expect(
-		(await server.inject({ url: "/v1/auth/owner", headers: ownerHeaders }))
-			.statusCode,
-	).toBe(204);
-	expect(
-		(await server.inject({ url: "/v1/api-tokens", headers: ownerHeaders }))
-			.statusCode,
-	).toBe(503);
-	expect(
-		(await server.inject({ url: "/v1/models", headers: ownerHeaders }))
-			.statusCode,
-	).toBe(200);
-	expect((await server.inject("/v1/auth/owner")).statusCode).toBe(401);
+	for (const url of ["/v1/models", "/v1/api-tokens", "/v1/team"]) {
+		const response = await server.inject(url);
+		expect(response.statusCode).toBe(401);
+		expect(response.headers["www-authenticate"]).toBe("Bearer");
+	}
 }, 15000);

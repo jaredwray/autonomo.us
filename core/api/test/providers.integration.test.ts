@@ -1,8 +1,14 @@
 import { randomUUID } from "node:crypto";
+import Fastify from "fastify";
 import { MongoClient } from "mongodb";
 import { afterAll, describe, expect, it } from "vitest";
 import { configFromEnv } from "../src/config.js";
+import { ModelCatalogService } from "../src/model-catalog-service.js";
+import { registryFromConfig } from "../src/providers/registry.js";
+import { ProviderSettingsStore } from "../src/providers/settings.js";
+import { modelsRoutes } from "../src/routes/models.js";
 import { createServer } from "../src/server.js";
+import { withSession } from "./auth-helpers.js";
 
 const url = new URL(
 	process.env.MONGODB_URI ??
@@ -29,7 +35,7 @@ afterAll(async () => {
 describe.skipIf(!available)("persisted model settings", () => {
 	it("restores multiple connections of the same provider independently", async () => {
 		const config = configFromEnv({ MONGODB_URI: url.toString() });
-		let server = createServer({ config, logger: false });
+		let server = await withSession(createServer({ config, logger: false }));
 		const ids = ["openai-work", "openai-personal"];
 		try {
 			for (const connectionId of ids) {
@@ -50,7 +56,7 @@ describe.skipIf(!available)("persisted model settings", () => {
 				).toBe(200);
 			}
 			await server.close();
-			server = createServer({ config, logger: false });
+			server = await withSession(createServer({ config, logger: false }));
 			const settings = await server.inject("/v1/providers");
 			for (const id of ids)
 				expect(settings.json().connections).toContainEqual({
@@ -98,7 +104,7 @@ describe.skipIf(!available)("persisted model settings", () => {
 	});
 	it("restores Cloudflare account IDs, native model IDs, and Jev capability after restart", async () => {
 		const config = configFromEnv({ MONGODB_URI: url.toString() });
-		let server = createServer({ config, logger: false });
+		let server = await withSession(createServer({ config, logger: false }));
 		try {
 			for (const payload of [
 				{
@@ -114,7 +120,7 @@ describe.skipIf(!available)("persisted model settings", () => {
 						.statusCode,
 				).toBe(200);
 			await server.close();
-			server = createServer({ config, logger: false });
+			server = await withSession(createServer({ config, logger: false }));
 			const settings = await server.inject("/v1/providers");
 			expect(settings.json().providers).toContainEqual({
 				id: "cloudflare",
@@ -148,7 +154,7 @@ describe.skipIf(!available)("persisted model settings", () => {
 	});
 	it("preserves simultaneous additions and restores credentials and models after restart", async () => {
 		const config = configFromEnv({ MONGODB_URI: url.toString() });
-		let server = createServer({ config, logger: false });
+		let server = await withSession(createServer({ config, logger: false }));
 		try {
 			const responses = await Promise.all(
 				["model-one", "model-two"].map((model) =>
@@ -165,7 +171,7 @@ describe.skipIf(!available)("persisted model settings", () => {
 			);
 			for (const response of responses) expect(response.statusCode).toBe(200);
 			await server.close();
-			server = createServer({ config, logger: false });
+			server = await withSession(createServer({ config, logger: false }));
 			const models = await server.inject("/v1/models");
 			expect(
 				models
@@ -194,9 +200,16 @@ describe.skipIf(!available)("persisted model settings", () => {
 });
 
 it("does not advertise an unsaved model when MongoDB is unavailable", async () => {
-	const server = createServer({
-		config: configFromEnv({ MONGODB_URI: "mongodb://127.0.0.1:9/test" }),
-		logger: false,
+	// No credential can be verified without MongoDB, so exercise the model
+	// routes directly with a settings store whose database is unreachable.
+	const config = configFromEnv({ MONGODB_URI: "mongodb://127.0.0.1:9/test" });
+	const registry = registryFromConfig(config);
+	const settings = new ProviderSettingsStore(config, registry);
+	const server = Fastify({ logger: false });
+	await server.register(modelsRoutes, {
+		registry,
+		catalog: new ModelCatalogService(),
+		settings,
 	});
 	try {
 		const added = await server.inject({
@@ -209,5 +222,6 @@ it("does not advertise an unsaved model when MongoDB is unavailable", async () =
 		expect((await server.inject("/v1/models")).json().models).toEqual([]);
 	} finally {
 		await server.close();
+		await settings.close();
 	}
 }, 10000);

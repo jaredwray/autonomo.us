@@ -24,12 +24,13 @@ requests; already admitted requests and streams are allowed to finish. The
 displayed status is active while any version is valid, and the displayed expiry
 is the newest value's expiry. Each still-live previous value is listed separately.
 
-With `OWNER_TOKEN` set, all `/v1/*` requests require bearer authentication.
-The owner can administer the gateway. Managed tokens have explicit permissions
+All `/v1/*` requests require a signed-in team member or a managed token (team
+accounts replaced the earlier `OWNER_TOKEN` credential). Team members can
+administer the gateway. Managed tokens have explicit permissions
 chosen in Create/Edit token: Models Read/Edit, Routing Read/Edit, Inference Run,
 and Telemetry Read. Edit includes Read, never Run. Access applies across the
 gateway, including all Auto/pool/failover targets when Inference Run is granted.
-API token management and its action history remain owner-only. The API maps each
+API token management and its action history require a signed-in owner or admin. The API maps each
 route to an action, denies unlisted routes, and returns 403 before provider calls
 when a valid credential lacks its required permission.
 
@@ -44,10 +45,9 @@ omitting permissions from a metadata update keeps existing grants. Rolling keeps
 the policy, and permission reductions apply to all overlapping values on their
 next request. Permission edits and their before/after grants are logged atomically.
 
-Without `OWNER_TOKEN`, the existing unauthenticated local-admin behavior remains;
-removing an Authorization header then bypasses token checks. The dashboard
-explicitly identifies this mode. Configure the owner credential before exposing
-the gateway. `/health` and CORS preflight remain accessible without credentials.
+There is no unauthenticated mode; `SETUP_TOKEN` only gates first-run setup.
+`/health`, CORS preflight, sign-in, and invite redemption remain accessible
+without credentials.
 
 ## Next phase: resource + action + scope
 
@@ -111,8 +111,8 @@ initially. Do not ship inert checkboxes: launch the editor with server enforceme
 2. Attach required resource/action metadata to every `/v1` route. A shared
    authorization hook denies routes with no declared policy, except an explicit
    public allowlist. Return 401 for invalid/expired credentials and 403 for valid
-   credentials lacking permission. Maintain the local mode only as an explicit
-   development opt-out when migrating to enforced-by-default authentication.
+   credentials lacking permission. Authentication is already enforced by
+   default; there is no local opt-out.
 3. Filter list responses and aggregates to allowed resources; authorize targeted
    reads and writes before touching provider credentials or making provider calls.
    Gateway-wide configuration replacements require gateway-wide Edit.

@@ -42,12 +42,12 @@ export type ApiConfig = {
 	failover?: FailoverPolicy;
 	/** When set, tokens, routing, provider settings, and telemetry persist here. */
 	mongodbUrl?: string;
-	/** Protect /v1 with this owner credential; managed API tokens only get gateway access. */
-	ownerToken?: string;
+	/** While first-run setup is pending, creating the first owner requires this secret. */
+	setupToken?: string;
 	/**
 	 * Browser origins allowed by CORS. `["*"]` allows any origin. The default
-	 * covers the Vite dev dashboard; the gateway holds provider keys and has
-	 * optional owner authentication, so arbitrary web pages must not be able to call it.
+	 * covers the Vite dev dashboard; the gateway holds provider keys, so
+	 * arbitrary web pages must not be able to call it.
 	 */
 	corsOrigins: string[];
 };
@@ -79,7 +79,8 @@ function parseModels(value: string | undefined, fallback: string[]): string[] {
  * - `OPENAI_COMPAT_BASE_URL` registers an OpenAI-compatible provider (Ollama,
  *   LM Studio, vLLM, ...). `OPENAI_COMPAT_NAME` (default `local`),
  *   `OPENAI_COMPAT_API_KEY`, and `OPENAI_COMPAT_MODELS` refine it.
- * - `MONGODB_URI` persists tokens, routing, provider settings, and telemetry.
+ * - `MONGODB_URI` persists team accounts, tokens, routing, provider settings, and telemetry.
+ * - `SETUP_TOKEN` is required to complete first-run setup; it grants nothing afterwards.
  * - `FAILOVER_ENABLED`, `FAILOVER_TARGETS` (comma-separated `provider/model`
  *   ids), and `FAILOVER_TIMEOUT_MS` seed the failover policy, which stays
  *   runtime-configurable via PUT /v1/failover and the dashboard.
@@ -194,7 +195,7 @@ export function configFromEnv(
 		providers,
 		failover,
 		mongodbUrl: env.MONGODB_URI,
-		ownerToken: env.OWNER_TOKEN || undefined,
+		setupToken: env.SETUP_TOKEN || undefined,
 		corsOrigins,
 	};
 }

@@ -38,7 +38,9 @@ export function eventCaller(event: TelemetryEvent): TelemetryCaller {
 	if (
 		typeof data.callerId === "string" &&
 		data.callerId &&
-		(data.callerKind === "api-token" || data.callerKind === "owner")
+		(data.callerKind === "api-token" ||
+			data.callerKind === "owner" ||
+			data.callerKind === "user")
 	) {
 		return {
 			id: data.callerId,

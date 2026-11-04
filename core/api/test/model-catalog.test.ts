@@ -18,6 +18,7 @@ import {
 import { ProviderRegistry } from "../src/providers/registry.js";
 import { modelsRoutes } from "../src/routes/models.js";
 import { createServer } from "../src/server.js";
+import { withSession } from "./auth-helpers.js";
 
 type RecordedCall = {
 	url: URL;
@@ -605,10 +606,12 @@ describe("ModelCatalogService", () => {
 
 describe("GET /v1/models/catalog", () => {
 	it("serves the bundled models.json catalog by default", async () => {
-		const server = createServer({
-			config: { providers: [], corsOrigins: [] },
-			logger: false,
-		});
+		const server = await withSession(
+			createServer({
+				config: { providers: [], corsOrigins: [] },
+				logger: false,
+			}),
+		);
 		const response = await server.inject({
 			method: "GET",
 			url: "/v1/models/catalog",
