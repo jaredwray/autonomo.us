@@ -121,17 +121,68 @@ describe.skipIf(!available)("durable team accounts", () => {
 		}
 	});
 
-	it("treats a setup marker without its owner as pending, then abandoned", async () => {
+	it("completes a setup whose owner was committed but never copied", async () => {
+		const url = database();
+		const client = new MongoClient(url);
+		const writer = new AccountStore({ mongodbUrl: url });
+		try {
+			// Commit setup normally, then simulate a crash before the owner copy
+			// by deleting the account and restoring its embedded copy.
+			const { user } = await writer.completeSetup({
+				email: "owner@example.com",
+				name: "Owner",
+				password: PASSWORD,
+			});
+			const users = client.db().collection("gateway_users");
+			const owner = await users.findOne({ _id: user.id as never });
+			expect(
+				(
+					await client
+						.db()
+						.collection("gateway_setup")
+						.findOne({ _id: "default" as never })
+				)?.owner,
+			).toBeNull();
+			await users.deleteOne({ _id: user.id as never });
+			await client
+				.db()
+				.collection("gateway_setup")
+				.updateOne({ _id: "default" as never }, { $set: { owner } });
+
+			const app = authServer({ mongodbUrl: url });
+			try {
+				expect((await app.inject("/v1/auth/status")).json().setupComplete).toBe(
+					true,
+				);
+				await signIn(app, "owner@example.com");
+				expect(
+					(
+						await app.inject({
+							method: "POST",
+							url: "/v1/setup",
+							payload: {
+								email: "second@example.com",
+								name: "Second",
+								password: PASSWORD,
+							},
+						})
+					).statusCode,
+				).toBe(409);
+				expect(await users.countDocuments()).toBe(1);
+			} finally {
+				await app.close();
+			}
+		} finally {
+			await writer.close();
+			await client.close();
+		}
+	});
+
+	it("lets setup run again over a marker with no owner", async () => {
 		const url = database();
 		const client = new MongoClient(url);
 		const app = authServer({ mongodbUrl: url });
-		const payload = {
-			email: "owner@example.com",
-			name: "Owner",
-			password: PASSWORD,
-		};
 		try {
-			// A setup that wrote its marker but never created the owner.
 			await client
 				.db()
 				.collection("gateway_setup")
@@ -144,28 +195,7 @@ describe.skipIf(!available)("durable team accounts", () => {
 			expect((await app.inject("/v1/auth/status")).json().setupComplete).toBe(
 				false,
 			);
-			const pending = await app.inject({
-				method: "POST",
-				url: "/v1/setup",
-				payload,
-			});
-			expect(pending.statusCode).toBe(409);
-			expect(pending.json().message).toMatch(/finishing/);
-
-			// Once stale, setup can run again and the status is not stuck.
-			await client
-				.db()
-				.collection("gateway_setup")
-				.updateOne(
-					{ _id: "default" as never },
-					{
-						$set: { completedAt: new Date(Date.now() - 120_000).toISOString() },
-					},
-				);
-			expect(
-				(await app.inject({ method: "POST", url: "/v1/setup", payload }))
-					.statusCode,
-			).toBe(201);
+			await completeSetup(app);
 			expect((await app.inject("/v1/auth/status")).json().setupComplete).toBe(
 				true,
 			);

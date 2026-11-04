@@ -119,9 +119,10 @@ There is always at least one owner, and nobody can remove themselves. Changes
 that remove an owner take a short lock on the setup record, so two owners
 demoting or removing each other at once cannot leave the team without one. A
 forgotten password is reset by an owner or admin. If every owner is locked out,
-fix the account in the `gateway_users` collection. Setup counts as complete only once
-its owner account exists. A marker left by a setup that crashed before creating
-the owner is treated as abandoned after a minute, so setup can run again.
+fix the account in the `gateway_users` collection. Setup writes the owner account into its
+marker in the same atomic write that claims setup. If the request dies before
+the account is copied into `gateway_users`, the next request finishes the copy,
+so a crash can neither lock the gateway nor admit a second owner.
 Without MongoDB, accounts and invites last until the API restarts and setup
 runs again. If a configured
 MongoDB is unreachable, sign-in and sessions fail with HTTP 503, and requests

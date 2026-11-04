@@ -35,14 +35,6 @@ export class AccountError extends Error {
 export const SESSION_TTL_MS = 14 * 86_400_000;
 export const SIGN_IN_WINDOW_MS = 15 * 60_000;
 export const SIGN_IN_MAX_FAILURES = 10;
-/** A setup marker whose owner never appeared within this window was abandoned. */
-export const SETUP_STALE_MS = 60_000;
-/**
- * A setup must start creating its owner this long before its marker turns
- * stale: longer than index creation plus one insert can take, so a stalled
- * setup can never add an owner after a retry has replaced its marker.
- */
-export const SETUP_MARGIN_MS = 15_000;
 /** Upper bound on holding the owner-change lock if a request dies mid-change. */
 export const OWNER_LOCK_MS = 60_000;
 /**
@@ -71,6 +63,11 @@ type SetupRecord = {
 	revision: number;
 	completedAt: string | null;
 	ownerId: string | null;
+	/**
+	 * The first owner, written in the same atomic write that claims setup and
+	 * then copied into gateway_users. Cleared once the copy exists.
+	 */
+	owner?: UserRecord | null;
 	/** Serializes changes that remove an owner, so two can't drop the last one. */
 	ownerLock?: { holder: string; expiresAt: string } | null;
 };
@@ -332,7 +329,8 @@ export class AccountStore {
 			409,
 		);
 	}
-	private async insertUser(record: UserRecord) {
+	/** `idempotent` accepts an insert that already happened (same ID). */
+	private async insertUser(record: UserRecord, idempotent = false) {
 		if (this.options.mongodbUrl && !this.indexed) {
 			await this.collection("gateway_users")
 				.createIndex({ email: 1 }, { unique: true, name: "email_unique" })
@@ -342,11 +340,13 @@ export class AccountStore {
 				// The lookup before each insert still rejects duplicates.
 				.catch(() => {});
 		}
-		if (!(await this.storage(() => this.users.insert(record))))
-			throw new AccountError(
-				"A team member with this email already exists.",
-				409,
-			);
+		if (await this.storage(() => this.users.insert(record))) return;
+		if (idempotent && (await this.storage(() => this.users.get(record._id))))
+			return;
+		throw new AccountError(
+			"A team member with this email already exists.",
+			409,
+		);
 	}
 	private async assertEmailAvailable(email: string) {
 		if (await this.storage(() => this.users.findBy("email", email)))
@@ -381,18 +381,35 @@ export class AccountStore {
 	}
 
 	/**
-	 * Setup is complete only once its marker names an owner that exists. A
-	 * marker without its owner is either still being written (pending) or was
-	 * left behind by a crash or rollback, after which setup can run again.
+	 * Setup is complete once its marker names an owner. The owner account is
+	 * written into the marker by the same atomic write that claims setup, and
+	 * whichever request finds it not yet copied into gateway_users finishes the
+	 * copy. A request that dies mid-setup therefore neither locks the gateway
+	 * nor leaves room for a second owner.
 	 */
 	private async setupState(record: SetupRecord | null) {
-		if (!record?.completedAt) return "open" as const;
-		const ownerId = record.ownerId;
-		if (ownerId && (await this.storage(() => this.users.get(ownerId))))
-			return "complete" as const;
-		return this.now() - Date.parse(record.completedAt) < SETUP_STALE_MS
-			? ("pending" as const)
-			: ("open" as const);
+		const ownerId = record?.ownerId;
+		if (!record?.completedAt || !ownerId) return "open" as const;
+		if (!(await this.storage(() => this.users.get(ownerId)))) {
+			// No embedded copy: a marker written before owners were embedded, or
+			// whose owner was deleted by hand. Setup may run again.
+			if (!record.owner) return "open" as const;
+			await this.insertUser(record.owner, true);
+		}
+		if (record.owner) await this.forgetEmbeddedOwner(ownerId);
+		return "complete" as const;
+	}
+
+	/** Drops the marker's copy of the owner once gateway_users has it. */
+	private async forgetEmbeddedOwner(ownerId: string) {
+		await this.mutate(
+			this.setup,
+			"default",
+			(setup) => {
+				if (setup.ownerId === ownerId) setup.owner = null;
+			},
+			new AccountError("Not found.", 404),
+		).catch(() => {});
 	}
 
 	async isSetupComplete(): Promise<boolean> {
@@ -412,20 +429,14 @@ export class AccountStore {
 		};
 	}
 
-	/** Creates the first owner and marks setup complete in one guarded step. */
+	/** Creates the first owner and marks setup complete in one atomic write. */
 	async completeSetup(input: SetupRequest): Promise<AuthSession> {
 		assertPassword(input.password);
 		const seen = await this.storage(() => this.setup.get("default"));
-		const state = await this.setupState(seen);
-		if (state === "complete") {
+		if ((await this.setupState(seen)) === "complete") {
 			this.completed = true;
 			throw this.setupDone();
 		}
-		if (state === "pending")
-			throw new AccountError(
-				"Setup is finishing in another request. Try again in a minute.",
-				409,
-			);
 		const passwordHash = await hashPassword(input.password);
 		const now = this.now();
 		const record = this.newUser(
@@ -436,8 +447,10 @@ export class AccountStore {
 			now,
 			true,
 		);
+		const session = issueSession(record, now);
 		// This compare-and-swap is the only gate: a concurrent setup loses here.
-		const claimedAt = await this.mutate(
+		// It commits the owner too, so nothing after it can admit another owner.
+		await this.mutate(
 			this.setup,
 			"default",
 			(setup, at) => {
@@ -445,7 +458,7 @@ export class AccountStore {
 				if (setup.revision !== (seen?.revision ?? 0)) throw this.setupDone();
 				setup.completedAt = iso(at);
 				setup.ownerId = record._id;
-				return at;
+				setup.owner = record;
 			},
 			() => ({
 				_id: "default",
@@ -454,30 +467,16 @@ export class AccountStore {
 				ownerId: null,
 			}),
 		);
-		const session = issueSession(record, now);
 		try {
-			if (this.now() - claimedAt >= SETUP_STALE_MS - SETUP_MARGIN_MS)
-				throw new AccountError(
-					"Setup took too long and was not saved. Try again.",
-					503,
-				);
-			await this.insertUser(record);
-		} catch (error) {
-			// Reopen setup so it can be retried. If this fails too, the marker
-			// without an owner is treated as abandoned after SETUP_STALE_MS.
-			await this.mutate(
-				this.setup,
-				"default",
-				(setup) => {
-					if (setup.ownerId === record._id) {
-						setup.completedAt = null;
-						setup.ownerId = null;
-					}
-				},
-				new AccountError("Not found.", 404),
-			).catch(() => {});
-			throw error;
+			await this.insertUser(record, true);
+		} catch {
+			// Committed already: the next request finishes copying the account.
+			throw new AccountError(
+				"Setup was saved, but your account isn't ready yet. Reload to sign in.",
+				503,
+			);
 		}
+		await this.forgetEmbeddedOwner(record._id);
 		this.completed = true;
 		return { ...session, user: publicMember(record) };
 	}

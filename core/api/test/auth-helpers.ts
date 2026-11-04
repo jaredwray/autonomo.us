@@ -110,7 +110,8 @@ export async function withSession<T extends Server>(
 	Object.assign(server, {
 		session,
 		inject: (options: string | { headers?: Record<string, string> }) => {
-			const request = typeof options === "string" ? { url: options } : options;
+			const request: { url?: string; headers?: Record<string, string> } =
+				typeof options === "string" ? { url: options } : options;
 			const headers = {
 				authorization: `Bearer ${session}`,
 				...request.headers,

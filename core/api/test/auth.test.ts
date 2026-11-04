@@ -4,8 +4,6 @@ import {
 	OWNER_LOCK_MARGIN_MS,
 	OWNER_LOCK_MS,
 	SESSION_TTL_MS,
-	SETUP_MARGIN_MS,
-	SETUP_STALE_MS,
 	SIGN_IN_MAX_FAILURES,
 	SIGN_IN_WINDOW_MS,
 } from "../src/auth/accounts.js";
@@ -193,34 +191,42 @@ describe("first-run setup", () => {
 		).toBe(403);
 	});
 
-	it("abandons a setup that stalls before creating its owner", async () => {
-		let now = Date.parse("2026-11-04T12:00:00Z");
-		const store = new AccountStore({ now: () => now });
-		// Time passes the commit margin right after setup claims its marker.
+	it("finishes a committed setup when copying its owner fails", async () => {
+		const store = new AccountStore();
+		// The owner copy fails once, as if the request died after its claim.
 		const internals = store as unknown as {
-			mutate: (...args: unknown[]) => Promise<unknown>;
+			insertUser: (...args: unknown[]) => Promise<void>;
 		};
-		const mutate = internals.mutate.bind(store);
-		let calls = 0;
-		internals.mutate = async (...args: unknown[]) => {
-			const result = await mutate(...args);
-			if (++calls === 1) now += SETUP_STALE_MS - SETUP_MARGIN_MS;
-			return result;
+		const insertUser = internals.insertUser.bind(store);
+		let failed = false;
+		internals.insertUser = async (...args: unknown[]) => {
+			if (!failed) {
+				failed = true;
+				throw new Error("insert interrupted");
+			}
+			return insertUser(...args);
 		};
 		await expect(
 			store.completeSetup({
-				email: "slow@example.com",
-				name: "Slow",
+				email: "ada@example.com",
+				name: "Ada",
 				password: PASSWORD,
 			}),
 		).rejects.toMatchObject({ statusCode: 503 });
-		expect(await store.isSetupComplete()).toBe(false);
-		// The marker was released, so a retry sets up exactly one owner.
-		const { user } = await store.completeSetup({
+		// The next request finishes the copy: the gateway is set up, not locked.
+		expect(await store.isSetupComplete()).toBe(true);
+		const { user } = await store.signIn({
 			email: "ada@example.com",
-			name: "Ada",
 			password: PASSWORD,
 		});
+		// And no later setup can add a second owner.
+		await expect(
+			store.completeSetup({
+				email: "mallory@example.com",
+				name: "Mallory",
+				password: PASSWORD,
+			}),
+		).rejects.toMatchObject({ statusCode: 409 });
 		expect(
 			(await store.team(user)).members.map((member) => member.email),
 		).toEqual(["ada@example.com"]);
