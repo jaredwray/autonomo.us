@@ -538,15 +538,28 @@ it; Wrangler creates the Worker as a placeholder when it does not exist yet.
 Never deploy a new Worker to a public hostname without them: with no
 `SETUP_TOKEN`, first-run setup is open to whoever reaches `POST /v1/setup`
 first, and with no `MONGODB_URI` that owner lives in memory until the next
-deploy. Once the new Worker is healthy, delete the retired Workers so
-`dev-api.autonomo.us` stops serving the old code:
+deploy.
 
-```bash
-pnpm exec wrangler secret put MONGODB_URI -c core/server/wrangler.jsonc
-pnpm exec wrangler secret put SETUP_TOKEN -c core/server/wrangler.jsonc
-pnpm exec wrangler delete --name autonomous-ux-development
-pnpm exec wrangler delete --name autonomous-api-development
-```
+1. Before merging, create the new Worker with its secrets:
+
+   ```bash
+   pnpm exec wrangler secret put MONGODB_URI -c core/server/wrangler.jsonc
+   pnpm exec wrangler secret put SETUP_TOKEN -c core/server/wrangler.jsonc
+   ```
+
+2. Merge. The deploy attaches `dev.autonomo.us` to the new Worker (Wrangler
+   moves a custom domain from the Worker that held it) and the workflow's
+   health check verifies `/healthz` and MongoDB. The retired Workers keep
+   running throughout, so a failed deploy leaves `dev-api.autonomo.us`
+   serving the previous release.
+
+3. Only after that check passes, delete the retired Workers so
+   `dev-api.autonomo.us` stops serving the old code:
+
+   ```bash
+   pnpm exec wrangler delete --name autonomous-ux-development
+   pnpm exec wrangler delete --name autonomous-api-development
+   ```
 
 Provision a MongoDB server or managed cluster outside this workflow and store
 its connection string as the `MONGODB_URI` Worker secret, as above. The
