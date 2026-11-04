@@ -5,6 +5,7 @@ import {
 	type UpdateApiTokenRequest,
 } from "@autonomo.us/common";
 import type { FastifyInstance } from "fastify";
+import { tokenActor } from "../auth/access.js";
 import { ApiTokenError, type TokenStore } from "../auth/token-store.js";
 
 const metadata = {
@@ -22,7 +23,8 @@ export async function tokenManagementRoutes<Permission extends string>(
 	server: FastifyInstance,
 	options: {
 		tokens: TokenStore<Permission>;
-		authenticationRequired: boolean;
+		/** True once OWNER_TOKEN is configured or setup has created team accounts. */
+		authenticationRequired: () => Promise<boolean>;
 		path: string;
 		permissions: Record<Permission, string>;
 	},
@@ -33,7 +35,6 @@ export async function tokenManagementRoutes<Permission extends string>(
 		uniqueItems: true,
 		items: { type: "string", enum: Object.keys(options.permissions) },
 	};
-	const actor = options.authenticationRequired ? "owner" : "local-admin";
 	server.addHook("onRequest", async (_request, reply) => {
 		reply.header("cache-control", "no-store");
 	});
@@ -51,8 +52,8 @@ export async function tokenManagementRoutes<Permission extends string>(
 			);
 		}
 	});
-	server.get(options.path, () =>
-		options.tokens.settings(options.authenticationRequired),
+	server.get(options.path, async () =>
+		options.tokens.settings(await options.authenticationRequired()),
 	);
 	server.post<{ Body: CreateApiTokenRequest<Permission> }>(
 		options.path,
@@ -67,7 +68,8 @@ export async function tokenManagementRoutes<Permission extends string>(
 			},
 		},
 		async (request, reply) => {
-			const result = await options.tokens.create(request.body, actor);
+			const { actor, name } = tokenActor(request);
+			const result = await options.tokens.create(request.body, actor, name);
 			return reply.code(201).send(result);
 		},
 	);
@@ -87,7 +89,15 @@ export async function tokenManagementRoutes<Permission extends string>(
 				},
 			},
 		},
-		(request) => options.tokens.update(request.params.id, request.body, actor),
+		(request) => {
+			const { actor, name } = tokenActor(request);
+			return options.tokens.update(
+				request.params.id,
+				request.body,
+				actor,
+				name,
+			);
+		},
 	);
 	server.post<{ Params: { id: string }; Body: RollApiTokenRequest }>(
 		`${options.path}/:id/roll`,
@@ -109,11 +119,17 @@ export async function tokenManagementRoutes<Permission extends string>(
 				},
 			},
 		},
-		(request) => options.tokens.roll(request.params.id, request.body, actor),
+		(request) => {
+			const { actor, name } = tokenActor(request);
+			return options.tokens.roll(request.params.id, request.body, actor, name);
+		},
 	);
 	server.delete<{ Params: { id: string } }>(
 		`${options.path}/:id`,
 		{ schema: { params } },
-		(request) => options.tokens.revoke(request.params.id, actor),
+		(request) => {
+			const { actor, name } = tokenActor(request);
+			return options.tokens.revoke(request.params.id, actor, name);
+		},
 	);
 }

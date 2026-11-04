@@ -194,19 +194,28 @@ describe.skipIf(!available)("persisted model settings", () => {
 });
 
 it("does not advertise an unsaved model when MongoDB is unavailable", async () => {
+	// Without MongoDB the gateway cannot read its setup state, so unauthenticated
+	// requests fail closed. The owner credential does not depend on MongoDB.
 	const server = createServer({
-		config: configFromEnv({ MONGODB_URI: "mongodb://127.0.0.1:9/test" }),
+		config: configFromEnv({
+			MONGODB_URI: "mongodb://127.0.0.1:9/test",
+			OWNER_TOKEN: "owner-secret",
+		}),
 		logger: false,
 	});
+	const headers = { authorization: "Bearer owner-secret" };
 	try {
 		const added = await server.inject({
 			method: "POST",
 			url: "/v1/models",
+			headers,
 			payload: { provider: "xai", model: "grok-test", apiKey: "test-key" },
 		});
 		expect(added.statusCode).toBe(503);
 		expect(added.body).not.toContain("test-key");
-		expect((await server.inject("/v1/models")).json().models).toEqual([]);
+		expect(
+			(await server.inject({ url: "/v1/models", headers })).json().models,
+		).toEqual([]);
 	} finally {
 		await server.close();
 	}

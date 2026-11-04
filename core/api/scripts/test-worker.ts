@@ -212,9 +212,51 @@ try {
 		);
 		await expectLog(logs, "gateway.persistence_ready");
 		assert(!logs().includes(created.secret));
+
+		// First-run setup, scrypt passwords, sessions, and invite links in workerd.
+		const json = { "content-type": "application/json" };
+		const password = "worker smoke passphrase";
+		const owner = (await request("/v1/setup", 201, {
+			method: "POST",
+			headers: json,
+			body: JSON.stringify({
+				email: "owner@example.com",
+				name: "Owner",
+				password,
+			}),
+		})) as { token: string };
+		await request("/v1/models", 401);
+		const signedIn = (await request("/v1/auth/session", 201, {
+			method: "POST",
+			headers: json,
+			body: JSON.stringify({ email: "owner@example.com", password }),
+		})) as { token: string };
+		const auth = { authorization: `Bearer ${signedIn.token}` };
+		await request("/v1/models", 200, { headers: auth });
+		const invite = (await request("/v1/team/invites", 201, {
+			method: "POST",
+			headers: { ...json, ...auth },
+			body: JSON.stringify({ role: "member", ttlDays: 1 }),
+		})) as { token: string };
+		await request("/v1/invites/accept", 201, {
+			method: "POST",
+			headers: json,
+			body: JSON.stringify({
+				token: invite.token,
+				email: "member@example.com",
+				name: "",
+				password,
+			}),
+		});
+		const team = (await request("/v1/team", 200, { headers: auth })) as {
+			members: unknown[];
+		};
+		assert.equal(team.members.length, 2);
+		for (const secret of [owner.token, signedIn.token, invite.token, password])
+			assert(!logs().includes(secret));
 	});
 	console.log(
-		"Worker: fresh database, concurrent requests, durable writes, and parameter routes passed",
+		"Worker: fresh database, concurrent requests, durable writes, parameter routes, and team sign-in passed",
 	);
 
 	await client.db().dropDatabase();

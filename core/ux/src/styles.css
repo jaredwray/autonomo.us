@@ -788,3 +788,33 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 	.analytics-sort select { width: auto; }
 	.analytics-filters label { flex-basis: calc(50% - 12px); }
 }
+
+/* Sign-in, setup, and invite screens */
+.auth-shell { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 32px 16px; }
+.auth-card { width: 100%; max-width: 440px; padding: 32px; margin: 0; }
+.auth-card h1 { margin: 0 0 8px; font-size: 24px; font-weight: 600; letter-spacing: -.5px; }
+.auth-card h1:focus { outline: none; }
+.auth-card .form-field { margin: 14px 0; }
+.auth-card .form-actions { margin-top: 20px; }
+.auth-card .form-actions .button.primary { width: 100%; padding: 11px 13px; font-size: 13px; }
+.auth-brand { display: flex; align-items: center; gap: 9px; margin-bottom: 28px; font-size: 17px; font-weight: 650; letter-spacing: -.6px; }
+.auth-step { margin: 0 0 6px; color: var(--text-muted); font-size: 12px; font-weight: 500; }
+.auth-intro { margin: 0 0 8px; color: var(--text-secondary); }
+.auth-note { margin-top: 16px !important; }
+.auth-switch { margin-top: 12px; }
+.link-button { border: 0; background: transparent; padding: 6px 0; color: var(--series-1); }
+.link-button:hover { background: transparent; text-decoration: underline; }
+@media (max-width: 480px) { .auth-card { padding: 22px 18px; } }
+
+/* Signed-in account in the sidebar */
+.sidebar-account { margin-top: 18px; display: grid; gap: 10px; }
+.sidebar-account .sidebar-lock { margin-top: 0; }
+.sidebar-user { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 0 4px; }
+.sidebar-avatar { flex-shrink: 0; width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; background: color-mix(in srgb, var(--series-1) 14%, var(--surface-1)); color: var(--series-1); font-weight: 650; }
+.sidebar-user-text { display: grid; min-width: 0; }
+.sidebar-user-text strong, .sidebar-user-text small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sidebar-user-text small { color: var(--text-muted); }
+.sidebar-collapsed .sidebar-user { justify-content: center; padding: 0; }
+
+.team-you { display: inline-block; margin-left: 8px; padding: 1px 7px; border-radius: 999px; background: color-mix(in srgb, var(--series-1) 12%, var(--surface-1)); color: var(--series-1); font-size: 11px; font-weight: 600; }
+.token-status.revoked, .token-status.expired { color: var(--text-muted); }

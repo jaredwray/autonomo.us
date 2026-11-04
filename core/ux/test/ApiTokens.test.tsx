@@ -10,12 +10,13 @@ import {
 import { StrictMode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { App } from "../src/App.js";
-import { clearOwnerCredential } from "../src/api.js";
+import { clearCredential } from "../src/api.js";
+import { setUpOwner } from "./session.js";
 
 const closers: Array<() => Promise<void>> = [];
 afterEach(async () => {
 	cleanup();
-	clearOwnerCredential();
+	clearCredential();
 	for (const close of closers.splice(0)) await close();
 	vi.unstubAllEnvs();
 	window.history.replaceState(null, "", "/");
@@ -30,6 +31,8 @@ async function start(ownerToken?: string) {
 	const url = await server.listen({ host: "127.0.0.1", port: 0 });
 	closers.push(() => server.close());
 	vi.stubEnv("VITE_API_URL", url);
+	// With an owner credential, tests sign in with it instead of the owner account.
+	await setUpOwner(url, { ownerToken, signIn: !ownerToken });
 	window.history.replaceState(null, "", "#/api-tokens");
 	render(
 		<StrictMode>
@@ -170,6 +173,11 @@ it("creates, edits, rolls with custom overlap, and revokes a token with a bottom
 
 it("connects with the owner credential, rejects an invalid credential, and clears access when locked", async () => {
 	await start("owner-test-secret");
+	fireEvent.click(
+		await screen.findByRole("button", {
+			name: "Use the owner credential instead",
+		}),
+	);
 	await screen.findByLabelText("Owner credential");
 	change("Owner credential", "bad-credential");
 	fireEvent.click(screen.getByRole("button", { name: "Connect", exact: true }));

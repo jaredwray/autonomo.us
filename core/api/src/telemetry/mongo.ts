@@ -452,7 +452,9 @@ function labeled(field: string, fallback: string) {
 function credentialCaller() {
 	return {
 		$and: [
-			{ $in: [{ $ifNull: ["$callerKind", ""] }, ["api-token", "owner"]] },
+			{
+				$in: [{ $ifNull: ["$callerKind", ""] }, ["api-token", "owner", "user"]],
+			},
 			nonEmpty("$callerId"),
 		],
 	};
@@ -476,6 +478,7 @@ function pricedCost() {
 const CALLER_KINDS = new Set<AnalyticsFact["caller"]["kind"]>([
 	"api-token",
 	"owner",
+	"user",
 	"agent",
 	"unattributed",
 ]);

@@ -1,12 +1,25 @@
-import { useEffect, useState } from "react";
+import type { AuthStatus, CurrentSession } from "@autonomo.us/common";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AgentTokensView } from "./AgentTokensView.js";
 import { ApiTokensView } from "./ApiTokensView.js";
-import { clearOwnerCredential, hasOwnerCredential } from "./api.js";
+import {
+	AuthLayout,
+	InviteView,
+	SetupView,
+	SignInView,
+} from "./AuthScreens.js";
+import {
+	clearCredential,
+	credentialKind,
+	fetchAuthStatus,
+	fetchCurrentSession,
+	signOut,
+} from "./api.js";
 import { Dashboard } from "./Dashboard.js";
 import { Icon } from "./Icons.js";
 import { ModelsView } from "./ModelsView.js";
-import { OwnerAccess } from "./OwnerAccess.js";
 import { RoutingView } from "./RoutingView.js";
+import { TeamView } from "./TeamView.js";
 
 const logoMark = new URL("./assets/logo-mark.svg", import.meta.url).href;
 
@@ -16,30 +29,88 @@ const viewLabels = {
 	routing: "Routing",
 	"api-tokens": "API Tokens",
 	"agent-tokens": "Agent Tokens",
+	team: "Team",
 };
-function currentView(): keyof typeof viewLabels {
+type View = keyof typeof viewLabels;
+function currentView(): View {
 	const view = window.location.hash.slice(2);
-	return Object.hasOwn(viewLabels, view)
-		? (view as keyof typeof viewLabels)
-		: "dashboard";
+	return Object.hasOwn(viewLabels, view) ? (view as View) : "dashboard";
+}
+/** Invite secrets stay in the URL fragment, which browsers never send to servers. */
+function inviteToken() {
+	return /^#\/invite\/([\w-]+)$/.exec(window.location.hash)?.[1] ?? null;
 }
 
+type Gate =
+	| { state: "loading" }
+	| { state: "error"; message: string }
+	| { state: "setup"; status: AuthStatus }
+	| { state: "sign-in"; status: AuthStatus }
+	| { state: "ready"; status: AuthStatus; session: CurrentSession };
+
 export function App() {
-	const [needsAuth, setNeedsAuth] = useState(false);
-	const [authenticated, setAuthenticated] = useState(hasOwnerCredential);
-	useEffect(() => {
-		const requireAuth = () => {
-			clearOwnerCredential();
-			setAuthenticated(false);
-			setNeedsAuth(true);
+	const [gate, setGate] = useState<Gate>({ state: "loading" });
+	const [signInMode, setSignInMode] = useState<"password" | "owner">(
+		"password",
+	);
+	const [invite, setInvite] = useState(inviteToken);
+	const sequence = useRef(0);
+	const load = useCallback(async () => {
+		const request = ++sequence.current;
+		const settle = (next: Gate) => {
+			if (request === sequence.current) setGate(next);
 		};
+		let status: AuthStatus;
+		try {
+			status = await fetchAuthStatus();
+		} catch (cause) {
+			settle({
+				state: "error",
+				message:
+					cause instanceof TypeError
+						? "The gateway API could not be reached."
+						: cause instanceof Error
+							? cause.message
+							: "The gateway API is unavailable.",
+			});
+			return;
+		}
+		if (!status.setupComplete) {
+			// A session from a previous database cannot belong to this setup.
+			if (credentialKind() === "session") clearCredential();
+			settle({ state: "setup", status });
+			return;
+		}
+		if (!credentialKind()) {
+			settle({ state: "sign-in", status });
+			return;
+		}
+		try {
+			settle({ state: "ready", status, session: await fetchCurrentSession() });
+		} catch {
+			// A rejected credential was cleared by the 401 handler.
+			settle(
+				credentialKind()
+					? {
+							state: "error",
+							message: "Your session could not be checked. Please retry.",
+						}
+					: { state: "sign-in", status },
+			);
+		}
+	}, []);
+	useEffect(() => {
+		void load();
+		const requireAuth = () => void load();
 		window.addEventListener("autonomous:authentication-required", requireAuth);
-		return () =>
+		return () => {
+			sequence.current++;
 			window.removeEventListener(
 				"autonomous:authentication-required",
 				requireAuth,
 			);
-	}, []);
+		};
+	}, [load]);
 	const [view, setView] = useState(currentView);
 	const [collapsed, setCollapsed] = useState(() => {
 		try {
@@ -50,10 +121,18 @@ export function App() {
 		}
 	});
 	useEffect(() => {
-		const navigate = () => setView(currentView());
+		const navigate = () => {
+			setView(currentView());
+			setInvite(inviteToken());
+		};
 		window.addEventListener("hashchange", navigate);
 		return () => window.removeEventListener("hashchange", navigate);
 	}, []);
+	const go = (next: View) => {
+		window.history.replaceState(null, "", `#/${next}`);
+		setView(next);
+		setInvite(null);
+	};
 	const toggle = () => {
 		const next = !collapsed;
 		setCollapsed(next);
@@ -61,6 +140,69 @@ export function App() {
 			window.localStorage.setItem("autonomous.sidebar.collapsed", String(next));
 		} catch {}
 	};
+
+	if (gate.state === "loading")
+		return (
+			<main className="auth-shell" aria-busy="true">
+				<p role="status">Loading…</p>
+			</main>
+		);
+	if (gate.state === "error")
+		return (
+			<AuthLayout labelledBy="gateway-error-heading">
+				<h1 id="gateway-error-heading">Can't reach the gateway</h1>
+				<p className="banner-error" role="alert">
+					{gate.message}
+				</p>
+				<button className="button primary" type="button" onClick={load}>
+					Retry
+				</button>
+			</AuthLayout>
+		);
+	if (gate.state === "setup")
+		return (
+			<SetupView
+				status={gate.status}
+				onComplete={(session) => {
+					go("team");
+					setGate({
+						state: "ready",
+						status: { ...gate.status, setupComplete: true },
+						session: {
+							kind: "user",
+							user: session.user,
+							expiresAt: session.expiresAt,
+						},
+					});
+				}}
+			/>
+		);
+	if (invite)
+		return (
+			<InviteView
+				token={invite}
+				status={gate.status}
+				onJoined={() => {
+					go("dashboard");
+					void load();
+				}}
+				onCancel={() => {
+					go("dashboard");
+					void load();
+				}}
+			/>
+		);
+	if (gate.state === "sign-in")
+		return (
+			<SignInView
+				status={gate.status}
+				initialMode={signInMode}
+				onSignedIn={() => void load()}
+			/>
+		);
+
+	const { session } = gate;
+	const user = session.user;
 	return (
 		<div className={`app-shell ${collapsed ? "sidebar-collapsed" : ""}`}>
 			<button
@@ -83,15 +225,7 @@ export function App() {
 					<span className="sidebar-label">autonomo.us</span>
 				</a>
 				<nav aria-label="Main navigation">
-					{(
-						[
-							"dashboard",
-							"models",
-							"routing",
-							"api-tokens",
-							"agent-tokens",
-						] as const
-					).map((item) => (
+					{(Object.keys(viewLabels) as View[]).map((item) => (
 						<a
 							key={item}
 							href={`#/${item}`}
@@ -106,22 +240,40 @@ export function App() {
 						</a>
 					))}
 				</nav>
-				{authenticated && (
+				<div className="sidebar-account">
+					<div
+						className="sidebar-user"
+						title={collapsed ? (user?.email ?? "Owner credential") : undefined}
+					>
+						<span className="sidebar-avatar" aria-hidden="true">
+							{(user?.name || user?.email || "O").slice(0, 1).toUpperCase()}
+						</span>
+						<span className="sidebar-label sidebar-user-text">
+							<strong>
+								{user ? user.name || user.email : "Owner credential"}
+							</strong>
+							<small>{user ? user.email : "Break-glass access"}</small>
+						</span>
+					</div>
 					<button
 						className="button sidebar-lock"
 						type="button"
-						aria-label="Lock dashboard"
-						title={collapsed ? "Lock dashboard" : undefined}
-						onClick={() => {
-							clearOwnerCredential();
-							setAuthenticated(false);
-							setNeedsAuth(true);
+						aria-label={user ? "Sign out" : "Lock dashboard"}
+						title={
+							collapsed ? (user ? "Sign out" : "Lock dashboard") : undefined
+						}
+						onClick={async () => {
+							setSignInMode(user ? "password" : "owner");
+							await signOut();
+							void load();
 						}}
 					>
-						<Icon name="lock" />
-						<span className="sidebar-label">Lock dashboard</span>
+						<Icon name={user ? "logout" : "lock"} />
+						<span className="sidebar-label">
+							{user ? "Sign out" : "Lock dashboard"}
+						</span>
 					</button>
-				)}
+				</div>
 				<button
 					type="button"
 					className="sidebar-toggle"
@@ -136,14 +288,7 @@ export function App() {
 				</button>
 			</aside>
 			<main id="main-content" tabIndex={-1} className="main-content">
-				{needsAuth ? (
-					<OwnerAccess
-						onConnected={() => {
-							setAuthenticated(true);
-							setNeedsAuth(false);
-						}}
-					/>
-				) : view === "api-tokens" ? (
+				{view === "api-tokens" ? (
 					<ApiTokensView />
 				) : view === "agent-tokens" ? (
 					<AgentTokensView />
@@ -151,6 +296,8 @@ export function App() {
 					<ModelsView />
 				) : view === "routing" ? (
 					<RoutingView />
+				) : view === "team" ? (
+					<TeamView />
 				) : (
 					<Dashboard />
 				)}

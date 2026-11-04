@@ -1,0 +1,204 @@
+import { MongoClient } from "mongodb";
+import { afterAll, describe, expect, it } from "vitest";
+import { AccountStore } from "../src/auth/accounts.js";
+import { tokenHash } from "../src/auth/tokens.js";
+import {
+	authServer,
+	bearer,
+	completeSetup,
+	PASSWORD,
+	signIn,
+} from "./auth-helpers.js";
+import { mongoAvailable, uniqueMongoUrl } from "./mongo-env.js";
+
+const available = await mongoAvailable();
+if (!available)
+	console.warn("MongoDB unavailable; skipping team account integration tests.");
+const urls: string[] = [];
+function database() {
+	const url = uniqueMongoUrl("accounts");
+	urls.push(url);
+	return url;
+}
+afterAll(async () => {
+	for (const url of urls) {
+		const client = new MongoClient(url, { serverSelectionTimeoutMS: 1500 });
+		await client
+			.db()
+			.dropDatabase()
+			.catch(() => {});
+		await client.close();
+	}
+});
+
+describe.skipIf(!available)("durable team accounts", () => {
+	it("marks setup in MongoDB and shares sessions, invites, and removals across replicas", async () => {
+		const url = database();
+		const first = authServer({ mongodbUrl: url });
+		const replica = authServer({ mongodbUrl: url });
+		try {
+			expect((await replica.inject("/v1/auth/status")).json()).toMatchObject({
+				setupComplete: false,
+				persistence: "mongodb",
+			});
+			const owner = await completeSetup(first);
+			expect(
+				(await replica.inject("/v1/auth/status")).json().setupComplete,
+			).toBe(true);
+			expect((await replica.inject("/v1/models")).statusCode).toBe(401);
+
+			// An invite created on one replica is redeemed on the other.
+			const invite = await first.inject({
+				method: "POST",
+				url: "/v1/team/invites",
+				headers: bearer(owner.token),
+				payload: { role: "member", ttlDays: 7 },
+			});
+			const { token } = invite.json();
+			const joined = await replica.inject({
+				method: "POST",
+				url: "/v1/invites/accept",
+				payload: {
+					token,
+					email: "teammate@example.com",
+					name: "Teammate",
+					password: PASSWORD,
+				},
+			});
+			expect(joined.statusCode).toBe(201);
+			const teammate = joined.json();
+			const again = await signIn(first, "teammate@example.com");
+
+			const client = new MongoClient(url);
+			try {
+				const setup = await client
+					.db()
+					.collection("gateway_setup")
+					.findOne({ _id: "default" as never });
+				expect(setup).toMatchObject({ ownerId: owner.user.id });
+				expect(typeof setup?.completedAt).toBe("string");
+				const raw = JSON.stringify(
+					await client.db().collection("gateway_users").find().toArray(),
+				);
+				expect(raw).not.toContain(PASSWORD);
+				expect(raw).toMatch(/scrypt\$16384\$8\$5\$/);
+				for (const session of [owner.token, teammate.token, again.token]) {
+					expect(raw).not.toContain(session);
+					expect(raw).toContain(tokenHash(session));
+				}
+				const invites = JSON.stringify(
+					await client.db().collection("gateway_invites").find().toArray(),
+				);
+				expect(invites).not.toContain(token);
+				expect(invites).toContain(tokenHash(token));
+				expect(
+					await client.db().collection("gateway_users").indexes(),
+				).toContainEqual(
+					expect.objectContaining({ name: "email_unique", unique: true }),
+				);
+			} finally {
+				await client.close();
+			}
+
+			await first.inject({
+				method: "DELETE",
+				url: `/v1/team/${teammate.user.id}`,
+				headers: bearer(owner.token),
+			});
+			for (const session of [teammate.token, again.token])
+				expect(
+					(
+						await replica.inject({
+							url: "/v1/models",
+							headers: bearer(session),
+						})
+					).statusCode,
+				).toBe(401);
+		} finally {
+			await first.close();
+			await replica.close();
+		}
+	});
+
+	it("lets exactly one concurrent setup win", async () => {
+		const url = database();
+		const stores = [
+			new AccountStore({ mongodbUrl: url }),
+			new AccountStore({ mongodbUrl: url }),
+		];
+		try {
+			const results = await Promise.allSettled(
+				stores.map((store, index) =>
+					store.completeSetup({
+						email: `owner${index}@example.com`,
+						name: `Owner ${index}`,
+						password: PASSWORD,
+					}),
+				),
+			);
+			expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+			expect(
+				(results.find((r) => r.status === "rejected") as PromiseRejectedResult)
+					.reason.statusCode,
+			).toBe(409);
+			expect((await stores[1].team({ kind: "owner" })).members).toHaveLength(1);
+		} finally {
+			for (const store of stores) await store.close();
+		}
+	});
+
+	it("redeems an invite link only once under concurrency", async () => {
+		const url = database();
+		const app = authServer({ mongodbUrl: url });
+		try {
+			const owner = await completeSetup(app);
+			const { token } = (
+				await app.inject({
+					method: "POST",
+					url: "/v1/team/invites",
+					headers: bearer(owner.token),
+					payload: { role: "member", ttlDays: 1 },
+				})
+			).json();
+			const codes = (
+				await Promise.all(
+					[1, 2, 3].map((index) =>
+						app.inject({
+							method: "POST",
+							url: "/v1/invites/accept",
+							payload: {
+								token,
+								email: `racer${index}@example.com`,
+								name: "",
+								password: PASSWORD,
+							},
+						}),
+					),
+				)
+			).map((response) => response.statusCode);
+			expect(codes.filter((code) => code === 201)).toHaveLength(1);
+			expect(
+				(
+					await app.inject({ url: "/v1/team", headers: bearer(owner.token) })
+				).json().members,
+			).toHaveLength(2);
+		} finally {
+			await app.close();
+		}
+	});
+
+	it("reports MongoDB outages as unavailable instead of opening the gateway", async () => {
+		const url = new URL(uniqueMongoUrl("accounts_down"));
+		url.host = "127.0.0.1:9";
+		const server = authServer({ mongodbUrl: url.toString() });
+		try {
+			expect((await server.inject("/v1/auth/status")).statusCode).toBe(503);
+			const models = await server.inject("/v1/models");
+			expect(models.statusCode).toBe(503);
+			expect(models.json().message).toMatch(/Team accounts are unavailable/);
+		} finally {
+			await server.close();
+		}
+		// Startup and each request wait out server selection against a closed port.
+	}, 30_000);
+});

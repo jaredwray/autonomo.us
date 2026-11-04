@@ -335,11 +335,13 @@ function BreakdownTable({
 												{row.provider ??
 													(row.kind === "api-token"
 														? "API token"
-														: row.kind === "agent"
-															? "Reported agent ID"
-															: row.kind === "owner"
-																? "Owner credential"
-																: "No caller identity")}
+														: row.kind === "user"
+															? "Team member"
+															: row.kind === "agent"
+																? "Reported agent ID"
+																: row.kind === "owner"
+																	? "Owner credential"
+																	: "No caller identity")}
 											</span>
 										</td>
 										<td className="num">{count(row.requests)}</td>

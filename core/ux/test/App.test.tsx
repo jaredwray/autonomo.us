@@ -13,10 +13,13 @@ import {
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "../src/App.js";
+import { clearCredential } from "../src/api.js";
+import { setUpOwner } from "./session.js";
 
 // The dashboard renders against a real gateway API server (no fetch mocks):
-// each test boots @autonomo.us/api on an ephemeral port, seeds its telemetry
-// through the public TelemetryService API, and points VITE_API_URL at it.
+// each test boots @autonomo.us/api on an ephemeral port, completes first-run
+// setup as the owner, seeds telemetry through the public TelemetryService API,
+// and points VITE_API_URL at it.
 
 const BASE_CONFIG: ApiConfig = {
 	providers: [
@@ -33,6 +36,8 @@ const BASE_CONFIG: ApiConfig = {
 type RunningApp = {
 	telemetry: TelemetryService;
 	url: string;
+	/** Headers for direct API calls as the signed-in owner. */
+	headers: Record<string, string>;
 	close(): Promise<void>;
 };
 
@@ -43,8 +48,14 @@ async function startApp(config: ApiConfig = BASE_CONFIG): Promise<RunningApp> {
 	const server = createServer({ config, telemetry, logger: false });
 	const url = await server.listen({ port: 0, host: "127.0.0.1" });
 	vi.stubEnv("VITE_API_URL", url);
-	const app: RunningApp = { telemetry, url, close: () => server.close() };
+	const app: RunningApp = {
+		telemetry,
+		url,
+		headers: {},
+		close: () => server.close(),
+	};
 	running.push(app);
+	app.headers = { authorization: `Bearer ${await setUpOwner(url)}` };
 	return app;
 }
 
@@ -135,7 +146,9 @@ describe("App", () => {
 		await waitFor(() =>
 			expect(screen.getByRole("button", { name: "Refresh" })).toBeDefined(),
 		);
-		const models = await (await fetch(`${app.url}/v1/models`)).json();
+		const models = await (
+			await fetch(`${app.url}/v1/models`, { headers: app.headers })
+		).json();
 		expect(models.models.map((item: { id: string }) => item.id)).toEqual([
 			"openai/gpt-test",
 			"openai-work/gpt-test",
@@ -150,6 +163,7 @@ describe("App", () => {
 	});
 	afterEach(async () => {
 		cleanup();
+		clearCredential();
 		window.history.replaceState(null, "", "/");
 		window.localStorage.clear();
 		vi.unstubAllEnvs();
@@ -161,7 +175,9 @@ describe("App", () => {
 	it("renders the dashboard heading, brand and live API status", async () => {
 		await startApp();
 		render(<App />);
-		expect(screen.getByRole("heading", { name: "Dashboard" })).toBeDefined();
+		expect(
+			await screen.findByRole("heading", { name: "Dashboard" }),
+		).toBeDefined();
 		expect(
 			screen.getByRole("link", { name: "autonomo.us home" }),
 		).toBeDefined();
@@ -171,7 +187,9 @@ describe("App", () => {
 	it("collapses navigation, keeps accessible icon links, and remembers the preference", async () => {
 		await startApp();
 		const rendered = render(<App />);
-		fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
+		fireEvent.click(
+			await screen.findByRole("button", { name: "Collapse sidebar" }),
+		);
 		expect(
 			screen
 				.getByRole("button", { name: "Expand sidebar" })
@@ -186,7 +204,7 @@ describe("App", () => {
 		rendered.unmount();
 		render(<App />);
 		expect(
-			screen.getByRole("button", { name: "Expand sidebar" }),
+			await screen.findByRole("button", { name: "Expand sidebar" }),
 		).toBeDefined();
 		fireEvent.click(screen.getByRole("link", { name: "Models" }));
 		expect(
@@ -288,7 +306,9 @@ describe("App", () => {
 			expect(
 				await screen.findByText(`${provider}/second-model is now active.`),
 			).toBeDefined();
-			const response = await fetch(`${app.url}/v1/models`);
+			const response = await fetch(`${app.url}/v1/models`, {
+				headers: app.headers,
+			});
 			const text = await response.text();
 			expect(text).toContain(`${provider}/second-model`);
 			expect(text).not.toContain("test-secret-key");
@@ -417,9 +437,13 @@ describe("App", () => {
 		expect(unknown?.textContent).toContain("1 unpriced");
 	});
 
-	it("shows a retryable error without inventing zero usage when the API is unreachable", async () => {
-		vi.stubEnv("VITE_API_URL", "http://127.0.0.1:9");
+	it("shows a retryable error without inventing zero usage when analytics fail", async () => {
+		const app = await startApp();
 		render(<App />);
+		await screen.findByRole("heading", { name: "Dashboard" });
+		// The gateway goes away after sign-in.
+		await running.splice(running.indexOf(app), 1)[0].close();
+		fireEvent.click(await screen.findByRole("button", { name: "Refresh" }));
 		expect(await screen.findByText("Analytics unavailable")).toBeDefined();
 		expect(screen.getByRole("alert").textContent).toContain(
 			"No report is available",

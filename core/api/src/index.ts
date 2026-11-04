@@ -1,4 +1,9 @@
 export {
+	AccountError,
+	AccountStore,
+	type TeamActor,
+} from "./auth/accounts.js";
+export {
 	type ApiConfig,
 	configFromEnv,
 	DEFAULT_ANTHROPIC_MODELS,

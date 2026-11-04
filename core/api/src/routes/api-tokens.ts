@@ -5,7 +5,10 @@ import { tokenManagementRoutes } from "./token-management.js";
 
 export async function apiTokenRoutes(
 	server: FastifyInstance,
-	options: { tokens: ApiTokenStore; authenticationRequired: boolean },
+	options: {
+		tokens: ApiTokenStore;
+		authenticationRequired: () => Promise<boolean>;
+	},
 ) {
 	// Owner verification remains available even if MongoDB is unavailable.
 	server.get("/v1/auth/owner", (_request, reply) =>

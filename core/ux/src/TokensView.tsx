@@ -516,8 +516,9 @@ export function TokensView<Permission extends string>({
 			)}
 			{data && !data.authenticationRequired && (
 				<p className="banner-error">
-					Authentication is disabled for this local gateway. Configure
-					OWNER_TOKEN on the API to require credentials for all API requests.
+					Authentication is disabled for this local gateway. Complete setup or
+					configure OWNER_TOKEN on the API to require credentials for all API
+					requests.
 				</p>
 			)}
 			{panel && (
@@ -669,7 +670,11 @@ export function TokensView<Permission extends string>({
 										<td>{action.tokenName}</td>
 										<td className="token-action-name">{action.action}</td>
 										<td>
-											{action.actor === "owner" ? "Owner" : "Local admin"}
+											{action.actor === "user"
+												? (action.actorName ?? "Team member")
+												: action.actor === "owner"
+													? "Owner credential"
+													: "Local admin"}
 										</td>
 										<td>{action.detail}</td>
 									</tr>
