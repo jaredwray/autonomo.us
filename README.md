@@ -514,7 +514,7 @@ exceed 100,000 time/model/caller/operation groups also fall back with this notic
 ## Deployment
 
 Merges to `main` deploy the development environment to one Cloudflare Worker,
-`autonomous-api-development`, which serves the dashboard and the API at
+`autonomous-server-development`, which serves the dashboard and the API at
 <https://dev.autonomo.us>. The
 [deploy-development](.github/workflows/deploy-development.yml) workflow runs
 `pnpm deploy:development`, which builds `@autonomo.us/ux` and uploads its
@@ -529,32 +529,30 @@ one origin, one deployable.
 | Everything else | The dashboard build. Unknown paths get `index.html` for client-side routes. These requests never invoke the Worker. |
 
 The dashboard calls the API on its own origin, so the build needs no
-`VITE_API_URL`. <https://dev-api.autonomo.us> stays attached to the same Worker
-for clients configured before the dashboard moved; the API answers on both
-hostnames.
+`VITE_API_URL`. API clients use `https://dev.autonomo.us/v1/...`.
 
-Cutting over from the earlier two-Worker layout is a one-time step. Two Workers
-cannot hold the same custom domain, so delete the retired dashboard Worker,
-which releases `dev.autonomo.us`, before the first combined deploy:
-
-```bash
-pnpm exec wrangler delete --name autonomous-ux-development
-```
-
-Provision a MongoDB server or managed cluster outside this workflow. After the
-first API deploy, store the connection string as a Worker secret:
+Cutting over from the retired Workers (`autonomous-ux-development` and
+`autonomous-api-development`) is a one-time step. Secrets belong to a Worker,
+so set them on the new name before the first deploy; Wrangler creates the
+Worker as a placeholder when it does not exist yet. Then delete the retired
+Workers so `dev-api.autonomo.us` stops serving the old code:
 
 ```bash
 pnpm exec wrangler secret put MONGODB_URI -c core/server/wrangler.jsonc
-```
-
-Before anyone can reach a new deployment, also set a setup token so only you
-can run first-run setup. Then open <https://dev.autonomo.us>, enter the token,
-and create the owner account. The token grants nothing after setup.
-
-```bash
 pnpm exec wrangler secret put SETUP_TOKEN -c core/server/wrangler.jsonc
+pnpm exec wrangler delete --name autonomous-ux-development
+pnpm exec wrangler delete --name autonomous-api-development
 ```
+
+Provision a MongoDB server or managed cluster outside this workflow and store
+its connection string as the `MONGODB_URI` Worker secret, as above. The
+deployment check fails until it is set.
+
+`SETUP_TOKEN` matters only while first-run setup is pending: with a fresh
+database, set it so only you can create the owner account, then open
+<https://dev.autonomo.us> and enter it. Setup state lives in MongoDB, so a
+Worker pointed at an already set-up database needs no token, and the token
+grants nothing after setup.
 
 Include the application database name in the connection string. The MongoDB
 user needs read/write access to that database, and the cluster must accept

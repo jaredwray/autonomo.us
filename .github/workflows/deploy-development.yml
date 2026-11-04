@@ -1,8 +1,7 @@
 name: deploy-development
 
 # Publishes the development environment to one Cloudflare Worker on main.
-#   autonomous-api-development → https://dev.autonomo.us (dashboard and API)
-#                                https://dev-api.autonomo.us (API alias)
+#   autonomous-server-development → https://dev.autonomo.us (dashboard and API)
 # The dashboard build is uploaded as the Worker's static assets; /v1, /health
 # and /healthz run the API.
 #
