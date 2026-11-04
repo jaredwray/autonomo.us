@@ -30,7 +30,7 @@ administer the gateway. Managed tokens have explicit permissions
 chosen in Create/Edit token: Models Read/Edit, Routing Read/Edit, Inference Run,
 and Telemetry Read. Edit includes Read, never Run. Access applies across the
 gateway, including all Auto/pool/failover targets when Inference Run is granted.
-API token management and its action history require a signed-in team member. The API maps each
+API token management and its action history require a signed-in owner or admin. The API maps each
 route to an action, denies unlisted routes, and returns 403 before provider calls
 when a valid credential lacks its required permission.
 

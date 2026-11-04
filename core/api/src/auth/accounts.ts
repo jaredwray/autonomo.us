@@ -35,6 +35,8 @@ export class AccountError extends Error {
 export const SESSION_TTL_MS = 14 * 86_400_000;
 export const SIGN_IN_WINDOW_MS = 15 * 60_000;
 export const SIGN_IN_MAX_FAILURES = 10;
+/** A setup marker whose owner never appeared within this window was abandoned. */
+export const SETUP_STALE_MS = 60_000;
 /** Upper bound on holding the owner-change lock if a request dies mid-change. */
 export const OWNER_LOCK_MS = 15_000;
 const MAX_SESSIONS = 10;
@@ -366,11 +368,26 @@ export class AccountStore {
 		};
 	}
 
+	/**
+	 * Setup is complete only once its marker names an owner that exists. A
+	 * marker without its owner is either still being written (pending) or was
+	 * left behind by a crash or rollback, after which setup can run again.
+	 */
+	private async setupState(record: SetupRecord | null) {
+		if (!record?.completedAt) return "open" as const;
+		const ownerId = record.ownerId;
+		if (ownerId && (await this.storage(() => this.users.get(ownerId))))
+			return "complete" as const;
+		return this.now() - Date.parse(record.completedAt) < SETUP_STALE_MS
+			? ("pending" as const)
+			: ("open" as const);
+	}
+
 	async isSetupComplete(): Promise<boolean> {
 		if (this.completed) return true;
 		const record = await this.storage(() => this.setup.get("default"));
-		// Completion is permanent, so later requests skip the read.
-		if (record?.completedAt) this.completed = true;
+		// Only a committed setup is cached; later requests then skip the reads.
+		if ((await this.setupState(record)) === "complete") this.completed = true;
 		return this.completed;
 	}
 
@@ -386,7 +403,17 @@ export class AccountStore {
 	/** Creates the first owner and marks setup complete in one guarded step. */
 	async completeSetup(input: SetupRequest): Promise<AuthSession> {
 		assertPassword(input.password);
-		if (await this.isSetupComplete()) throw this.setupDone();
+		const seen = await this.storage(() => this.setup.get("default"));
+		const state = await this.setupState(seen);
+		if (state === "complete") {
+			this.completed = true;
+			throw this.setupDone();
+		}
+		if (state === "pending")
+			throw new AccountError(
+				"Setup is finishing in another request. Try again in a minute.",
+				409,
+			);
 		const passwordHash = await hashPassword(input.password);
 		const now = this.now();
 		const record = this.newUser(
@@ -402,7 +429,8 @@ export class AccountStore {
 			this.setup,
 			"default",
 			(setup, at) => {
-				if (setup.completedAt) throw this.setupDone();
+				// Any write since we looked means another setup got there first.
+				if (setup.revision !== (seen?.revision ?? 0)) throw this.setupDone();
 				setup.completedAt = iso(at);
 				setup.ownerId = record._id;
 			},
@@ -417,8 +445,8 @@ export class AccountStore {
 		try {
 			await this.insertUser(record);
 		} catch (error) {
-			// Reopen setup so it can be retried. If this fails too, setup stays
-			// closed (fail closed); OWNER_TOKEN or a database fix recovers it.
+			// Reopen setup so it can be retried. If this fails too, the marker
+			// without an owner is treated as abandoned after SETUP_STALE_MS.
 			await this.mutate(
 				this.setup,
 				"default",
@@ -451,31 +479,45 @@ export class AccountStore {
 			throw incorrect();
 		}
 		const failures = recentFailures(user, this.now());
-		if (failures.length >= SIGN_IN_MAX_FAILURES) {
-			const wait =
-				SIGN_IN_WINDOW_MS - (this.now() - Date.parse(failures.at(-1) ?? ""));
-			throw new AccountError(
-				`Too many failed sign-in attempts. Try again in ${Math.max(1, Math.ceil(wait / 60_000))} minutes.`,
-				429,
-			);
-		}
+		if (failures.length >= SIGN_IN_MAX_FAILURES) throw this.throttled(failures);
 		const valid = await verifyPassword(input.password, user.passwordHash);
-		const session = await this.mutate(
+		type Outcome =
+			| { kind: "throttled"; failures: string[] }
+			| { kind: "incorrect" }
+			| { kind: "signed-in"; session: AuthSession };
+		const outcome = await this.mutate<UserRecord, Outcome>(
 			this.users,
 			user._id,
 			(record, now) => {
+				// Re-check at commit: concurrent guesses must not slip past the limit,
+				// and a correct guess beyond it must not be confirmed.
+				const recent = recentFailures(record, now);
+				if (recent.length >= SIGN_IN_MAX_FAILURES)
+					return { kind: "throttled", failures: recent };
 				if (!valid || record.passwordHash !== user.passwordHash) {
-					record.failedSignIns = [iso(now), ...recentFailures(record, now)];
-					return null;
+					record.failedSignIns = [iso(now), ...recent];
+					return { kind: "incorrect" };
 				}
 				record.failedSignIns = [];
 				record.lastSignInAt = iso(now);
-				return { ...issueSession(record, now), user: publicMember(record) };
+				return {
+					kind: "signed-in",
+					session: { ...issueSession(record, now), user: publicMember(record) },
+				};
 			},
 			incorrect(),
 		);
-		if (!session) throw incorrect();
-		return session;
+		if (outcome.kind === "throttled") throw this.throttled(outcome.failures);
+		if (outcome.kind === "incorrect") throw incorrect();
+		return outcome.session;
+	}
+	private throttled(failures: string[]) {
+		const wait =
+			SIGN_IN_WINDOW_MS - (this.now() - Date.parse(failures.at(-1) ?? ""));
+		return new AccountError(
+			`Too many failed sign-in attempts. Try again in ${Math.max(1, Math.ceil(wait / 60_000))} minutes.`,
+			429,
+		);
 	}
 
 	async authenticate(
@@ -539,6 +581,15 @@ export class AccountStore {
 					current.failedSignIns = [iso(now), ...recentFailures(current, now)];
 					return false;
 				}
+				// A reset or sign-out since we verified wins over this change.
+				if (
+					current.passwordHash !== record.passwordHash ||
+					!current.sessions.some((session) => session.hash === keep)
+				)
+					throw new AccountError(
+						"Your account changed during this request. Sign in again and retry.",
+						409,
+					);
 				current.passwordHash = passwordHash;
 				current.failedSignIns = [];
 				current.sessions = current.sessions.filter(
@@ -673,6 +724,7 @@ export class AccountStore {
 				this.users,
 				id,
 				(record, now) => {
+					this.authorize(actor, [record.role, input.role]);
 					if (record.role === "owner" && input.role !== "owner") {
 						// Became an owner after we looked: retry so the lock applies.
 						if (!demotes) throw changedMember();
@@ -705,6 +757,8 @@ export class AccountStore {
 			this.users,
 			id,
 			(record, now) => {
+				// The member may have been promoted while the password hashed.
+				this.authorize(actor, [record.role]);
 				record.passwordHash = passwordHash;
 				record.sessions = [];
 				record.failedSignIns = [];

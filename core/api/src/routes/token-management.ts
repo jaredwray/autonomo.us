@@ -6,6 +6,7 @@ import {
 } from "@autonomo.us/common";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { signedInMember } from "../auth/access.js";
+import { AccountError, AccountStore } from "../auth/accounts.js";
 import { ApiTokenError, type TokenStore } from "../auth/token-store.js";
 
 const metadata = {
@@ -39,6 +40,12 @@ export async function tokenManagementRoutes<Permission extends string>(
 	};
 	server.addHook("onRequest", async (_request, reply) => {
 		reply.header("cache-control", "no-store");
+	});
+	// Tokens outlive the member who minted them, so only owners and admins
+	// may create, change, or list them.
+	server.addHook("preHandler", async (request) => {
+		if (!AccountStore.canManage(signedInMember(request)))
+			throw new AccountError("Only owners and admins can manage tokens.", 403);
 	});
 	// Fastify can coerce a scalar to an array during schema validation. Grants
 	// must be an explicit array; reject malformed input before that coercion.

@@ -206,6 +206,30 @@ it("invites a member with a one-time link that creates their account", async () 
 	).toBeDefined();
 });
 
+it("shows a replacement invite after an invalid link in the same tab", async () => {
+	const { server, url } = await start();
+	const owner = await setUpOwner(url, { signIn: false });
+	const { token } = (
+		await server.inject({
+			method: "POST",
+			url: "/v1/team/invites",
+			headers: { authorization: `Bearer ${owner}` },
+			payload: { role: "member", ttlDays: 1 },
+		})
+	).json();
+	window.history.replaceState(null, "", "#/invite/inv_not-a-real-token");
+	renderApp();
+	expect(
+		await screen.findByRole("heading", { name: "Invite unavailable" }),
+	).toBeDefined();
+	window.location.hash = `#/invite/${token}`;
+	expect(
+		await screen.findByRole("heading", { name: "Join your team" }),
+	).toBeDefined();
+	expect(await screen.findByLabelText("Your name (optional)")).toBeDefined();
+	expect(screen.queryByRole("alert")).toBeNull();
+});
+
 it("adds, edits, resets, and removes members and changes your own password", async () => {
 	const { server, url } = await start();
 	await setUpOwner(url);
@@ -336,6 +360,9 @@ it("shows members a read-only team and sends signed-out users back to sign in", 
 	expect(screen.queryByRole("button", { name: "Add member" })).toBeNull();
 	expect(screen.queryByRole("button", { name: "Edit Founder" })).toBeNull();
 	expect(screen.getByRole("button", { name: "Change password" })).toBeDefined();
+	// Members don't manage tokens: the pages are hidden and their links fall back.
+	expect(screen.queryByRole("link", { name: "API Tokens" })).toBeNull();
+	expect(screen.queryByRole("link", { name: "Agent Tokens" })).toBeNull();
 
 	// Removing the member ends their session on the next request.
 	const team = (

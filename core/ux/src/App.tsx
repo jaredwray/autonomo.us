@@ -175,6 +175,7 @@ export function App() {
 	if (invite)
 		return (
 			<InviteView
+				key={invite}
 				token={invite}
 				status={gate.status}
 				onJoined={() => {
@@ -191,6 +192,11 @@ export function App() {
 		return <SignInView status={gate.status} onSignedIn={() => void load()} />;
 
 	const { user } = gate.session;
+	// Tokens outlive their creator, so only owners and admins manage them.
+	const allowed = (item: View) =>
+		user.role !== "member" ||
+		(item !== "api-tokens" && item !== "agent-tokens");
+	const shown = allowed(view) ? view : "dashboard";
 	return (
 		<div className={`app-shell ${collapsed ? "sidebar-collapsed" : ""}`}>
 			<button
@@ -213,12 +219,12 @@ export function App() {
 					<span className="sidebar-label">autonomo.us</span>
 				</a>
 				<nav aria-label="Main navigation">
-					{(Object.keys(viewLabels) as View[]).map((item) => (
+					{(Object.keys(viewLabels) as View[]).filter(allowed).map((item) => (
 						<a
 							key={item}
 							href={`#/${item}`}
-							className={`nav-item ${view === item ? "active" : ""}`}
-							aria-current={view === item ? "page" : undefined}
+							className={`nav-item ${shown === item ? "active" : ""}`}
+							aria-current={shown === item ? "page" : undefined}
 							aria-label={viewLabels[item]}
 							title={collapsed ? viewLabels[item] : undefined}
 							onClick={() => setView(item)}
@@ -269,15 +275,15 @@ export function App() {
 				</button>
 			</aside>
 			<main id="main-content" tabIndex={-1} className="main-content">
-				{view === "api-tokens" ? (
+				{shown === "api-tokens" ? (
 					<ApiTokensView />
-				) : view === "agent-tokens" ? (
+				) : shown === "agent-tokens" ? (
 					<AgentTokensView />
-				) : view === "models" ? (
+				) : shown === "models" ? (
 					<ModelsView />
-				) : view === "routing" ? (
+				) : shown === "routing" ? (
 					<RoutingView />
-				) : view === "team" ? (
+				) : shown === "team" ? (
 					<TeamView />
 				) : (
 					<Dashboard />

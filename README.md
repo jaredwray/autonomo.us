@@ -88,7 +88,7 @@ identifier: the gateway never sends email. Passwords are 12–128 characters and
 are stored as salted scrypt hashes (N=2^14, r=8, p=5, which fits Workers memory
 limits). An unknown email takes the same time and gets the same error as a wrong
 password. Ten failed attempts within 15 minutes throttle that account until the
-window passes. A session lasts 14 days. The browser keeps its session token in
+window passes, including bursts of concurrent guesses. A session lasts 14 days. The browser keeps its session token in
 `localStorage` so reloads stay signed in; **Sign out** revokes it on the server.
 Only SHA-256 digests of session tokens are stored. Each account keeps up to 10
 sessions.
@@ -113,14 +113,17 @@ Open **Team** to manage access:
 | --- | --- |
 | Owner | Everything, including granting, changing, and removing owners. |
 | Admin | Everything except owner accounts and owner invites. |
-| Member | Every dashboard page; read-only Team. |
+| Member | Dashboard, Models, and Routing; read-only Team. No API or agent tokens, because tokens outlive the member who created them. |
 
 There is always at least one owner, and nobody can remove themselves. Changes
 that remove an owner take a short lock on the setup record, so two owners
 demoting or removing each other at once cannot leave the team without one. A
 forgotten password is reset by an owner or admin. If every owner is locked out,
-fix the account in the `gateway_users` collection. Without MongoDB, accounts
-and invites last until the API restarts and setup runs again. If a configured
+fix the account in the `gateway_users` collection. Setup counts as complete only once
+its owner account exists. A marker left by a setup that crashed before creating
+the owner is treated as abandoned after a minute, so setup can run again.
+Without MongoDB, accounts and invites last until the API restarts and setup
+runs again. If a configured
 MongoDB is unreachable, sign-in and sessions fail with HTTP 503, and requests
 without credentials still get 401.
 
@@ -239,8 +242,8 @@ Creation and rolling show the secret once; copy it before leaving the page.
 The server stores only its SHA-256 digest. MongoDB persists tokens and their
 actions in `gateway_api_tokens`; without MongoDB they last until API restart.
 
-Managing tokens requires a signed-in team member; the action log records which
-member acted. Generated tokens receive the permissions chosen in Create/Edit
+Managing tokens requires a signed-in owner or admin; the action log records
+which member acted. Generated tokens receive the permissions chosen in Create/Edit
 token. `/health` stays public. Entries from before team accounts may still show
 the retired owner credential or local admin as their actor.
 
@@ -293,7 +296,7 @@ Agent secrets use the `agt_` prefix and store only SHA-256 digests in the separa
 restart. API and agent token lists, histories, permission sets, and authentication
 are isolated: an agent credential cannot authenticate a `/v1/*` request, and an
 API credential cannot authenticate through `AgentTokenStore`. Management requires
-a signed-in team member.
+a signed-in owner or admin.
 
 New agent tokens start with no permissions, both in the dashboard and through the
 API. The reserved MCP grants are `mcp:read` (discover tools and read resources and

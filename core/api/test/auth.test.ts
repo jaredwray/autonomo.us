@@ -281,6 +281,30 @@ describe("email and password sign-in", () => {
 		expect(await store.authenticate(setup.token)).toBeNull();
 	});
 
+	it("holds the throttle under concurrent guesses", async () => {
+		const store = new AccountStore();
+		await store.completeSetup({
+			email: "ada@example.com",
+			name: "Ada",
+			password: PASSWORD,
+		});
+		const guesses = await Promise.allSettled(
+			Array.from({ length: SIGN_IN_MAX_FAILURES + 5 }, () =>
+				store.signIn({ email: "ada@example.com", password: "a wrong guess" }),
+			),
+		);
+		const codes = guesses.map(
+			(guess) => (guess as PromiseRejectedResult).reason.statusCode,
+		);
+		expect(codes.filter((code) => code === 401)).toHaveLength(
+			SIGN_IN_MAX_FAILURES,
+		);
+		expect(codes.filter((code) => code === 429)).toHaveLength(5);
+		await expect(
+			store.signIn({ email: "ada@example.com", password: PASSWORD }),
+		).rejects.toMatchObject({ statusCode: 429 });
+	});
+
 	it("changes a password with the current one and signs out other sessions", async () => {
 		const server = start();
 		const owner = await completeSetup(server);
@@ -717,6 +741,119 @@ describe("team management", () => {
 		]);
 		expect(removals.filter((r) => r.status === "fulfilled")).toHaveLength(1);
 		expect(await owners()).toHaveLength(1);
+	});
+
+	it("limits API and agent token management to owners and admins", async () => {
+		const server = start();
+		const owner = await completeSetup(server);
+		const admin = await joinWithInvite(
+			server,
+			owner.token,
+			"admin@example.com",
+			"admin",
+		);
+		const member = await joinWithInvite(
+			server,
+			owner.token,
+			"member@example.com",
+		);
+		for (const path of ["/v1/api-tokens", "/v1/agent-tokens"]) {
+			const create = (token: string) =>
+				server.inject({
+					method: "POST",
+					url: path,
+					headers: bearer(token),
+					payload: { name: "Client", description: "", ttlDays: 1 },
+				});
+			expect((await create(member.token)).statusCode).toBe(403);
+			expect(
+				(await server.inject({ url: path, headers: bearer(member.token) }))
+					.statusCode,
+			).toBe(403);
+			expect((await create(admin.token)).statusCode).toBe(201);
+			expect(
+				(await server.inject({ url: path, headers: bearer(admin.token) }))
+					.statusCode,
+			).toBe(200);
+		}
+	});
+
+	it("re-checks authorization when a reset races a promotion to owner", async () => {
+		const store = new AccountStore();
+		const { user: owner } = await store.completeSetup({
+			email: "owner@example.com",
+			name: "Owner",
+			password: PASSWORD,
+		});
+		const admin = await store.addMember(
+			{
+				email: "admin@example.com",
+				name: "",
+				role: "admin",
+				password: PASSWORD,
+			},
+			owner,
+		);
+		const target = await store.addMember(
+			{ email: "t@example.com", name: "", role: "member", password: PASSWORD },
+			owner,
+		);
+		// The reset hashes its password first, so the promotion commits before it.
+		const [reset, promotion] = await Promise.allSettled([
+			store.resetPassword(target.id, "an admin chosen password", admin),
+			store.updateMember(target.id, { name: "", role: "owner" }, owner),
+		]);
+		expect(promotion.status).toBe("fulfilled");
+		expect(reset).toMatchObject({
+			status: "rejected",
+			reason: { statusCode: 403 },
+		});
+		await expect(
+			store.signIn({
+				email: "t@example.com",
+				password: "an admin chosen password",
+			}),
+		).rejects.toMatchObject({ statusCode: 401 });
+	});
+
+	it("lets an admin reset win over a concurrent self-service change", async () => {
+		const store = new AccountStore();
+		const { user: owner } = await store.completeSetup({
+			email: "owner@example.com",
+			name: "Owner",
+			password: PASSWORD,
+		});
+		const member = await store.addMember(
+			{ email: "m@example.com", name: "", role: "member", password: PASSWORD },
+			owner,
+		);
+		const session = await store.signIn({
+			email: "m@example.com",
+			password: PASSWORD,
+		});
+		// The change verifies and hashes (two scrypt runs); the reset commits first.
+		const [change, reset] = await Promise.allSettled([
+			store.changePassword(member, session.token, {
+				currentPassword: PASSWORD,
+				newPassword: "member chosen password",
+			}),
+			store.resetPassword(member.id, "the reset password", owner),
+		]);
+		expect(reset.status).toBe("fulfilled");
+		expect(change).toMatchObject({
+			status: "rejected",
+			reason: { statusCode: 409 },
+		});
+		await store.signIn({
+			email: "m@example.com",
+			password: "the reset password",
+		});
+		await expect(
+			store.signIn({
+				email: "m@example.com",
+				password: "member chosen password",
+			}),
+		).rejects.toMatchObject({ statusCode: 401 });
 	});
 
 	it("attributes gateway usage to the signed-in member", async () => {

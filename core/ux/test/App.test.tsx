@@ -439,11 +439,11 @@ describe("App", () => {
 
 	it("shows a retryable error without inventing zero usage when analytics fail", async () => {
 		const app = await startApp();
+		// Sign-in works, but every analytics report fails on the server.
+		app.telemetry.analytics = async () => {
+			throw new Error("analytics store unavailable");
+		};
 		render(<App />);
-		await screen.findByRole("heading", { name: "Dashboard" });
-		// The gateway goes away after sign-in.
-		await running.splice(running.indexOf(app), 1)[0].close();
-		fireEvent.click(await screen.findByRole("button", { name: "Refresh" }));
 		expect(await screen.findByText("Analytics unavailable")).toBeDefined();
 		expect(screen.getByRole("alert").textContent).toContain(
 			"No report is available",
