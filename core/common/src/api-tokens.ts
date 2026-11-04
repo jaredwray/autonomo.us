@@ -59,6 +59,7 @@ export type ApiTokenAction = {
 	tokenName: string;
 	action: "created" | "updated" | "rolled" | "revoked";
 	timestamp: string;
+	/** `owner` and `local-admin` appear only in history from before team accounts. */
 	actor: "owner" | "local-admin" | "user";
 	/** Team member's display name when `actor` is `user`. */
 	actorName?: string;

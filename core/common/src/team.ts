@@ -48,8 +48,8 @@ export type TeamSettings = {
 	/** Newest first, limited to the latest 50. */
 	invites: TeamInvite[];
 	persistence: "mongodb" | "memory";
-	/** The signed-in member, or null for the owner credential and local mode. */
-	currentUserId: string | null;
+	/** The signed-in member. */
+	currentUserId: string;
 	/** Whether the caller may add, edit, invite, or remove members. */
 	canManage: boolean;
 };
@@ -92,8 +92,8 @@ export type AcceptInviteRequest = {
 /** Public, unauthenticated status the dashboard reads before choosing a screen. */
 export type AuthStatus = {
 	setupComplete: boolean;
-	/** OWNER_TOKEN is configured; setup and break-glass access require it. */
-	ownerCredentialConfigured: boolean;
+	/** Setup is pending and SETUP_TOKEN is configured, so setup requires it. */
+	setupTokenRequired: boolean;
 	persistence: "mongodb" | "memory";
 };
 
@@ -108,7 +108,6 @@ export type AuthSession = {
 };
 
 export type CurrentSession = {
-	kind: "user" | "owner" | "local";
-	user: TeamMember | null;
-	expiresAt: string | null;
+	user: TeamMember;
+	expiresAt: string;
 };

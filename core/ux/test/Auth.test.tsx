@@ -22,9 +22,9 @@ afterEach(async () => {
 	window.history.replaceState(null, "", "/");
 	window.localStorage.clear();
 });
-async function start(ownerToken?: string) {
+async function start(setupToken?: string) {
 	const server = createServer({
-		config: { providers: [], corsOrigins: ["*"], ownerToken },
+		config: { providers: [], corsOrigins: ["*"], setupToken },
 		logger: false,
 	});
 	const url = await server.listen({ host: "127.0.0.1", port: 0 });
@@ -103,19 +103,19 @@ it("defaults a fresh gateway to first-run setup and keeps the owner signed in", 
 	expect(await screen.findByRole("heading", { name: "Team" })).toBeDefined();
 });
 
-it("asks for the owner credential before setup when OWNER_TOKEN is configured", async () => {
-	await start("owner-setup-secret");
+it("asks for SETUP_TOKEN before setup when it is configured", async () => {
+	await start("setup-secret");
 	renderApp();
 	expect(
 		await screen.findByRole("heading", { name: "Welcome to autonomo.us" }),
 	).toBeDefined();
 	expect(screen.getByText("Step 1 of 2")).toBeDefined();
-	change("Owner credential", "wrong");
+	change("Setup token", "wrong");
 	fireEvent.click(screen.getByRole("button", { name: "Continue" }));
 	expect((await screen.findByRole("alert")).textContent).toBe(
-		"Enter a valid owner credential.",
+		"Enter the SETUP_TOKEN configured on the API.",
 	);
-	change("Owner credential", "owner-setup-secret");
+	change("Setup token", "setup-secret");
 	fireEvent.click(screen.getByRole("button", { name: "Continue" }));
 	expect(
 		await screen.findByRole("heading", { name: "Create your account" }),
@@ -126,9 +126,8 @@ it("asks for the owner credential before setup when OWNER_TOKEN is configured", 
 	change("Confirm password", PASSWORD);
 	fireEvent.click(screen.getByRole("button", { name: "Create account" }));
 	expect(await screen.findByRole("heading", { name: "Team" })).toBeDefined();
-	expect(JSON.stringify(window.localStorage)).not.toContain(
-		"owner-setup-secret",
-	);
+	expect(JSON.stringify(window.localStorage)).not.toContain("setup-secret");
+	expect(screen.queryByRole("button", { name: /Lock dashboard/ })).toBeNull();
 });
 
 it("invites a member with a one-time link that creates their account", async () => {

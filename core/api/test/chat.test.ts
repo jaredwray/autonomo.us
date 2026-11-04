@@ -10,6 +10,7 @@ import {
 import { configFromEnv } from "../src/config.js";
 import { createServer } from "../src/server.js";
 import { TelemetryService } from "../src/telemetry/telemetry.js";
+import { withSession } from "./auth-helpers.js";
 import { type StubProvider, startStubProvider } from "./helpers.js";
 
 describe("POST /v1/chat", () => {
@@ -25,14 +26,16 @@ describe("POST /v1/chat", () => {
 		await provider.close();
 	});
 
-	beforeEach(() => {
+	beforeEach(async () => {
 		telemetry = new TelemetryService();
-		server = createServer({
-			config: configFromEnv({}),
-			registry: provider.registry,
-			telemetry,
-			logger: false,
-		});
+		server = await withSession(
+			createServer({
+				config: configFromEnv({}),
+				registry: provider.registry,
+				telemetry,
+				logger: false,
+			}),
+		);
 	});
 
 	afterEach(async () => {

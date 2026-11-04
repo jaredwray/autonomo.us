@@ -4,6 +4,7 @@ import { configFromEnv } from "../src/config.js";
 import { createServer, releaseRequestResources } from "../src/server.js";
 import { MongoTelemetrySink } from "../src/telemetry/mongo.js";
 import { TelemetryService } from "../src/telemetry/telemetry.js";
+import { withSession } from "./auth-helpers.js";
 import { type StubProvider, startStubProvider } from "./helpers.js";
 import { mongoAvailable, uniqueMongoUrl } from "./mongo-env.js";
 
@@ -102,11 +103,13 @@ describe.skipIf(!available)("TelemetryService + real MongoDB", () => {
 			sink: trackedSink("routing"),
 			flushIntervalMs: 60_000,
 		});
-		const server = createServer({
-			config: { providers: [], corsOrigins: [] },
-			telemetry,
-			logger: false,
-		});
+		const server = await withSession(
+			createServer({
+				config: { providers: [], corsOrigins: [] },
+				telemetry,
+				logger: false,
+			}),
+		);
 		try {
 			telemetry.recordChat({
 				operation: "routing",
@@ -170,11 +173,13 @@ describe.skipIf(!available)("gateway → MongoDB end to end", () => {
 		databaseUrls.push(databaseUrl);
 		const sink = new MongoTelemetrySink(databaseUrl);
 		const telemetry = new TelemetryService({ sink, flushIntervalMs: 60_000 });
-		const server = createServer({
-			registry: provider.registry,
-			telemetry,
-			logger: false,
-		});
+		const server = await withSession(
+			createServer({
+				registry: provider.registry,
+				telemetry,
+				logger: false,
+			}),
+		);
 
 		const chat = await server.inject({
 			method: "POST",
@@ -215,12 +220,14 @@ describe.skipIf(!available)("gateway → MongoDB end to end", () => {
 	it("persists each request's telemetry before releasing the Worker's clients", async () => {
 		const databaseUrl = uniqueMongoUrl("worker");
 		databaseUrls.push(databaseUrl);
-		const server = createServer({
-			config: configFromEnv({ MONGODB_URI: databaseUrl }),
-			registry: provider.registry,
-			logger: false,
-			releaseMongoPerRequest: true,
-		});
+		const server = await withSession(
+			createServer({
+				config: configFromEnv({ MONGODB_URI: databaseUrl }),
+				registry: provider.registry,
+				logger: false,
+				releaseMongoPerRequest: true,
+			}),
+		);
 		const payload = {
 			model: "stub/chat-model",
 			messages: [{ role: "user", content: "Hi" }],

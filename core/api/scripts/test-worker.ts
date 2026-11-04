@@ -131,6 +131,23 @@ type RequestWorker = (
 	init?: RequestInit,
 ) => Promise<unknown>;
 
+const json = { "content-type": "application/json" };
+const password = "worker smoke passphrase";
+
+/** First-run setup through the Worker; returns the owner's auth header. */
+async function setUp(request: RequestWorker, headers: HeadersInit = {}) {
+	const owner = (await request("/v1/setup", 201, {
+		method: "POST",
+		headers: { ...json, ...headers },
+		body: JSON.stringify({
+			email: "owner@example.com",
+			name: "Owner",
+			password,
+		}),
+	})) as { token: string };
+	return { authorization: `Bearer ${owner.token}` };
+}
+
 async function expectLog(logs: () => string, event: string) {
 	const deadline = Date.now() + 5000;
 	while (!logs().includes(event)) {
@@ -149,10 +166,13 @@ await withWorker("", async (request, logs) => {
 			initialized: false,
 		});
 	}
-	await request("/v1/models");
+	// No unauthenticated mode, even before setup.
+	await request("/v1/models", 401);
+	const auth = await setUp(request);
+	await request("/v1/models", 200, { headers: auth });
 	await request("/v1/routing", 400, {
 		method: "PUT",
-		headers: { "content-type": "application/json" },
+		headers: { ...json, ...auth },
 		body: "{}",
 	});
 	await expectLog(logs, "gateway.request");
@@ -191,12 +211,17 @@ try {
 				.collection<{ _id: string }>("gateway_routing")
 				.findOne({ _id: "default" }),
 		);
+		// First-run setup, scrypt passwords, sessions, and invite links in workerd.
+		await request("/v1/api-tokens", 401);
+		const ownerAuth = await setUp(request);
 		await Promise.all(
-			Array.from({ length: 6 }, () => request("/v1/api-tokens")),
+			Array.from({ length: 6 }, () =>
+				request("/v1/api-tokens", 200, { headers: ownerAuth }),
+			),
 		);
 		const created = (await request("/v1/api-tokens", 201, {
 			method: "POST",
-			headers: { "content-type": "application/json" },
+			headers: { ...json, ...ownerAuth },
 			body: JSON.stringify({
 				name: "Worker smoke",
 				description: "",
@@ -205,6 +230,7 @@ try {
 		})) as { token: { id: string }; secret: string };
 		await request(`/v1/api-tokens/${created.token.id}`, 200, {
 			method: "DELETE",
+			headers: ownerAuth,
 		});
 		assert.equal(
 			await client.db().collection("gateway_routing").countDocuments(),
@@ -213,18 +239,6 @@ try {
 		await expectLog(logs, "gateway.persistence_ready");
 		assert(!logs().includes(created.secret));
 
-		// First-run setup, scrypt passwords, sessions, and invite links in workerd.
-		const json = { "content-type": "application/json" };
-		const password = "worker smoke passphrase";
-		const owner = (await request("/v1/setup", 201, {
-			method: "POST",
-			headers: json,
-			body: JSON.stringify({
-				email: "owner@example.com",
-				name: "Owner",
-				password,
-			}),
-		})) as { token: string };
 		await request("/v1/models", 401);
 		const signedIn = (await request("/v1/auth/session", 201, {
 			method: "POST",
@@ -252,7 +266,12 @@ try {
 			members: unknown[];
 		};
 		assert.equal(team.members.length, 2);
-		for (const secret of [owner.token, signedIn.token, invite.token, password])
+		for (const secret of [
+			ownerAuth.authorization.slice(7),
+			signedIn.token,
+			invite.token,
+			password,
+		])
 			assert(!logs().includes(secret));
 	});
 	console.log(
@@ -270,7 +289,7 @@ try {
 			connected: true,
 			initialized: false,
 		});
-		await request("/v1/routing", 503);
+		await request("/v1/routing", 503, { headers: await setUp(request) });
 		await expectLog(logs, "gateway.persistence_failed");
 		await expectLog(logs, "code: 121");
 		await client.db().command({ collMod: "gateway_routing", validator: {} });

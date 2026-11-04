@@ -5,10 +5,7 @@ import { tokenManagementRoutes } from "./token-management.js";
 
 export async function agentTokenRoutes(
 	server: FastifyInstance,
-	options: {
-		tokens: AgentTokenStore;
-		authenticationRequired: () => Promise<boolean>;
-	},
+	options: { tokens: AgentTokenStore },
 ) {
 	await tokenManagementRoutes(server, {
 		...options,

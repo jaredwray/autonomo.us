@@ -51,12 +51,13 @@ function apiBase(): string {
 }
 
 /**
- * The owner credential lives only in this tab's memory. A team member's
- * session is revocable and expires, so it is kept in localStorage to survive
- * reloads; signing out deletes it on the server and in the browser.
+ * A team member's session is revocable and expires, so it is kept in
+ * localStorage to survive reloads; signing out deletes it on the server and
+ * in the browser. A SETUP_TOKEN, used only during first-run setup, stays in
+ * this tab's memory.
  */
 const SESSION_KEY = "autonomous.session";
-type Credential = { kind: "owner" | "session"; value: string };
+type Credential = { kind: "setup" | "session"; value: string };
 let credential: Credential | null | undefined;
 function current(): Credential | null {
 	if (credential === undefined) {
@@ -83,8 +84,8 @@ export function setSessionToken(token: string) {
 		window.localStorage.setItem(SESSION_KEY, token);
 	} catch {}
 }
-export async function connectOwner(value: string) {
-	const response = await fetch(`${apiBase()}/v1/auth/owner`, {
+export async function verifySetupToken(value: string) {
+	const response = await fetch(`${apiBase()}/v1/setup/token`, {
 		headers: {
 			accept: "application/json",
 			authorization: `Bearer ${value}`,
@@ -92,12 +93,15 @@ export async function connectOwner(value: string) {
 	});
 	if (!response.ok)
 		throw new Error(
-			response.status === 401 || response.status === 403
-				? "Enter a valid owner credential."
-				: "Could not connect to the API. Please retry.",
+			response.status === 401
+				? "Enter the SETUP_TOKEN configured on the API."
+				: await errorMessage(
+						response,
+						"Could not reach the API. Please retry.",
+					),
 		);
 	clearCredential();
-	credential = { kind: "owner", value };
+	credential = { kind: "setup", value };
 }
 function authorize(headers: Headers) {
 	const active = current();

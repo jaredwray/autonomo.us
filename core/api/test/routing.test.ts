@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ApiConfig } from "../src/config.js";
 import { createServer } from "../src/server.js";
 import { TelemetryService } from "../src/telemetry/telemetry.js";
+import { withSession } from "./auth-helpers.js";
 import { startOpenAIStub } from "./openai-stub.js";
 
 const messages = [
@@ -27,6 +28,7 @@ const base: RoutingConfig = {
 	failover: { enabled: false, targets: [], timeoutMs: 1000 },
 };
 let server: ReturnType<typeof createServer>;
+let session: string;
 let chatServer: Awaited<ReturnType<typeof startOpenAIStub>>;
 let selector: http.Server;
 let telemetry: TelemetryService;
@@ -144,7 +146,10 @@ beforeEach(async () => {
 		],
 	};
 	telemetry = new TelemetryService();
-	server = createServer({ config, telemetry, logger: false });
+	server = await withSession(
+		createServer({ config, telemetry, logger: false }),
+	);
+	session = (server as typeof server & { session: string }).session;
 });
 
 afterEach(async () => {
@@ -203,20 +208,22 @@ describe("routing settings", () => {
 	});
 	it("preserves legacy connections named pool and rejects colliding pool configuration", async () => {
 		await server.close();
-		server = createServer({
-			config: {
-				corsOrigins: [],
-				providers: [
-					{
-						kind: "openai-compatible",
-						name: "pool",
-						baseURL: chatServer.url,
-						models: ["chat"],
-					},
-				],
-			},
-			logger: false,
-		});
+		server = await withSession(
+			createServer({
+				config: {
+					corsOrigins: [],
+					providers: [
+						{
+							kind: "openai-compatible",
+							name: "pool",
+							baseURL: chatServer.url,
+							models: ["chat"],
+						},
+					],
+				},
+				logger: false,
+			}),
+		);
 		expect((await chat("pool/chat")).json().model).toBe("pool/chat");
 		const settings = (await server.inject("/v1/routing")).json().config;
 		await save(settings);
@@ -321,7 +328,10 @@ describe("automatic selection", () => {
 				const client = new AbortController();
 				const request = fetch(`${origin}/v1/chat`, {
 					method: "POST",
-					headers: { "content-type": "application/json" },
+					headers: {
+						"content-type": "application/json",
+						authorization: `Bearer ${session}`,
+					},
 					body: JSON.stringify({ model: "auto", messages, stream }),
 					signal: client.signal,
 				}).catch((error) => error);

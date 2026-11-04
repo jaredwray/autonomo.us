@@ -4,8 +4,8 @@ import {
 	type RollApiTokenRequest,
 	type UpdateApiTokenRequest,
 } from "@autonomo.us/common";
-import type { FastifyInstance } from "fastify";
-import { tokenActor } from "../auth/access.js";
+import type { FastifyInstance, FastifyRequest } from "fastify";
+import { signedInMember } from "../auth/access.js";
 import { ApiTokenError, type TokenStore } from "../auth/token-store.js";
 
 const metadata = {
@@ -23,12 +23,14 @@ export async function tokenManagementRoutes<Permission extends string>(
 	server: FastifyInstance,
 	options: {
 		tokens: TokenStore<Permission>;
-		/** True once OWNER_TOKEN is configured or setup has created team accounts. */
-		authenticationRequired: () => Promise<boolean>;
 		path: string;
 		permissions: Record<Permission, string>;
 	},
 ) {
+	const tokenActor = (request: FastifyRequest) => {
+		const member = signedInMember(request);
+		return { actor: "user" as const, name: member.name || member.email };
+	};
 	const permissions = {
 		type: "array",
 		maxItems: Object.keys(options.permissions).length,
@@ -52,9 +54,8 @@ export async function tokenManagementRoutes<Permission extends string>(
 			);
 		}
 	});
-	server.get(options.path, async () =>
-		options.tokens.settings(await options.authenticationRequired()),
-	);
+	// Every /v1 request is authenticated; token management needs a signed-in member.
+	server.get(options.path, () => options.tokens.settings(true));
 	server.post<{ Body: CreateApiTokenRequest<Permission> }>(
 		options.path,
 		{

@@ -3,6 +3,7 @@ import { MongoClient } from "mongodb";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ApiConfig } from "../src/config.js";
 import { createServer, initializePersistence } from "../src/server.js";
+import { withSession } from "./auth-helpers.js";
 import { mongoAvailable, uniqueMongoUrl } from "./mongo-env.js";
 
 const available = await mongoAvailable();
@@ -88,7 +89,9 @@ describe.skipIf(!available)("database initialization", () => {
 		});
 		await server.close();
 
-		const restarted = start({ enabled: true, timeoutMs: 5678 });
+		const restarted = await withSession(
+			start({ enabled: true, timeoutMs: 5678 }),
+		);
 		const response = await restarted.inject("/v1/routing");
 		expect(response.statusCode).toBe(200);
 		expect(response.json()).toEqual({
@@ -110,7 +113,10 @@ describe.skipIf(!available)("database initialization", () => {
 		expect(saved).not.toBeNull();
 		expect(await settings().countDocuments()).toBe(1);
 		expect([1000, 2000]).toContain(saved?.config.failover.timeoutMs);
-		for (const server of [first, second]) {
+		for (const server of [
+			await withSession(first),
+			await withSession(second),
+		]) {
 			const response = await server.inject("/v1/routing");
 			expect(response.statusCode).toBe(200);
 			expect(response.json()).toEqual({
@@ -125,7 +131,7 @@ describe.skipIf(!available)("database initialization", () => {
 			validator: { rejectTestWrites: { $exists: true } },
 			validationLevel: "strict",
 		});
-		const server = start();
+		const server = await withSession(start());
 		const failed = await server.inject("/v1/routing");
 		expect(failed.statusCode).toBe(503);
 		expect(await settings().countDocuments()).toBe(0);

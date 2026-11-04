@@ -100,8 +100,6 @@ export function createServer(options: CreateServerOptions = {}) {
 	const tokens = new ApiTokenStore(config.mongodbUrl);
 	const agentTokens = new AgentTokenStore(config.mongodbUrl);
 	const accounts = new AccountStore({ mongodbUrl: config.mongodbUrl });
-	const authenticationRequired = async () =>
-		Boolean(config.ownerToken) || (await accounts.isSetupComplete());
 	let persistenceInitialized = false;
 	const server = Fastify({
 		pluginTimeout: options.pluginTimeout,
@@ -117,7 +115,7 @@ export function createServer(options: CreateServerOptions = {}) {
 	});
 	// Install after CORS so browsers can read authentication failures too.
 	server.after(() =>
-		registerApiAccess(server, tokens, accounts, config.ownerToken),
+		registerApiAccess(server, tokens, accounts, config.setupToken),
 	);
 	server.register(healthRoutes, {
 		config,
@@ -125,14 +123,11 @@ export function createServer(options: CreateServerOptions = {}) {
 	});
 	server.register(authRoutes, {
 		accounts,
-		ownerCredentialConfigured: Boolean(config.ownerToken),
+		setupTokenConfigured: Boolean(config.setupToken),
 	});
 	server.register(teamRoutes, { accounts });
-	server.register(apiTokenRoutes, { tokens, authenticationRequired });
-	server.register(agentTokenRoutes, {
-		tokens: agentTokens,
-		authenticationRequired,
-	});
+	server.register(apiTokenRoutes, { tokens });
+	server.register(agentTokenRoutes, { tokens: agentTokens });
 	server.register(modelsRoutes, { registry, catalog: modelCatalog, settings });
 	server.register(failoverRoutes, { failover, registry, routing });
 	server.register(routingRoutes, { routing });

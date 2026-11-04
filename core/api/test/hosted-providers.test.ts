@@ -3,6 +3,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { configFromEnv } from "../src/config.js";
 import { registryFromConfig } from "../src/providers/registry.js";
 import { createServer } from "../src/server.js";
+import { withSession } from "./auth-helpers.js";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -78,7 +79,9 @@ it("sends Cloudflare requests to the account-scoped endpoint with native model I
 });
 
 it("validates Cloudflare account setup and allows later additions to reuse account and token", async () => {
-	const server = createServer({ config: configFromEnv({}), logger: false });
+	const server = await withSession(
+		createServer({ config: configFromEnv({}), logger: false }),
+	);
 	try {
 		for (const accountId of [undefined, "../bad", "short"]) {
 			expect(

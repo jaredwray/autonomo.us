@@ -2,14 +2,17 @@ import type { AddModelRequest } from "@autonomo.us/common";
 import { afterEach, expect, it, vi } from "vitest";
 import { configFromEnv } from "../src/config.js";
 import { createServer } from "../src/server.js";
+import { withSession } from "./auth-helpers.js";
 
 const servers: ReturnType<typeof createServer>[] = [];
 afterEach(async () => {
 	await Promise.all(servers.splice(0).map((server) => server.close()));
 	vi.unstubAllGlobals();
 });
-function gateway() {
-	const server = createServer({ config: configFromEnv({}), logger: false });
+async function gateway() {
+	const server = await withSession(
+		createServer({ config: configFromEnv({}), logger: false }),
+	);
 	servers.push(server);
 	return server;
 }
@@ -36,7 +39,7 @@ const response = {
 it("routes duplicate models through independent credentials and only rotates the selected connection", async () => {
 	const upstream = vi.fn<typeof fetch>(async () => Response.json(response));
 	vi.stubGlobal("fetch", upstream);
-	const server = gateway();
+	const server = await gateway();
 	for (const [connectionId, apiKey] of [
 		["xai", "default-key"],
 		["xai-work", "work-key"],
@@ -134,7 +137,7 @@ it("routes duplicate models through independent credentials and only rotates the
 });
 
 it("requires new credentials for each connection and rejects duplicate names, cross-provider collisions, and invalid IDs", async () => {
-	const server = gateway();
+	const server = await gateway();
 	await add(server, { provider: "xai", model: "test", apiKey: "default-key" });
 	expect(
 		(
@@ -193,7 +196,7 @@ it("requires new credentials for each connection and rejects duplicate names, cr
 });
 
 it("keeps Cloudflare account IDs and Jev capabilities scoped to their connection", async () => {
-	const server = gateway();
+	const server = await gateway();
 	for (const [connectionId, accountId] of [
 		["cloudflare", "a".repeat(32)],
 		["cf-work", "b".repeat(32)],

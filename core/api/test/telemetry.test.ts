@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createServer } from "../src/server.js";
 import { MongoTelemetrySink } from "../src/telemetry/mongo.js";
 import { TelemetryService } from "../src/telemetry/telemetry.js";
+import { withSession } from "./auth-helpers.js";
 
 // In-memory aggregation and route behavior without a sink. Sink behavior
 // against a real MongoDB server lives in telemetry.integration.test.ts.
@@ -114,7 +115,9 @@ describe("TelemetryService", () => {
 describe("telemetry routes (no sink)", () => {
 	it("serves the memory summary and recent events", async () => {
 		const telemetry = new TelemetryService();
-		const server = createServer({ telemetry, logger: false });
+		const server = await withSession(
+			createServer({ telemetry, logger: false }),
+		);
 
 		telemetry.recordChat({
 			model: "stub/chat-model",

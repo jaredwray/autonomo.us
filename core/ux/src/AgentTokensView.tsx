@@ -21,7 +21,7 @@ const config: TokenViewConfig<AgentTokenPermission> = {
 	connectionNote:
 		"Prepare credentials for the upcoming MCP connection. The MCP server is not available yet.",
 	permissionHint:
-		"MCP Read is for discovering tools and reading resources and prompts. MCP Call is for running tools. Select both when an agent needs both. These grants are reserved for the upcoming MCP server and do not grant API access. Managing tokens requires the owner credential.",
+		"MCP Read is for discovering tools and reading resources and prompts. MCP Call is for running tools. Select both when an agent needs both. These grants are reserved for the upcoming MCP server and do not grant API access. Any signed-in team member can manage agent tokens.",
 	permissions: AGENT_TOKEN_PERMISSIONS,
 	permissionGroups: [
 		{ resource: "mcp", label: "MCP", choices: ["mcp:read", "mcp:call"] },

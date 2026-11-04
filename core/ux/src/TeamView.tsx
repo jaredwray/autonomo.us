@@ -413,8 +413,7 @@ export function TeamView() {
 		};
 	}, [refresh]);
 	const me = data?.members.find((member) => member.id === data.currentUserId);
-	// The owner credential (no current user) acts as an owner.
-	const isOwner = data?.currentUserId === null || me?.role === "owner";
+	const isOwner = me?.role === "owner";
 	const canEdit = (member: TeamMember) =>
 		Boolean(data?.canManage) && (isOwner || member.role !== "owner");
 	const open = (next: Panel) => {

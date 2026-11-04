@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { configFromEnv } from "../src/config.js";
 import { createServer } from "../src/server.js";
 import { TelemetryService } from "../src/telemetry/telemetry.js";
+import { withSession } from "./auth-helpers.js";
 
 const payload: DecisionRequest = {
 	model: "typesafe/jev-latest",
@@ -42,11 +43,13 @@ afterEach(async () => {
 });
 async function gateway(apiKey = "test-secret") {
 	const telemetry = new TelemetryService();
-	const server = createServer({
-		config: configFromEnv({}),
-		telemetry,
-		logger: false,
-	});
+	const server = await withSession(
+		createServer({
+			config: configFromEnv({}),
+			telemetry,
+			logger: false,
+		}),
+	);
 	servers.push(server);
 	expect(
 		(

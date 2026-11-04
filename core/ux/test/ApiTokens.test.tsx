@@ -11,7 +11,7 @@ import { StrictMode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { App } from "../src/App.js";
 import { clearCredential } from "../src/api.js";
-import { setUpOwner } from "./session.js";
+import { PASSWORD, setUpOwner } from "./session.js";
 
 const closers: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -23,16 +23,15 @@ afterEach(async () => {
 	window.localStorage.clear();
 	window.sessionStorage.clear();
 });
-async function start(ownerToken?: string) {
+async function start({ signIn = true } = {}) {
 	const server = createServer({
-		config: { providers: [], corsOrigins: ["*"], ownerToken },
+		config: { providers: [], corsOrigins: ["*"] },
 		logger: false,
 	});
 	const url = await server.listen({ host: "127.0.0.1", port: 0 });
 	closers.push(() => server.close());
 	vi.stubEnv("VITE_API_URL", url);
-	// With an owner credential, tests sign in with it instead of the owner account.
-	await setUpOwner(url, { ownerToken, signIn: !ownerToken });
+	await setUpOwner(url, { signIn });
 	window.history.replaceState(null, "", "#/api-tokens");
 	render(
 		<StrictMode>
@@ -171,36 +170,29 @@ it("creates, edits, rolls with custom overlap, and revokes a token with a bottom
 	expect(screen.queryByLabelText("New API token")).toBeNull();
 });
 
-it("connects with the owner credential, rejects an invalid credential, and clears access when locked", async () => {
-	await start("owner-test-secret");
-	fireEvent.click(
-		await screen.findByRole("button", {
-			name: "Use the owner credential instead",
-		}),
-	);
-	await screen.findByLabelText("Owner credential");
-	change("Owner credential", "bad-credential");
-	fireEvent.click(screen.getByRole("button", { name: "Connect", exact: true }));
+it("requires sign-in, keeps passwords out of storage, and clears access on sign out", async () => {
+	await start({ signIn: false });
+	await screen.findByRole("heading", { name: "Sign in" });
+	change("Email", "founder@example.com");
+	change("Password", "not the password");
+	fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
 	expect((await screen.findByRole("alert")).textContent).toBe(
-		"Enter a valid owner credential.",
+		"Incorrect email or password.",
 	);
-	change("Owner credential", "owner-test-secret");
-	fireEvent.click(screen.getByRole("button", { name: "Connect", exact: true }));
+	change("Password", PASSWORD);
+	fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
 	await screen.findByText(/No API tokens yet/);
 	expect(screen.queryByText(/Authentication is disabled/)).toBeNull();
-	expect(JSON.stringify(window.localStorage)).not.toContain(
-		"owner-test-secret",
-	);
-	expect(JSON.stringify(window.sessionStorage)).not.toContain(
-		"owner-test-secret",
-	);
+	for (const storage of [window.localStorage, window.sessionStorage])
+		expect(JSON.stringify(storage)).not.toContain(PASSWORD);
 	fireEvent.click(screen.getByRole("link", { name: "Routing", exact: true }));
 	await screen.findByLabelText("Enable Auto routing");
-	fireEvent.click(screen.getByRole("button", { name: "Lock dashboard" }));
-	await screen.findByLabelText("Owner credential");
-	expect(
-		(screen.getByLabelText("Owner credential") as HTMLInputElement).value,
-	).toBe("");
+	fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+	await screen.findByRole("heading", { name: "Sign in" });
+	expect((screen.getByLabelText("Password") as HTMLInputElement).value).toBe(
+		"",
+	);
+	expect(window.localStorage.getItem("autonomous.session")).toBeNull();
 });
 
 it("saves and edits resource permissions and enforces them on the issued credential", async () => {

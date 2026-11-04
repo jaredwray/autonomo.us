@@ -24,18 +24,15 @@ afterEach(async () => {
 	window.sessionStorage.clear();
 });
 let owner: Record<string, string> = {};
-async function start(ownerToken?: string) {
+async function start() {
 	const server = createServer({
-		config: { providers: [], corsOrigins: ["*"], ownerToken },
+		config: { providers: [], corsOrigins: ["*"] },
 		logger: false,
 	});
 	const url = await server.listen({ host: "127.0.0.1", port: 0 });
 	closers.push(() => server.close());
 	vi.stubEnv("VITE_API_URL", url);
-	// With an owner credential, tests sign in with it instead of the owner account.
-	owner = {
-		authorization: `Bearer ${await setUpOwner(url, { ownerToken, signIn: !ownerToken })}`,
-	};
+	owner = { authorization: `Bearer ${await setUpOwner(url)}` };
 	window.history.replaceState(null, "", "#/agent-tokens");
 	render(
 		<StrictMode>
@@ -169,16 +166,8 @@ it("clears an unsaved agent secret when navigating to API Tokens", async () => {
 	expect(screen.queryByLabelText("New agent token")).toBeNull();
 });
 
-it("requires owner sign-in and clears agent secrets when the dashboard locks", async () => {
-	await start("owner-for-agents");
-	fireEvent.click(
-		await screen.findByRole("button", {
-			name: "Use the owner credential instead",
-		}),
-	);
-	await screen.findByLabelText("Owner credential");
-	change("Owner credential", "owner-for-agents");
-	fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+it("clears agent secrets when the member signs out", async () => {
+	await start();
 	await screen.findByText(/No agent tokens yet/);
 	fireEvent.click(screen.getByRole("button", { name: "Create token" }));
 	change("Name", "Owner agent");
@@ -186,8 +175,8 @@ it("requires owner sign-in and clears agent secrets when the dashboard locks", a
 	const secret = (
 		(await screen.findByLabelText("New agent token")) as HTMLTextAreaElement
 	).value;
-	fireEvent.click(screen.getByRole("button", { name: "Lock dashboard" }));
-	await screen.findByLabelText("Owner credential");
+	fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+	await screen.findByRole("heading", { name: "Sign in" });
 	expect(screen.queryByLabelText("New agent token")).toBeNull();
 	expect(document.body.textContent).not.toContain(secret);
 });

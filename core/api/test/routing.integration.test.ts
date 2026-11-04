@@ -4,6 +4,7 @@ import { MongoClient } from "mongodb";
 import { afterAll, describe, expect, it } from "vitest";
 import type { ApiConfig } from "../src/config.js";
 import { createServer } from "../src/server.js";
+import { withSession } from "./auth-helpers.js";
 
 const url = new URL(
 	process.env.MONGODB_URI ??
@@ -73,7 +74,7 @@ const policy: RoutingConfig = {
 
 describe.skipIf(!available)("durable routing", () => {
 	it("restores Auto, pools, rules, and serialized legacy edits after restart", async () => {
-		let server = createServer({ config, logger: false });
+		let server = await withSession(createServer({ config, logger: false }));
 		try {
 			expect(
 				(
@@ -91,7 +92,7 @@ describe.skipIf(!available)("durable routing", () => {
 			);
 			for (const edit of edits) expect(edit.statusCode).toBe(200);
 			await server.close();
-			server = createServer({ config, logger: false });
+			server = await withSession(createServer({ config, logger: false }));
 			expect((await server.inject("/v1/routing")).json()).toEqual({
 				persistence: "mongodb",
 				config: {
@@ -105,7 +106,7 @@ describe.skipIf(!available)("durable routing", () => {
 		}
 	});
 	it("does not activate edits rejected by durable storage", async () => {
-		const server = createServer({ config, logger: false });
+		const server = await withSession(createServer({ config, logger: false }));
 		try {
 			const before = (await server.inject("/v1/routing")).json();
 			await client.db().command({

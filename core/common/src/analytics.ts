@@ -2,6 +2,7 @@
 export type TelemetryCaller = {
 	id: string;
 	name: string;
+	/** `owner` appears only in history from before team accounts. */
 	kind: "api-token" | "owner" | "user" | "agent" | "unattributed";
 };
 

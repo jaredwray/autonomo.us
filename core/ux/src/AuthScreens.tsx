@@ -14,7 +14,7 @@ import {
 	previewInvite,
 	signIn,
 } from "./api.js";
-import { OwnerCredentialForm } from "./OwnerAccess.js";
+import { SetupTokenForm } from "./SetupToken.js";
 
 const logoMark = new URL("./assets/logo-mark.svg", import.meta.url).href;
 const message = (cause: unknown, fallback: string) =>
@@ -214,9 +214,9 @@ export function SetupView({
 	status: AuthStatus;
 	onComplete(session: AuthSession): void;
 }) {
-	const [step, setStep] = useState<"owner" | "account">(() =>
-		status.ownerCredentialConfigured && credentialKind() !== "owner"
-			? "owner"
+	const [step, setStep] = useState<"token" | "account">(() =>
+		status.setupTokenRequired && credentialKind() !== "setup"
+			? "token"
 			: "account",
 	);
 	const heading = useRef<HTMLHeadingElement>(null);
@@ -226,27 +226,24 @@ export function SetupView({
 	}, [step]);
 	return (
 		<AuthLayout labelledBy="setup-heading">
-			{status.ownerCredentialConfigured && (
-				<p className="auth-step">Step {step === "owner" ? 1 : 2} of 2</p>
+			{status.setupTokenRequired && (
+				<p className="auth-step">Step {step === "token" ? 1 : 2} of 2</p>
 			)}
 			<h1 id="setup-heading" tabIndex={-1} ref={heading}>
-				{step === "owner" ? "Welcome to autonomo.us" : "Create your account"}
+				{step === "token" ? "Welcome to autonomo.us" : "Create your account"}
 			</h1>
-			{step === "owner" ? (
+			{step === "token" ? (
 				<>
 					<p className="auth-intro">
-						This gateway hasn't been set up yet. Enter its owner credential to
+						This gateway hasn't been set up yet. Enter its setup token to
 						continue.
 					</p>
-					<OwnerCredentialForm
-						submitLabel="Continue"
-						onConnected={() => setStep("account")}
-					/>
+					<SetupTokenForm onVerified={() => setStep("account")} />
 				</>
 			) : (
 				<>
 					<p className="auth-intro">
-						{status.ownerCredentialConfigured
+						{status.setupTokenRequired
 							? "Create the first owner account for this gateway."
 							: "Welcome! This gateway hasn't been set up yet. Create the first owner account."}{" "}
 						Once you're in, invite your team from the Team page.
@@ -268,18 +265,11 @@ export function SetupView({
 
 export function SignInView({
 	status,
-	initialMode,
 	onSignedIn,
 }: {
 	status: AuthStatus;
-	initialMode: "password" | "owner";
 	onSignedIn(): void;
 }) {
-	const [mode, setMode] = useState<"password" | "owner">(
-		initialMode === "owner" && status.ownerCredentialConfigured
-			? "owner"
-			: "password",
-	);
 	const [email, setEmail] = useState("");
 	const [password, setPassword] = useState("");
 	const [busy, setBusy] = useState(false);
@@ -287,86 +277,66 @@ export function SignInView({
 	return (
 		<AuthLayout labelledBy="sign-in-heading">
 			<h1 id="sign-in-heading">Sign in</h1>
-			{mode === "password" ? (
-				<form
-					onSubmit={async (event) => {
-						event.preventDefault();
-						if (busy) return;
-						setBusy(true);
-						setError("");
-						try {
-							await signIn(email.trim(), password);
-							onSignedIn();
-						} catch (cause) {
-							setError(message(cause, "Could not sign in."));
-							setPassword("");
-							setBusy(false);
-						}
-					}}
-				>
-					<fieldset className="routing-fields" disabled={busy}>
-						<div className="form-field">
-							<label htmlFor="sign-in-email">Email</label>
-							<input
-								id="sign-in-email"
-								type="email"
-								autoComplete="username"
-								required
-								value={email}
-								onChange={(event) => setEmail(event.target.value)}
-							/>
-						</div>
-						<div className="form-field">
-							<label htmlFor="sign-in-password">Password</label>
-							<input
-								id="sign-in-password"
-								type="password"
-								autoComplete="current-password"
-								required
-								value={password}
-								onChange={(event) => setPassword(event.target.value)}
-							/>
-						</div>
-						{error && (
-							<p className="banner-error" role="alert">
-								{error}
-							</p>
-						)}
-						<div className="form-actions">
-							<button
-								className="button primary"
-								type="submit"
-								disabled={!email.trim() || !password}
-							>
-								{busy ? "Signing in…" : "Sign in"}
-							</button>
-						</div>
-					</fieldset>
-					<p className="card-note auth-note">
-						Forgot your password? Ask an owner or admin to reset it from the
-						Team page.
-					</p>
-				</form>
-			) : (
-				<>
-					<p className="auth-intro">
-						Use the gateway's owner credential for break-glass access.
-					</p>
-					<OwnerCredentialForm onConnected={onSignedIn} />
-				</>
-			)}
+			<form
+				onSubmit={async (event) => {
+					event.preventDefault();
+					if (busy) return;
+					setBusy(true);
+					setError("");
+					try {
+						await signIn(email.trim(), password);
+						onSignedIn();
+					} catch (cause) {
+						setError(message(cause, "Could not sign in."));
+						setPassword("");
+						setBusy(false);
+					}
+				}}
+			>
+				<fieldset className="routing-fields" disabled={busy}>
+					<div className="form-field">
+						<label htmlFor="sign-in-email">Email</label>
+						<input
+							id="sign-in-email"
+							type="email"
+							autoComplete="username"
+							required
+							value={email}
+							onChange={(event) => setEmail(event.target.value)}
+						/>
+					</div>
+					<div className="form-field">
+						<label htmlFor="sign-in-password">Password</label>
+						<input
+							id="sign-in-password"
+							type="password"
+							autoComplete="current-password"
+							required
+							value={password}
+							onChange={(event) => setPassword(event.target.value)}
+						/>
+					</div>
+					{error && (
+						<p className="banner-error" role="alert">
+							{error}
+						</p>
+					)}
+					<div className="form-actions">
+						<button
+							className="button primary"
+							type="submit"
+							disabled={!email.trim() || !password}
+						>
+							{busy ? "Signing in…" : "Sign in"}
+						</button>
+					</div>
+				</fieldset>
+				<p className="card-note auth-note">
+					Forgot your password? Ask an owner or admin to reset it from the Team
+					page.
+				</p>
+			</form>
 			<MemoryNote status={status} />
-			{status.ownerCredentialConfigured && (
-				<button
-					className="button link-button auth-switch"
-					type="button"
-					onClick={() => setMode(mode === "owner" ? "password" : "owner")}
-				>
-					{mode === "owner"
-						? "Sign in with email instead"
-						: "Use the owner credential instead"}
-				</button>
-			)}
 		</AuthLayout>
 	);
 }

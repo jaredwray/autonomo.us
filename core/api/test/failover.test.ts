@@ -14,6 +14,7 @@ import {
 } from "../src/failover.js";
 import { createServer } from "../src/server.js";
 import { TelemetryService } from "../src/telemetry/telemetry.js";
+import { withSession } from "./auth-helpers.js";
 import { type StubProvider, startStubProvider } from "./helpers.js";
 
 describe("FailoverPolicyStore", () => {
@@ -77,13 +78,15 @@ describe("failover policy API", () => {
 		await provider.close();
 	});
 
-	beforeEach(() => {
-		server = createServer({
-			config: configFromEnv({}),
-			registry: provider.registry,
-			telemetry: new TelemetryService(),
-			logger: false,
-		});
+	beforeEach(async () => {
+		server = await withSession(
+			createServer({
+				config: configFromEnv({}),
+				registry: provider.registry,
+				telemetry: new TelemetryService(),
+				logger: false,
+			}),
+		);
 	});
 
 	afterEach(async () => {
@@ -207,19 +210,21 @@ describe("POST /v1/chat failover", () => {
 		await server.close();
 	});
 
-	function startServer(failover?: FailoverPolicyStore) {
-		server = createServer({
-			config: configFromEnv({}),
-			registry: provider.registry,
-			telemetry,
-			failover,
-			logger: false,
-		});
+	async function startServer(failover?: FailoverPolicyStore) {
+		server = await withSession(
+			createServer({
+				config: configFromEnv({}),
+				registry: provider.registry,
+				telemetry,
+				failover,
+				logger: false,
+			}),
+		);
 		return server;
 	}
 
 	it("fails over to the next target when the provider errors", async () => {
-		startServer();
+		await startServer();
 		// Configure the policy through the public API, as the dashboard does.
 		await server.inject({
 			method: "PUT",
@@ -259,7 +264,7 @@ describe("POST /v1/chat failover", () => {
 	});
 
 	it("fails over when an attempt exceeds the policy timeout", async () => {
-		startServer(
+		await startServer(
 			new FailoverPolicyStore({
 				enabled: true,
 				targets: ["stub/chat-model"],
@@ -288,7 +293,7 @@ describe("POST /v1/chat failover", () => {
 	it("leaves the timeout unarmed when there is no fallback to try", async () => {
 		// Enabled but with no usable target: aborting a slow-but-successful
 		// request would buy nothing, so the attempt must be allowed to finish.
-		startServer(
+		await startServer(
 			new FailoverPolicyStore({ enabled: true, targets: [], timeoutMs: 100 }),
 		);
 
@@ -309,7 +314,7 @@ describe("POST /v1/chat failover", () => {
 	});
 
 	it("returns 502 with every attempt when all candidates fail", async () => {
-		startServer(
+		await startServer(
 			new FailoverPolicyStore({
 				enabled: true,
 				targets: ["stub/broken-too"],
@@ -336,7 +341,7 @@ describe("POST /v1/chat failover", () => {
 	});
 
 	it("does not retry when the policy is disabled", async () => {
-		startServer(
+		await startServer(
 			new FailoverPolicyStore({
 				enabled: false,
 				targets: ["stub/chat-model"],
@@ -361,7 +366,7 @@ describe("POST /v1/chat failover", () => {
 	it("skips stale targets and never retries the requested model", async () => {
 		// Constructed directly (as from env config): targets are not validated
 		// against the registry, so `ghost/model` simulates a removed provider.
-		startServer(
+		await startServer(
 			new FailoverPolicyStore({
 				enabled: true,
 				targets: ["ghost/model", "stub/broken-model", "stub/chat-model"],
@@ -407,14 +412,16 @@ describe("POST /v1/chat failover (stream)", () => {
 		await server.close();
 	});
 
-	function startServer(failover: FailoverPolicyStore) {
-		server = createServer({
-			config: configFromEnv({}),
-			registry: provider.registry,
-			telemetry,
-			failover,
-			logger: false,
-		});
+	async function startServer(failover: FailoverPolicyStore) {
+		server = await withSession(
+			createServer({
+				config: configFromEnv({}),
+				registry: provider.registry,
+				telemetry,
+				failover,
+				logger: false,
+			}),
+		);
 		return server;
 	}
 
@@ -432,7 +439,7 @@ describe("POST /v1/chat failover (stream)", () => {
 	}
 
 	it("streams from the fallback when the requested model fails to start", async () => {
-		startServer(
+		await startServer(
 			new FailoverPolicyStore({ enabled: true, targets: ["stub/chat-model"] }),
 		);
 
@@ -473,7 +480,7 @@ describe("POST /v1/chat failover (stream)", () => {
 	});
 
 	it("fails over when the stream does not start within the timeout", async () => {
-		startServer(
+		await startServer(
 			new FailoverPolicyStore({
 				enabled: true,
 				targets: ["stub/chat-model"],
@@ -500,7 +507,7 @@ describe("POST /v1/chat failover (stream)", () => {
 	});
 
 	it("does not fail over once output has been streamed", async () => {
-		startServer(
+		await startServer(
 			new FailoverPolicyStore({ enabled: true, targets: ["stub/chat-model"] }),
 		);
 

@@ -7,7 +7,7 @@ import {
 	type UpdateTeamMemberRequest,
 } from "@autonomo.us/common";
 import type { FastifyInstance } from "fastify";
-import { teamActor } from "../auth/access.js";
+import { signedInMember } from "../auth/access.js";
 import type { AccountStore } from "../auth/accounts.js";
 import { emailSchema, nameSchema, passwordSchema } from "./auth.js";
 
@@ -31,7 +31,7 @@ export async function teamRoutes(
 	server.addHook("onRequest", async (_request, reply) => {
 		reply.header("cache-control", "no-store");
 	});
-	server.get("/v1/team", (request) => accounts.team(teamActor(request)));
+	server.get("/v1/team", (request) => accounts.team(signedInMember(request)));
 	server.post<{ Body: AddTeamMemberRequest }>(
 		"/v1/team",
 		{
@@ -47,7 +47,7 @@ export async function teamRoutes(
 		async (request, reply) =>
 			reply
 				.code(201)
-				.send(await accounts.addMember(request.body, teamActor(request))),
+				.send(await accounts.addMember(request.body, signedInMember(request))),
 	);
 	server.patch<{ Params: { id: string }; Body: UpdateTeamMemberRequest }>(
 		"/v1/team/:id",
@@ -56,7 +56,7 @@ export async function teamRoutes(
 			accounts.updateMember(
 				request.params.id,
 				request.body,
-				teamActor(request),
+				signedInMember(request),
 			),
 	);
 	server.put<{ Params: { id: string }; Body: ResetPasswordRequest }>(
@@ -66,13 +66,14 @@ export async function teamRoutes(
 			accounts.resetPassword(
 				request.params.id,
 				request.body.password,
-				teamActor(request),
+				signedInMember(request),
 			),
 	);
 	server.delete<{ Params: { id: string } }>(
 		"/v1/team/:id",
 		{ schema: { params } },
-		(request) => accounts.removeMember(request.params.id, teamActor(request)),
+		(request) =>
+			accounts.removeMember(request.params.id, signedInMember(request)),
 	);
 	server.post<{ Body: CreateTeamInviteRequest }>(
 		"/v1/team/invites",
@@ -84,11 +85,14 @@ export async function teamRoutes(
 		async (request, reply) =>
 			reply
 				.code(201)
-				.send(await accounts.createInvite(request.body, teamActor(request))),
+				.send(
+					await accounts.createInvite(request.body, signedInMember(request)),
+				),
 	);
 	server.delete<{ Params: { id: string } }>(
 		"/v1/team/invites/:id",
 		{ schema: { params } },
-		(request) => accounts.revokeInvite(request.params.id, teamActor(request)),
+		(request) =>
+			accounts.revokeInvite(request.params.id, signedInMember(request)),
 	);
 }

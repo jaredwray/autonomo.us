@@ -1,3 +1,4 @@
+import type { TeamMember } from "@autonomo.us/common";
 import { MongoClient } from "mongodb";
 import { afterAll, describe, expect, it } from "vitest";
 import { AccountStore } from "../src/auth/accounts.js";
@@ -141,7 +142,48 @@ describe.skipIf(!available)("durable team accounts", () => {
 				(results.find((r) => r.status === "rejected") as PromiseRejectedResult)
 					.reason.statusCode,
 			).toBe(409);
-			expect((await stores[1].team({ kind: "owner" })).members).toHaveLength(1);
+			const winner = results.find((r) => r.status === "fulfilled");
+			expect(
+				(
+					await stores[1].team(
+						(winner as PromiseFulfilledResult<{ user: TeamMember }>).value.user,
+					)
+				).members,
+			).toHaveLength(1);
+		} finally {
+			for (const store of stores) await store.close();
+		}
+	});
+
+	it("keeps an owner when two owners remove each other concurrently", async () => {
+		const url = database();
+		const stores = [
+			new AccountStore({ mongodbUrl: url }),
+			new AccountStore({ mongodbUrl: url }),
+		];
+		try {
+			const { user: first } = await stores[0].completeSetup({
+				email: "first@example.com",
+				name: "First",
+				password: PASSWORD,
+			});
+			const second = await stores[0].addMember(
+				{
+					email: "second@example.com",
+					name: "Second",
+					role: "owner",
+					password: PASSWORD,
+				},
+				first,
+			);
+			const results = await Promise.allSettled([
+				stores[0].removeMember(second.id, first),
+				stores[1].removeMember(first.id, second),
+			]);
+			expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+			const survivor = results[0].status === "fulfilled" ? first : second;
+			const team = await stores[1].team(survivor);
+			expect(team.members.map((member) => member.role)).toEqual(["owner"]);
 		} finally {
 			for (const store of stores) await store.close();
 		}
@@ -187,13 +229,18 @@ describe.skipIf(!available)("durable team accounts", () => {
 		}
 	});
 
-	it("reports MongoDB outages as unavailable instead of opening the gateway", async () => {
+	it("reports MongoDB outages as unavailable and never opens the gateway", async () => {
 		const url = new URL(uniqueMongoUrl("accounts_down"));
 		url.host = "127.0.0.1:9";
 		const server = authServer({ mongodbUrl: url.toString() });
 		try {
 			expect((await server.inject("/v1/auth/status")).statusCode).toBe(503);
-			const models = await server.inject("/v1/models");
+			expect((await server.inject("/v1/models")).statusCode).toBe(401);
+			const session = `ses_${"0".repeat(8)}-0000-4000-8000-${"0".repeat(12)}_${"A".repeat(43)}`;
+			const models = await server.inject({
+				url: "/v1/models",
+				headers: bearer(session),
+			});
 			expect(models.statusCode).toBe(503);
 			expect(models.json().message).toMatch(/Team accounts are unavailable/);
 		} finally {

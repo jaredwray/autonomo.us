@@ -50,9 +50,6 @@ type Gate =
 
 export function App() {
 	const [gate, setGate] = useState<Gate>({ state: "loading" });
-	const [signInMode, setSignInMode] = useState<"password" | "owner">(
-		"password",
-	);
 	const [invite, setInvite] = useState(inviteToken);
 	const sequence = useRef(0);
 	const load = useCallback(async () => {
@@ -81,6 +78,8 @@ export function App() {
 			settle({ state: "setup", status });
 			return;
 		}
+		// The setup token has no use once setup is complete.
+		if (credentialKind() === "setup") clearCredential();
 		if (!credentialKind()) {
 			settle({ state: "sign-in", status });
 			return;
@@ -168,11 +167,7 @@ export function App() {
 					setGate({
 						state: "ready",
 						status: { ...gate.status, setupComplete: true },
-						session: {
-							kind: "user",
-							user: session.user,
-							expiresAt: session.expiresAt,
-						},
+						session: { user: session.user, expiresAt: session.expiresAt },
 					});
 				}}
 			/>
@@ -193,16 +188,9 @@ export function App() {
 			/>
 		);
 	if (gate.state === "sign-in")
-		return (
-			<SignInView
-				status={gate.status}
-				initialMode={signInMode}
-				onSignedIn={() => void load()}
-			/>
-		);
+		return <SignInView status={gate.status} onSignedIn={() => void load()} />;
 
-	const { session } = gate;
-	const user = session.user;
+	const { user } = gate.session;
 	return (
 		<div className={`app-shell ${collapsed ? "sidebar-collapsed" : ""}`}>
 			<button
@@ -243,35 +231,28 @@ export function App() {
 				<div className="sidebar-account">
 					<div
 						className="sidebar-user"
-						title={collapsed ? (user?.email ?? "Owner credential") : undefined}
+						title={collapsed ? user.email : undefined}
 					>
 						<span className="sidebar-avatar" aria-hidden="true">
-							{(user?.name || user?.email || "O").slice(0, 1).toUpperCase()}
+							{(user.name || user.email).slice(0, 1).toUpperCase()}
 						</span>
 						<span className="sidebar-label sidebar-user-text">
-							<strong>
-								{user ? user.name || user.email : "Owner credential"}
-							</strong>
-							<small>{user ? user.email : "Break-glass access"}</small>
+							<strong>{user.name || user.email}</strong>
+							<small>{user.email}</small>
 						</span>
 					</div>
 					<button
 						className="button sidebar-lock"
 						type="button"
-						aria-label={user ? "Sign out" : "Lock dashboard"}
-						title={
-							collapsed ? (user ? "Sign out" : "Lock dashboard") : undefined
-						}
+						aria-label="Sign out"
+						title={collapsed ? "Sign out" : undefined}
 						onClick={async () => {
-							setSignInMode(user ? "password" : "owner");
 							await signOut();
 							void load();
 						}}
 					>
-						<Icon name={user ? "logout" : "lock"} />
-						<span className="sidebar-label">
-							{user ? "Sign out" : "Lock dashboard"}
-						</span>
+						<Icon name="logout" />
+						<span className="sidebar-label">Sign out</span>
 					</button>
 				</div>
 				<button

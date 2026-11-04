@@ -72,10 +72,16 @@ A new gateway opens the dashboard on first-run setup. Whether setup has run is
 stored in MongoDB (`gateway_setup` in the database named by `MONGODB_URI`), so
 every API replica and dashboard tab agrees. Setup creates the first **Owner**
 account from a name, email, and password, signs it in, and opens **Team**.
-Until setup completes, the gateway keeps its existing trusted local mode. Once
-it completes, every `/v1/*` request needs a signed-in member, the owner
-credential, or an API token; `/health` stays public. If `OWNER_TOKEN` is set,
-setup asks for it first, so nobody else can claim a deployed gateway before you.
+
+There is no unauthenticated mode. Before and after setup, every `/v1/*` request
+needs a signed-in team member or an API token. Only `/health`, CORS preflight,
+`GET /v1/auth/status`, sign-in, invite redemption, and setup itself answer
+without one. Set `SETUP_TOKEN` on the API to protect the first run: while setup
+is pending, the dashboard asks for it before creating the owner account, so
+nobody else can claim a deployed gateway. The setup token unlocks setup and
+nothing else. It is not a login, and after setup it grants nothing. Without
+`SETUP_TOKEN`, whoever reaches a fresh gateway first can complete setup; that's
+fine locally but not for a public deployment.
 
 Accounts sign in with email and password. The email is only a sign-in
 identifier: the gateway never sends email. Passwords are 12–128 characters and
@@ -109,14 +115,14 @@ Open **Team** to manage access:
 | Admin | Everything except owner accounts and owner invites. |
 | Member | Every dashboard page; read-only Team. |
 
-There is always at least one owner, and nobody can remove themselves. A
-forgotten password is reset by an owner or admin. The `OWNER_TOKEN` credential
-remains break-glass access: on the sign-in page choose **Use the owner
-credential instead**. It acts as an owner and is held only in tab memory.
-Without MongoDB, accounts and invites last until the API restarts and setup
-runs again. If a configured MongoDB is unreachable, requests without a
-credential fail with HTTP 503 instead of opening the gateway. The owner
-credential keeps working because it doesn't need the database.
+There is always at least one owner, and nobody can remove themselves. Changes
+that remove an owner take a short lock on the setup record, so two owners
+demoting or removing each other at once cannot leave the team without one. A
+forgotten password is reset by an owner or admin. If every owner is locked out,
+fix the account in the `gateway_users` collection. Without MongoDB, accounts
+and invites last until the API restarts and setup runs again. If a configured
+MongoDB is unreachable, sign-in and sessions fail with HTTP 503, and requests
+without credentials still get 401.
 
 ## Gateway
 
@@ -179,17 +185,16 @@ through environment variables:
 
 - `GET /health` and `GET /healthz` — API liveness (`status`, `timestamp`) plus `mongodb`, containing `configured`, `connected`, and `initialized`. The last field confirms saved settings loaded and the default routing document exists. A configured database is probed with a bounded timeout; an unavailable database reports `connected: false` while liveness remains HTTP 200. Set `MONGODB_URI` to enable the check.
 
-- `GET /v1/auth/status` — public: `{ setupComplete, ownerCredentialConfigured, persistence }`. The dashboard reads it to choose setup or sign-in.
-- `POST /v1/setup` — first-run only: `{ email, name, password }` creates the first owner and returns `{ token, expiresAt, user }`. Requires the owner credential when `OWNER_TOKEN` is set; returns 409 once setup is complete.
+- `GET /v1/auth/status` — public: `{ setupComplete, setupTokenRequired, persistence }`. The dashboard reads it to choose setup or sign-in.
+- `POST /v1/setup` — first-run only: `{ email, name, password }` creates the first owner and returns `{ token, expiresAt, user }`. Requires `Authorization: Bearer <SETUP_TOKEN>` when it is set; returns 409 once setup is complete. `GET /v1/setup/token` checks a setup token (204) before the form is shown.
 - `POST /v1/auth/session` — public sign-in with `{ email, password }`; returns `{ token, expiresAt, user }`. Send `Authorization: Bearer <token>` on later requests. `GET` returns the current identity; `DELETE` signs out that session.
 - `PUT /v1/auth/password` — signed-in member: `{ currentPassword, newPassword }`.
 - `POST /v1/invites/preview` and `POST /v1/invites/accept` — public: `{ token }` shows an invite's role and inviter; `{ token, email, name, password }` redeems it once and returns a session.
-- `GET /v1/team` — members, the latest 50 invites, and whether the caller can manage the team. Signed-in members and the owner credential only; API tokens get 403.
+- `GET /v1/team` — members, the latest 50 invites, and whether the caller can manage the team. Signed-in members only; API tokens get 403.
 - `POST /v1/team` — owners/admins: add `{ email, name, role, password }`. `PATCH /v1/team/:id` updates `{ name, role }`; `PUT /v1/team/:id/password` sets `{ password }` and signs that member out; `DELETE /v1/team/:id` removes them.
 - `POST /v1/team/invites` — owners/admins: `{ role, ttlDays }` with TTL `1`, `7`, or `30`; returns `{ invite, token }` once. `DELETE /v1/team/invites/:id` revokes a pending link.
 
 - `GET /v1/api-tokens` — token metadata, latest 100 lifecycle actions, persistence and authentication mode; never returns secrets or hashes.
-- `GET /v1/auth/owner` — verify owner access without reading MongoDB; returns 204. Managed API tokens cannot use this endpoint.
 - `POST /v1/api-tokens` — create with `{ name, description, ttlDays, permissions? }`, where TTL is `1`, `7`, `30`, `180`, or `"never"`. Returns `{ token, secret }` once.
 - `PATCH /v1/api-tokens/:id` — update `{ name, description, permissions? }`. Omitted permissions stay unchanged; `[]` removes all grants.
 - `POST /v1/api-tokens/:id/roll` — issue a new secret with `{ ttlDays, previousTokenTtlSeconds }`. Overlap is 0–2592000 seconds (30 days), capped at the previous value's original expiry.
@@ -234,16 +239,10 @@ Creation and rolling show the secret once; copy it before leaving the page.
 The server stores only its SHA-256 digest. MongoDB persists tokens and their
 actions in `gateway_api_tokens`; without MongoDB they last until API restart.
 
-After first-run setup, managing tokens requires a signed-in team member or
-the owner credential; the action log records which member acted. Set
-`OWNER_TOKEN` on the API (also passed through Docker Compose) to require
-`Authorization: Bearer <token>` on every `/v1/*` request even before setup.
-The owner credential is held only in tab memory; reloading or selecting
-**Lock dashboard** clears it. Generated tokens receive the permissions chosen
-in Create/Edit token. `/health` stays public. Before setup and without
-`OWNER_TOKEN`, the gateway is in unauthenticated local mode, where tokens don't
-protect it from requests without credentials. The token page shows this mode
-explicitly.
+Managing tokens requires a signed-in team member; the action log records which
+member acted. Generated tokens receive the permissions chosen in Create/Edit
+token. `/health` stays public. Entries from before team accounts may still show
+the retired owner credential or local admin as their actor.
 
 Permissions apply across the gateway for this initial version:
 
@@ -294,8 +293,7 @@ Agent secrets use the `agt_` prefix and store only SHA-256 digests in the separa
 restart. API and agent token lists, histories, permission sets, and authentication
 are isolated: an agent credential cannot authenticate a `/v1/*` request, and an
 API credential cannot authenticate through `AgentTokenStore`. Management requires
-the owner credential when `OWNER_TOKEN` is configured; the existing trusted local
-mode remains available without it.
+a signed-in team member.
 
 New agent tokens start with no permissions, both in the dashboard and through the
 API. The reserved MCP grants are `mcp:read` (discover tools and read resources and
@@ -528,12 +526,12 @@ first API deploy, store the connection string as a Worker secret:
 pnpm exec wrangler secret put MONGODB_URI -c core/api/wrangler.jsonc
 ```
 
-Before anyone can reach a new deployment, also set an owner credential so only
-you can run first-run setup, then open <https://dev.autonomo.us> and create the
-owner account:
+Before anyone can reach a new deployment, also set a setup token so only you
+can run first-run setup. Then open <https://dev.autonomo.us>, enter the token,
+and create the owner account. The token grants nothing after setup.
 
 ```bash
-pnpm exec wrangler secret put OWNER_TOKEN -c core/api/wrangler.jsonc
+pnpm exec wrangler secret put SETUP_TOKEN -c core/api/wrangler.jsonc
 ```
 
 Include the application database name in the connection string. The MongoDB

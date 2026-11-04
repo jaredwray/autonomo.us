@@ -41,16 +41,17 @@ describe("passwords", () => {
 });
 
 describe("first-run setup", () => {
-	it("keeps local mode until setup, then requires sign-in for every gateway route", async () => {
+	it("requires sign-in for every gateway route before and after setup", async () => {
 		const server = start();
 		const status = await server.inject("/v1/auth/status");
 		expect(status.headers["cache-control"]).toBe("no-store");
 		expect(status.json()).toEqual({
 			setupComplete: false,
-			ownerCredentialConfigured: false,
+			setupTokenRequired: false,
 			persistence: "memory",
 		});
-		expect((await server.inject("/v1/models")).statusCode).toBe(200);
+		// There is no unauthenticated mode, even on a fresh gateway.
+		expect((await server.inject("/v1/models")).statusCode).toBe(401);
 
 		const done = await server.inject({
 			method: "POST",
@@ -97,7 +98,7 @@ describe("first-run setup", () => {
 					headers: bearer(session.token),
 				})
 			).json(),
-		).toMatchObject({ kind: "user", user: { role: "owner" } });
+		).toMatchObject({ user: { role: "owner" } });
 
 		// Setup runs once, with or without a session.
 		const payload = {
@@ -105,47 +106,87 @@ describe("first-run setup", () => {
 			name: "Mallory",
 			password: PASSWORD,
 		};
-		expect(
-			(await server.inject({ method: "POST", url: "/v1/setup", payload }))
-				.statusCode,
-		).toBe(401);
+		for (const headers of [{}, bearer(session.token)])
+			expect(
+				(
+					await server.inject({
+						method: "POST",
+						url: "/v1/setup",
+						headers,
+						payload,
+					})
+				).statusCode,
+			).toBe(409);
+	});
+
+	it("requires SETUP_TOKEN for setup and accepts it nowhere else", async () => {
+		const server = start({ setupToken: "setup-secret" });
+		expect((await server.inject("/v1/auth/status")).json()).toMatchObject({
+			setupComplete: false,
+			setupTokenRequired: true,
+		});
+		const payload = {
+			email: "mallory@example.com",
+			name: "Mallory",
+			password: PASSWORD,
+		};
+		for (const headers of [{}, bearer("wrong")]) {
+			expect(
+				(
+					await server.inject({
+						method: "POST",
+						url: "/v1/setup",
+						headers,
+						payload,
+					})
+				).statusCode,
+			).toBe(401);
+			expect(
+				(await server.inject({ url: "/v1/setup/token", headers })).statusCode,
+			).toBe(401);
+		}
 		expect(
 			(
 				await server.inject({
-					method: "POST",
-					url: "/v1/setup",
-					headers: bearer(session.token),
-					payload,
+					url: "/v1/setup/token",
+					headers: bearer("setup-secret"),
+				})
+			).statusCode,
+		).toBe(204);
+		// The setup token is not a login: it opens no other route.
+		for (const url of ["/v1/models", "/v1/team", "/v1/api-tokens"])
+			expect(
+				(await server.inject({ url, headers: bearer("setup-secret") }))
+					.statusCode,
+			).toBe(403);
+
+		const { token } = await completeSetup(server, {
+			headers: bearer("setup-secret"),
+		});
+		expect((await server.inject("/v1/auth/status")).json()).toMatchObject({
+			setupComplete: true,
+			setupTokenRequired: false,
+		});
+		expect(
+			(
+				await server.inject({
+					url: "/v1/setup/token",
+					headers: bearer("setup-secret"),
 				})
 			).statusCode,
 		).toBe(409);
-	});
-
-	it("requires the owner credential for setup when OWNER_TOKEN is configured", async () => {
-		const server = start({ ownerToken: "owner-secret" });
-		expect((await server.inject("/v1/auth/status")).json()).toMatchObject({
-			setupComplete: false,
-			ownerCredentialConfigured: true,
-		});
-		const anonymous = await server.inject({
-			method: "POST",
-			url: "/v1/setup",
-			payload: {
-				email: "mallory@example.com",
-				name: "Mallory",
-				password: PASSWORD,
-			},
-		});
-		expect(anonymous.statusCode).toBe(401);
-		const { token } = await completeSetup(server, {
-			headers: bearer("owner-secret"),
-		});
-		// The owner credential keeps working as break-glass access.
-		for (const credential of [token, "owner-secret"])
-			expect(
-				(await server.inject({ url: "/v1/team", headers: bearer(credential) }))
-					.statusCode,
-			).toBe(200);
+		expect(
+			(await server.inject({ url: "/v1/team", headers: bearer(token) }))
+				.statusCode,
+		).toBe(200);
+		expect(
+			(
+				await server.inject({
+					url: "/v1/team",
+					headers: bearer("setup-secret"),
+				})
+			).statusCode,
+		).toBe(403);
 	});
 
 	it("rejects malformed setup input and short passwords", async () => {
@@ -268,22 +309,6 @@ describe("email and password sign-in", () => {
 		).toBe(401);
 		await expect(signIn(server, "founder@example.com")).rejects.toThrow();
 		await signIn(server, "founder@example.com", "a brand new passphrase");
-		// The owner credential is not an account and has no password to change.
-		const ownerServer = start({ ownerToken: "owner-secret" });
-		await completeSetup(ownerServer, { headers: bearer("owner-secret") });
-		expect(
-			(
-				await ownerServer.inject({
-					method: "PUT",
-					url: "/v1/auth/password",
-					headers: bearer("owner-secret"),
-					payload: {
-						currentPassword: PASSWORD,
-						newPassword: "a brand new passphrase",
-					},
-				})
-			).statusCode,
-		).toBe(403);
 	});
 });
 
@@ -381,12 +406,11 @@ describe("invite links", () => {
 	it("rejects revoked, expired, and forged links", async () => {
 		let now = Date.parse("2026-11-04T12:00:00Z");
 		const store = new AccountStore({ now: () => now });
-		await store.completeSetup({
+		const { user: actor } = await store.completeSetup({
 			email: "ada@example.com",
 			name: "Ada",
 			password: PASSWORD,
 		});
-		const actor = { kind: "owner" } as const;
 		const revoked = await store.createInvite(
 			{ role: "member", ttlDays: 1 },
 			actor,
@@ -598,14 +622,14 @@ describe("team management", () => {
 		).toHaveLength(2);
 	});
 
-	it("blocks team changes before setup and from API tokens", async () => {
+	it("blocks team changes without a member session, including from API tokens", async () => {
 		const server = start();
 		const early = await server.inject({
 			method: "POST",
 			url: "/v1/team/invites",
 			payload: { role: "owner", ttlDays: 1 },
 		});
-		expect(early.statusCode).toBe(409);
+		expect(early.statusCode).toBe(401);
 		const owner = await completeSetup(server);
 		const created = await server.inject({
 			method: "POST",
@@ -642,6 +666,57 @@ describe("team management", () => {
 			actor: "user",
 			actorName: "Founder",
 		});
+	});
+
+	it("never lets concurrent changes remove the last owner", async () => {
+		const store = new AccountStore();
+		const { user: first } = await store.completeSetup({
+			email: "first@example.com",
+			name: "First",
+			password: PASSWORD,
+		});
+		const second = await store.addMember(
+			{
+				email: "second@example.com",
+				name: "Second",
+				role: "owner",
+				password: PASSWORD,
+			},
+			first,
+		);
+		const owners = async () =>
+			(await store.team(first)).members.filter(
+				(member) => member.role === "owner",
+			);
+		// Two owners demote each other at the same moment.
+		const demotions = await Promise.allSettled([
+			store.updateMember(second.id, { name: "Second", role: "admin" }, first),
+			store.updateMember(first.id, { name: "First", role: "admin" }, second),
+		]);
+		expect(demotions.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+		expect(
+			(demotions.find((r) => r.status === "rejected") as PromiseRejectedResult)
+				.reason.statusCode,
+		).toBe(409);
+		expect(await owners()).toHaveLength(1);
+
+		// And two owners remove each other.
+		const [remaining] = await owners();
+		const third = await store.addMember(
+			{
+				email: "third@example.com",
+				name: "Third",
+				role: "owner",
+				password: PASSWORD,
+			},
+			remaining,
+		);
+		const removals = await Promise.allSettled([
+			store.removeMember(third.id, remaining),
+			store.removeMember(remaining.id, third),
+		]);
+		expect(removals.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+		expect(await owners()).toHaveLength(1);
 	});
 
 	it("attributes gateway usage to the signed-in member", async () => {

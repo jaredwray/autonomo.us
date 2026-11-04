@@ -85,3 +85,40 @@ export async function joinWithInvite(
 		throw new Error(`Accept failed: ${accepted.body}`);
 	return accepted.json();
 }
+
+/**
+ * Completes first-run setup (or signs in as its owner, or reuses `token`)
+ * and makes every `inject`
+ * send that session unless the call sets its own authorization header.
+ * Pass `authorization: ""` to send a request without credentials.
+ */
+export async function withSession<T extends Server>(
+	server: T,
+	token?: string,
+): Promise<T & { session: string }> {
+	// Servers sharing a database reuse the owner account created by the first.
+	const setupComplete = (await server.inject("/v1/auth/status")).json()
+		.setupComplete as boolean;
+	const session =
+		token ??
+		(setupComplete
+			? (await signIn(server, "founder@example.com")).token
+			: (await completeSetup(server)).token);
+	const inject = server.inject.bind(server) as (
+		options: object,
+	) => ReturnType<Server["inject"]>;
+	Object.assign(server, {
+		session,
+		inject: (options: string | { headers?: Record<string, string> }) => {
+			const request = typeof options === "string" ? { url: options } : options;
+			const headers = {
+				authorization: `Bearer ${session}`,
+				...request.headers,
+			};
+			if (headers.authorization === "")
+				delete (headers as Partial<typeof headers>).authorization;
+			return inject({ ...request, headers });
+		},
+	});
+	return server as T & { session: string };
+}

@@ -1,8 +1,4 @@
-export {
-	AccountError,
-	AccountStore,
-	type TeamActor,
-} from "./auth/accounts.js";
+export { AccountError, AccountStore } from "./auth/accounts.js";
 export {
 	type ApiConfig,
 	configFromEnv,

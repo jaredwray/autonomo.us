@@ -9,12 +9,12 @@ export const PASSWORD = "correct horse battery";
 export async function setUpOwner(
 	url: string,
 	{
-		ownerToken,
+		setupToken,
 		signIn = true,
 		email = "founder@example.com",
 		name = "Founder",
 	}: {
-		ownerToken?: string;
+		setupToken?: string;
 		signIn?: boolean;
 		email?: string;
 		name?: string;
@@ -24,7 +24,7 @@ export async function setUpOwner(
 		method: "POST",
 		headers: {
 			"content-type": "application/json",
-			...(ownerToken ? { authorization: `Bearer ${ownerToken}` } : {}),
+			...(setupToken ? { authorization: `Bearer ${setupToken}` } : {}),
 		},
 		body: JSON.stringify({ email, name, password: PASSWORD }),
 	});

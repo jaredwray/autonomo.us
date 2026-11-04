@@ -514,13 +514,6 @@ export function TokensView<Permission extends string>({
 					They are lost when the API restarts.
 				</p>
 			)}
-			{data && !data.authenticationRequired && (
-				<p className="banner-error">
-					Authentication is disabled for this local gateway. Complete setup or
-					configure OWNER_TOKEN on the API to require credentials for all API
-					requests.
-				</p>
-			)}
 			{panel && (
 				<TokenForm
 					config={config}
@@ -673,7 +666,7 @@ export function TokensView<Permission extends string>({
 											{action.actor === "user"
 												? (action.actorName ?? "Team member")
 												: action.actor === "owner"
-													? "Owner credential"
+													? "Owner credential (before team accounts)"
 													: "Local admin"}
 										</td>
 										<td>{action.detail}</td>

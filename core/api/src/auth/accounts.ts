@@ -35,6 +35,8 @@ export class AccountError extends Error {
 export const SESSION_TTL_MS = 14 * 86_400_000;
 export const SIGN_IN_WINDOW_MS = 15 * 60_000;
 export const SIGN_IN_MAX_FAILURES = 10;
+/** Upper bound on holding the owner-change lock if a request dies mid-change. */
+export const OWNER_LOCK_MS = 15_000;
 const MAX_SESSIONS = 10;
 const LISTED_INVITES = 50;
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
@@ -55,6 +57,8 @@ type SetupRecord = {
 	revision: number;
 	completedAt: string | null;
 	ownerId: string | null;
+	/** Serializes changes that remove an owner, so two can't drop the last one. */
+	ownerLock?: { holder: string; expiresAt: string } | null;
 };
 type InviteRecord = Omit<TeamInvite, "id" | "status"> & {
 	_id: string;
@@ -63,12 +67,6 @@ type InviteRecord = Omit<TeamInvite, "id" | "status"> & {
 	acceptedUserId: string | null;
 };
 type Stored = { _id: string; revision: number };
-
-/** Who is acting on the team: the OWNER_TOKEN, a signed-in member, or pre-setup local mode. */
-export type TeamActor =
-	| { kind: "owner" }
-	| { kind: "local" }
-	| { kind: "user"; member: TeamMember };
 
 const iso = (time: number) => new Date(time).toISOString();
 export const normalizeEmail = (email: string) => email.trim().toLowerCase();
@@ -79,6 +77,11 @@ const invalidInvite = () =>
 		404,
 	);
 const missingMember = () => new AccountError("Team member not found.", 404);
+const changedMember = () =>
+	new AccountError(
+		"This member changed during your request. Refresh and try again.",
+		409,
+	);
 const lastOwner = () =>
 	new AccountError(
 		"Keep at least one owner. Make another member an owner first.",
@@ -153,11 +156,7 @@ function recentFailures(record: UserRecord, now: number) {
 	);
 }
 
-function actorName(actor: TeamActor) {
-	return actor.kind === "user"
-		? actor.member.name || actor.member.email
-		: "Owner credential";
-}
+const actorName = (actor: TeamMember) => actor.name || actor.email;
 
 /** MongoDB or process memory with the same compare-and-swap semantics. */
 class Documents<T extends Stored> {
@@ -224,10 +223,21 @@ class Documents<T extends Stored> {
 		);
 		return write.matchedCount > 0;
 	}
-	async remove(id: string) {
-		if (!this.mongo) return this.memory.delete(id);
+	/** With a revision, deletes only if the record is unchanged since it was read. */
+	async remove(id: string, revision?: number) {
+		if (!this.mongo) {
+			const current = this.memory.get(id);
+			if (!current || (revision !== undefined && current.revision !== revision))
+				return false;
+			return this.memory.delete(id);
+		}
 		return (
-			(await this.mongo().deleteOne({ _id: id as never })).deletedCount > 0
+			(
+				await this.mongo().deleteOne({
+					_id: id as never,
+					...(revision === undefined ? {} : { revision }),
+				})
+			).deletedCount > 0
 		);
 	}
 }
@@ -364,10 +374,11 @@ export class AccountStore {
 		return this.completed;
 	}
 
-	async status(ownerCredentialConfigured: boolean): Promise<AuthStatus> {
+	async status(setupTokenConfigured: boolean): Promise<AuthStatus> {
+		const setupComplete = await this.isSetupComplete();
 		return {
-			setupComplete: await this.isSetupComplete(),
-			ownerCredentialConfigured,
+			setupComplete,
+			setupTokenRequired: setupTokenConfigured && !setupComplete,
 			persistence: this.persistence,
 		};
 	}
@@ -542,14 +553,11 @@ export class AccountStore {
 			throw new AccountError("Your current password is incorrect.", 403);
 	}
 
-	static canManage(actor: TeamActor) {
-		return (
-			actor.kind === "owner" ||
-			(actor.kind === "user" && actor.member.role !== "member")
-		);
+	static canManage(actor: TeamMember) {
+		return actor.role !== "member";
 	}
 
-	async team(actor: TeamActor): Promise<TeamSettings> {
+	async team(actor: TeamMember): Promise<TeamSettings> {
 		const [users, invites] = await Promise.all([
 			this.storage(() => this.users.list()),
 			this.storage(() => this.invites.list()),
@@ -567,25 +575,18 @@ export class AccountStore {
 				.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
 				.slice(0, LISTED_INVITES),
 			persistence: this.persistence,
-			currentUserId: actor.kind === "user" ? actor.member.id : null,
-			canManage:
-				(await this.isSetupComplete()) && AccountStore.canManage(actor),
+			currentUserId: actor.id,
+			canManage: AccountStore.canManage(actor),
 		};
 	}
 
-	private async authorize(actor: TeamActor, roles: TeamRole[]) {
-		if (!(await this.isSetupComplete()))
-			throw new AccountError("Finish setup before managing the team.", 409);
+	private authorize(actor: TeamMember, roles: TeamRole[]) {
 		if (!AccountStore.canManage(actor))
 			throw new AccountError(
 				"Only owners and admins can manage the team.",
 				403,
 			);
-		if (
-			roles.includes("owner") &&
-			actor.kind === "user" &&
-			actor.member.role !== "owner"
-		)
+		if (roles.includes("owner") && actor.role !== "owner")
 			throw new AccountError(
 				"Only owners can invite, add, change, or remove owners.",
 				403,
@@ -607,9 +608,9 @@ export class AccountStore {
 	/** Adds an account directly with an initial password the admin shares. */
 	async addMember(
 		input: AddTeamMemberRequest,
-		actor: TeamActor,
+		actor: TeamMember,
 	): Promise<TeamMember> {
-		await this.authorize(actor, [input.role]);
+		this.authorize(actor, [input.role]);
 		assertPassword(input.password);
 		await this.assertEmailAvailable(normalizeEmail(input.email));
 		const record = this.newUser(
@@ -624,38 +625,79 @@ export class AccountStore {
 		return publicMember(record);
 	}
 
+	/**
+	 * Runs a change that may remove an owner while holding a short lease on the
+	 * setup record, so concurrent demotions or removals see each other's
+	 * results and cannot leave the team without an owner.
+	 */
+	private async withOwnerLock<T>(work: () => Promise<T>): Promise<T> {
+		const holder = randomUUID();
+		await this.mutate(
+			this.setup,
+			"default",
+			(setup, now) => {
+				if (setup.ownerLock && Date.parse(setup.ownerLock.expiresAt) > now)
+					throw new AccountError(
+						"Another owner change is in progress. Try again in a moment.",
+						409,
+					);
+				setup.ownerLock = { holder, expiresAt: iso(now + OWNER_LOCK_MS) };
+			},
+			new AccountError("Finish setup before managing the team.", 409),
+		);
+		try {
+			return await work();
+		} finally {
+			await this.mutate(
+				this.setup,
+				"default",
+				(setup) => {
+					if (setup.ownerLock?.holder === holder) setup.ownerLock = null;
+				},
+				new AccountError("Not found.", 404),
+			).catch(() => {});
+		}
+	}
+
 	async updateMember(
 		id: string,
 		input: UpdateTeamMemberRequest,
-		actor: TeamActor,
+		actor: TeamMember,
 	): Promise<TeamMember> {
 		const current = await this.member(id);
-		await this.authorize(actor, [current.role, input.role]);
-		const owners = await this.ownerCount();
-		return this.mutate(
-			this.users,
-			id,
-			(record, now) => {
-				if (record.role === "owner" && input.role !== "owner" && owners <= 1)
-					throw lastOwner();
-				record.name = input.name.trim();
-				record.role = input.role;
-				record.updatedAt = iso(now);
-				return publicMember(record);
-			},
-			missingMember(),
-		);
+		this.authorize(actor, [current.role, input.role]);
+		const demotes = current.role === "owner" && input.role !== "owner";
+		const apply = async () => {
+			const owners = demotes ? await this.ownerCount() : 0;
+			return this.mutate(
+				this.users,
+				id,
+				(record, now) => {
+					if (record.role === "owner" && input.role !== "owner") {
+						// Became an owner after we looked: retry so the lock applies.
+						if (!demotes) throw changedMember();
+						if (owners <= 1) throw lastOwner();
+					}
+					record.name = input.name.trim();
+					record.role = input.role;
+					record.updatedAt = iso(now);
+					return publicMember(record);
+				},
+				missingMember(),
+			);
+		};
+		return demotes ? this.withOwnerLock(apply) : apply();
 	}
 
 	/** Sets a new password for another member and signs them out everywhere. */
 	async resetPassword(
 		id: string,
 		password: string,
-		actor: TeamActor,
+		actor: TeamMember,
 	): Promise<TeamMember> {
 		const current = await this.member(id);
-		await this.authorize(actor, [current.role]);
-		if (actor.kind === "user" && actor.member.id === id)
+		this.authorize(actor, [current.role]);
+		if (actor.id === id)
 			throw new AccountError("Use Change password for your own account.", 409);
 		assertPassword(password);
 		const passwordHash = await hashPassword(password);
@@ -673,26 +715,33 @@ export class AccountStore {
 		);
 	}
 
-	async removeMember(id: string, actor: TeamActor): Promise<TeamMember> {
-		const record = await this.member(id);
-		await this.authorize(actor, [record.role]);
-		if (actor.kind === "user" && actor.member.id === id)
+	async removeMember(id: string, actor: TeamMember): Promise<TeamMember> {
+		const seen = await this.member(id);
+		this.authorize(actor, [seen.role]);
+		if (actor.id === id)
 			throw new AccountError(
 				"You can't remove yourself. Ask another owner or admin.",
 				409,
 			);
-		if (record.role === "owner" && (await this.ownerCount()) <= 1)
-			throw lastOwner();
-		// Sessions live in the member document, so removal signs them out everywhere.
-		await this.storage(() => this.users.remove(id));
-		return publicMember(record);
+		const remove = async () => {
+			const record = seen.role === "owner" ? await this.member(id) : seen;
+			if (record.role !== seen.role) throw changedMember();
+			if (record.role === "owner" && (await this.ownerCount()) <= 1)
+				throw lastOwner();
+			// Sessions live in the member document, so removal signs them out
+			// everywhere. The revision check refuses a member changed meanwhile.
+			if (!(await this.storage(() => this.users.remove(id, record.revision))))
+				throw changedMember();
+			return publicMember(record);
+		};
+		return seen.role === "owner" ? this.withOwnerLock(remove) : remove();
 	}
 
 	async createInvite(
 		input: CreateTeamInviteRequest,
-		actor: TeamActor,
+		actor: TeamMember,
 	): Promise<TeamInviteSecret> {
-		await this.authorize(actor, [input.role]);
+		this.authorize(actor, [input.role]);
 		const now = this.now();
 		const id = randomUUID();
 		const { secret, hash, masked } = newSecret("inv", id);
@@ -714,10 +763,10 @@ export class AccountStore {
 		return { invite: publicInvite(record, now), token: secret };
 	}
 
-	async revokeInvite(id: string, actor: TeamActor): Promise<TeamInvite> {
+	async revokeInvite(id: string, actor: TeamMember): Promise<TeamInvite> {
 		const invite = await this.storage(() => this.invites.get(id));
 		if (!invite) throw new AccountError("Invite not found.", 404);
-		await this.authorize(actor, [invite.role]);
+		this.authorize(actor, [invite.role]);
 		return this.mutate(
 			this.invites,
 			id,

@@ -3,6 +3,7 @@ import type { AddressInfo } from "node:net";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { configFromEnv } from "../src/config.js";
 import { createServer } from "../src/server.js";
+import { withSession } from "./auth-helpers.js";
 
 // Real HTTP contract server; requests run through the production adapters.
 describe("cloud adapters and model management", () => {
@@ -174,21 +175,23 @@ describe("cloud adapters and model management", () => {
 		);
 	});
 
-	function gateway() {
-		const server = createServer({
-			config: configFromEnv({
-				GOOGLE_BASE_URL: baseURL,
-				XAI_BASE_URL: baseURL,
-				OPENAI_BASE_URL: baseURL,
-				GROQ_BASE_URL: baseURL,
-				MISTRAL_BASE_URL: baseURL,
-				DEEPSEEK_BASE_URL: baseURL,
-				OPENROUTER_BASE_URL: baseURL,
-				CLOUDFLARE_BASE_URL: baseURL,
-				CLOUDFLARE_ACCOUNT_ID: "a".repeat(32),
+	async function gateway() {
+		const server = await withSession(
+			createServer({
+				config: configFromEnv({
+					GOOGLE_BASE_URL: baseURL,
+					XAI_BASE_URL: baseURL,
+					OPENAI_BASE_URL: baseURL,
+					GROQ_BASE_URL: baseURL,
+					MISTRAL_BASE_URL: baseURL,
+					DEEPSEEK_BASE_URL: baseURL,
+					OPENROUTER_BASE_URL: baseURL,
+					CLOUDFLARE_BASE_URL: baseURL,
+					CLOUDFLARE_ACCOUNT_ID: "a".repeat(32),
+				}),
+				logger: false,
 			}),
-			logger: false,
-		});
+		);
 		servers.push(server);
 		return server;
 	}
@@ -205,7 +208,7 @@ describe("cloud adapters and model management", () => {
 	] as const) {
 		for (const stream of [false, true]) {
 			it(`adds ${provider} at runtime and routes ${stream ? "streamed" : "non-streamed"} chat with authentication and usage`, async () => {
-				const server = gateway();
+				const server = await gateway();
 				const model =
 					provider === "cloudflare"
 						? "@cf/vendor/test-model"
@@ -268,7 +271,7 @@ describe("cloud adapters and model management", () => {
 	}
 
 	it("validates provider, key and model without changing the active registry", async () => {
-		const server = gateway();
+		const server = await gateway();
 		const before = (await server.inject("/v1/models")).body;
 		for (const payload of [
 			{ provider: "google", model: "test-model" },
@@ -285,7 +288,7 @@ describe("cloud adapters and model management", () => {
 	});
 
 	it("reuses saved keys, deduplicates models, and never returns credentials", async () => {
-		const server = gateway();
+		const server = await gateway();
 		await server.inject({
 			method: "POST",
 			url: "/v1/models",
@@ -333,7 +336,7 @@ describe("cloud adapters and model management", () => {
 	});
 
 	it("surfaces provider authentication failures", async () => {
-		const server = gateway();
+		const server = await gateway();
 		await server.inject({
 			method: "POST",
 			url: "/v1/models",

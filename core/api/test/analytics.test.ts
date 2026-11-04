@@ -5,6 +5,7 @@ import { ModelCatalogService } from "../src/model-catalog-service.js";
 import { createServer } from "../src/server.js";
 import { MongoTelemetrySink } from "../src/telemetry/mongo.js";
 import { TelemetryService } from "../src/telemetry/telemetry.js";
+import { withSession } from "./auth-helpers.js";
 import { startStubProvider } from "./helpers.js";
 import { mongoAvailable, uniqueMongoUrl } from "./mongo-env.js";
 
@@ -219,10 +220,12 @@ describe("usage analytics", () => {
 	});
 
 	it("rejects malformed, inverted and oversized ranges and accepts timezone offsets", async () => {
-		const server = createServer({
-			config: { providers: [], corsOrigins: [] },
-			logger: false,
-		});
+		const server = await withSession(
+			createServer({
+				config: { providers: [], corsOrigins: [] },
+				logger: false,
+			}),
+		);
 		cleanups.push(() => server.close());
 		for (const params of [
 			{ from: "bad", to },
@@ -248,18 +251,19 @@ describe("usage analytics", () => {
 	it("captures authenticated callers for chat and streaming without storing secrets", async () => {
 		const stub = await startStubProvider();
 		const telemetry = new TelemetryService();
-		const server = createServer({
-			registry: stub.registry,
-			telemetry,
-			config: { providers: [], corsOrigins: [], ownerToken: "owner-test" },
-			logger: false,
-		});
+		const server = await withSession(
+			createServer({
+				registry: stub.registry,
+				telemetry,
+				config: { providers: [], corsOrigins: [] },
+				logger: false,
+			}),
+		);
 		cleanups.push(() => server.close(), stub.close);
 		const issued = (
 			await server.inject({
 				method: "POST",
 				url: "/v1/api-tokens",
-				headers: { authorization: "Bearer owner-test" },
 				payload: {
 					name: "Dashboard client",
 					description: "",
@@ -315,17 +319,24 @@ describe("usage analytics", () => {
 				},
 			},
 		});
-		const server = createServer({
-			telemetry,
-			modelCatalog,
-			config: {
-				corsOrigins: [],
-				providers: [
-					{ name: "work", kind: "openai", apiKey: "unused", models: ["paid"] },
-				],
-			},
-			logger: false,
-		});
+		const server = await withSession(
+			createServer({
+				telemetry,
+				modelCatalog,
+				config: {
+					corsOrigins: [],
+					providers: [
+						{
+							name: "work",
+							kind: "openai",
+							apiKey: "unused",
+							models: ["paid"],
+						},
+					],
+				},
+				logger: false,
+			}),
+		);
 		cleanups.push(() => server.close());
 		const event = telemetry.recordChat({
 			model: "work/paid",

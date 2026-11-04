@@ -8,6 +8,7 @@ import {
 	type SignInRequest,
 } from "@autonomo.us/common";
 import type { FastifyInstance, FastifyRequest } from "fastify";
+import { signedInMember } from "../auth/access.js";
 import type { AccountStore } from "../auth/accounts.js";
 
 export const emailSchema = {
@@ -36,15 +37,23 @@ function sessionToken(request: FastifyRequest) {
 
 export async function authRoutes(
 	server: FastifyInstance,
-	options: { accounts: AccountStore; ownerCredentialConfigured: boolean },
+	options: { accounts: AccountStore; setupTokenConfigured: boolean },
 ) {
 	const { accounts } = options;
 	server.addHook("onRequest", async (_request, reply) => {
 		reply.header("cache-control", "no-store");
 	});
 	server.get("/v1/auth/status", () =>
-		accounts.status(options.ownerCredentialConfigured),
+		accounts.status(options.setupTokenConfigured),
 	);
+	// The access hook has already checked SETUP_TOKEN; this confirms it before setup.
+	server.get("/v1/setup/token", async (_request, reply) => {
+		if (await accounts.isSetupComplete())
+			return reply.code(409).send({
+				error: { message: "Setup is already complete. Sign in instead." },
+			});
+		return reply.code(204).send();
+	});
 	server.post<{ Body: SetupRequest }>(
 		"/v1/setup",
 		{
@@ -74,14 +83,9 @@ export async function authRoutes(
 			reply.code(201).send(await accounts.signIn(request.body)),
 	);
 	server.get("/v1/auth/session", (request): CurrentSession => {
-		const auth = request.auth;
-		if (auth?.kind === "user")
-			return { kind: "user", user: auth.member, expiresAt: auth.expiresAt };
-		return {
-			kind: auth?.kind === "owner" ? "owner" : "local",
-			user: null,
-			expiresAt: null,
-		};
+		const member = signedInMember(request);
+		const auth = request.auth as { expiresAt: string };
+		return { user: member, expiresAt: auth.expiresAt };
 	});
 	server.delete("/v1/auth/session", async (request, reply) => {
 		const token = sessionToken(request);
@@ -99,13 +103,12 @@ export async function authRoutes(
 			},
 		},
 		async (request, reply) => {
-			const auth = request.auth;
-			const token = sessionToken(request);
-			if (auth?.kind !== "user" || !token)
-				return reply.code(403).send({
-					error: { message: "Sign in as a team member to change a password." },
-				});
-			await accounts.changePassword(auth.member, token, request.body);
+			const member = signedInMember(request);
+			await accounts.changePassword(
+				member,
+				sessionToken(request) ?? "",
+				request.body,
+			);
 			return reply.code(204).send();
 		},
 	);

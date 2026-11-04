@@ -340,7 +340,7 @@ function BreakdownTable({
 															: row.kind === "agent"
 																? "Reported agent ID"
 																: row.kind === "owner"
-																	? "Owner credential"
+																	? "Owner credential (before team accounts)"
 																	: "No caller identity")}
 											</span>
 										</td>
