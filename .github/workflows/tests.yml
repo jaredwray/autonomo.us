@@ -51,9 +51,8 @@ jobs:
       - run: pnpm lint
       - run: pnpm build
       - name: Check development Worker config
-        run: |
-          pnpm exec wrangler deploy -c core/ux/wrangler.jsonc --dry-run --outdir "$RUNNER_TEMP/ux"
-          pnpm exec wrangler deploy -c core/api/wrangler.jsonc --dry-run --outdir "$RUNNER_TEMP/api"
+        # The dashboard assets come from core/ux/dist, built by pnpm build above.
+        run: pnpm exec wrangler deploy -c core/server/wrangler.jsonc --dry-run --outdir "$RUNNER_TEMP/server"
       # Suites that need MongoDB default to the service above. Leaving
       # MONGODB_URI unset keeps createServer() in-memory for the other tests.
       - run: pnpm test:ci
@@ -72,4 +71,4 @@ jobs:
         with:
           mode: firewall-free
           firewall-version: "1.15.0"
-      - run: docker compose build api ux
+      - run: docker compose build server

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,7 +14,7 @@ import { MongoClient } from "mongodb";
 // enforce Workers' restrictions on code generation or request-owned sockets.
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 const config = JSON.parse(
-	(await readFile(join(root, "core/api/wrangler.jsonc"), "utf8")).replace(
+	(await readFile(join(root, "core/server/wrangler.jsonc"), "utf8")).replace(
 		/^\s*\/\/.*$/gm,
 		"",
 	),
@@ -34,17 +34,31 @@ async function unusedPort() {
 
 async function withWorker(
 	mongodbUrl: string,
-	test: (request: RequestWorker, logs: () => string) => Promise<void>,
+	test: (
+		request: RequestWorker,
+		logs: () => string,
+		base: string,
+	) => Promise<void>,
 ) {
 	const directory = await mkdtemp(join(tmpdir(), "autonomous-worker-"));
 	const port = await unusedPort();
 	const inspectorPort = await unusedPort();
+	// A stub stands in for the dashboard build so this test needs no Vite
+	// build and still proves that run_worker_first sends the API paths to the
+	// Worker while everything else is a static asset.
+	const assets = join(directory, "assets");
+	await mkdir(assets);
+	await writeFile(
+		join(assets, "index.html"),
+		"<!doctype html><title>dashboard stub</title>",
+	);
 	// A temporary config isolates tests from developers' .dev.vars and .env.
 	await writeFile(
 		join(directory, "wrangler.json"),
 		JSON.stringify({
 			...config,
-			main: join(root, "core/api/src/worker.ts"),
+			main: join(root, "core/server/src/worker.ts"),
+			assets: { ...config.assets, directory: assets },
 			routes: [],
 			vars: {
 				...config.vars,
@@ -103,7 +117,7 @@ async function withWorker(
 			assert(Date.now() < deadline, "Worker startup timed out");
 			await delay(100);
 		}
-		await test(request, () => output);
+		await test(request, () => output, `http://127.0.0.1:${port}`);
 	} catch (error) {
 		// Never print Wrangler's binding dump (it can include the MongoDB URI).
 		console.error(
@@ -156,7 +170,16 @@ async function expectLog(logs: () => string, event: string) {
 	}
 }
 
-await withWorker("", async (request, logs) => {
+await withWorker("", async (request, logs, base) => {
+	// The dashboard: static assets answer the root and client-side routes.
+	for (const path of ["/", "/models"]) {
+		const page = await fetch(`${base}${path}`, {
+			signal: AbortSignal.timeout(20_000),
+		});
+		assert.equal(page.status, 200, `${path}: HTTP ${page.status}`);
+		assert.match(page.headers.get("content-type") ?? "", /text\/html/);
+		assert.match(await page.text(), /dashboard stub/);
+	}
 	for (const path of ["/health", "/healthz"]) {
 		const health = (await request(path)) as Health;
 		assert.equal(health.status, "ok");
@@ -168,6 +191,8 @@ await withWorker("", async (request, logs) => {
 	}
 	// No unauthenticated mode, even before setup.
 	await request("/v1/models", 401);
+	// The bare namespace reaches the API (a JSON 404), not the dashboard.
+	await request("/v1", 404);
 	const auth = await setUp(request);
 	await request("/v1/models", 200, { headers: auth });
 	await request("/v1/routing", 400, {
@@ -179,7 +204,7 @@ await withWorker("", async (request, logs) => {
 	await expectLog(logs, "gateway.mongodb_unconfigured");
 });
 console.log(
-	"Worker: cold start, health aliases, schema validation, and logs passed",
+	"Worker: cold start, dashboard assets, health aliases, schema validation, and logs passed",
 );
 
 const url = new URL(

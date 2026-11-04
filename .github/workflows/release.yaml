@@ -99,7 +99,7 @@ jobs:
           mkdir -p packed
           dest="$(pwd)/packed"
           pnpm --filter @autonomo.us/common pack --pack-destination "$dest"
-          pnpm --filter @autonomo.us/api pack --pack-destination "$dest"
+          pnpm --filter @autonomo.us/server pack --pack-destination "$dest"
           pnpm --filter @autonomo.us/logo pack --pack-destination "$dest"
           ls -la packed
 

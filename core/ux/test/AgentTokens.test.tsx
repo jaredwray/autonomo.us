@@ -1,4 +1,4 @@
-import { createServer } from "@autonomo.us/api";
+import { createServer } from "@autonomo.us/server";
 import {
 	cleanup,
 	fireEvent,

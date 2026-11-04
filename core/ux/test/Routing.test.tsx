@@ -1,4 +1,4 @@
-import { type ApiConfig, createServer } from "@autonomo.us/api";
+import { type ApiConfig, createServer } from "@autonomo.us/server";
 import {
 	cleanup,
 	fireEvent,
@@ -9,7 +9,7 @@ import {
 } from "@testing-library/react";
 import { StrictMode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
-import { startOpenAIStub } from "../../api/test/openai-stub.js";
+import { startOpenAIStub } from "../../server/test/openai-stub.js";
 import { App } from "../src/App.js";
 import { clearCredential } from "../src/api.js";
 import { setUpOwner } from "./session.js";

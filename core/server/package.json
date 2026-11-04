@@ -1,13 +1,13 @@
 {
-	"name": "@autonomo.us/api",
+	"name": "@autonomo.us/server",
 	"version": "0.0.0",
-	"description": "AI gateway API service for autonomo.us",
+	"description": "autonomo.us server: the AI gateway API, which also hosts the management dashboard",
 	"license": "MIT",
 	"author": "Jared Wray",
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/jaredwray/autonomo.us.git",
-		"directory": "core/api"
+		"directory": "core/server"
 	},
 	"type": "module",
 	"main": "./dist/index.cjs",
