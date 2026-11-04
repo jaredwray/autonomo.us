@@ -187,6 +187,7 @@ it("requires sign-in, keeps passwords out of storage, and clears access on sign 
 		expect(JSON.stringify(storage)).not.toContain(PASSWORD);
 	fireEvent.click(screen.getByRole("link", { name: "Routing", exact: true }));
 	await screen.findByLabelText("Enable Auto routing");
+	fireEvent.click(screen.getByRole("button", { name: /Account menu for/ }));
 	fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
 	await screen.findByRole("heading", { name: "Sign in" });
 	expect((screen.getByLabelText("Password") as HTMLInputElement).value).toBe(

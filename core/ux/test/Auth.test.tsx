@@ -86,6 +86,7 @@ it("defaults a fresh gateway to first-run setup and keeps the owner signed in", 
 	expect(await screen.findByRole("heading", { name: "Team" })).toBeDefined();
 	expect(screen.getByText("ada@example.com")).toBeDefined();
 
+	fireEvent.click(screen.getByRole("button", { name: /Account menu for/ }));
 	fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
 	expect(await screen.findByRole("heading", { name: "Sign in" })).toBeDefined();
 	expect(window.localStorage.getItem("autonomous.session")).toBeNull();
@@ -157,6 +158,7 @@ it("invites a member with a one-time link that creates their account", async () 
 	expect(document.body.textContent).not.toContain(link.split("/").at(-1));
 
 	// The invitee opens the link in a fresh browser.
+	fireEvent.click(screen.getByRole("button", { name: /Account menu for/ }));
 	fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
 	await screen.findByRole("heading", { name: "Sign in" });
 	cleanup();

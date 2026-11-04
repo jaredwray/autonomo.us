@@ -17,6 +17,7 @@ import {
 } from "./api.js";
 import { Dashboard } from "./Dashboard.js";
 import { Icon } from "./Icons.js";
+import { ProfileView } from "./ProfileView.js";
 import { ModelsView } from "./ModelsView.js";
 import { RoutingView } from "./RoutingView.js";
 import { TeamView } from "./TeamView.js";
@@ -31,10 +32,12 @@ const viewLabels = {
 	"agent-tokens": "Agent Tokens",
 	team: "Team",
 };
-type View = keyof typeof viewLabels;
+type View = keyof typeof viewLabels | "profile";
 function currentView(): View {
 	const view = window.location.hash.slice(2);
-	return Object.hasOwn(viewLabels, view) ? (view as View) : "dashboard";
+	return view === "profile" || Object.hasOwn(viewLabels, view)
+		? (view as View)
+		: "dashboard";
 }
 /** Invite secrets stay in the URL fragment, which browsers never send to servers. */
 function inviteToken() {
@@ -110,6 +113,27 @@ export function App() {
 			);
 		};
 	}, [load]);
+	const [accountOpen, setAccountOpen] = useState(false);
+	const accountRef = useRef<HTMLDivElement>(null);
+	useEffect(() => {
+		const dismiss = (event: PointerEvent) => {
+			if (!accountRef.current?.contains(event.target as Node))
+				setAccountOpen(false);
+		};
+		const escape = (event: KeyboardEvent) => {
+			if (event.key === "Escape") {
+				setAccountOpen(false);
+				if (accountRef.current?.contains(document.activeElement))
+					accountRef.current.querySelector("button")?.focus();
+			}
+		};
+		document.addEventListener("pointerdown", dismiss);
+		document.addEventListener("keydown", escape);
+		return () => {
+			document.removeEventListener("pointerdown", dismiss);
+			document.removeEventListener("keydown", escape);
+		};
+	}, []);
 	const [view, setView] = useState(currentView);
 	const [collapsed, setCollapsed] = useState(() => {
 		try {
@@ -219,23 +243,30 @@ export function App() {
 					<span className="sidebar-label">autonomo.us</span>
 				</a>
 				<nav aria-label="Main navigation">
-					{(Object.keys(viewLabels) as View[]).filter(allowed).map((item) => (
-						<a
-							key={item}
-							href={`#/${item}`}
-							className={`nav-item ${shown === item ? "active" : ""}`}
-							aria-current={shown === item ? "page" : undefined}
-							aria-label={viewLabels[item]}
-							title={collapsed ? viewLabels[item] : undefined}
-							onClick={() => setView(item)}
-						>
-							<Icon name={item} />
-							<span className="sidebar-label">{viewLabels[item]}</span>
-						</a>
-					))}
+					{(Object.keys(viewLabels) as (keyof typeof viewLabels)[])
+						.filter(allowed)
+						.map((item) => (
+							<a
+								key={item}
+								href={`#/${item}`}
+								className={`nav-item ${shown === item ? "active" : ""}`}
+								aria-current={shown === item ? "page" : undefined}
+								aria-label={viewLabels[item]}
+								title={collapsed ? viewLabels[item] : undefined}
+								onClick={() => setView(item)}
+							>
+								<Icon name={item} />
+								<span className="sidebar-label">{viewLabels[item]}</span>
+							</a>
+						))}
 				</nav>
-				<div className="sidebar-account">
-					<div
+				<div className="sidebar-account" ref={accountRef}>
+					<button
+						type="button"
+						aria-label={`Account menu for ${user.name || user.email}`}
+						aria-expanded={accountOpen}
+						aria-controls="account-menu"
+						onClick={() => setAccountOpen(!accountOpen)}
 						className="sidebar-user"
 						title={collapsed ? user.email : undefined}
 					>
@@ -246,20 +277,34 @@ export function App() {
 							<strong>{user.name || user.email}</strong>
 							<small>{user.email}</small>
 						</span>
-					</div>
-					<button
-						className="button sidebar-lock"
-						type="button"
-						aria-label="Sign out"
-						title={collapsed ? "Sign out" : undefined}
-						onClick={async () => {
-							await signOut();
-							void load();
-						}}
-					>
-						<Icon name="logout" />
-						<span className="sidebar-label">Sign out</span>
 					</button>
+					{accountOpen && (
+						<div className="account-menu" id="account-menu">
+							<a
+								href="#/profile"
+								onClick={() => {
+									go("profile");
+									setAccountOpen(false);
+								}}
+							>
+								Profile settings
+							</a>
+							<button
+								className="account-sign-out"
+								type="button"
+								aria-label="Sign out"
+								title={collapsed ? "Sign out" : undefined}
+								onClick={async () => {
+									setAccountOpen(false);
+									await signOut();
+									void load();
+								}}
+							>
+								<Icon name="logout" />
+								<span>Sign out</span>
+							</button>
+						</div>
+					)}
 				</div>
 				<button
 					type="button"
@@ -271,11 +316,12 @@ export function App() {
 					title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
 				>
 					<Icon name={collapsed ? "expand" : "collapse"} />
-					<span className="sidebar-label">Collapse sidebar</span>
 				</button>
 			</aside>
 			<main id="main-content" tabIndex={-1} className="main-content">
-				{shown === "api-tokens" ? (
+				{shown === "profile" ? (
+					<ProfileView user={user} />
+				) : shown === "api-tokens" ? (
 					<ApiTokensView />
 				) : shown === "agent-tokens" ? (
 					<AgentTokensView />

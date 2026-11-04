@@ -219,6 +219,29 @@ describe("App", () => {
 		).toBeDefined();
 	});
 
+	it("opens profile settings from the account menu and dismisses it with Escape", async () => {
+		await startApp();
+		render(<App />);
+		const account = await screen.findByRole("button", {
+			name: /Account menu for/,
+		});
+		expect(screen.queryByRole("button", { name: "Sign out" })).toBeNull();
+		fireEvent.click(account);
+		expect(screen.getByRole("button", { name: "Sign out" })).toBeDefined();
+		fireEvent.keyDown(document, { key: "Escape" });
+		expect(screen.queryByRole("link", { name: "Profile settings" })).toBeNull();
+		fireEvent.click(account);
+		fireEvent.click(screen.getByRole("link", { name: "Profile settings" }));
+		expect(
+			await screen.findByRole("heading", { name: "Profile settings" }),
+		).toBeDefined();
+		expect(
+			screen.getByText("founder@example.com", { selector: "dd" }),
+		).toBeDefined();
+		expect(screen.getByLabelText("Current password")).toBeDefined();
+		expect(account.getAttribute("aria-expanded")).toBe("false");
+	});
+
 	it("opens the Models deep link and filters active models", async () => {
 		await startApp();
 		window.history.replaceState(null, "", "#/models");
