@@ -175,6 +175,7 @@ it("clears agent secrets when the member signs out", async () => {
 	const secret = (
 		(await screen.findByLabelText("New agent token")) as HTMLTextAreaElement
 	).value;
+	fireEvent.click(screen.getByRole("button", { name: /Account menu for/ }));
 	fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
 	await screen.findByRole("heading", { name: "Sign in" });
 	expect(screen.queryByLabelText("New agent token")).toBeNull();
