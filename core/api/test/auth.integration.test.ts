@@ -7,6 +7,7 @@ import {
 	authServer,
 	bearer,
 	completeSetup,
+	joinWithInvite,
 	PASSWORD,
 	signIn,
 } from "./auth-helpers.js";
@@ -175,6 +176,50 @@ describe.skipIf(!available)("durable team accounts", () => {
 		} finally {
 			await writer.close();
 			await client.close();
+		}
+	});
+
+	it("stays set up after the first owner is removed", async () => {
+		const url = database();
+		const first = authServer({ mongodbUrl: url });
+		try {
+			const founder = await completeSetup(first);
+			const second = await joinWithInvite(
+				first,
+				founder.token,
+				"second@example.com",
+				"owner",
+			);
+			expect(
+				(
+					await first.inject({
+						method: "DELETE",
+						url: `/v1/team/${founder.user.id}`,
+						headers: bearer(second.token),
+					})
+				).statusCode,
+			).toBe(200);
+		} finally {
+			await first.close();
+		}
+		// A freshly started instance has no cached state to lean on.
+		const fresh = authServer({ mongodbUrl: url });
+		try {
+			expect((await fresh.inject("/v1/auth/status")).json().setupComplete).toBe(
+				true,
+			);
+			const takeover = await fresh.inject({
+				method: "POST",
+				url: "/v1/setup",
+				payload: {
+					email: "mallory@example.com",
+					name: "Mallory",
+					password: PASSWORD,
+				},
+			});
+			expect(takeover.statusCode).toBe(409);
+		} finally {
+			await fresh.close();
 		}
 	});
 

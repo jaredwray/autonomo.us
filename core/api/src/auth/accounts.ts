@@ -391,9 +391,13 @@ export class AccountStore {
 		const ownerId = record?.ownerId;
 		if (!record?.completedAt || !ownerId) return "open" as const;
 		if (!(await this.storage(() => this.users.get(ownerId)))) {
-			// No embedded copy: a marker written before owners were embedded, or
-			// whose owner was deleted by hand. Setup may run again.
-			if (!record.owner) return "open" as const;
+			if (!record.owner) {
+				// The first owner may since have been removed by another owner:
+				// setup stays complete while any account exists. Only a gateway
+				// with no accounts at all (which the API can't produce) reopens.
+				const accounts = await this.storage(() => this.users.list());
+				return accounts.length ? ("complete" as const) : ("open" as const);
+			}
 			await this.insertUser(record.owner, true);
 		}
 		if (record.owner) await this.forgetEmbeddedOwner(ownerId);
