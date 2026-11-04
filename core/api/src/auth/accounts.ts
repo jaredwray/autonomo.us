@@ -38,7 +38,13 @@ export const SIGN_IN_MAX_FAILURES = 10;
 /** A setup marker whose owner never appeared within this window was abandoned. */
 export const SETUP_STALE_MS = 60_000;
 /** Upper bound on holding the owner-change lock if a request dies mid-change. */
-export const OWNER_LOCK_MS = 15_000;
+export const OWNER_LOCK_MS = 60_000;
+/**
+ * A holder stops committing this long before its lease ends: longer than one
+ * MongoDB write can take (1.5 s server selection + 3 s socket deadline), so an
+ * expired holder can never commit after another request takes the lock.
+ */
+export const OWNER_LOCK_MARGIN_MS = 15_000;
 const MAX_SESSIONS = 10;
 const LISTED_INVITES = 50;
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
@@ -677,12 +683,24 @@ export class AccountStore {
 	}
 
 	/**
-	 * Runs a change that may remove an owner while holding a short lease on the
-	 * setup record, so concurrent demotions or removals see each other's
-	 * results and cannot leave the team without an owner.
+	 * Runs a change that may remove an owner while holding a lease on the setup
+	 * record, so concurrent demotions or removals see each other's results and
+	 * cannot leave the team without an owner. `fence` must run immediately
+	 * before the final write: it refuses to commit once the lease is too close
+	 * to expiring, so a stalled holder cannot race the next one.
 	 */
-	private async withOwnerLock<T>(work: () => Promise<T>): Promise<T> {
+	private async withOwnerLock<T>(
+		work: (fence: () => void) => Promise<T>,
+	): Promise<T> {
 		const holder = randomUUID();
+		const deadline = this.now() + OWNER_LOCK_MS - OWNER_LOCK_MARGIN_MS;
+		const fence = () => {
+			if (this.now() >= deadline)
+				throw new AccountError(
+					"This owner change took too long and was not saved. Try again.",
+					503,
+				);
+		};
 		await this.mutate(
 			this.setup,
 			"default",
@@ -697,7 +715,7 @@ export class AccountStore {
 			new AccountError("Finish setup before managing the team.", 409),
 		);
 		try {
-			return await work();
+			return await work(fence);
 		} finally {
 			await this.mutate(
 				this.setup,
@@ -718,7 +736,7 @@ export class AccountStore {
 		const current = await this.member(id);
 		this.authorize(actor, [current.role, input.role]);
 		const demotes = current.role === "owner" && input.role !== "owner";
-		const apply = async () => {
+		const apply = async (fence?: () => void) => {
 			const owners = demotes ? await this.ownerCount() : 0;
 			return this.mutate(
 				this.users,
@@ -730,6 +748,7 @@ export class AccountStore {
 						if (!demotes) throw changedMember();
 						if (owners <= 1) throw lastOwner();
 					}
+					fence?.();
 					record.name = input.name.trim();
 					record.role = input.role;
 					record.updatedAt = iso(now);
@@ -777,11 +796,12 @@ export class AccountStore {
 				"You can't remove yourself. Ask another owner or admin.",
 				409,
 			);
-		const remove = async () => {
+		const remove = async (fence?: () => void) => {
 			const record = seen.role === "owner" ? await this.member(id) : seen;
 			if (record.role !== seen.role) throw changedMember();
 			if (record.role === "owner" && (await this.ownerCount()) <= 1)
 				throw lastOwner();
+			fence?.();
 			// Sessions live in the member document, so removal signs them out
 			// everywhere. The revision check refuses a member changed meanwhile.
 			if (!(await this.storage(() => this.users.remove(id, record.revision))))

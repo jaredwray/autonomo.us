@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
 	AccountStore,
+	OWNER_LOCK_MARGIN_MS,
+	OWNER_LOCK_MS,
 	SESSION_TTL_MS,
 	SIGN_IN_MAX_FAILURES,
 	SIGN_IN_WINDOW_MS,
@@ -740,6 +742,48 @@ describe("team management", () => {
 			store.removeMember(remaining.id, third),
 		]);
 		expect(removals.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+		expect(await owners()).toHaveLength(1);
+	});
+
+	it("refuses an owner change that outlives its lease margin", async () => {
+		let now = Date.parse("2026-11-04T12:00:00Z");
+		const store = new AccountStore({ now: () => now });
+		const { user: first } = await store.completeSetup({
+			email: "first@example.com",
+			name: "First",
+			password: PASSWORD,
+		});
+		const second = await store.addMember(
+			{
+				email: "second@example.com",
+				name: "Second",
+				role: "owner",
+				password: PASSWORD,
+			},
+			first,
+		);
+		// Time jumps past the commit deadline while the change is in flight.
+		const realList = store.team.bind(store);
+		let jumped = false;
+		const owners = async () =>
+			(await realList(first)).members.filter((m) => m.role === "owner");
+		const original = (store as unknown as { ownerCount: () => Promise<number> })
+			.ownerCount;
+		(store as unknown as { ownerCount: () => Promise<number> }).ownerCount =
+			async function (this: AccountStore) {
+				const count = await original.call(this);
+				if (!jumped) {
+					jumped = true;
+					now += OWNER_LOCK_MS - OWNER_LOCK_MARGIN_MS;
+				}
+				return count;
+			};
+		await expect(store.removeMember(second.id, first)).rejects.toMatchObject({
+			statusCode: 503,
+		});
+		expect(await owners()).toHaveLength(2);
+		// The lease was released, so the next change goes through.
+		await store.removeMember(second.id, first);
 		expect(await owners()).toHaveLength(1);
 	});
 
