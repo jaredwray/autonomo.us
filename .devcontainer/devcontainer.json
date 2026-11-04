@@ -12,16 +12,16 @@
 	},
 	"forwardPorts": [
 		5173,
-		8080
+		3000
 	],
 	"portsAttributes": {
 		"5173": {
 			"label": "Dashboard (development)",
 			"onAutoForward": "openBrowser"
 		},
-		"8080": {
-			"label": "Dashboard (Docker Compose)",
-			"onAutoForward": "openBrowser"
+		"3000": {
+			"label": "Server: dashboard and API",
+			"onAutoForward": "notify"
 		}
 	},
 	"remoteEnv": {

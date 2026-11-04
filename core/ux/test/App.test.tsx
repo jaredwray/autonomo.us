@@ -2,7 +2,7 @@ import {
 	type ApiConfig,
 	createServer,
 	TelemetryService,
-} from "@autonomo.us/api";
+} from "@autonomo.us/server";
 import {
 	cleanup,
 	fireEvent,
@@ -17,7 +17,7 @@ import { clearCredential } from "../src/api.js";
 import { setUpOwner } from "./session.js";
 
 // The dashboard renders against a real gateway API server (no fetch mocks):
-// each test boots @autonomo.us/api on an ephemeral port, completes first-run
+// each test boots @autonomo.us/server on an ephemeral port, completes first-run
 // setup as the owner, seeds telemetry through the public TelemetryService API,
 // and points VITE_API_URL at it.
 

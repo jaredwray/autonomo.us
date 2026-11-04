@@ -5,6 +5,7 @@ import { AccountStore } from "./auth/accounts.js";
 import { AgentTokenStore } from "./auth/agent-tokens.js";
 import { ApiTokenStore } from "./auth/tokens.js";
 import { type ApiConfig, configFromEnv } from "./config.js";
+import { registerDashboard } from "./dashboard.js";
 import { FailoverPolicyStore } from "./failover.js";
 import { ModelCatalogService } from "./model-catalog-service.js";
 import { mongoErrorDetails } from "./mongo.js";
@@ -63,6 +64,12 @@ export type CreateServerOptions = {
 	pluginTimeout?: number;
 	/** Workers compile routes at module startup, before database I/O is allowed. */
 	deferPersistence?: boolean;
+	/**
+	 * Built dashboard directory (`core/ux/dist`). When set, this instance serves
+	 * it beside the API so one process runs both. The Worker leaves it unset and
+	 * serves the same files as Workers static assets instead.
+	 */
+	dashboardDir?: string;
 };
 
 export function createServer(options: CreateServerOptions = {}) {
@@ -140,6 +147,7 @@ export function createServer(options: CreateServerOptions = {}) {
 	});
 	server.register(telemetryRoutes, { telemetry });
 	server.register(decisionsRoutes, { registry, telemetry });
+	if (options.dashboardDir) registerDashboard(server, options.dashboardDir);
 
 	const initialize = async (onError?: PersistenceErrorHandler) => {
 		let initialized = true;

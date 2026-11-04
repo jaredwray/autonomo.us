@@ -1,6 +1,6 @@
 name: update-models
 
-# Refreshes the bundled model catalog baseline (core/api/src/models.json)
+# Refreshes the bundled model catalog baseline (core/server/src/models.json)
 # once a day and uploads it as a workflow artifact. The API also refreshes
 # itself daily at runtime; the committed models.json is the cold-start
 # fallback until that first refresh succeeds. Provider API keys are optional
@@ -40,7 +40,7 @@ jobs:
       - run: corepack enable
       - run: sfw pnpm install --frozen-lockfile
       - name: Refresh the model catalog
-        run: pnpm --filter @autonomo.us/api models:update
+        run: pnpm --filter @autonomo.us/server models:update
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -54,5 +54,5 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: model-catalog
-          path: core/api/src/models.json
+          path: core/server/src/models.json
           if-no-files-found: error

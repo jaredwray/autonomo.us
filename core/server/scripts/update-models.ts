@@ -8,7 +8,7 @@
  * rewritten when the catalog content actually changed, keeping workflow runs
  * diff-free on quiet days.
  *
- * Run it with `pnpm --filter @autonomo.us/api models:update`.
+ * Run it with `pnpm --filter @autonomo.us/server models:update`.
  */
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";

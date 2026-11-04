@@ -1,8 +1,10 @@
 name: deploy-development
 
-# Publishes the development environment to Cloudflare Workers on main.
-#   autonomous-ux-development  → https://dev.autonomo.us
-#   autonomous-api-development → https://dev-api.autonomo.us
+# Publishes the development environment to one Cloudflare Worker on main.
+#   autonomous-api-development → https://dev.autonomo.us (dashboard and API)
+#                                https://dev-api.autonomo.us (API alias)
+# The dashboard build is uploaded as the Worker's static assets; /v1, /health
+# and /healthz run the API.
 #
 # Repository secrets:
 #   CLOUDFLARE_API_TOKEN  — required. Account → Workers Scripts → Edit,
@@ -12,7 +14,7 @@ name: deploy-development
 #   CLOUDFLARE_ACCOUNT_ID — required. The same account.
 #
 # Provision a MongoDB server and set its URL on the API worker:
-#   pnpm exec wrangler secret put MONGODB_URI -c core/api/wrangler.jsonc
+#   pnpm exec wrangler secret put MONGODB_URI -c core/server/wrangler.jsonc
 # The API creates its configuration database on its first request. The health
 # check fails until the secret is set and configuration initialization succeeds.
 on:
@@ -67,11 +69,7 @@ jobs:
             echo "Set CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID before deploying."
             exit 1
           fi
-      - name: Build the dashboard
-        run: pnpm --filter @autonomo.us/ux... build
-        env:
-          VITE_API_URL: https://dev-api.autonomo.us
-      - name: Deploy development Workers
+      - name: Build the dashboard and deploy the development Worker
         run: pnpm deploy:development
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
