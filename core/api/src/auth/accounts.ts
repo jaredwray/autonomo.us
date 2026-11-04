@@ -37,6 +37,12 @@ export const SIGN_IN_WINDOW_MS = 15 * 60_000;
 export const SIGN_IN_MAX_FAILURES = 10;
 /** A setup marker whose owner never appeared within this window was abandoned. */
 export const SETUP_STALE_MS = 60_000;
+/**
+ * A setup must start creating its owner this long before its marker turns
+ * stale: longer than index creation plus one insert can take, so a stalled
+ * setup can never add an owner after a retry has replaced its marker.
+ */
+export const SETUP_MARGIN_MS = 15_000;
 /** Upper bound on holding the owner-change lock if a request dies mid-change. */
 export const OWNER_LOCK_MS = 60_000;
 /**
@@ -431,7 +437,7 @@ export class AccountStore {
 			true,
 		);
 		// This compare-and-swap is the only gate: a concurrent setup loses here.
-		await this.mutate(
+		const claimedAt = await this.mutate(
 			this.setup,
 			"default",
 			(setup, at) => {
@@ -439,6 +445,7 @@ export class AccountStore {
 				if (setup.revision !== (seen?.revision ?? 0)) throw this.setupDone();
 				setup.completedAt = iso(at);
 				setup.ownerId = record._id;
+				return at;
 			},
 			() => ({
 				_id: "default",
@@ -449,6 +456,11 @@ export class AccountStore {
 		);
 		const session = issueSession(record, now);
 		try {
+			if (this.now() - claimedAt >= SETUP_STALE_MS - SETUP_MARGIN_MS)
+				throw new AccountError(
+					"Setup took too long and was not saved. Try again.",
+					503,
+				);
 			await this.insertUser(record);
 		} catch (error) {
 			// Reopen setup so it can be retried. If this fails too, the marker

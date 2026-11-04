@@ -4,6 +4,8 @@ import {
 	OWNER_LOCK_MARGIN_MS,
 	OWNER_LOCK_MS,
 	SESSION_TTL_MS,
+	SETUP_MARGIN_MS,
+	SETUP_STALE_MS,
 	SIGN_IN_MAX_FAILURES,
 	SIGN_IN_WINDOW_MS,
 } from "../src/auth/accounts.js";
@@ -189,6 +191,39 @@ describe("first-run setup", () => {
 				})
 			).statusCode,
 		).toBe(403);
+	});
+
+	it("abandons a setup that stalls before creating its owner", async () => {
+		let now = Date.parse("2026-11-04T12:00:00Z");
+		const store = new AccountStore({ now: () => now });
+		// Time passes the commit margin right after setup claims its marker.
+		const internals = store as unknown as {
+			mutate: (...args: unknown[]) => Promise<unknown>;
+		};
+		const mutate = internals.mutate.bind(store);
+		let calls = 0;
+		internals.mutate = async (...args: unknown[]) => {
+			const result = await mutate(...args);
+			if (++calls === 1) now += SETUP_STALE_MS - SETUP_MARGIN_MS;
+			return result;
+		};
+		await expect(
+			store.completeSetup({
+				email: "slow@example.com",
+				name: "Slow",
+				password: PASSWORD,
+			}),
+		).rejects.toMatchObject({ statusCode: 503 });
+		expect(await store.isSetupComplete()).toBe(false);
+		// The marker was released, so a retry sets up exactly one owner.
+		const { user } = await store.completeSetup({
+			email: "ada@example.com",
+			name: "Ada",
+			password: PASSWORD,
+		});
+		expect(
+			(await store.team(user)).members.map((member) => member.email),
+		).toEqual(["ada@example.com"]);
 	});
 
 	it("rejects malformed setup input and short passwords", async () => {
