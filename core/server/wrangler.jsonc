@@ -1,9 +1,7 @@
 {
 	"$schema": "../../node_modules/wrangler/config-schema.json",
-	// One Worker serves the dashboard and the API. The name predates that:
-	// renaming a Worker creates a new one without its MONGODB_URI and
-	// SETUP_TOKEN secrets, so it stays.
-	"name": "autonomous-api-development",
+	// One Worker serves the dashboard and the API.
+	"name": "autonomous-server-development",
 	"main": "./src/worker.ts",
 	// nodejs_compat (and the Node HTTP server) is on for dates on or after 2026-08-04.
 	"compatibility_date": "2026-10-22",
@@ -30,11 +28,6 @@
 	"routes": [
 		{
 			"pattern": "dev.autonomo.us",
-			"custom_domain": true
-		},
-		// Kept for clients configured before the dashboard moved here.
-		{
-			"pattern": "dev-api.autonomo.us",
 			"custom_domain": true
 		}
 	]
