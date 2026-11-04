@@ -7,7 +7,7 @@ const available = await mongoAvailable();
 const failpoints = available && (await failpointsEnabled());
 if (!available) {
 	console.warn(
-		"[mongo-timeout] no MongoDB at MONGODB_URL — skipping. Start it with: docker compose up -d mongo",
+		"[mongo-timeout] no MongoDB at MONGODB_URI — skipping. Start it with: docker compose up -d mongo",
 	);
 } else if (!failpoints) {
 	console.warn(

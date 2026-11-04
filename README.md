@@ -470,8 +470,6 @@ user needs read/write access to that database, and the cluster must accept
 connections from the Worker. A GitHub or local environment secret alone does
 not configure this Worker binding. On the first request, the API creates the
 database's `gateway_routing` collection and its default configuration.
-`MONGODB_URI` takes precedence; `MONGODB_URL` is accepted as a compatibility
-fallback for existing installations.
 
 The deployment workflow runs `pnpm check:deployment` after uploading. It fails
 unless `/healthz` responds successfully and MongoDB is configured, connected,

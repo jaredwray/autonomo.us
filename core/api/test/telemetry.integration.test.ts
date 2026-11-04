@@ -12,7 +12,7 @@ import { mongoAvailable, uniqueMongoUrl } from "./mongo-env.js";
 const available = await mongoAvailable();
 if (!available) {
 	console.warn(
-		"[telemetry.integration] no MongoDB at MONGODB_URL — skipping. Start it with: docker compose up -d mongo",
+		"[telemetry.integration] no MongoDB at MONGODB_URI — skipping. Start it with: docker compose up -d mongo",
 	);
 }
 
@@ -216,7 +216,7 @@ describe.skipIf(!available)("gateway → MongoDB end to end", () => {
 		const databaseUrl = uniqueMongoUrl("worker");
 		databaseUrls.push(databaseUrl);
 		const server = createServer({
-			config: configFromEnv({ MONGODB_URL: databaseUrl }),
+			config: configFromEnv({ MONGODB_URI: databaseUrl }),
 			registry: provider.registry,
 			logger: false,
 			releaseMongoPerRequest: true,

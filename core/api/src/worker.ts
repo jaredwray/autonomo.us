@@ -73,8 +73,7 @@ export default {
 				);
 				if (initialized && !configurationLogged) {
 					configurationLogged = true;
-					if (env.MONGODB_URI || env.MONGODB_URL)
-						console.info("gateway.persistence_ready");
+					if (env.MONGODB_URI) console.info("gateway.persistence_ready");
 					else
 						console.warn("gateway.mongodb_unconfigured", {
 							message:

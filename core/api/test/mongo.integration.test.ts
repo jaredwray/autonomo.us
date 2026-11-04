@@ -9,7 +9,7 @@ import { mongoAvailable, uniqueMongoUrl } from "./mongo-env.js";
 const available = await mongoAvailable();
 if (!available) {
 	console.warn(
-		"[mongo.integration] no MongoDB at MONGODB_URL — skipping. Start it with: docker compose up -d mongo",
+		"[mongo.integration] no MongoDB at MONGODB_URI — skipping. Start it with: docker compose up -d mongo",
 	);
 }
 

@@ -6,7 +6,6 @@ import { createServer } from "../src/server.js";
 
 const url = new URL(
 	process.env.MONGODB_URI ??
-		process.env.MONGODB_URL ??
 		"mongodb://autonomous:autonomous@localhost:27017/autonomous?authSource=admin",
 );
 url.pathname = `/autonomous_models_test_${randomUUID().replaceAll("-", "")}`;
@@ -29,7 +28,7 @@ afterAll(async () => {
 
 describe.skipIf(!available)("persisted model settings", () => {
 	it("restores multiple connections of the same provider independently", async () => {
-		const config = configFromEnv({ MONGODB_URL: url.toString() });
+		const config = configFromEnv({ MONGODB_URI: url.toString() });
 		let server = createServer({ config, logger: false });
 		const ids = ["openai-work", "openai-personal"];
 		try {
@@ -98,7 +97,7 @@ describe.skipIf(!available)("persisted model settings", () => {
 		}
 	});
 	it("restores Cloudflare account IDs, native model IDs, and Jev capability after restart", async () => {
-		const config = configFromEnv({ MONGODB_URL: url.toString() });
+		const config = configFromEnv({ MONGODB_URI: url.toString() });
 		let server = createServer({ config, logger: false });
 		try {
 			for (const payload of [
@@ -148,7 +147,7 @@ describe.skipIf(!available)("persisted model settings", () => {
 		}
 	});
 	it("preserves simultaneous additions and restores credentials and models after restart", async () => {
-		const config = configFromEnv({ MONGODB_URL: url.toString() });
+		const config = configFromEnv({ MONGODB_URI: url.toString() });
 		let server = createServer({ config, logger: false });
 		try {
 			const responses = await Promise.all(
@@ -196,7 +195,7 @@ describe.skipIf(!available)("persisted model settings", () => {
 
 it("does not advertise an unsaved model when MongoDB is unavailable", async () => {
 	const server = createServer({
-		config: configFromEnv({ MONGODB_URL: "mongodb://127.0.0.1:9/test" }),
+		config: configFromEnv({ MONGODB_URI: "mongodb://127.0.0.1:9/test" }),
 		logger: false,
 	});
 	try {

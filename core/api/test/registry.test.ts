@@ -119,28 +119,14 @@ describe("configFromEnv + registryFromConfig", () => {
 		expect(config.mongodbUrl).toBeUndefined();
 	});
 
-	it("reads the MongoDB URL used for tokens, settings, and telemetry", () => {
+	it("reads the MongoDB URI used for tokens, settings, and telemetry", () => {
 		const config = configFromEnv({
-			MONGODB_URL:
+			MONGODB_URI:
 				"mongodb://autonomous:autonomous@localhost:27017/autonomous?authSource=admin",
 		});
 		expect(config.mongodbUrl).toBe(
 			"mongodb://autonomous:autonomous@localhost:27017/autonomous?authSource=admin",
 		);
-	});
-
-	it("uses MONGODB_URI before the legacy MONGODB_URL", () => {
-		const uri = "mongodb://localhost:27017/configured";
-		expect(configFromEnv({ MONGODB_URI: uri }).mongodbUrl).toBe(uri);
-		expect(
-			configFromEnv({
-				MONGODB_URI: uri,
-				MONGODB_URL: "mongodb://localhost:27017/legacy",
-			}).mongodbUrl,
-		).toBe(uri);
-		expect(
-			configFromEnv({ MONGODB_URI: "", MONGODB_URL: uri }).mongodbUrl,
-		).toBe(uri);
 	});
 
 	it("parses the failover policy from env with safe defaults", () => {

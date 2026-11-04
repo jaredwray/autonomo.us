@@ -49,7 +49,6 @@ async function withWorker(
 			vars: {
 				...config.vars,
 				MONGODB_URI: mongodbUrl,
-				MONGODB_URL: "",
 				OWNER_TOKEN: "",
 			},
 		}),
