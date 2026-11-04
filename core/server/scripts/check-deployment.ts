@@ -1,9 +1,6 @@
 import { setTimeout as delay } from "node:timers/promises";
 
-const url = new URL(
-	"/healthz",
-	process.argv[2] ?? "https://dev-api.autonomo.us",
-);
+const url = new URL("/healthz", process.argv[2] ?? "https://dev.autonomo.us");
 let failure = "No response";
 for (let attempt = 0; attempt < 12; attempt++) {
 	try {

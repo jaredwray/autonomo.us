@@ -24,13 +24,13 @@ The repository is a pnpm workspace (`core/*`) with four packages. The relevant t
 | Package | What it is | State |
 | --- | --- | --- |
 | `@autonomo.us/common` (`core/common`) | Shared types: `GatewayRequest`/`GatewayResponse`, `FailoverPolicy`, `TelemetryEvent`, `TokenUsage`, `ModelInfo`, `UsageSummary`, a placeholder `AgentConfig`. | Types only, no runtime code. |
-| `@autonomo.us/api` (`core/api`) | Fastify gateway. `ProviderRegistry` maps `provider/model` ids to Vercel AI SDK language models (Anthropic direct, any OpenAI-compatible server). `POST /v1/chat` (JSON and SSE) with a sequential failover loop: per-attempt timeout, stale-target skipping, streaming fails over only until the first token. `FailoverPolicyStore` is in-memory and runtime-mutable via `PUT /v1/failover`. `ModelCatalogService` keeps a multi-provider catalog in `cacheable` with a daily refresh (provider APIs when keys exist, models.dev otherwise). `TelemetryService` aggregates in memory and batches to MongoDB (`telemetry_events`, event id as `_id`). CORS allowlist. Team accounts (email + password sessions, invite links) and managed API tokens on every `/v1` request; `SETUP_TOKEN` gates first-run setup. | Working, tested, deployed via `docker-compose.yml`. |
-| `@autonomo.us/ux` (`core/ux`) | React + Vite dashboard: usage tiles, per-model token bars, recent events, routable models, and a failover policy editor. Polls `/v1/telemetry/*`, `/v1/models`, `/v1/failover`. | Working; tests boot a real `@autonomo.us/api` server. |
+| `@autonomo.us/server` (`core/server`) | Fastify gateway. `ProviderRegistry` maps `provider/model` ids to Vercel AI SDK language models (Anthropic direct, any OpenAI-compatible server). `POST /v1/chat` (JSON and SSE) with a sequential failover loop: per-attempt timeout, stale-target skipping, streaming fails over only until the first token. `FailoverPolicyStore` is in-memory and runtime-mutable via `PUT /v1/failover`. `ModelCatalogService` keeps a multi-provider catalog in `cacheable` with a daily refresh (provider APIs when keys exist, models.dev otherwise). `TelemetryService` aggregates in memory and batches to MongoDB (`telemetry_events`, event id as `_id`). CORS allowlist. Team accounts (email + password sessions, invite links) and managed API tokens on every `/v1` request; `SETUP_TOKEN` gates first-run setup. | Working, tested, deployed via `docker-compose.yml`. |
+| `@autonomo.us/ux` (`core/ux`) | React + Vite dashboard: usage tiles, per-model token bars, recent events, routable models, and a failover policy editor. Polls `/v1/telemetry/*`, `/v1/models`, `/v1/failover`. | Working; tests boot a real `@autonomo.us/server` server. |
 
 Infrastructure and conventions that constrain the plan:
 
 - `docker-compose.yml` runs `api`, `ux`, `mongo`, and an optional `ollama` profile. `MONGODB_URI` stores tokens, provider settings, routing, and telemetry.
-- Tests run against real services: a real OpenAI-compatible HTTP server (`core/api/test/openai-stub.ts`) over the production provider wire path, and a real MongoDB (compose locally, a service container in `.github/workflows/tests.yml`). Suites probe the service and `describe.skipIf` with a loud warning when it is absent. Pure helpers get unit tests. Injected clocks (`now?: () => Date`) are used for time, not fake services.
+- Tests run against real services: a real OpenAI-compatible HTTP server (`core/server/test/openai-stub.ts`) over the production provider wire path, and a real MongoDB (compose locally, a service container in `.github/workflows/tests.yml`). Suites probe the service and `describe.skipIf` with a loud warning when it is absent. Pure helpers get unit tests. Injected clocks (`now?: () => Date`) are used for time, not fake services.
 - Supply chain: Aikido Safe Chain shims, pnpm `minimumReleaseAge` of 7 days (new dependencies must be at least a week old), `strictDepBuilds` with an `allowBuilds` allowlist (prefer pure-JS dependencies; any native build is a security exception), SHA-pinned GitHub Actions, Socket Firewall around installs. Biome (tabs, double quotes), tsdown builds, vitest with coverage.
 - `GatewayRequest.model` is documented as "required until agent lookup by `agentId` is implemented". `agentId` is accepted and recorded but not authenticated or enforced.
 
@@ -70,7 +70,7 @@ core/
                              artifacts, reviews, approvals, routines, jobs, incidents, decisions, memory, objects
     migrations/              0001_init.sql, 0002_vault.sql, ...
     test/postgres-env.ts     probe + skipIf helper, unique schema per suite (mirrors test/mongo-env.ts)
-  api/                       @autonomo.us/api — the gateway
+  server/                    @autonomo.us/server — the gateway API and dashboard host
     src/
       auth/                  principals, gateway identity tokens, Fastify auth hook
       vault/                 Vault (encrypt/decrypt, rotate, revoke), env seeding
@@ -613,7 +613,7 @@ Positions are what the PR sequence assumes. "Decision needed" marks where the ow
 
 ### 4.1 Build the gateway or extend an existing MCP gateway/proxy? (design Q1)
 
-**Position: build the gateway core on the existing `core/api`, borrow the MCP protocol layer.** The differentiators (registry with verbs and egress classes, scopes with quotas, `review()`, approval-held `send`) are policy decisions on every call, and the repo already has the pieces around them: the Fastify host, provider adapters, the failover loop, and MongoDB telemetry. Off-the-shelf MCP proxies solve transport fan-out and auth, which the official `@modelcontextprotocol/sdk` already gives us (Streamable HTTP server and client, tool listing and invocation, schemas); they would put our enforcement logic in someone else's plugin model. We use the SDK for protocol, keep provider access on the Vercel AI SDK as today, and write the policy core ourselves.
+**Position: build the gateway core on the existing `core/server`, borrow the MCP protocol layer.** The differentiators (registry with verbs and egress classes, scopes with quotas, `review()`, approval-held `send`) are policy decisions on every call, and the repo already has the pieces around them: the Fastify host, provider adapters, the failover loop, and MongoDB telemetry. Off-the-shelf MCP proxies solve transport fan-out and auth, which the official `@modelcontextprotocol/sdk` already gives us (Streamable HTTP server and client, tool listing and invocation, schemas); they would put our enforcement logic in someone else's plugin model. We use the SDK for protocol, keep provider access on the Vercel AI SDK as today, and write the policy core ourselves.
 
 **Decision needed before PR 7:** confirm this. If the owner prefers a specific existing proxy, PR 7 changes shape (the gateway becomes a policy plugin for that proxy) and PRs 3–5 lose their MCP-facing assumptions.
 
@@ -681,9 +681,9 @@ Numbering continues from this PR (PR 0).
 
 **Scope**
 
-- New `@autonomo.us/db`: `pg` pool from `DATABASE_URL`, health probe, forward-only SQL migration runner (`migrations/0001_init.sql` creating `schema_migrations` only), a `repositories/` skeleton, and `test/postgres-env.ts` modeled on `core/api/test/mongo-env.ts` (probe `SELECT 1`, `describe.skipIf` with a warning, unique schema per suite, cleanup).
-- `docker-compose.yml`: add `postgres:17` with a healthcheck; remove `mongo` and `MONGODB_URI`. Remove the `mongodb` dependency from `core/api`. Add a `postgres` service container to `.github/workflows/tests.yml` and `release.yaml`.
-- `core/api/Dockerfile` copies `core/db` manifests and dist.
+- New `@autonomo.us/db`: `pg` pool from `DATABASE_URL`, health probe, forward-only SQL migration runner (`migrations/0001_init.sql` creating `schema_migrations` only), a `repositories/` skeleton, and `test/postgres-env.ts` modeled on `core/server/test/mongo-env.ts` (probe `SELECT 1`, `describe.skipIf` with a warning, unique schema per suite, cleanup).
+- `docker-compose.yml`: add `postgres:17` with a healthcheck; remove `mongo` and `MONGODB_URI`. Remove the `mongodb` dependency from `core/server`. Add a `postgres` service container to `.github/workflows/tests.yml` and `release.yaml`.
+- `core/server/Dockerfile` copies `core/db` manifests and dist.
 - README: Postgres in the getting-started and testing sections.
 
 **Acceptance criteria**
@@ -703,7 +703,7 @@ Numbering continues from this PR (PR 0).
 - `auth/`: `Principal`, `GatewayIdentity`, bearer-token issuance (plaintext returned once, `sha256` stored), revocation, a Fastify `onRequest` hook that sets `request.principal`. `GET /health` stays open. An `AUTH_MODE=disabled` escape hatch for local dev that logs loudly at boot; the default is enforced.
 - `vault/`: AES-256-GCM envelope encryption with `VAULT_MASTER_KEY`, `secrets` table, `Vault` interface, admin routes that accept values and never return them, rotation and revocation with audit events.
 - `configFromEnv` provider keys are seeded into the vault at boot (`seedVaultFromEnv`) and providers resolve `secretRef` at construction. Env-only operation still works.
-- Owner identity bootstrap: `OWNER_TOKEN` env, or a one-time `pnpm --filter @autonomo.us/api identity:create --owner` script.
+- Owner identity bootstrap: `OWNER_TOKEN` env, or a one-time `pnpm --filter @autonomo.us/server identity:create --owner` script.
 - Dashboard: reads `VITE_OWNER_TOKEN` (dev) or a token entered once and kept in session storage; every call sends `Authorization: Bearer`.
 
 **Acceptance criteria**
@@ -884,7 +884,7 @@ Numbering continues from this PR (PR 0).
 - An interaction with a bad signature or a stale timestamp is rejected with 401 and audited.
 - An agent principal cannot call `owner-notify`.
 
-**Tests:** a local real-protocol Slack server (`core/api/test/slack-stub.ts`): implements `chat.postMessage`/`chat.update`, records calls, and can POST signed interaction payloads back to the gateway; the suite asserts the signature verification path with a real HMAC.
+**Tests:** a local real-protocol Slack server (`core/server/test/slack-stub.ts`): implements `chat.postMessage`/`chat.update`, records calls, and can POST signed interaction payloads back to the gateway; the suite asserts the signature verification path with a real HMAC.
 
 ### PR 12: Scheduler with typed routines and missed-run detection
 
@@ -980,12 +980,12 @@ PRs 7, 8, and 12 can be developed in parallel with PRs 5–6; they merge in numb
 
 The repository's rule is real services, not mocks, and every PR above keeps it:
 
-- **Databases and stores:** real Postgres, ClickHouse, and MinIO from `docker-compose.yml` locally and as service containers in `.github/workflows/tests.yml` and `release.yaml`. Each suite probes the service and `describe.skipIf`s with a loud warning when it is absent, exactly like `core/api/test/mongo-env.ts`. Each suite uses a unique schema, table, or bucket prefix and cleans up in `afterAll`.
-- **Model providers:** the existing OpenAI-compatible stub server (`core/api/test/openai-stub.ts`) over the production AI SDK wire path. It grows model names for structured review verdicts and vision assertions, and it is started several times under different server ids to stand in for distinct model families.
+- **Databases and stores:** real Postgres, ClickHouse, and MinIO from `docker-compose.yml` locally and as service containers in `.github/workflows/tests.yml` and `release.yaml`. Each suite probes the service and `describe.skipIf`s with a loud warning when it is absent, exactly like `core/server/test/mongo-env.ts`. Each suite uses a unique schema, table, or bucket prefix and cleans up in `afterAll`.
+- **Model providers:** the existing OpenAI-compatible stub server (`core/server/test/openai-stub.ts`) over the production AI SDK wire path. It grows model names for structured review verdicts and vision assertions, and it is started several times under different server ids to stand in for distinct model families.
 - **Third-party APIs:** local HTTP servers that speak the real protocol and record calls (a Slack server with signed interaction callbacks, GitHub and X servers for the executors), in the same style as the provider stub. Signature verification is tested with real HMACs.
 - **MCP:** the real `@modelcontextprotocol/sdk` client against the gateway and a real SDK server registered as an external tool server.
 - **Time:** injected `now()` for scheduler, reconciler, quota windows, and expiry; short real intervals for heartbeats and leases. No fake timers around service calls.
-- **Dashboard:** `core/ux` tests keep booting the real `@autonomo.us/api` on an ephemeral port and drive the UI with Testing Library.
+- **Dashboard:** `core/ux` tests keep booting the real `@autonomo.us/server` on an ephemeral port and drive the UI with Testing Library.
 - **Full stack:** PR 15 adds one end-to-end suite in `core/agents/test` that runs gateway, orchestrator, and runtimes in-process against the compose services.
 - **Security assertions as tests:** secret plaintext never appears in any response body or log line; `send` never appears in any agent's `tools/list`; no `production` write executes without a decision row; author and reviewer families always differ. These are the exit criteria, so they are tests, not review notes.
 

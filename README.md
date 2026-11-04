@@ -11,18 +11,19 @@ AI platform for gateway, agents, and management.
 
 ## Packages
 
-- **@autonomo.us/api** — Fastify AI gateway service
+- **@autonomo.us/server** — Fastify server: the AI gateway API, which also hosts the dashboard build
 - **@autonomo.us/ux** — React + Vite management dashboard
 - **@autonomo.us/common** — Shared types and utilities
 - **@autonomo.us/logo** — Animated AUTONOMOUS aurora logo (framework-agnostic SVG)
 
 ## Getting Started
 
-Run the whole platform with docker compose — API gateway, dashboard, and MongoDB:
+Run the whole platform with docker compose — one server container (API gateway
+and dashboard) plus MongoDB:
 
 ```bash
 docker compose up --build
-# Dashboard: http://localhost:8080  ·  API: http://localhost:3000
+# Dashboard and API: http://localhost:3000
 ```
 
 Add a real local LLM with the `llm` profile (Ollama):
@@ -40,7 +41,8 @@ no Moby packages; with Moby the build fails and Codespaces starts in recovery
 mode). Container startup launches MongoDB with a persistent volume. New
 terminals inherit `MONGODB_URI` for the host-run API. Start the API and UX using
 the development commands below; the dashboard
-uses forwarded port 5173. Port 8080 is also forwarded for the full Compose stack.
+uses forwarded port 5173. Port 3000 is also forwarded for the server, which
+hosts the built dashboard too once `core/ux/dist` exists.
 
 For development on the host:
 
@@ -53,10 +55,10 @@ pnpm test
 ## Development
 
 ```bash
-# Start the API server
-pnpm --filter @autonomo.us/api dev
+# Start the server (the API; it also serves core/ux/dist once the dashboard is built)
+pnpm --filter @autonomo.us/server dev
 
-# Start the UX dashboard (proxies /v1 to the API on :3000)
+# Start the UX dashboard with hot reload (proxies /v1 to the server on :3000)
 pnpm --filter @autonomo.us/ux dev
 
 # Lint
@@ -228,7 +230,7 @@ through environment variables:
 docker compose up -d mongo
 OPENAI_COMPAT_BASE_URL=http://localhost:11434/v1 \
 MONGODB_URI='mongodb://autonomous:autonomous@localhost:27017/autonomous?authSource=admin' \
-pnpm --filter @autonomo.us/api dev
+pnpm --filter @autonomo.us/server dev
 
 curl -X POST http://localhost:3000/v1/chat \
   -H "content-type: application/json" \
@@ -352,7 +354,7 @@ public [models.dev](https://models.dev) catalog, so no keys are required. A
 refresh that cannot reach the sources just keeps the catalog it already has —
 requests are always served from cache, never blocked on a fetch.
 
-The bundled `core/api/src/models.json` is the baseline the gateway serves
+The bundled `core/server/src/models.json` is the baseline the gateway serves
 until the first successful refresh. The
 [update-models](.github/workflows/update-models.yml) workflow runs the same
 collection daily (using repo secrets for whichever provider keys are
@@ -361,11 +363,11 @@ does not commit back to the repo. Refresh the committed baseline locally
 with:
 
 ```bash
-pnpm --filter @autonomo.us/api models:update
+pnpm --filter @autonomo.us/server models:update
 ```
 
 To collect another provider, add a spec to `PROVIDERS` in
-`core/api/src/model-catalog.ts` (and its key to the workflow env).
+`core/server/src/model-catalog.ts` (and its key to the workflow env).
 
 ### Routing
 
@@ -511,23 +513,39 @@ exceed 100,000 time/model/caller/operation groups also fall back with this notic
 
 ## Deployment
 
-Merges to `main` deploy the development environment to two Cloudflare Workers.
-The [deploy-development](.github/workflows/deploy-development.yml) workflow
-builds `@autonomo.us/ux` with `VITE_API_URL=https://dev-api.autonomo.us` and
-runs `pnpm deploy:development`. The `autonomo.us` zone must already be on the
-Cloudflare account. Local Compose still serves the dashboard and API on one
-origin; these Workers split them.
+Merges to `main` deploy the development environment to one Cloudflare Worker,
+`autonomous-api-development`, which serves the dashboard and the API at
+<https://dev.autonomo.us>. The
+[deploy-development](.github/workflows/deploy-development.yml) workflow runs
+`pnpm deploy:development`, which builds `@autonomo.us/ux` and uploads its
+`dist` directory as the Worker's static assets together with the API code
+(`assets` in `core/server/wrangler.jsonc`). The `autonomo.us` zone must already
+be on the Cloudflare account. Compose and the Worker now have the same shape:
+one origin, one deployable.
 
-| Worker | URL | What it serves |
-| --- | --- | --- |
-| `autonomous-ux-development` | <https://dev.autonomo.us> | Static dashboard. API calls go to `https://dev-api.autonomo.us`. |
-| `autonomous-api-development` | <https://dev-api.autonomo.us> | API gateway. `CORS_ORIGIN` is `https://dev.autonomo.us`. |
+| Path | Served by |
+| --- | --- |
+| `/v1/*`, `/health`, `/healthz` | The API (Fastify) inside the Worker (`run_worker_first`). |
+| Everything else | The dashboard build. Unknown paths get `index.html` for client-side routes. These requests never invoke the Worker. |
+
+The dashboard calls the API on its own origin, so the build needs no
+`VITE_API_URL`. <https://dev-api.autonomo.us> stays attached to the same Worker
+for clients configured before the dashboard moved; the API answers on both
+hostnames.
+
+Cutting over from the earlier two-Worker layout is a one-time step. Two Workers
+cannot hold the same custom domain, so delete the retired dashboard Worker,
+which releases `dev.autonomo.us`, before the first combined deploy:
+
+```bash
+pnpm exec wrangler delete --name autonomous-ux-development
+```
 
 Provision a MongoDB server or managed cluster outside this workflow. After the
 first API deploy, store the connection string as a Worker secret:
 
 ```bash
-pnpm exec wrangler secret put MONGODB_URI -c core/api/wrangler.jsonc
+pnpm exec wrangler secret put MONGODB_URI -c core/server/wrangler.jsonc
 ```
 
 Before anyone can reach a new deployment, also set a setup token so only you
@@ -535,7 +553,7 @@ can run first-run setup. Then open <https://dev.autonomo.us>, enter the token,
 and create the owner account. The token grants nothing after setup.
 
 ```bash
-pnpm exec wrangler secret put SETUP_TOKEN -c core/api/wrangler.jsonc
+pnpm exec wrangler secret put SETUP_TOKEN -c core/server/wrangler.jsonc
 ```
 
 Include the application database name in the connection string. The MongoDB
@@ -549,11 +567,11 @@ unless `/healthz` responds successfully and MongoDB is configured, connected,
 and initialized. For an initial deployment, set the Worker secret and rerun
 the workflow. Database write failures remain visible even when a ping succeeds.
 
-Worker logs are enabled in `core/api/wrangler.jsonc`. View them in Cloudflare's
+Worker logs are enabled in `core/server/wrangler.jsonc`. View them in Cloudflare's
 Worker observability page or with:
 
 ```bash
-pnpm exec wrangler tail -c core/api/wrangler.jsonc
+pnpm exec wrangler tail -c core/server/wrangler.jsonc
 ```
 
 `gateway.request` records method, path, status, and duration. Persistence emits

@@ -34,7 +34,18 @@ importers:
         specifier: ^4.152.0
         version: 4.152.0(@types/node@25.6.0)
 
-  core/api:
+  core/common: {}
+
+  core/logo:
+    devDependencies:
+      jsdom:
+        specifier: ^29.0.2
+        version: 29.0.2
+      vite:
+        specifier: ^8.3.4
+        version: 8.3.4(@types/node@25.6.0)(esbuild@0.28.2)(tsx@4.21.0)
+
+  core/server:
     dependencies:
       '@ai-sdk/anthropic':
         specifier: ^4.0.16
@@ -83,17 +94,6 @@ importers:
         specifier: ^4.21.0
         version: 4.21.0
 
-  core/common: {}
-
-  core/logo:
-    devDependencies:
-      jsdom:
-        specifier: ^29.0.2
-        version: 29.0.2
-      vite:
-        specifier: ^8.3.4
-        version: 8.3.4(@types/node@25.6.0)(esbuild@0.28.2)(tsx@4.21.0)
-
   core/ux:
     dependencies:
       '@autonomo.us/common':
@@ -106,9 +106,9 @@ importers:
         specifier: ^19.2.5
         version: 19.2.5(react@19.2.5)
     devDependencies:
-      '@autonomo.us/api':
+      '@autonomo.us/server':
         specifier: workspace:*
-        version: link:../api
+        version: link:../server
       '@testing-library/jest-dom':
         specifier: ^6.9.1
         version: 6.9.1

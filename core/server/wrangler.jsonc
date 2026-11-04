@@ -1,0 +1,41 @@
+{
+	"$schema": "../../node_modules/wrangler/config-schema.json",
+	// One Worker serves the dashboard and the API. The name predates that:
+	// renaming a Worker creates a new one without its MONGODB_URI and
+	// SETUP_TOKEN secrets, so it stays.
+	"name": "autonomous-api-development",
+	"main": "./src/worker.ts",
+	// nodejs_compat (and the Node HTTP server) is on for dates on or after 2026-08-04.
+	"compatibility_date": "2026-10-22",
+	"workers_dev": false,
+	"preview_urls": false,
+	"send_metrics": false,
+	"observability": {
+		"enabled": true,
+		"head_sampling_rate": 1
+	},
+	"upload_source_maps": true,
+	// The dashboard build (pnpm --filter @autonomo.us/ux build). Paths in
+	// run_worker_first reach Fastify; every other path is answered from this
+	// directory without invoking the Worker, with index.html standing in for
+	// the dashboard's client-side routes.
+	"assets": {
+		"directory": "../ux/dist",
+		"not_found_handling": "single-page-application",
+		"run_worker_first": ["/v1/*", "/health", "/healthz"]
+	},
+	"vars": {
+		"CORS_ORIGIN": "https://dev.autonomo.us"
+	},
+	"routes": [
+		{
+			"pattern": "dev.autonomo.us",
+			"custom_domain": true
+		},
+		// Kept for clients configured before the dashboard moved here.
+		{
+			"pattern": "dev-api.autonomo.us",
+			"custom_domain": true
+		}
+	]
+}
