@@ -15,7 +15,7 @@ import type {
 	UpdateApiTokenRequest,
 } from "@autonomo.us/common";
 import { MongoClient } from "mongodb";
-import { mongoOperationDeadlines } from "../mongo.js";
+import { mongoOperationDeadlines, requestMongoClient } from "../mongo.js";
 
 type Credential = { hash: string; prefix: string; expiresAt: string | null };
 type TokenRecord<Permission extends string> = Omit<
@@ -170,12 +170,18 @@ export class TokenStore<Permission extends string> {
 		private readonly now = Date.now,
 	) {}
 	private collection() {
-		this.client ??= new MongoClient(this.mongodbUrl as string, {
-			serverSelectionTimeoutMS: 1500,
-			...mongoOperationDeadlines(3000),
-			readPreference: "primary",
-		});
-		return this.client
+		const create = () =>
+			new MongoClient(this.mongodbUrl as string, {
+				serverSelectionTimeoutMS: 1500,
+				...mongoOperationDeadlines(3000),
+				readPreference: "primary",
+			});
+		let client = requestMongoClient(this, create);
+		if (!client) {
+			this.client ??= create();
+			client = this.client;
+		}
+		return client
 			.db()
 			.collection<TokenRecord<Permission>>(this.profile.collection);
 	}

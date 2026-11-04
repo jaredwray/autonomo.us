@@ -1,95 +1,111 @@
 import { httpServerHandler } from "cloudflare:node";
+import { env } from "cloudflare:workers";
 import { configFromEnv } from "./config.js";
 import { ModelCatalogService } from "./model-catalog-service.js";
-import { createServer, releaseRequestResources } from "./server.js";
+import { mongoErrorDetails, withMongoRequestScope } from "./mongo.js";
 import {
-	RequestTracker,
+	createServer,
+	initializePersistence,
+	releaseRequestResources,
+} from "./server.js";
+import {
 	releaseAfterResponse,
 	scheduleTicksAsMicrotasks,
 } from "./worker-requests.js";
 
 const PORT = 3000;
-
-type WorkerEnv = Record<string, string | undefined>;
-
-let handler:
-	| {
-			fetch: (
-				request: Request,
-				env: WorkerEnv,
-				ctx: ExecutionContext,
-			) => Promise<Response>;
-	  }
-	| undefined;
-let server: ReturnType<typeof createServer> | undefined;
-let starting: Promise<void> | undefined;
-const requests = new RequestTracker(async () => {
-	if (server) await releaseRequestResources(server);
-});
+const modelCatalog = new ModelCatalogService({ env });
 
 /**
- * Serves the Fastify gateway on Cloudflare Workers. Construction happens
- * inside fetch: Fastify's startup timer is not allowed in Worker global scope.
- * MongoDB sockets are closed after each request because Workers cannot reuse
- * them. Set MONGODB_URL as a Worker secret. CORS_ORIGIN defaults to the
- * development dashboard.
+ * Fastify's router and schema validators generate functions. Workers allow that
+ * only during module startup, so compile before fetch and defer database I/O
+ * until a request. No persistence clients or refresh timers start here.
  */
-async function ensureStarted(env: WorkerEnv, ctx: ExecutionContext) {
-	if (handler && server) return;
-	starting ??= start(env, ctx).catch((error: unknown) => {
-		starting = undefined;
-		handler = undefined;
-		server = undefined;
-		throw error;
-	});
-	await starting;
-}
-
-async function start(env: WorkerEnv, ctx: ExecutionContext) {
-	// Before Fastify: its constructor schedules the first boot turn immediately.
-	// Restored after listen so later MongoDB I/O uses the native queue.
+async function prepareServer() {
 	const restoreTicks = scheduleTicksAsMicrotasks();
 	try {
-		const modelCatalog = new ModelCatalogService({ env });
-		const created = createServer({
+		const server = createServer({
 			config: configFromEnv({
 				...env,
 				CORS_ORIGIN: env.CORS_ORIGIN ?? "https://dev.autonomo.us",
 			}),
 			modelCatalog,
+			// Wrangler's Pino shim lacks the symbols Fastify requires. Emit
+			// credential-free structured console events at the Worker boundary.
 			logger: false,
 			releaseMongoPerRequest: true,
+			deferPersistence: true,
 			pluginTimeout: 0,
 		});
-		await created.listen({ port: PORT, host: "127.0.0.1" });
-		server = created;
-		handler = httpServerHandler({ port: PORT });
-		ctx.waitUntil(modelCatalog.refresh());
+		await server.listen({ port: PORT, host: "127.0.0.1" });
+		return server;
 	} finally {
 		restoreTicks();
 	}
 }
 
+const server = await prepareServer();
+const handler = httpServerHandler({ port: PORT });
+let catalogStarted = false;
+let configurationLogged = false;
+
 export default {
-	async fetch(request: Request, env: WorkerEnv, ctx: ExecutionContext) {
-		await ensureStarted(env, ctx);
-		const respond = handler;
-		if (!respond) {
-			throw new Error("The development API failed to start.");
-		}
-		// The handler resolves once headers are written; a streamed chat keeps
-		// running (and records its telemetry) until the body ends, so clients
-		// are released only after the last open response in this isolate.
-		const end = requests.begin();
-		let response: Response;
-		try {
-			response = await respond.fetch(request, env, ctx);
-		} catch (error) {
-			ctx.waitUntil(end());
-			throw error;
-		}
-		const tracked = releaseAfterResponse(response, end);
-		ctx.waitUntil(tracked.finished);
-		return tracked.response;
+	fetch(request: Request, bindings: unknown, ctx: ExecutionContext) {
+		return withMongoRequestScope(async (close) => {
+			const started = Date.now();
+			const end = async () => {
+				try {
+					await releaseRequestResources(server);
+				} finally {
+					await close();
+				}
+			};
+			let response: Response;
+			try {
+				const initialized = await initializePersistence(
+					server,
+					(store, error) => {
+						console.error("gateway.persistence_failed", {
+							store,
+							...mongoErrorDetails(error),
+						});
+					},
+				);
+				if (initialized && !configurationLogged) {
+					configurationLogged = true;
+					if (env.MONGODB_URI) console.info("gateway.persistence_ready");
+					else
+						console.warn("gateway.mongodb_unconfigured", {
+							message:
+								"Set the MONGODB_URI Worker secret to persist configuration.",
+						});
+				}
+				if (!catalogStarted) {
+					catalogStarted = true;
+					ctx.waitUntil(modelCatalog.refresh());
+				}
+				response = await handler.fetch(request, bindings, ctx);
+			} catch (error) {
+				console.error("gateway.request_failed", mongoErrorDetails(error));
+				response = Response.json(
+					{ error: "The API is unavailable. Check Worker logs." },
+					{ status: 503, headers: { "cache-control": "no-store" } },
+				);
+			}
+			console.info("gateway.request", {
+				method: request.method,
+				path: new URL(request.url).pathname,
+				status: response.status,
+				durationMs: Date.now() - started,
+			});
+			// Keep request resources until streaming and telemetry writes complete.
+			const tracked = releaseAfterResponse(response, end);
+			ctx.waitUntil(
+				tracked.finished.catch((error) => {
+					console.error("gateway.cleanup_failed", mongoErrorDetails(error));
+				}),
+			);
+			return tracked.response;
+		});
 	},
 };

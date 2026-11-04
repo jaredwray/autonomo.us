@@ -55,8 +55,10 @@ jobs:
           pnpm exec wrangler deploy -c core/ux/wrangler.jsonc --dry-run --outdir "$RUNNER_TEMP/ux"
           pnpm exec wrangler deploy -c core/api/wrangler.jsonc --dry-run --outdir "$RUNNER_TEMP/api"
       # Suites that need MongoDB default to the service above. Leaving
-      # MONGODB_URL unset keeps createServer() in-memory for the other tests.
+      # MONGODB_URI unset keeps createServer() in-memory for the other tests.
       - run: pnpm test:ci
+      - name: Exercise the API in the Workers runtime
+        run: pnpm test:worker
 
   docker:
     runs-on: ubuntu-latest

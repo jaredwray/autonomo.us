@@ -79,7 +79,7 @@ function parseModels(value: string | undefined, fallback: string[]): string[] {
  * - `OPENAI_COMPAT_BASE_URL` registers an OpenAI-compatible provider (Ollama,
  *   LM Studio, vLLM, ...). `OPENAI_COMPAT_NAME` (default `local`),
  *   `OPENAI_COMPAT_API_KEY`, and `OPENAI_COMPAT_MODELS` refine it.
- * - `MONGODB_URL` persists tokens, routing, provider settings, and telemetry.
+ * - `MONGODB_URI` persists tokens, routing, provider settings, and telemetry.
  * - `FAILOVER_ENABLED`, `FAILOVER_TARGETS` (comma-separated `provider/model`
  *   ids), and `FAILOVER_TIMEOUT_MS` seed the failover policy, which stays
  *   runtime-configurable via PUT /v1/failover and the dashboard.
@@ -193,7 +193,7 @@ export function configFromEnv(
 	return {
 		providers,
 		failover,
-		mongodbUrl: env.MONGODB_URL,
+		mongodbUrl: env.MONGODB_URI,
 		ownerToken: env.OWNER_TOKEN || undefined,
 		corsOrigins,
 	};

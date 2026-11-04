@@ -119,9 +119,9 @@ describe("configFromEnv + registryFromConfig", () => {
 		expect(config.mongodbUrl).toBeUndefined();
 	});
 
-	it("reads the MongoDB URL used for tokens, settings, and telemetry", () => {
+	it("reads the MongoDB URI used for tokens, settings, and telemetry", () => {
 		const config = configFromEnv({
-			MONGODB_URL:
+			MONGODB_URI:
 				"mongodb://autonomous:autonomous@localhost:27017/autonomous?authSource=admin",
 		});
 		expect(config.mongodbUrl).toBe(

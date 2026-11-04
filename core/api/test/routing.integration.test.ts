@@ -6,7 +6,7 @@ import type { ApiConfig } from "../src/config.js";
 import { createServer } from "../src/server.js";
 
 const url = new URL(
-	process.env.MONGODB_URL ??
+	process.env.MONGODB_URI ??
 		"mongodb://autonomous:autonomous@localhost:27017/autonomous?authSource=admin",
 );
 url.pathname = `/autonomous_routing_test_${randomUUID().replaceAll("-", "")}`;

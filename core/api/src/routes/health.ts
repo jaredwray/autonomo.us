@@ -19,7 +19,13 @@ async function check(
 
 export async function healthRoutes(
 	server: FastifyInstance,
-	{ config }: { config: ApiConfig },
+	{
+		config,
+		persistenceInitialized,
+	}: {
+		config: ApiConfig;
+		persistenceInitialized: () => boolean;
+	},
 ) {
 	const pingMongo = config.mongodbUrl
 		? async () => {
@@ -45,7 +51,10 @@ export async function healthRoutes(
 			// does not prevent the dashboard from starting in Docker Compose.
 			status: "ok",
 			timestamp: new Date().toISOString(),
-			mongodb,
+			mongodb: {
+				...mongodb,
+				initialized: mongodb.configured && persistenceInitialized(),
+			},
 		};
 	};
 	server.get("/health", report);

@@ -29,7 +29,7 @@ The repository is a pnpm workspace (`core/*`) with four packages. The relevant t
 
 Infrastructure and conventions that constrain the plan:
 
-- `docker-compose.yml` runs `api`, `ux`, `mongo`, and an optional `ollama` profile. `MONGODB_URL` stores tokens, provider settings, routing, and telemetry.
+- `docker-compose.yml` runs `api`, `ux`, `mongo`, and an optional `ollama` profile. `MONGODB_URI` stores tokens, provider settings, routing, and telemetry.
 - Tests run against real services: a real OpenAI-compatible HTTP server (`core/api/test/openai-stub.ts`) over the production provider wire path, and a real MongoDB (compose locally, a service container in `.github/workflows/tests.yml`). Suites probe the service and `describe.skipIf` with a loud warning when it is absent. Pure helpers get unit tests. Injected clocks (`now?: () => Date`) are used for time, not fake services.
 - Supply chain: Aikido Safe Chain shims, pnpm `minimumReleaseAge` of 7 days (new dependencies must be at least a week old), `strictDepBuilds` with an `allowBuilds` allowlist (prefer pure-JS dependencies; any native build is a security exception), SHA-pinned GitHub Actions, Socket Firewall around installs. Biome (tabs, double quotes), tsdown builds, vitest with coverage.
 - `GatewayRequest.model` is documented as "required until agent lookup by `agentId` is implemented". `agentId` is accepted and recorded but not authenticated or enforced.
@@ -682,7 +682,7 @@ Numbering continues from this PR (PR 0).
 **Scope**
 
 - New `@autonomo.us/db`: `pg` pool from `DATABASE_URL`, health probe, forward-only SQL migration runner (`migrations/0001_init.sql` creating `schema_migrations` only), a `repositories/` skeleton, and `test/postgres-env.ts` modeled on `core/api/test/mongo-env.ts` (probe `SELECT 1`, `describe.skipIf` with a warning, unique schema per suite, cleanup).
-- `docker-compose.yml`: add `postgres:17` with a healthcheck; remove `mongo` and `MONGODB_URL`. Remove the `mongodb` dependency from `core/api`. Add a `postgres` service container to `.github/workflows/tests.yml` and `release.yaml`.
+- `docker-compose.yml`: add `postgres:17` with a healthcheck; remove `mongo` and `MONGODB_URI`. Remove the `mongodb` dependency from `core/api`. Add a `postgres` service container to `.github/workflows/tests.yml` and `release.yaml`.
 - `core/api/Dockerfile` copies `core/db` manifests and dist.
 - README: Postgres in the getting-started and testing sections.
 

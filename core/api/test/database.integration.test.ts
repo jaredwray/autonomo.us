@@ -2,7 +2,7 @@ import type { RoutingConfig } from "@autonomo.us/common";
 import { MongoClient } from "mongodb";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ApiConfig } from "../src/config.js";
-import { createServer } from "../src/server.js";
+import { createServer, initializePersistence } from "../src/server.js";
 import { mongoAvailable, uniqueMongoUrl } from "./mongo-env.js";
 
 const available = await mongoAvailable();
@@ -48,6 +48,22 @@ describe.skipIf(!available)("database initialization", () => {
 			.db()
 			.collection<{ _id: string; config: RoutingConfig }>("gateway_routing");
 	}
+
+	it("defers database creation until the Worker handles a request", async () => {
+		const server = createServer({
+			config: { mongodbUrl, providers: [], corsOrigins: [] },
+			logger: false,
+			deferPersistence: true,
+		});
+		servers.push(server);
+		await server.ready();
+		expect(await client.db().listCollections().toArray()).toEqual([]);
+		expect(await initializePersistence(server)).toBe(true);
+		expect(await settings().findOne({ _id: "default" })).not.toBeNull();
+		expect((await server.inject("/healthz")).json().mongodb.initialized).toBe(
+			true,
+		);
+	});
 
 	it("creates a fresh database at startup and preserves its defaults on restart", async () => {
 		expect(await client.db().listCollections().toArray()).toEqual([]);
@@ -113,8 +129,14 @@ describe.skipIf(!available)("database initialization", () => {
 		const failed = await server.inject("/v1/routing");
 		expect(failed.statusCode).toBe(503);
 		expect(await settings().countDocuments()).toBe(0);
+		expect((await server.inject("/healthz")).json().mongodb).toEqual({
+			configured: true,
+			connected: true,
+			initialized: false,
+		});
 
 		await client.db().command({ collMod: "gateway_routing", validator: {} });
+		expect(await initializePersistence(server)).toBe(true);
 		const recovered = await server.inject("/v1/routing");
 		expect(recovered.statusCode).toBe(200);
 		expect(await settings().findOne({ _id: "default" })).toEqual({

@@ -5,7 +5,7 @@ import type {
 	UsageSummary,
 } from "@autonomo.us/common";
 import { type Collection, MongoBulkWriteError, MongoClient } from "mongodb";
-import { mongoOperationDeadlines } from "../mongo.js";
+import { mongoOperationDeadlines, requestMongoClient } from "../mongo.js";
 import { type AnalyticsFact, bucketMs } from "./analytics.js";
 
 const GATEWAY_TYPES = [
@@ -113,11 +113,17 @@ export class MongoTelemetrySink {
 	) {}
 
 	private collection(): Collection<TelemetryDocument> {
-		this.client ??= new MongoClient(this.url, {
-			serverSelectionTimeoutMS: this.timeoutMs,
-			...mongoOperationDeadlines(this.timeoutMs),
-		});
-		return this.client.db().collection<TelemetryDocument>(TELEMETRY_COLLECTION);
+		const create = () =>
+			new MongoClient(this.url, {
+				serverSelectionTimeoutMS: this.timeoutMs,
+				...mongoOperationDeadlines(this.timeoutMs),
+			});
+		let client = requestMongoClient(this, create);
+		if (!client) {
+			this.client ??= create();
+			client = this.client;
+		}
+		return client.db().collection<TelemetryDocument>(TELEMETRY_COLLECTION);
 	}
 
 	private fail(error: unknown): never {

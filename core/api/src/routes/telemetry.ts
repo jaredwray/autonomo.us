@@ -77,7 +77,7 @@ export async function telemetryRoutes(
 						error: {
 							type: "mongodb_unavailable",
 							message:
-								"MongoDB is not configured or not reachable. Set MONGODB_URL.",
+								"MongoDB is not configured or not reachable. Set MONGODB_URI.",
 						},
 					});
 				}
