@@ -217,6 +217,31 @@ describe("MCP endpoint", () => {
 		);
 		expect(notification.status).toBe(202);
 		expect(notification.body).toBeNull();
+		// A request sent without an id is refused, not acknowledged and dropped.
+		const idless = await post(
+			JSON.stringify({
+				jsonrpc: "2.0",
+				method: "tools/call",
+				params: {
+					name: "brain_create",
+					arguments: { title: "Lost without an id" },
+				},
+			}),
+			headers,
+		);
+		expect(idless.status).toBe(400);
+		expect(idless.body).toMatchObject({
+			id: null,
+			error: { code: -32600, message: expect.stringMatching(/needs an id/) },
+		});
+		expect(
+			(
+				await rpc(agent.secret, "tools/call", {
+					name: "brain_search",
+					arguments: { query: "Lost without an id" },
+				})
+			).body,
+		).toMatchObject({ result: { structuredContent: { total: 0 } } });
 		const parse = await post("{not json", headers);
 		expect(parse.status).toBe(400);
 		expect(parse.body).toMatchObject({ id: null, error: { code: -32700 } });

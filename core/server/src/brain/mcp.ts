@@ -645,7 +645,18 @@ export async function mcpRoutes(
 				RPC.invalidRequest,
 				'Invalid Request: expected jsonrpc "2.0" and a method.',
 			);
-		if (id === undefined) return reply.code(202).send();
+		// Only notifications may omit the id. A request without one, such as a
+		// tools/call, is refused so the client learns its write did not happen.
+		if (id === undefined) {
+			if (method.startsWith("notifications/")) return reply.code(202).send();
+			return rpcError(
+				reply,
+				400,
+				null,
+				RPC.invalidRequest,
+				`Invalid Request: ${method} needs an id; only notifications may omit it.`,
+			);
+		}
 		if (typeof id !== "string" && typeof id !== "number" && id !== null)
 			return rpcError(
 				reply,

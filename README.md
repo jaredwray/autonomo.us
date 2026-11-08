@@ -355,8 +355,9 @@ curl -X POST http://localhost:3000/mcp \
 ```
 
 Requests with an `Origin` outside `CORS_ORIGIN` get 403, `GET`/`DELETE /mcp`
-get 405, and notifications get 202. Tool failures (not found, validation,
-limits, conflicts) come back as tool results with `isError: true`.
+get 405, `notifications/*` messages get 202, and any other message without an
+`id` gets 400. Tool failures (not found, validation, limits, conflicts) come
+back as tool results with `isError: true`.
 
 REST routes under `/v1/brain`: `GET /vaults` and `GET /templates`;
 `GET|POST /vaults/:vault/notes` (query with `text`, `category`, `tag`,
