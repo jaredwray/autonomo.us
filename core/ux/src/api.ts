@@ -12,10 +12,27 @@ import type {
 	ApiTokenSettings,
 	AuthSession,
 	AuthStatus,
+	BrainCategory,
+	BrainDaily,
+	BrainExport,
+	BrainImportRequest,
+	BrainImportResult,
+	BrainNote,
+	BrainNoteList,
+	BrainNoteView,
+	BrainProposal,
+	BrainProposalList,
+	BrainProposalStatus,
+	BrainQuery,
+	BrainTemplate,
+	BrainUnresolvedLink,
+	BrainVaultList,
 	CreateAgentTokenRequest,
 	CreateApiTokenRequest,
+	CreateBrainNoteRequest,
 	CreateTeamInviteRequest,
 	CurrentSession,
+	DecideBrainProposalRequest,
 	FailoverPolicy,
 	GatewayResponse,
 	InvitePreview,
@@ -32,6 +49,7 @@ import type {
 	TeamSettings,
 	UpdateAgentTokenRequest,
 	UpdateApiTokenRequest,
+	UpdateBrainNoteRequest,
 	UpdateTeamMemberRequest,
 	UsageAnalytics,
 } from "@autonomo.us/common";
@@ -427,4 +445,151 @@ export function revokeTeamInvite(id: string): Promise<TeamInvite> {
 }
 export function removeTeamMember(id: string): Promise<TeamMember> {
 	return postJson(`/v1/team/${encodeURIComponent(id)}`, "DELETE", {});
+}
+
+/** A failed request whose HTTP status matters to the caller (404, 409). */
+export class ApiError extends Error {
+	readonly status: number;
+	constructor(message: string, status: number) {
+		super(message);
+		this.name = "ApiError";
+		this.status = status;
+	}
+}
+async function brainRequest<T>(
+	path: string,
+	{ method = "GET", body }: { method?: string; body?: unknown } = {},
+): Promise<T> {
+	const headers = new Headers({ accept: "application/json" });
+	if (body !== undefined) headers.set("content-type", "application/json");
+	const response = await apiFetch(`${apiBase()}${path}`, {
+		method,
+		headers,
+		body: body === undefined ? undefined : JSON.stringify(body),
+	});
+	if (!response.ok)
+		throw new ApiError(
+			await errorMessage(response, `Request failed (${response.status})`),
+			response.status,
+		);
+	return (response.status === 204 ? undefined : await response.json()) as T;
+}
+const vaultPath = (vault: string) =>
+	`/v1/brain/vaults/${encodeURIComponent(vault)}`;
+const notePath = (vault: string, title: string) =>
+	`${vaultPath(vault)}/notes/${encodeURIComponent(title)}`;
+
+export function fetchBrainVaults(): Promise<BrainVaultList> {
+	return brainRequest("/v1/brain/vaults");
+}
+export function fetchBrainTemplates(): Promise<{ templates: BrainTemplate[] }> {
+	return brainRequest("/v1/brain/templates");
+}
+export function fetchBrainNotes(
+	vault: string,
+	query: BrainQuery = {},
+): Promise<BrainNoteList> {
+	const params = new URLSearchParams();
+	const { where, ...rest } = query;
+	for (const [key, value] of Object.entries(rest))
+		if (value !== undefined && value !== "") params.set(key, String(value));
+	for (const [key, value] of Object.entries(where ?? {}))
+		params.set(`where.${key}`, String(value));
+	const search = params.toString();
+	return brainRequest(`${vaultPath(vault)}/notes${search ? `?${search}` : ""}`);
+}
+export function createBrainNote(
+	vault: string,
+	input: CreateBrainNoteRequest,
+): Promise<BrainNote> {
+	return brainRequest(`${vaultPath(vault)}/notes`, {
+		method: "POST",
+		body: input,
+	});
+}
+export function fetchBrainNote(
+	vault: string,
+	title: string,
+): Promise<BrainNoteView> {
+	return brainRequest(notePath(vault, title));
+}
+export function updateBrainNote(
+	vault: string,
+	title: string,
+	input: UpdateBrainNoteRequest,
+): Promise<BrainNote> {
+	return brainRequest(notePath(vault, title), { method: "PATCH", body: input });
+}
+export function appendBrainNote(
+	vault: string,
+	title: string,
+	text: string,
+	template?: string,
+): Promise<BrainNote> {
+	return brainRequest(`${notePath(vault, title)}/append`, {
+		method: "POST",
+		body: { text, template },
+	});
+}
+export function deleteBrainNote(vault: string, title: string): Promise<void> {
+	return brainRequest(notePath(vault, title), { method: "DELETE" });
+}
+export function fetchBrainUnresolved(
+	vault: string,
+): Promise<{ links: BrainUnresolvedLink[] }> {
+	return brainRequest(`${vaultPath(vault)}/unresolved`);
+}
+export function fetchBrainCategories(
+	vault: string,
+): Promise<{ categories: BrainCategory[] }> {
+	return brainRequest(`${vaultPath(vault)}/categories`);
+}
+export function fetchBrainDaily(
+	vault: string,
+	date: string,
+): Promise<BrainDaily> {
+	return brainRequest(`${vaultPath(vault)}/daily/${encodeURIComponent(date)}`);
+}
+export function fetchBrainExport(vault: string): Promise<BrainExport> {
+	return brainRequest(`${vaultPath(vault)}/export`);
+}
+/** The vault as an Obsidian-compatible zip, fetched with the session credential. */
+export async function fetchBrainExportZip(vault: string): Promise<Blob> {
+	const response = await apiFetch(
+		`${apiBase()}${vaultPath(vault)}/export?format=zip`,
+		{
+			headers: { accept: "application/zip" },
+		},
+	);
+	if (!response.ok)
+		throw new ApiError(
+			await errorMessage(response, `Export failed (${response.status})`),
+			response.status,
+		);
+	return response.blob();
+}
+export function importBrainNotes(
+	vault: string,
+	input: BrainImportRequest,
+): Promise<BrainImportResult> {
+	return brainRequest(`${vaultPath(vault)}/import`, {
+		method: "POST",
+		body: input,
+	});
+}
+export function fetchBrainProposals(
+	status?: BrainProposalStatus,
+): Promise<BrainProposalList> {
+	return brainRequest(
+		`/v1/brain/proposals${status ? `?status=${encodeURIComponent(status)}` : ""}`,
+	);
+}
+export function decideBrainProposal(
+	id: string,
+	input: DecideBrainProposalRequest,
+): Promise<BrainProposal> {
+	return brainRequest(`/v1/brain/proposals/${encodeURIComponent(id)}/decide`, {
+		method: "POST",
+		body: input,
+	});
 }

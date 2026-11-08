@@ -15,6 +15,7 @@ import {
 	fetchCurrentSession,
 	signOut,
 } from "./api.js";
+import { BrainView } from "./BrainView.js";
 import { Dashboard } from "./Dashboard.js";
 import { Icon } from "./Icons.js";
 import { ModelsView } from "./ModelsView.js";
@@ -28,13 +29,15 @@ const viewLabels = {
 	dashboard: "Dashboard",
 	models: "Models",
 	routing: "Routing",
+	brain: "Brain",
 	"api-tokens": "API Tokens",
 	"agent-tokens": "Agent Tokens",
 	team: "Team",
 };
 type View = keyof typeof viewLabels | "profile";
 function currentView(): View {
-	const view = window.location.hash.slice(2);
+	// Views such as Brain keep their own state after the view name (#/brain/<vault>/<note>).
+	const view = window.location.hash.slice(2).split("/")[0] ?? "";
 	return view === "profile" || Object.hasOwn(viewLabels, view)
 		? (view as View)
 		: "dashboard";
@@ -329,6 +332,8 @@ export function App() {
 					<ModelsView />
 				) : shown === "routing" ? (
 					<RoutingView />
+				) : shown === "brain" ? (
+					<BrainView user={user} />
 				) : shown === "team" ? (
 					<TeamView />
 				) : (
