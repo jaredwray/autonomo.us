@@ -174,12 +174,12 @@ Additions to existing types:
 
 | Collection | Today | Change |
 | --- | --- | --- |
-| `gateway_workspaces` | — | New. `{ _id, slug, name, description, createdAt, createdBy, updatedAt, archivedAt, revision, actions }`. Unique index on `slug`; the slug is immutable in v1 so dashboard links never break. `actions` holds the latest 100 lifecycle and membership changes with actor and time, committed atomically with the change, like token `actions`. The `default` document is created with a `$setOnInsert` upsert, the same way `RoutingSettingsStore` creates its default document, so concurrent startups agree. Metadata edits use `$set` on named fields with a `revision` check, never a whole-document replace. |
+| `gateway_workspaces` | — | New. `{ _id, slug, name, description, createdAt, createdBy, updatedAt, archivedAt, revision, actions }`. Unique index on `slug`; the slug is immutable in v1 so dashboard links never break. `actions` holds the latest 100 lifecycle changes to this document (create, rename, archive, unarchive) with actor and time, committed in the same write, like token `actions`. Membership changes are logged on the user document instead (see `gateway_users`), because that is the document they change. The `default` document is created with a `$setOnInsert` upsert, the same way `RoutingSettingsStore` creates its default document, so concurrent startups agree. Metadata edits use `$set` on named fields with a `revision` check, never a whole-document replace. |
 | `gateway_providers` | `_id` = connection name, `{ config }` | Add a `workspaceId` field and an index on it. **`default` keeps its existing `_id` = connection name**; other workspaces use `_id: "<workspaceId>:<connection>"`. Saved connection names cannot contain `:`, so the two key spaces never collide, and no existing document is rewritten. |
-| `gateway_routing` | `_id: "default"` | `_id: <workspaceId>`, plus a `revision` field for compare-and-swap (missing counts as 0). The default workspace's id is `"default"`, so the existing document is already correct. |
+| `gateway_routing` | `_id: "default"` | `_id: <workspaceId>`, plus a `revision` field for compare-and-swap. A missing `revision` counts as 0, and the compare-and-swap filter for revision 0 is `{ revision: { $in: [0, null] } }`, because `{ revision: 0 }` does not match a missing field. The default workspace's id is `"default"`, so the existing document is already correct. |
 | `gateway_api_tokens`, `gateway_agent_tokens` | no workspace | `workspaceId` field and index, set on every new token. The secret format (`aut_<id>_…`) is unchanged; `authenticate` already reads the record by id and gets `workspaceId` from it. |
 | `telemetry_events` | no workspace | `workspaceId` on new events; index `{ workspaceId: 1, timestamp: 1, type: 1 }`. History is not rewritten. |
-| `gateway_users` | `role` | `workspaces: [{ workspaceId, role }]` and a multikey index on `workspaces.workspaceId` for member listings. Kept in the user document so session authentication stays one read. |
+| `gateway_users` | `role` | `workspaces: [{ workspaceId, role }]` and a multikey index on `workspaces.workspaceId` for member listings. Kept in the user document so session authentication stays one read. `membershipActions` holds the latest 100 grants, role changes, and removals for this account (workspace, actor, time, before and after), written in the same compare-and-swap as the membership change, so access never changes without its record on standalone MongoDB. A workspace's membership history is a query on `membershipActions.workspaceId`. |
 | `gateway_invites` | `role` | Optional `workspace: { workspaceId, role }`. |
 | `gateway_setup` | — | Unchanged. |
 
@@ -336,7 +336,9 @@ type WorkspaceContext = {
   a 404, never a silent in-memory success. Creating a connection is an insert,
   so a duplicate name returns 409 from the unique `_id`. Routing writes
   (`PUT /v1/routing`, `PUT /v1/failover`) read the document, then
-  `replaceOne({ _id, revision })` and increment `revision`; a lost race returns
+  `replaceOne({ _id, revision })` and increment `revision` (for revision 0 the
+  filter is `{ $in: [0, null] }`, so a document saved before this change, or
+  rewritten by an older replica without the field, still matches); a lost race returns
   409 "Routing changed during your request. Refresh and try again." This
   replaces today's per-process write queue, which cannot serialize writes
   across replicas.
@@ -464,8 +466,9 @@ Changed:
   Streaming chat hijacks the reply and writes its own headers with
   `raw.writeHead`, bypassing hooks, so the header is added there next to the
   manual CORS header.
-- Every workspace lifecycle and membership change is appended to the
-  workspace's `actions` with the acting member, like token action logs.
+- Every workspace lifecycle change is appended to the workspace's `actions`,
+  and every membership change to the member's `membershipActions`, each in the
+  same single-document write as the change, with the acting member.
 - Token list, create, roll, and revoke operate on the current workspace only.
   `workspaceId` is set from the request at creation and is not accepted in any
   body.
@@ -625,8 +628,10 @@ Following the repository's rule of real services, not mocks:
 - **Upgrade from pre-workspace data:** seed documents in the current shape
   (providers keyed by name, tokens and members without the new fields, a
   routing document without `revision`) into a unique test database, boot, and
-  assert they resolve as `default` with unchanged behavior and that no document
-  was rewritten. Write a provider document the way old code does (whole-document
+  assert they resolve as `default` with unchanged behavior and that booting
+  rewrote no document. Assert the first `PUT /v1/routing` against the
+  `revision`-less document succeeds without a false conflict. Write a provider
+  document the way old code does (whole-document
   `replaceOne` without `workspaceId`) and assert it still resolves as `default`.
   Add a model and rotate a key on a pre-workspace connection, then restart and
   assert both changes persisted.
@@ -702,7 +707,7 @@ store-created workspaces); pre-workspace tokens and events count in `default`.
 - `workspaces` on user records with the default read rule; role resolution and
   the authorization matrix; org role-change rules; memberships on invites and
   **Add member**; `GET /v1/auth/session` returns accessible workspaces; member
-  management routes with `actions` entries.
+  management routes with `membershipActions` entries.
 
 **Accept:** every row of the authorization matrix as a test; existing members
 keep their access with no data rewritten; a member without memberships gets 404
@@ -786,4 +791,6 @@ Findings and what changed:
 | `HEAD` routes in the completeness check; index creation; unbounded telemetry partitions; slug mutability; workspace audit trail | Architecture review | Fixed (5.1, 4.2, 5.4, 7). |
 | Without MongoDB, rebuilding or evicting configuration would discard saved connections and routing | Codex (P2) | Fixed: a process-wide in-memory backend per workspace that is never evicted; only derived state is rebuilt per request (5.3). |
 | Field-level writes filtered by `workspaceId` would miss `default` connections saved before the change | Aikido (medium) | Fixed: the `default` rule applies to write filters too, writes set the field, and a zero match is a 404 (4.2, 5.3, 12). |
+| Membership audit entries on the workspace document cannot be written atomically with membership changes on the user document | Aikido (medium) | Fixed: membership changes are logged on the user document in the same write (4.2, 7). |
+| Routing compare-and-swap with `{ revision: 0 }` misses documents with no `revision` | Aikido (medium) | Fixed: the revision-0 filter is `{ $in: [0, null] }`, and the upgrade test covers the first write (4.2, 5.3, 12). |
 | `OPENAI_COMPAT_NAME` is not validated, so an environment connection name could contain `:` | Architecture review | No change: environment connections are never persisted, so they never form a composite key. |
