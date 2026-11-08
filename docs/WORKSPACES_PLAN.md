@@ -366,9 +366,13 @@ type WorkspaceContext = {
   them once, at construction, into server-owned state: the provider entries and
   the policy value. `listProviders()` and `listModels()` are projections without
   the `languageModel` and `decide` handlers, so `ProviderRegistry` gains a
-  `snapshot()` that returns a new registry holding the same provider entries
-  with copied `models` arrays and the original handlers (which are stateless
-  closures over their config). Nothing calls `register` or `update` on the
+  `snapshot()` that returns a new registry whose own map holds the same
+  provider objects, unmodified, so handlers keep their receiver. The server
+  never mutates a provider object: saved changes build new providers from saved
+  config, as `addModel` already does. The map is therefore the only server-owned
+  part. Provider objects injected into two servers are shared because the
+  caller chose to share them; only tests inject a registry. Nothing calls
+  `register` or `update` on the
   injected objects afterwards, unlike today's `addModel` and routing saves.
   Two servers given the same object therefore never see each other's changes.
 - **Workers connections.** Per-request reads mean more stores touch MongoDB in
