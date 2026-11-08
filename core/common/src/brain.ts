@@ -19,6 +19,35 @@ export type BrainVaultId = "shared" | `agent-${string}`;
 export const BRAIN_SHARED_VAULT = "shared" as const;
 export const BRAIN_VAULT_ID_PATTERN = "^(shared|agent-[A-Za-z0-9_-]{1,64})$";
 
+/**
+ * A [[link]] whose target ends in one of these extensions points at an
+ * attachment, not a note. Only known formats count, so "Node.js" can be a note.
+ */
+export const BRAIN_ATTACHMENT_EXTENSIONS: readonly string[] = [
+	"png",
+	"jpg",
+	"jpeg",
+	"gif",
+	"bmp",
+	"svg",
+	"webp",
+	"avif",
+	"mp3",
+	"wav",
+	"m4a",
+	"ogg",
+	"3gp",
+	"flac",
+	"mp4",
+	"webm",
+	"ogv",
+	"mov",
+	"mkv",
+	"pdf",
+	"canvas",
+	"base",
+];
+
 export type BrainActor = {
 	kind: "user" | "api-token" | "agent" | "system";
 	id: string;

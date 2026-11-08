@@ -149,6 +149,64 @@ it.each(
 			status: 400,
 			payload: {},
 		},
+		{
+			method: "GET",
+			url: "/v1/brain/vaults",
+			required: "brain:read",
+			status: 200,
+		},
+		{
+			method: "GET",
+			url: "/v1/brain/templates",
+			required: "brain:read",
+			status: 200,
+		},
+		{
+			method: "GET",
+			url: "/v1/brain/vaults/shared/notes?text=x",
+			required: "brain:read",
+			status: 200,
+		},
+		{
+			method: "POST",
+			url: "/v1/brain/vaults/shared/notes",
+			required: "brain:edit",
+			status: 201,
+			payload: { title: "Permission note" },
+		},
+		// Read grants reach the note lookup; the 404 proves the gate let them through.
+		{
+			method: "GET",
+			url: "/v1/brain/vaults/shared/notes/Missing%20note",
+			required: "brain:read",
+			status: 404,
+		},
+		{
+			method: "GET",
+			url: "/v1/brain/vaults/shared/daily/2026-11-08",
+			required: "brain:read",
+			status: 200,
+		},
+		// Export hands out a whole vault, so it needs the edit grant.
+		{
+			method: "GET",
+			url: "/v1/brain/vaults/shared/export",
+			required: "brain:edit",
+			status: 200,
+		},
+		{
+			method: "POST",
+			url: "/v1/brain/vaults/shared/import",
+			required: "brain:edit",
+			status: 200,
+			payload: { files: [] },
+		},
+		{
+			method: "GET",
+			url: "/v1/brain/proposals",
+			required: "brain:read",
+			status: 200,
+		},
 	] as const;
 	for (const test of cases) {
 		const allowed =
@@ -186,6 +244,12 @@ it.each(
 		],
 		["DELETE", `/v1/api-tokens/${issued.token.id}`, undefined],
 		["GET", "/v1/unlisted", undefined],
+		// Approvals need a person, whatever the token's grants.
+		[
+			"POST",
+			"/v1/brain/proposals/00000000-0000-0000-0000-000000000000/decide",
+			{ decision: "approve" },
+		],
 	] as const) {
 		expect(
 			(await server.inject({ method, url, payload, headers })).statusCode,

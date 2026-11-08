@@ -20,7 +20,7 @@
 	"assets": {
 		"directory": "../ux/dist",
 		"not_found_handling": "single-page-application",
-		"run_worker_first": ["/v1", "/v1/*", "/health", "/healthz"]
+		"run_worker_first": ["/v1", "/v1/*", "/mcp", "/health", "/healthz"]
 	},
 	"vars": {
 		"CORS_ORIGIN": "https://dev.autonomo.us"

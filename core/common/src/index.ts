@@ -36,6 +36,7 @@ export {
 } from "./api-tokens.js";
 export {
 	type AppendBrainNoteRequest,
+	BRAIN_ATTACHMENT_EXTENSIONS,
 	BRAIN_SHARED_VAULT,
 	BRAIN_VAULT_ID_PATTERN,
 	type BrainActor,

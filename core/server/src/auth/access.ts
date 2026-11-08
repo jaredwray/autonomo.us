@@ -11,7 +11,7 @@ import { type ApiTokenStore, secretMatches, tokenHash } from "./tokens.js";
 /** How the current request authenticated. */
 export type RequestAuth =
 	| { kind: "user"; member: TeamMember; expiresAt: string }
-	| { kind: "api-token" }
+	| { kind: "api-token"; token: { id: string; name: string } }
 	/** SETUP_TOKEN: accepted only on the first-run setup routes. */
 	| { kind: "setup" };
 
@@ -54,6 +54,22 @@ const routePermissions = new Map<string, ApiTokenPermission>([
 	["GET /v1/telemetry/summary", "telemetry:read"],
 	["GET /v1/telemetry/events", "telemetry:read"],
 	["GET /v1/telemetry/analytics", "telemetry:read"],
+	["GET /v1/brain/vaults", "brain:read"],
+	["GET /v1/brain/templates", "brain:read"],
+	["GET /v1/brain/vaults/:vault/notes", "brain:read"],
+	["POST /v1/brain/vaults/:vault/notes", "brain:edit"],
+	["GET /v1/brain/vaults/:vault/notes/:title", "brain:read"],
+	["PATCH /v1/brain/vaults/:vault/notes/:title", "brain:edit"],
+	["POST /v1/brain/vaults/:vault/notes/:title/append", "brain:edit"],
+	["DELETE /v1/brain/vaults/:vault/notes/:title", "brain:edit"],
+	["GET /v1/brain/vaults/:vault/unresolved", "brain:read"],
+	["GET /v1/brain/vaults/:vault/categories", "brain:read"],
+	["GET /v1/brain/vaults/:vault/daily/:date", "brain:read"],
+	// A whole vault in one response, so it needs the write-level grant.
+	["GET /v1/brain/vaults/:vault/export", "brain:edit"],
+	["POST /v1/brain/vaults/:vault/import", "brain:edit"],
+	["GET /v1/brain/proposals", "brain:read"],
+	// POST /v1/brain/proposals/:id/decide is absent on purpose: approvals need a person.
 ]);
 
 /**
@@ -111,7 +127,10 @@ export function registerApiAccess(
 		}
 		const token = await tokens.authenticate(match[1]);
 		if (!token) return unauthorized(reply);
-		request.auth = { kind: "api-token" };
+		request.auth = {
+			kind: "api-token",
+			token: { id: token.id, name: token.name },
+		};
 		request.telemetryCaller = {
 			id: `api-token:${token.id}`,
 			name: token.name,

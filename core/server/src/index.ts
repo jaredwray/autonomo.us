@@ -1,5 +1,21 @@
 export { AccountError, AccountStore } from "./auth/accounts.js";
 export {
+	BrainService,
+	type BrainServiceOptions,
+	MAX_BODY_LENGTH,
+	MAX_NOTES_PER_VAULT,
+} from "./brain/brain.js";
+export { BrainError } from "./brain/errors.js";
+export {
+	parseMarkdown,
+	renderMarkdown,
+	titleProblem,
+} from "./brain/markdown.js";
+export { MemoryBrainRepository } from "./brain/memory-repository.js";
+export { MongoBrainRepository } from "./brain/mongo-repository.js";
+export type { BrainRepository } from "./brain/repository.js";
+export { BUILTIN_TEMPLATES } from "./brain/templates.js";
+export {
 	type ApiConfig,
 	configFromEnv,
 	DEFAULT_ANTHROPIC_MODELS,

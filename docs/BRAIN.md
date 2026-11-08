@@ -42,19 +42,19 @@ A note is `{ title, properties, body }` plus derived fields (`links`, `tags`, `c
 
 **Titles** are the identity users and agents see, and the file name on export. They are unique per vault, compared case-insensitively. A title is 1–200 characters, has no leading or trailing whitespace, does not start with `.`, and contains none of `\ / : * ? " < > | # ^ [ ]` or control characters (Obsidian's file name and link restrictions). Routes address notes by URL-encoded title.
 
-**Links.** `[[Target]]`, `[[Target|Alias]]`, `[[Target#Heading]]`, `[[Target#^block]]`, and embeds `![[Target]]` all link to `Target` (trimmed). Links inside fenced code blocks (```` ``` ```` or `~~~`) and inline code spans are ignored. Links inside property string values and list items count too, so `categories: ["[[People]]"]` links to `People`. Links resolve case-insensitively. `links` keeps the first-seen spelling, deduplicated case-insensitively. A link to a target ending in a file extension other than `.md` (an attachment such as `photo.jpg`) is ignored; `[[Note.md]]` links to `Note`.
+**Links.** `[[Target]]`, `[[Target|Alias]]`, `[[Target#Heading]]`, `[[Target#^block]]`, and embeds `![[Target]]` all link to `Target` (trimmed). Links inside fenced code blocks (```` ``` ```` or `~~~`) and inline code spans are ignored. Links inside property string values and list items count too, so `categories: ["[[People]]"]` links to `People`. Links resolve case-insensitively. `links` is in file order (properties, then body) and keeps the first-seen spelling, deduplicated case-insensitively. A link whose target ends in a known attachment extension (images, audio, video, PDF, `.canvas`, `.base`: `BRAIN_ATTACHMENT_EXTENSIONS`) is ignored, so `[[Node.js]]` still links to a note. `[[Note.md]]` and `[[Folder/Note]]` link to `Note`.
 
 **Tags** come from the `tags` property (a string or list; a leading `#` is stripped) and inline `#tags` in the body outside code. An inline tag starts after whitespace or line start, is made of letters, digits, `_`, `-`, `/` and emoji, and must contain at least one non-digit character. A line starting with `# ` is a heading, not a tag. Tags are stored lowercased and deduplicated.
 
 **Categories** are the link targets found in the `categories` property, in order.
 
-**Properties** are a flat object. Keys are 1–64 characters matching `^[A-Za-z0-9_][A-Za-z0-9_ .-]*$`, at most 50 per note. Values are strings (≤ 2,000 characters), finite numbers, booleans, `null` (an empty property), or lists of up to 100 strings (≤ 2,000 characters each). Dates are `YYYY-MM-DD` strings.
+**Properties** are a flat object. Keys are 1–64 characters matching `^[A-Za-z0-9_][A-Za-z0-9_ .-]*$` other than `__proto__`, at most 50 per note. Values are strings (≤ 2,000 characters), finite numbers, booleans, `null` (an empty property), or lists of up to 100 strings (≤ 2,000 characters each). Dates are `YYYY-MM-DD` strings.
 
 **Limits.** Body ≤ 100,000 characters. A vault holds at most 10,000 notes. An append adds ≤ 20,000 characters, and the result must still fit the body limit. Violations return 400 (413 is not used).
 
 **Concurrency.** Every change increments `revision`. Updates may send the `revision` they read; a mismatch returns 409. Titles are claimed atomically (duplicate titles return 409). A rename rewrites links in other notes one by one; it is not a transaction, so a crash mid-rename can leave some links pointing at the old (now unresolved) title.
 
-**Rename rewrite.** When `Old` becomes `New`, every `[[Old…]]` in the vault (body and property strings, any casing of `Old`) is rewritten to `[[New…]]`, keeping any `#heading`, `|alias`, and the `!` of embeds. Notes whose `categories` used `Old` now use `New`.
+**Rename rewrite.** When `Old` becomes `New`, every `[[Old…]]` in the vault (body and property strings, any casing of `Old`) is rewritten to `[[New…]]`, keeping any `#heading`, `|alias`, and the `!` of embeds. Links inside code are left alone, as they are not links. Notes whose `categories` used `Old` now use `New`.
 
 **Category notes.** When a create, update, append, or import leaves a note with a category that has no note, the Brain creates that category note with `tags: ["categories"]` and the built-in template's description as its body (or an empty body for custom categories).
 
@@ -112,9 +112,9 @@ A rejected proposal appends `- HH:mm Proposal to <action> [[<title>]] in the sha
 An agent files `{ action, title, newTitle?, body?, properties?, text?, reason }`:
 
 - `create`: the title must not exist in `shared` (400 if it does). `body` and/or `properties`.
-- `update`: the note must exist. Optional `newTitle`, `body`, `properties` (merged). At least one change.
-- `append`: the note must exist; `text` required.
-- `delete`: the note must exist.
+- `update`: the note must exist (404 otherwise). Optional `newTitle`, `body`, `properties` (merged). At least one change.
+- `append`: the note must exist (404 otherwise); `text` required.
+- `delete`: the note must exist (404 otherwise).
 
 The proposal records `baseRevision` (the shared note's revision, or `null` for create). An agent may have at most 50 pending proposals. Proposals are listed newest first, filterable by status, and agents see only their own.
 
@@ -156,7 +156,7 @@ Read (import and the `markdown` field): a frontmatter block starts with `---` on
 - **Auth**: `Authorization: Bearer agt_…` via `AgentTokenStore`. Missing, unknown, expired, or revoked tokens get HTTP 401 with `WWW-Authenticate: Bearer`. Session tokens, API tokens, and the setup token are not accepted.
 - **Origin**: a request with an `Origin` header not allowed by `CORS_ORIGIN` gets 403 (DNS-rebinding protection required by the MCP spec).
 - **Methods**: `GET` and `DELETE /mcp` return 405 with `Allow: POST`.
-- **Messages**: `initialize` returns `protocolVersion` (the client's requested version if it is one of `2025-11-25`, `2025-06-18`, `2025-03-26`, else `2025-11-25`), `capabilities: { tools: { listChanged: false } }`, `serverInfo: { name: "autonomo.us", version }`, and `instructions` (below). `ping` returns `{}`. Notifications (no `id`) return 202 with no body. `tools/list` needs `mcp:read`; `tools/call` needs `mcp:call`; without them the JSON-RPC error is `-32001` with a message naming the missing grant (HTTP 200). Malformed JSON is `-32700`; a batch array or a non-object is `-32600`; an unknown method is `-32601`; an unknown tool or invalid arguments is `-32602`. Tool failures (not found, validation, limits, conflicts) are tool results with `isError: true` and the message as text.
+- **Messages**: `initialize` returns `protocolVersion` (the client's requested version if it is one of `2025-11-25`, `2025-06-18`, `2025-03-26`, else `2025-11-25`), `capabilities: { tools: { listChanged: false } }`, `serverInfo: { name: "autonomo.us", version }`, and `instructions` (below). `ping` returns `{}`. Notifications (no `id`) return 202 with no body. `tools/list` needs `mcp:read`; `tools/call` needs `mcp:call`; without them the JSON-RPC error is `-32001` with a message naming the missing grant (HTTP 200). Malformed JSON is `-32700` and a batch array or a non-object is `-32600`, both with HTTP 400; an unknown method is `-32601`; an unknown tool or invalid arguments is `-32602`. Tool failures (not found, validation, limits, conflicts) are tool results with `isError: true` and the message as text.
 - **Results**: every tool returns `structuredContent` (the JSON result) and one text content item. The text is JSON, except `brain_read`, whose text is the note's Markdown followed by `## Backlinks`, `## Related`, and `## Unresolved links` sections listing `[[titles]]`.
 
 **Instructions** sent at `initialize` (condensed kepano rules): the Brain is your long-term memory; search before you write; one note per thing (person, company, project, idea) titled with its name, evergreen notes titled as a statement; always link the first mention of a person, project, company, or idea with `[[Title]]`, even when no note exists yet; set `categories` with a template (plural names); dates are `YYYY-MM-DD`; record what you did with `brain_log`; your vault is private; `shared` is the team canon you may read and change only with `brain_propose`.
@@ -192,7 +192,7 @@ The first write by an agent records its vault with the token's name.
 | `PATCH /v1/brain/vaults/:vault/notes/:title` | `brain:edit` | `UpdateBrainNoteRequest` → `BrainNote` |
 | `POST /v1/brain/vaults/:vault/notes/:title/append` | `brain:edit` | `AppendBrainNoteRequest` → `BrainNote` (201 when created) |
 | `DELETE /v1/brain/vaults/:vault/notes/:title` | `brain:edit` | 204 |
-| `GET /v1/brain/vaults/:vault/unresolved` | `brain:read` | `{ links: BrainUnresolvedLink[] }` |
+| `GET /v1/brain/vaults/:vault/unresolved` | `brain:read` | `{ links: BrainUnresolvedLink[] }`; `?limit=` (default 200, max 1000) |
 | `GET /v1/brain/vaults/:vault/categories` | `brain:read` | `{ categories: BrainCategory[] }` |
 | `GET /v1/brain/vaults/:vault/daily/:date` | `brain:read` | `BrainDaily` |
 | `GET /v1/brain/vaults/:vault/export` | `brain:edit` | `BrainExport`, or a zip with `?format=zip` |

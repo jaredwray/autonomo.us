@@ -133,7 +133,7 @@ without credentials still get 401.
 ## Gateway
 
 The dashboard has a collapsible sidebar with **Dashboard**, **Models**,
-**Routing**, **API Tokens**, **Agent Tokens**, and **Team** views.
+**Routing**, **Brain**, **API Tokens**, **Agent Tokens**, and **Team** views.
 In **Models**, search active models or choose **Add model** to connect Google
 Gemini, xAI Grok, Anthropic Claude, OpenAI, Groq, Mistral, DeepSeek, OpenRouter,
 Cloudflare Workers AI, or Jev (TypeSafe). Choose a catalog suggestion or enter a
@@ -181,7 +181,8 @@ through environment variables:
 | `TYPESAFE_API_KEY` | Jev decisions adapter; `TYPESAFE_MODELS` defaults to `jev-latest` |
 | `XAI_API_KEY` | Registers the native xAI Grok adapter as `xai`; `XAI_MODELS` overrides the advertised list (default `grok-4`) |
 | `OPENAI_COMPAT_BASE_URL` | Registers an OpenAI-compatible provider — Ollama, LM Studio, vLLM, llama.cpp (`OPENAI_COMPAT_NAME` defaults to `local`, plus optional `OPENAI_COMPAT_API_KEY` / `OPENAI_COMPAT_MODELS`) |
-| `MONGODB_URI` | Persists the setup marker, team accounts, invites, API tokens, agent tokens, provider settings, routing, and telemetry. Compose uses `mongodb://autonomous:autonomous@mongo:27017/autonomous?authSource=admin` |
+| `MONGODB_URI` | Persists the setup marker, team accounts, invites, API tokens, agent tokens, provider settings, routing, Brain notes, and telemetry. Compose uses `mongodb://autonomous:autonomous@mongo:27017/autonomous?authSource=admin` |
+| `BRAIN_TIME_ZONE` | IANA time zone that decides "today" in the [Brain](#brain) (template dates, daily notes, the agent log). Default `UTC`; an unknown name fails startup |
 | `CORS_ORIGIN` | Comma-separated browser origins allowed by CORS (default: the Vite dev dashboard on `localhost:5173`; set `*` to allow any) |
 | `FAILOVER_ENABLED` | Seeds the failover policy switch (`true`/`1`; default off) — see [Failover](#failover) |
 | `FAILOVER_TARGETS` | Comma-separated `provider/model` ids tried, in order, when a request fails |
@@ -225,6 +226,9 @@ through environment variables:
 - `GET /v1/telemetry/events` — recent gateway events and sink status.
 - `GET /v1/telemetry/analytics?from=<ISO timestamp>&to=<ISO timestamp>` — date-filtered model, connection, caller, and time-series analytics. Optional `model`, `provider` (connection ID), and `caller` filters apply to the entire report. Ranges are start-inclusive, end-exclusive, and limited to 90 days. Requires `telemetry:read` when API authentication is enabled.
 
+- `/v1/brain/...` — the Brain's notes, vaults, export/import, and proposals; see [Brain](#brain).
+- `POST /mcp` — the MCP endpoint for agent tokens; see [Brain](#brain).
+
 ```bash
 # Host-run API against the compose services
 docker compose up -d mongo
@@ -258,13 +262,15 @@ Permissions apply across the gateway for this initial version:
 | Routing | None, Read, Edit | Read inspects routing and failover. Edit also saves those settings. |
 | Inference | None, Run | Run sends chat and decisions requests, including Auto, pools, and failover. |
 | Telemetry | None, Read | Read views usage and events. |
+| Brain | None, Read, Edit | Read lists vaults, templates, notes, categories, unresolved links, daily views, and proposals. Edit also creates, changes, appends to, deletes, imports, and exports notes. Neither decides proposals. |
 
 Edit includes Read for that resource, but never Run. API token management and
 action history remain owner-only. Requests without the required permission
 return 403 before any provider call. There is no per-model or per-pool scope yet.
 
 The API accepts permission IDs `models:read`, `models:edit`, `routing:read`,
-`routing:edit`, `inference:run`, and `telemetry:read`. For example, an observer
+`routing:edit`, `inference:run`, `telemetry:read`, `brain:read`, and
+`brain:edit`. For example, an observer
 can use `["models:read", "routing:read", "telemetry:read"]`. The dashboard starts
 new tokens with every permission unchecked; select the access each token needs.
 API clients that omit permissions default to Models Read + Inference Run. Older stored tokens
@@ -288,11 +294,11 @@ delegated token management, and a permanent audit log are covered in the
 
 ### Agent tokens
 
-Open **Agent Tokens** to prepare credentials for agents connecting through the
-future MCP gateway. The MCP server is not implemented yet; creating a token does
-not establish an MCP connection. Each token supports the same name, description,
-TTL, one-time secret display, rolling with overlap, revocation, and action log as
-API Tokens.
+Open **Agent Tokens** to issue credentials for agents that connect over MCP.
+The MCP server at `POST /mcp` serves the [Brain](#brain) tools; an agent sends
+its token as `Authorization: Bearer agt_…`. Each token supports the same name,
+description, TTL, one-time secret display, rolling with overlap, revocation, and
+action log as API Tokens.
 
 Agent secrets use the `agt_` prefix and store only SHA-256 digests in the separate
 `gateway_agent_tokens` MongoDB collection. Without MongoDB they last until API
@@ -302,12 +308,70 @@ API credential cannot authenticate through `AgentTokenStore`. Management require
 a signed-in owner or admin.
 
 New agent tokens start with no permissions, both in the dashboard and through the
-API. The reserved MCP grants are `mcp:read` (discover tools and read resources and
-prompts) and `mcp:call` (call tools). They are independent; select both when needed.
-These grants do not authorize any current REST endpoint. The future MCP server
-must authenticate through `AgentTokenStore` and enforce these permissions on each
-operation, together with any tool-specific scope and approval policies.
-Permission edits apply to all overlapping values, and rolling preserves grants.
+API. The MCP grants are `mcp:read` (`tools/list`) and `mcp:call` (`tools/call`).
+They are independent; an agent that uses the Brain needs both. These grants do
+not authorize any REST endpoint: an agent token on `/v1/*` gets 401. Permission
+edits apply to all overlapping values, and rolling preserves grants. An agent's
+token ID names its private Brain vault (`agent-<id>`), so rolling a credential
+keeps the agent's memory and revoking it cuts the agent off without deleting it.
+
+### Brain
+
+The Brain is the gateway's long-term memory for agents and the team: a
+knowledge graph of linked Markdown notes with properties, modelled on Steph
+Ango's (kepano) [Obsidian vault](https://github.com/kepano/kepano-obsidian).
+Notes have no folders; they are classified by a `categories` property, linked
+with `[[wikilinks]]`, and found through backlinks, related notes, unresolved
+links, and daily notes. Every vault exports to Obsidian-compatible files, and
+an Obsidian vault imports back. The full behavior is in
+[docs/BRAIN.md](docs/BRAIN.md).
+
+There are two kinds of vault. `shared` is the team canon: every agent can read
+it, and agents change it only through **proposals** that an owner or admin
+approves or rejects (a rejection's reason is appended to the agent's daily
+note). `agent-<agentTokenId>` is one agent's private vault, created on its first
+write and named after the token; agents cannot read each other's vaults.
+Signed-in team members read and write every vault from the **Brain** view in
+the dashboard and over `/v1/brain`; API tokens use `brain:read` for GET routes
+and `brain:edit` for writes, import, and export, and never decide proposals.
+
+Agents use the Brain over MCP. `POST /mcp` speaks Streamable HTTP in stateless
+mode (one JSON-RPC message per request, JSON responses, no sessions) and
+accepts agent tokens only. `initialize` returns short instructions (search
+before you write, one note per thing, link first mentions, dates as
+`YYYY-MM-DD`, log what you did); the tools are `brain_search`, `brain_read`,
+`brain_create`, `brain_update`, `brain_append`, `brain_delete`, `brain_log`,
+`brain_daily`, `brain_unresolved`, `brain_templates`, `brain_propose`, and
+`brain_proposals`:
+
+```bash
+curl -X POST http://localhost:3000/mcp \
+  -H "authorization: Bearer agt_…" -H "content-type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"my-agent","version":"1.0"}}}'
+
+curl -X POST http://localhost:3000/mcp \
+  -H "authorization: Bearer agt_…" -H "content-type: application/json" \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"brain_log","arguments":{"text":"Drafted the launch post with [[Ada Lovelace]]"}}}'
+```
+
+Requests with an `Origin` outside `CORS_ORIGIN` get 403, `GET`/`DELETE /mcp`
+get 405, and notifications get 202. Tool failures (not found, validation,
+limits, conflicts) come back as tool results with `isError: true`.
+
+REST routes under `/v1/brain`: `GET /vaults` and `GET /templates`;
+`GET|POST /vaults/:vault/notes` (query with `text`, `category`, `tag`,
+`linksTo`, `sort`, `direction`, `limit`, `offset`, `where.<property>=`);
+`GET|PATCH|DELETE /vaults/:vault/notes/:title` and
+`POST .../notes/:title/append`; `GET /vaults/:vault/unresolved`,
+`.../categories`, `.../daily/:date`; `GET /vaults/:vault/export` (JSON, or a
+`.zip` with `?format=zip`) and `POST /vaults/:vault/import` (up to 500 files,
+5 MB); `GET /proposals` and `POST /proposals/:id/decide` (signed-in owners and
+admins only). Titles are URL-encoded; errors use `{ error: { message } }`.
+
+With `MONGODB_URI`, notes live in `brain_notes`, vault records in
+`brain_vaults`, and proposals in `brain_proposals`; without it the Brain lasts
+until restart. `BRAIN_TIME_ZONE` sets the time zone for `{{date}}`, daily
+notes, and the log.
 
 ### Jev decisions
 
@@ -525,7 +589,7 @@ one origin, one deployable.
 
 | Path | Served by |
 | --- | --- |
-| `/v1/*`, `/health`, `/healthz` | The API (Fastify) inside the Worker (`run_worker_first`). |
+| `/v1/*`, `/mcp`, `/health`, `/healthz` | The API (Fastify) inside the Worker (`run_worker_first`). |
 | Everything else | The dashboard build. Unknown paths get `index.html` for client-side routes. These requests never invoke the Worker. |
 
 The dashboard calls the API on its own origin, so the build needs no

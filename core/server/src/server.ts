@@ -1,9 +1,14 @@
 import cors from "@fastify/cors";
 import Fastify from "fastify";
+import packageJson from "../package.json" with { type: "json" };
 import { registerApiAccess } from "./auth/access.js";
 import { AccountStore } from "./auth/accounts.js";
 import { AgentTokenStore } from "./auth/agent-tokens.js";
 import { ApiTokenStore } from "./auth/tokens.js";
+import { BrainService } from "./brain/brain.js";
+import { mcpRoutes } from "./brain/mcp.js";
+import { MemoryBrainRepository } from "./brain/memory-repository.js";
+import { MongoBrainRepository } from "./brain/mongo-repository.js";
 import { type ApiConfig, configFromEnv } from "./config.js";
 import { registerDashboard } from "./dashboard.js";
 import { FailoverPolicyStore } from "./failover.js";
@@ -17,6 +22,7 @@ import { ProviderSettingsStore } from "./providers/settings.js";
 import { agentTokenRoutes } from "./routes/agent-tokens.js";
 import { apiTokenRoutes } from "./routes/api-tokens.js";
 import { authRoutes } from "./routes/auth.js";
+import { brainRoutes } from "./routes/brain.js";
 import { chatRoutes } from "./routes/chat.js";
 import { decisionsRoutes } from "./routes/decisions.js";
 import { failoverRoutes } from "./routes/failover.js";
@@ -107,6 +113,12 @@ export function createServer(options: CreateServerOptions = {}) {
 	const tokens = new ApiTokenStore(config.mongodbUrl);
 	const agentTokens = new AgentTokenStore(config.mongodbUrl);
 	const accounts = new AccountStore({ mongodbUrl: config.mongodbUrl });
+	const brainRepository = config.mongodbUrl
+		? new MongoBrainRepository(config.mongodbUrl)
+		: new MemoryBrainRepository();
+	const brain = new BrainService(brainRepository, {
+		timeZone: config.brainTimeZone ?? "UTC",
+	});
 	let persistenceInitialized = false;
 	const server = Fastify({
 		pluginTimeout: options.pluginTimeout,
@@ -147,6 +159,13 @@ export function createServer(options: CreateServerOptions = {}) {
 	});
 	server.register(telemetryRoutes, { telemetry });
 	server.register(decisionsRoutes, { registry, telemetry });
+	server.register(brainRoutes, { brain });
+	server.register(mcpRoutes, {
+		brain,
+		agentTokens,
+		corsOrigins: config.corsOrigins,
+		version: packageJson.version,
+	});
 	if (options.dashboardDir) registerDashboard(server, options.dashboardDir);
 
 	const initialize = async (onError?: PersistenceErrorHandler) => {
@@ -187,6 +206,7 @@ export function createServer(options: CreateServerOptions = {}) {
 		await agentTokens.close();
 		await accounts.close();
 		await routing.close();
+		await brainRepository.close();
 		await telemetry.close();
 	});
 
@@ -201,6 +221,7 @@ export function createServer(options: CreateServerOptions = {}) {
 				agentTokens.close(),
 				accounts.close(),
 				routing.close(),
+				brainRepository.close(),
 			]);
 			const failed = results.find(
 				(result): result is PromiseRejectedResult =>
