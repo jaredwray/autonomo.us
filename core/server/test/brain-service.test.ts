@@ -1,4 +1,4 @@
-import type { BrainActor } from "@autonomo.us/common";
+import type { BrainActor, BrainVaultId } from "@autonomo.us/common";
 import { describe, expect, it } from "vitest";
 import {
 	appendLogLine,
@@ -778,6 +778,22 @@ describe("export and import", () => {
 	});
 });
 
+/** Runs queued hooks inside repository calls, to land a concurrent change in a precise gap. */
+class InterleavedRepository extends MemoryBrainRepository {
+	beforeGetNote: Array<(() => Promise<unknown>) | undefined> = [];
+	beforeDelete?: () => Promise<unknown>;
+	override async getNote(vault: BrainVaultId, key: string) {
+		await this.beforeGetNote.shift()?.();
+		return super.getNote(vault, key);
+	}
+	override async deleteNote(id: string, expectedRevision?: number) {
+		const hook = this.beforeDelete;
+		this.beforeDelete = undefined;
+		await hook?.();
+		return super.deleteNote(id, expectedRevision);
+	}
+}
+
 describe("proposals", () => {
 	it("validates each action and bounds pending proposals", async () => {
 		const { service } = brain();
@@ -1002,5 +1018,78 @@ describe("proposals", () => {
 			"rejected",
 			"approved",
 		]);
+	});
+
+	it("claims a proposal before applying it and never overwrites a newer shared revision", async () => {
+		const repository = new InterleavedRepository();
+		const service = new BrainService(repository, {
+			timeZone: "UTC",
+			now: () => Date.parse("2026-11-08T12:00:00Z"),
+		});
+		const reviewer: BrainActor = { kind: "user", id: "u2", name: "Admin Ann" };
+		const other: BrainActor = { kind: "user", id: "u3", name: "Owner Olu" };
+		await service.createNote("shared", { title: "Canon", body: "v1" }, user);
+		const status = async (id: string) =>
+			(await service.listProposals({})).find((p) => p.id === id)?.status;
+
+		// A rejection that arrives while an approval is applying loses cleanly.
+		const append = await service.propose(agent, {
+			action: "append",
+			title: "Canon",
+			text: "agent line",
+			reason: "More detail",
+		});
+		let concurrent: Promise<unknown> | undefined;
+		repository.beforeGetNote = [
+			async () => {
+				concurrent = service
+					.decideProposal(
+						append.id,
+						{ decision: "reject", reason: "No" },
+						other,
+					)
+					.catch((error) => error);
+				await concurrent;
+			},
+		];
+		await service.decideProposal(append.id, { decision: "approve" }, reviewer);
+		expect(await concurrent).toMatchObject({ statusCode: 409 });
+		expect(await status(append.id)).toBe("approved");
+		expect((await service.getNote("shared", "Canon")).body).toBe(
+			"v1\nagent line",
+		);
+
+		// An edit landing between the staleness check and the append is a conflict.
+		const late = await service.propose(agent, {
+			action: "append",
+			title: "Canon",
+			text: "late line",
+			reason: "r",
+		});
+		repository.beforeGetNote = [
+			undefined,
+			() => service.appendNote("shared", "Canon", { text: "human" }, user),
+		];
+		await expect(
+			service.decideProposal(late.id, { decision: "approve" }, reviewer),
+		).rejects.toMatchObject({ statusCode: 409 });
+		expect(await status(late.id)).toBe("pending");
+		expect((await service.getNote("shared", "Canon")).body).not.toContain(
+			"late line",
+		);
+
+		// An edit landing just before the delete keeps the note.
+		const remove = await service.propose(agent, {
+			action: "delete",
+			title: "Canon",
+			reason: "Obsolete",
+		});
+		repository.beforeDelete = () =>
+			service.appendNote("shared", "Canon", { text: "newer" }, user);
+		await expect(
+			service.decideProposal(remove.id, { decision: "approve" }, reviewer),
+		).rejects.toMatchObject({ statusCode: 409 });
+		expect(await status(remove.id)).toBe("pending");
+		expect((await service.getNote("shared", "Canon")).body).toContain("newer");
 	});
 });

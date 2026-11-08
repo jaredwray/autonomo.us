@@ -237,5 +237,12 @@ export class MemoryBrainRepository implements BrainRepository {
 		this.proposals.set(id, { ...current, ...structuredClone(decision) });
 		return true;
 	}
+	async reopenProposal(id: string) {
+		const current = this.proposals.get(id);
+		if (!current || current.status !== "approved") return false;
+		const { decidedAt, decidedBy, decisionReason, ...pending } = current;
+		this.proposals.set(id, { ...pending, status: "pending" });
+		return true;
+	}
 	async close() {}
 }

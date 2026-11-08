@@ -373,6 +373,17 @@ function contract(name: string, open: () => BrainRepository) {
 						await repo.listProposals({ authorId: author, status: "rejected" })
 					).map((p) => p.id),
 				).toEqual([first.id]);
+				// Only approvals reopen, and a reopened proposal is pending again.
+				expect(await repo.reopenProposal(first.id)).toBe(false);
+				const approval = {
+					status: "approved" as const,
+					decidedAt: "2026-11-08T02:00:00.000Z",
+					decidedBy: actor,
+				};
+				expect(await repo.decideProposal(second.id, approval)).toBe(true);
+				expect(await repo.reopenProposal(second.id)).toBe(true);
+				expect(await repo.reopenProposal(second.id)).toBe(false);
+				expect(await repo.getProposal(second.id)).toEqual(second);
 			} finally {
 				await repo.close();
 			}

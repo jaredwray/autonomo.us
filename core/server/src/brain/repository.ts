@@ -130,6 +130,8 @@ export interface BrainRepository {
 	countProposals(filter: ProposalFilter): Promise<number>;
 	/** Records a decision only while the proposal is still pending. */
 	decideProposal(id: string, decision: ProposalDecision): Promise<boolean>;
+	/** Returns an approved proposal to pending, undoing a claim whose change failed to apply. */
+	reopenProposal(id: string): Promise<boolean>;
 	close(): Promise<void>;
 }
 

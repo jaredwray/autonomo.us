@@ -644,10 +644,13 @@ export class BrainService {
 		title: string,
 		request: AppendBrainNoteRequest,
 		actor: BrainActor,
+		/** Appends only to this revision; a missing or changed note is a conflict. */
+		expectedRevision?: number,
 	): Promise<{ note: BrainNote; created: boolean }> {
 		assertTitle(title);
 		const text = assertAppendText(request.text);
 		const existing = await this.repository.getNote(vault, titleKey(title));
+		if (!existing && expectedRevision !== undefined) throw notFound(title);
 		if (!existing) {
 			const template = this.templateFor(request.template);
 			const note = await this.createNote(
@@ -661,15 +664,20 @@ export class BrainService {
 			);
 			return { note, created: true };
 		}
-		const next = await this.change(vault, title, (current) =>
-			this.revise(
+		const next = await this.change(vault, title, (current) => {
+			if (
+				expectedRevision !== undefined &&
+				current.revision !== expectedRevision
+			)
+				throw changed();
+			return this.revise(
 				current,
 				current.title,
 				current.properties,
 				assertBody(appendText(current.body, text)),
 				actor,
-			),
-		);
+			);
+		});
 		await this.afterWrite(vault, actor, next.categories);
 		return { note: publicNote(next), created: false };
 	}
@@ -678,9 +686,14 @@ export class BrainService {
 		vault: BrainVaultId,
 		title: string,
 		actor: BrainActor,
+		/** Deletes only this revision; a newer one is a conflict. */
+		expectedRevision?: number,
 	): Promise<void> {
 		const note = await this.mustGet(vault, title);
-		if (!(await this.repository.deleteNote(note.id))) throw notFound(title);
+		if (expectedRevision !== undefined && note.revision !== expectedRevision)
+			throw changed();
+		if (!(await this.repository.deleteNote(note.id, expectedRevision)))
+			throw expectedRevision === undefined ? notFound(title) : changed();
 		await this.touchVault(vault, actor);
 	}
 
@@ -1068,9 +1081,13 @@ export class BrainService {
 	): Promise<BrainProposal> {
 		const proposal = await this.repository.getProposal(id);
 		if (!proposal) throw new BrainError("Proposal not found.", 404);
+		if (proposal.status !== "pending")
+			throw new BrainError(
+				`This proposal was already ${proposal.status}.`,
+				409,
+			);
 		const alreadyDecided = () =>
-			new BrainError(`This proposal was already ${proposal.status}.`, 409);
-		if (proposal.status !== "pending") throw alreadyDecided();
+			new BrainError("This proposal was decided by someone else.", 409);
 		if (request.decision === "reject") {
 			const reason = assertReason(request.reason, "Rejecting a proposal");
 			const decided = await this.repository.decideProposal(id, {
@@ -1101,14 +1118,21 @@ export class BrainService {
 					.catch(() => {});
 			}
 		} else {
-			await this.applyProposal(proposal, actor);
-			const decided = await this.repository.decideProposal(id, {
+			// Claim the proposal before changing the canon, so a rejection decided
+			// at the same moment can never have its change applied anyway.
+			const claimed = await this.repository.decideProposal(id, {
 				status: "approved",
 				decidedAt: this.now(),
 				decidedBy: actor,
 				...(request.reason ? { decisionReason: request.reason } : {}),
 			});
-			if (!decided) throw alreadyDecided();
+			if (!claimed) throw alreadyDecided();
+			try {
+				await this.applyProposal(proposal, actor);
+			} catch (error) {
+				await this.repository.reopenProposal(id);
+				throw error;
+			}
 		}
 		return (await this.repository.getProposal(id)) ?? proposal;
 	}
@@ -1156,10 +1180,11 @@ export class BrainService {
 					proposal.title,
 					{ text: proposal.text ?? "" },
 					actor,
+					note.revision,
 				);
 				return;
 			case "delete":
-				await this.deleteNote(vault, proposal.title, actor);
+				await this.deleteNote(vault, proposal.title, actor, note.revision);
 				return;
 		}
 	}

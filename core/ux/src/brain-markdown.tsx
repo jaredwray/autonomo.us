@@ -174,9 +174,16 @@ const startsBlock = (line: string) =>
 	QUOTE.test(line) ||
 	LIST_ITEM.test(line);
 
+/**
+ * Quotes and lists nest by recursion. Deeper levels render as plain text, so a
+ * note with thousands of `>` markers or indents cannot overflow the stack.
+ */
+export const MAX_NESTING = 16;
+
 function parseList(
 	lines: string[],
 	start: number,
+	depth = 0,
 ): { node: ListNode; end: number } {
 	const first = LIST_ITEM.exec(lines[start]);
 	if (!first) throw new Error("not a list");
@@ -213,8 +220,11 @@ function parseList(
 			if (indent < base || !continues(line)) break;
 			node.items.push({ text: [item[3]], children: [] });
 			i++;
+		} else if (item && last && depth + 1 >= MAX_NESTING) {
+			last.text.push(line.trim());
+			i++;
 		} else if (item && last) {
-			const nested = parseList(lines, i);
+			const nested = parseList(lines, i, depth + 1);
 			last.children.push(nested.node);
 			i = nested.end;
 		} else if (indent > base && last) {
@@ -282,6 +292,7 @@ function splitRow(line: string): string[] {
 export function renderMarkdown(
 	source: string,
 	options: InlineOptions,
+	depth = 0,
 ): ReactNode[] {
 	const lines = source.replace(/\r\n?/g, "\n").split("\n");
 	const blocks: ReactNode[] = [];
@@ -344,7 +355,11 @@ export function renderMarkdown(
 			}
 			blocks.push(
 				<blockquote key={key}>
-					{renderMarkdown(inner.join("\n"), options)}
+					{depth + 1 < MAX_NESTING ? (
+						renderMarkdown(inner.join("\n"), options, depth + 1)
+					) : (
+						<p>{renderLines(inner, options)}</p>
+					)}
 				</blockquote>,
 			);
 			continue;

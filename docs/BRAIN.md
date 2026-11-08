@@ -118,7 +118,7 @@ An agent files `{ action, title, newTitle?, body?, properties?, text?, reason }`
 
 The proposal records `baseRevision` (the shared note's revision, or `null` for create). An agent may have at most 50 pending proposals. Proposals are listed newest first, filterable by status, and agents see only their own.
 
-An owner or admin decides. **Approve** applies the change as that owner or admin, but returns 409 and leaves the proposal pending if the note's revision no longer equals `baseRevision`, a create's title is now taken, or the note is gone; the reviewer can then reject it. **Reject** requires a reason (1–2,000 characters). Decided proposals cannot be decided again (409).
+An owner or admin decides. **Approve** first claims the proposal (pending → approved, atomically), so a concurrent decision gets 409 instead of racing it, then applies the change as that owner or admin. Update, append, and delete write only to `baseRevision`. If the note's revision no longer equals `baseRevision`, a create's title is now taken, or the note is gone, approval returns 409 and the proposal goes back to pending; the reviewer can then reject it. **Reject** requires a reason (1–2,000 characters). Decided proposals cannot be decided again (409).
 
 ## 8. Export and import ("file over app")
 

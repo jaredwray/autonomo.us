@@ -332,6 +332,18 @@ export class MongoBrainRepository implements BrainRepository {
 		);
 		return result.matchedCount > 0;
 	}
+	async reopenProposal(id: string) {
+		const result = await this.storage(() =>
+			this.proposals().updateOne(
+				{ _id: id, status: "approved" },
+				{
+					$set: { status: "pending" },
+					$unset: { decidedAt: "", decidedBy: "", decisionReason: "" },
+				},
+			),
+		);
+		return result.matchedCount > 0;
+	}
 	async close() {
 		const client = this.client;
 		this.client = undefined;
