@@ -278,8 +278,9 @@ by id and act only on its entry for the resolved workspace.
 Today `createServer` builds one `ProviderRegistry`, `ProviderSettingsStore`,
 `RoutingSettingsStore`, `FailoverPolicyStore`, and `ModelRouter`, and the two
 stores load once per process. Workspace configuration is instead **read on
-every request that needs it**, and nothing but pool balancing state is kept
-between requests:
+every request that needs it**. With MongoDB, nothing but pool balancing state
+is kept between requests; without it, the in-memory storage described below is
+kept too:
 
 ```ts
 /** Built per request, memoized on the request, never shared across requests. */
@@ -307,6 +308,14 @@ type WorkspaceContext = {
   number of round trips as a cached design that must read the workspace document
   anyway. Building a registry is cheap: provider factories are closures over a
   config.
+- **Memory mode.** Without MongoDB, the provider and routing stores are the
+  storage itself: today `addModel` and `RoutingSettingsStore.save` keep changes
+  only in the store instances. The workspace-bound stores therefore read and
+  write a process-wide in-memory backend keyed by workspace, the same pattern
+  as the memory side of `AccountStore`'s `Documents`. That backend is never
+  evicted or rebuilt, so a successful change lasts until the process restarts,
+  as it does today. Only the derived registry and context are rebuilt per
+  request.
 - **Why not a cache.** A cache keyed by a revision counter on the workspace
   document saves two small reads per request but needs a load-tag ordering
   rule, invalidation on every write path, an LRU, and an age backstop, and it
@@ -755,17 +764,18 @@ Findings and what changed:
 
 | Finding | Source | Disposition |
 | --- | --- | --- |
-| Rewriting provider `_id`s loses writes from older replicas during a rolling deploy and after rollback | Architecture review | Fixed: `default` keeps its keys; only new workspaces use composite keys (4.2, 9.2). |
-| Marker-gated read fallbacks lock out tokens and members created by older replicas | Architecture review | Fixed: missing fields mean `default` permanently; all backfills and `gateway_migrations` removed (4.2, 9.2). |
+| Rewriting provider `_id`s loses writes from older replicas during a rolling deploy and after rollback | Architecture review, Codex (P2), Aikido (medium) | Fixed: `default` keeps its keys; only new workspaces use composite keys (4.2, 9.2). |
+| Marker-gated read fallbacks lock out tokens and members created by older replicas | Architecture review, Codex (P2) | Fixed: missing fields mean `default` permanently; all backfills and `gateway_migrations` removed (4.2, 9.2). |
 | Revision-tagged cache: tag-after-load race, whole-document `PATCH` writing back a stale counter, a shared load promise tied to one Workers request | Architecture review | Fixed by design change: configuration is read per request, with no cache (5.3). The ordering rules are recorded in case a cache is added later. |
 | Writes merge from process memory, so concurrent replicas lose models or routing changes | Architecture review | Fixed: field-level provider updates and `revision` compare-and-swap on routing (5.3). |
 | By-id token operations (`update`, `roll`, `revoke`) would cross workspaces if only lists were scoped | Architecture review | Fixed: by-id filter rule and invariant 4 (5.2, 11). |
 | W2 too large to review | Architecture review | Split into W2a and W2b (13). |
-| Path-named workspace routes were not bound to the authorized workspace; `PATCH /v1/workspaces/:id` skipped resolution | Aikido (high) and architecture review | Fixed: `workspace-path` scope, path is authoritative, a disagreeing header gets 400 (5.1, 5.2, invariant 2). |
+| Path-named workspace routes were not bound to the authorized workspace; `PATCH /v1/workspaces/:id` skipped resolution | Aikido (two high findings) and architecture review | Fixed: `workspace-path` scope, path is authoritative, a disagreeing header gets 400 (5.1, 5.2, invariant 2). |
 | `GET /v1/workspaces` for tokens contradicted the deny-unlisted rule | Architecture review | Fixed: signed-in only (5.1, 7). |
 | Streaming chat bypasses response hooks | Architecture review | Fixed: header written beside the manual CORS header (7). |
 | Balancing counts keyed by model id would mix workspaces | Found while revising | Fixed: keyed by workspace (5.3, invariant 7). |
 | Per-request client per store exceeds the Workers connection limit | Architecture review | Fixed: one shared request client with a pool cap, in W2a (5.3). |
 | Org promotion and demotion effects on memberships unspecified | Architecture review | Fixed: memberships kept; demotion warns when it would leave none (6). |
 | `HEAD` routes in the completeness check; index creation; unbounded telemetry partitions; slug mutability; workspace audit trail | Architecture review | Fixed (5.1, 4.2, 5.4, 7). |
+| Without MongoDB, rebuilding or evicting configuration would discard saved connections and routing | Codex (P2) | Fixed: a process-wide in-memory backend per workspace that is never evicted; only derived state is rebuilt per request (5.3). |
 | `OPENAI_COMPAT_NAME` is not validated, so an environment connection name could contain `:` | Architecture review | No change: environment connections are never persisted, so they never form a composite key. |
