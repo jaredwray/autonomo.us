@@ -362,7 +362,11 @@ type WorkspaceContext = {
   existing rule that credentials are never inherited by a new connection. The
   `registry` and `failover` options that tests pass to `createServer` play the
   same role: they become the `default` workspace's environment providers and
-  seed policy, so existing suites keep working unchanged.
+  seed policy, so existing suites keep working unchanged. `createServer` copies
+  them once, at construction, into server-owned state: the list of provider
+  entries and the policy value. Nothing calls `register` or `update` on the
+  injected objects afterwards, unlike today's `addModel` and routing saves.
+  Two servers given the same object therefore never see each other's changes.
 - **Workers connections.** Per-request reads mean more stores touch MongoDB in
   one request (account or token, workspace, providers, routing, telemetry),
   and each store keys its own request client today. With the provider call,
@@ -799,4 +803,5 @@ Findings and what changed:
 | Field-level writes filtered by `workspaceId` would miss `default` connections saved before the change | Aikido (medium) | Fixed: the `default` rule applies to write filters too, writes set the field, and a zero match is a 404 (4.2, 5.3, 12). |
 | Membership audit entries on the workspace document cannot be written atomically with membership changes on the user document | Aikido (medium) | Fixed: membership changes are logged on the user document in the same write (4.2, 7). |
 | Routing compare-and-swap with `{ revision: 0 }` misses documents with no `revision` | Aikido (medium) | Fixed: the revision-0 filter is `{ $in: [0, null] }`, and the upgrade test covers the first write (4.2, 5.3, 12). |
+| Injected `registry` and `failover` objects shared by two servers would carry one server's changes to the other | Aikido (medium) | Fixed: copied into server-owned state at construction and never mutated afterwards (5.3). |
 | `OPENAI_COMPAT_NAME` is not validated, so an environment connection name could contain `:` | Architecture review | No change: environment connections are never persisted, so they never form a composite key. |
