@@ -188,9 +188,11 @@ provider, token, or telemetry document means `default`, and a `member` account
 with no `workspaces` field is a member of `default`. These are permanent read
 rules, not pre-migration fallbacks, so a document written by an older replica
 during a rolling deploy, or while rolled back, still resolves correctly. Every
-write from new code sets the field explicitly. Queries for `default` use
-`{ workspaceId: { $in: ["default", null] } }`, which also matches missing
-fields; queries for any other workspace use the exact id. No data is rewritten,
+write from new code sets the field explicitly. Every filter for `default`,
+in reads and in writes, uses `{ workspaceId: { $in: ["default", null] } }`,
+which also matches missing fields; filters for any other workspace use the
+exact id. A write filter that used `workspaceId: "default"` alone would miss
+every record saved before this change. No data is rewritten,
 so there is no backfill to order, crash, or re-run.
 
 **Indexes** (slug unique, `workspaceId` on providers, tokens, and telemetry,
@@ -328,8 +330,11 @@ type WorkspaceContext = {
 - **Writes.** They no longer merge from process memory. Adding a model is a
   field-level update on the connection document (`$addToSet` on
   `config.models`, `$set` for a new key or Cloudflare account) filtered by
-  `{ _id, workspaceId, "config.kind" }`. Creating a connection is an insert, so
-  a duplicate name returns 409 from the unique `_id`. Routing writes
+  `{ _id, workspaceId, "config.kind" }`, where for `default` the workspace
+  clause is `{ $in: ["default", null] }` so connections saved before this
+  change match. The update also sets `workspaceId`, and a zero matched count is
+  a 404, never a silent in-memory success. Creating a connection is an insert,
+  so a duplicate name returns 409 from the unique `_id`. Routing writes
   (`PUT /v1/routing`, `PUT /v1/failover`) read the document, then
   `replaceOne({ _id, revision })` and increment `revision`; a lost race returns
   409 "Routing changed during your request. Refresh and try again." This
@@ -623,6 +628,8 @@ Following the repository's rule of real services, not mocks:
   assert they resolve as `default` with unchanged behavior and that no document
   was rewritten. Write a provider document the way old code does (whole-document
   `replaceOne` without `workspaceId`) and assert it still resolves as `default`.
+  Add a model and rotate a key on a pre-workspace connection, then restart and
+  assert both changes persisted.
 - **Coherence and concurrent writes:** two `createServer` instances on one
   database. Add a model in instance 1; instance 2 serves it on its next request
   without a restart (a regression test for today's load-once staleness). Add
@@ -778,4 +785,5 @@ Findings and what changed:
 | Org promotion and demotion effects on memberships unspecified | Architecture review | Fixed: memberships kept; demotion warns when it would leave none (6). |
 | `HEAD` routes in the completeness check; index creation; unbounded telemetry partitions; slug mutability; workspace audit trail | Architecture review | Fixed (5.1, 4.2, 5.4, 7). |
 | Without MongoDB, rebuilding or evicting configuration would discard saved connections and routing | Codex (P2) | Fixed: a process-wide in-memory backend per workspace that is never evicted; only derived state is rebuilt per request (5.3). |
+| Field-level writes filtered by `workspaceId` would miss `default` connections saved before the change | Aikido (medium) | Fixed: the `default` rule applies to write filters too, writes set the field, and a zero match is a 404 (4.2, 5.3, 12). |
 | `OPENAI_COMPAT_NAME` is not validated, so an environment connection name could contain `:` | Architecture review | No change: environment connections are never persisted, so they never form a composite key. |
