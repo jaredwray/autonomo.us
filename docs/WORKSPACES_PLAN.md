@@ -1,11 +1,11 @@
 # Workspaces plan
 
-*Status: proposal v0.2, November 2026, revised after an independent architecture review ([section 16](#16-review-log)). Owner: Jared Wray.*
+*Status: v0.3, November 2026. Revised after an independent architecture review ([section 16](#16-review-log)); owner decisions recorded in [section 10](#10-decisions). Owner: Jared Wray.*
 
 Nothing in this document is code. It answers whether the gateway has workspaces
 (it does not), proposes how to add them, and orders the work into reviewable
-PRs. Each implementation PR is opened separately after the decisions in
-[section 10](#10-decisions-needed) are made.
+PRs. The owner decisions are recorded in [section 10](#10-decisions); each
+implementation PR is opened separately.
 
 ## Contents
 
@@ -18,7 +18,7 @@ PRs. Each implementation PR is opened separately after the decisions in
 7. [API surface](#7-api-surface)
 8. [Dashboard](#8-dashboard)
 9. [Migration, rollout, and rollback](#9-migration-rollout-and-rollback)
-10. [Decisions needed](#10-decisions-needed)
+10. [Decisions](#10-decisions)
 11. [Security invariants](#11-security-invariants)
 12. [Testing](#12-testing)
 13. [PR sequence](#13-pr-sequence)
@@ -79,9 +79,12 @@ Goals:
    another.
 2. **One identity per person.** Team accounts stay gateway-level. A person is
    granted access to specific workspaces with a workspace role.
-3. **No breaking change for existing clients.** Every current API call, token,
-   and dashboard bookmark keeps working against a `default` workspace that
-   holds everything that exists today.
+3. **Existing data keeps working.** Everything stored today belongs to a
+   `default` workspace, and existing tokens, members, connections, and routing
+   keep working there with no data rewritten. The API surface does change:
+   workspace-scoped routes move under `/v1/:workspace/` (decision D2). The
+   gateway has no external users yet, so this is accepted as a breaking change,
+   and the dashboard moves in the same PR.
 4. **A home for future MVP records.** Agents, routines, approvals, storage
    prefixes, and budgets get a `workspaceId` from their first PR instead of a
    retrofit.
@@ -138,10 +141,8 @@ export const WORKSPACE_ROLES = { admin: "Admin", member: "Member" } as const;
 export type WorkspaceRole = keyof typeof WORKSPACE_ROLES;
 
 export type Workspace = {
-	/** "default" for the migrated workspace, otherwise a UUID. Immutable. */
+	/** "default" for the migrated workspace, otherwise a UUID. Immutable; the `:workspace` path segment. */
 	id: string;
-	/** Unique, URL-safe (^[a-z][a-z0-9-]{0,47}$), used in dashboard URLs. */
-	slug: string;
 	name: string;
 	description: string;
 	createdAt: string;
@@ -174,7 +175,7 @@ Additions to existing types:
 
 | Collection | Today | Change |
 | --- | --- | --- |
-| `gateway_workspaces` | — | New. `{ _id, slug, name, description, createdAt, createdBy, updatedAt, archivedAt, revision, actions }`. Unique index on `slug`; the slug is immutable in v1 so dashboard links never break. `actions` holds the latest 100 lifecycle changes to this document (create, rename, archive, unarchive) with actor and time, committed in the same write, like token `actions`. Membership changes are logged on the user document instead (see `gateway_users`), because that is the document they change. The `default` document is created with a `$setOnInsert` upsert, the same way `RoutingSettingsStore` creates its default document, so concurrent startups agree. Metadata edits use `$set` on named fields with a `revision` check, never a whole-document replace. |
+| `gateway_workspaces` | — | New. `{ _id, name, description, createdAt, createdBy, updatedAt, archivedAt, revision, actions }`. `_id` is `"default"` for the migrated workspace and a server-generated UUID for every other one; it never changes, so API paths and dashboard links stay valid. Names need not be unique. `actions` holds the latest 100 lifecycle changes to this document (create, rename, archive, unarchive) with actor and time, committed in the same write, like token `actions`. Membership changes are logged on the user document instead (see `gateway_users`), because that is the document they change. The `default` document is created with a `$setOnInsert` upsert, the same way `RoutingSettingsStore` creates its default document, so concurrent startups agree. Metadata edits use `$set` on named fields with a `revision` check, never a whole-document replace. |
 | `gateway_providers` | `_id` = connection name, `{ config }` | Add a `workspaceId` field and an index on it. **`default` keeps its existing `_id` = connection name**; other workspaces use `_id: "<workspaceId>:<connection>"`. Saved connection names cannot contain `:`, so the two key spaces never collide, and no existing document is rewritten. |
 | `gateway_routing` | `_id: "default"` | `_id: <workspaceId>`, plus a `revision` field for compare-and-swap. A missing `revision` counts as 0, and the compare-and-swap filter for revision 0 is `{ revision: { $in: [0, null] } }`, because `{ revision: 0 }` does not match a missing field. The default workspace's id is `"default"`, so the existing document is already correct. |
 | `gateway_api_tokens`, `gateway_agent_tokens` | no workspace | `workspaceId` field and index, set on every new token. The secret format (`aut_<id>_…`) is unchanged; `authenticate` already reads the record by id and gets `workspaceId` from it. |
@@ -195,7 +196,7 @@ exact id. A write filter that used `workspaceId: "default"` alone would miss
 every record saved before this change. No data is rewritten,
 so there is no backfill to order, crash, or re-run.
 
-**Indexes** (slug unique, `workspaceId` on providers, tokens, and telemetry,
+**Indexes** (`workspaceId` on providers, tokens, and telemetry,
 the users multikey) are created by an `ensureIndexes` step in `initialize()`,
 once per process or isolate, alongside the telemetry indexes created today.
 
@@ -211,14 +212,18 @@ Every `/v1` route declares one scope in a central table next to
 | `public` | `GET /v1/auth/status`, `POST /v1/auth/session`, `POST /v1/invites/preview`, `POST /v1/invites/accept` |
 | `setup` | `POST /v1/setup`, `GET /v1/setup/token` |
 | `instance` | `GET/DELETE /v1/auth/session`, `PUT /v1/auth/password`, `/v1/team*`, `GET/POST /v1/workspaces` (list, create), `GET /v1/models/catalog` |
-| `workspace` | `/v1/models`, `/v1/providers`, `/v1/routing`, `/v1/failover`, `/v1/chat`, `/v1/decisions`, `/v1/telemetry/*`, `/v1/api-tokens*`, `/v1/agent-tokens*` |
-| `workspace-path` | `PATCH /v1/workspaces/:id`, `POST /v1/workspaces/:id/archive`, `POST /v1/workspaces/:id/unarchive`, `/v1/workspaces/:id/members*` |
+| `workspace` | `/v1/:workspace/models`, `/v1/:workspace/providers`, `/v1/:workspace/routing`, `/v1/:workspace/failover`, `/v1/:workspace/chat`, `/v1/:workspace/decisions`, `/v1/:workspace/telemetry/*`, `/v1/:workspace/api-tokens*`, `/v1/:workspace/agent-tokens*`, `/v1/:workspace/members*`, and the lifecycle routes `PATCH /v1/workspaces/:workspace`, `POST /v1/workspaces/:workspace/archive`, `POST /v1/workspaces/:workspace/unarchive` |
 
-`workspace-path` routes name their target workspace in the URL. For them the
-`:id` path parameter, not the header, selects the workspace, and it goes
-through the same resolution and role checks as the header does (5.2). A route
-that names a workspace in its path is never classified `instance`, so no
-handler can act on a path-named workspace without that resolution.
+**The workspace is always in the path (D2).** Every workspace-scoped route
+names its workspace with a `:workspace` path parameter, which is the
+workspace's id: `default` for the migrated workspace, a UUID for every other.
+The parameter is constrained to that pattern in the route definition, so it can
+never match a static segment such as `team`, `auth`, or `workspaces`. Today's
+unprefixed resource routes (`/v1/models`, `/v1/chat`, …) are removed in W1;
+the gateway has no external users yet, so the break is accepted (decision
+D2). There is no workspace header. A route that names a workspace in its
+path is never classified `instance`, so no handler can act on a workspace
+without the resolution in 5.2.
 
 An `onRoute` hook throws at startup when a `/v1` route has no scope entry, so a
 new endpoint cannot ship unscoped. This runs during route compilation, which is
@@ -232,30 +237,27 @@ action.") there.
 
 ### 5.2 Workspace resolution
 
-`registerApiAccess` gains one step after authentication, for `workspace` and
-`workspace-path` routes:
+`registerApiAccess` gains one step after authentication, for `workspace`
+routes. Fastify has matched the route and parsed `request.params` before
+`onRequest`, so the workspace id is known from the path:
 
-1. **API or agent token:** the workspace is the token's `workspaceId`. If the
-   request also sends `X-Autonomous-Workspace` with a different id, reject with
-   403 ("This token belongs to another workspace.") rather than ignore it, so a
-   misconfigured client cannot believe it is writing somewhere it is not.
-   `workspace-path` routes are signed-in only, so tokens get 403 there.
-2. **Signed-in member, `workspace` route:** the workspace is the
-   `X-Autonomous-Workspace` header, or `default` when it is absent (keeps the
-   current dashboard and scripts working during rollout).
-3. **Signed-in member, `workspace-path` route:** the workspace is
-   `request.params.id` (Fastify has matched the route and parsed parameters
-   before `onRequest`). If the header is also present and names a different
-   workspace, reject with 400 rather than pick one, so a caller authorized for
-   workspace A can never act on workspace B by sending header A with B in the
-   path.
+1. **API or agent token:** the token's `workspaceId` must equal the path's
+   workspace. Otherwise reject with 403 ("This token belongs to another
+   workspace."), so a misconfigured client fails loudly instead of acting
+   somewhere it did not intend. Lifecycle and member routes are signed-in only,
+   so tokens get 403 there.
+2. **Signed-in member:** the path's workspace is the target, subject to the
+   membership check below.
+3. Because the id is in the path, the token or session read, the workspace
+   document read, and (where needed) the configuration reads of 5.3 can run
+   concurrently; nothing they return is used until access is confirmed.
 4. Read the workspace document. This adds one indexed `_id` read per request,
    which is deliberate: like token revocation today, archiving must take effect
    on the next request on every replica.
 5. Unknown workspace, or a member with no access to it → **404 "Workspace not
    found."** for both, so the API is not an oracle for workspace ids. Archived
    workspace (to a caller who has access) → 409 "This workspace is archived.",
-   except on `POST /v1/workspaces/:id/unarchive`, which must resolve an
+   except on `POST /v1/workspaces/:workspace/unarchive`, which must resolve an
    archived workspace.
 6. Set `request.workspace = { id, role, implicit }`. Org owners and admins get
    role `admin` with `implicit: true`. The role matrix in
@@ -264,12 +266,12 @@ action.") there.
    workspaces they administer.
 
 Handlers read the target workspace only from `request.workspace`: never from a
-body or query string, and never from `request.params` directly.
+body or query string, and never from `request.params.workspace` directly.
 
 **By-id operations carry the workspace filter.** Resolving the workspace is not
 enough on its own: `TokenStore.read(id)` is `findOne({ _id })` today and backs
 `update`, `roll`, and `revoke`, so scoping only the token list would leave
-`PATCH /v1/api-tokens/:id` usable from workspace A against B's token id. Every
+`PATCH /v1/A/api-tokens/<B's token id>` working across workspaces. Every
 by-id read or write on a workspace-level collection filters on
 `{ _id, workspaceId }` (with the default read rule from 4.2) and returns the
 same 404 as a missing record on a miss. Membership routes look up the account
@@ -302,14 +304,12 @@ type WorkspaceContext = {
 - **Loading.** A request helper `workspaceContext(request)` reads the
   workspace's provider documents and routing document and builds the registry.
   Only routes that need configuration call it (models, providers, routing,
-  failover, chat, decisions); telemetry and token routes do not. Those reads can
-  be issued concurrently with the workspace document read from 5.2, and nothing
-  loaded is used until access is confirmed. For a token, the workspace is known
-  only after the token read, so a chat request costs the token read, then one
-  round trip for the workspace, provider, and routing reads together: the same
-  number of round trips as a cached design that must read the workspace document
-  anyway. Building a registry is cheap: provider factories are closures over a
-  config.
+  failover, chat, decisions); telemetry and token routes do not. Because the
+  workspace id is in the path, those reads run concurrently with the credential
+  and workspace document reads from 5.2, so a chat request costs one round trip
+  to MongoDB before the provider call, the same as today's token check. Nothing
+  loaded is used until access is confirmed. Building a registry is cheap:
+  provider factories are closures over a config.
 - **Memory mode.** Without MongoDB, the provider and routing stores are the
   storage itself: today `addModel` and `RoutingSettingsStore.save` keep changes
   only in the store instances. The workspace-bound stores therefore read and
@@ -433,17 +433,24 @@ Two layers, both required:
 | Rename or describe a workspace | ✓ | ✓ | ✓ | – | – |
 | Add or remove workspace members (existing accounts) | ✓ | ✓ | ✓ | – | – |
 | Create team accounts and invites | ✓ | ✓ (not owners) | – | – | – |
-| Models and connections: read, add, update keys | ✓ | ✓ | ✓ | ✓ | `models:*` |
+| Models and connections: read | ✓ | ✓ | ✓ | ✓ | `models:read` |
+| Add connections and models, change keys | ✓ | ✓ | ✓ | – (D4) | `models:edit` |
 | Routing and failover: read, edit | ✓ | ✓ | ✓ | ✓ | `routing:*` |
 | Chat, decisions, routing tester | ✓ | ✓ | ✓ | ✓ | `inference:run` |
 | Telemetry | ✓ | ✓ | ✓ | ✓ | `telemetry:read` |
-| API and agent tokens | ✓ | ✓ | ✓ | – | – |
+| API and agent tokens | ✓ | ✓ | – (D3) | – | – |
 
 Notes:
 
-- Workspace members keep today's org Member semantics inside their workspaces
-  (models, routing, dashboard; no tokens), so nobody gains or loses ability by
-  migration.
+- **Behavior change for current Members (D4).** Today an org Member can add
+  connections and change keys. After W4, existing Members are members of
+  `default` and can read connections, use models, and edit routing, but adding
+  connections, adding models, and changing keys needs a workspace admin or an
+  org owner or admin. The W4 README update states this.
+- **Tokens stay with org owners and admins (D3).** Workspace admins cannot
+  create, edit, roll, or revoke tokens, because tokens outlive the member who
+  created them. Token management happens under each workspace's path, so an
+  org admin manages each workspace's tokens separately.
 - Org owners and admins are implicit admins everywhere. Because they always
   exist, there is no "last workspace admin" invariant to protect, and no
   owner-lock equivalent is needed for memberships.
@@ -466,30 +473,31 @@ New:
 | Route | Who | Purpose |
 | --- | --- | --- |
 | `GET /v1/workspaces` | Any signed-in member (tokens get 403) | Accessible workspaces with the caller's role. |
-| `POST /v1/workspaces` | Org owner/admin | Create `{ name, slug?, description? }`. Slug defaults from the name, is immutable afterwards, and duplicates return 409. |
-| `PATCH /v1/workspaces/:id` | Org owner/admin, workspace admin | Update `{ name, description }` with `$set` and a `revision` check. |
-| `POST /v1/workspaces/:id/archive`, `POST /v1/workspaces/:id/unarchive` | Org owner/admin | Soft archive. `default` cannot be archived. |
-| `GET /v1/workspaces/:id/members` | Workspace admin and above | Members with workspace roles, including implicit admins. |
-| `PUT /v1/workspaces/:id/members/:userId` | Workspace admin and above | Set `{ role }` for an existing org member. |
-| `DELETE /v1/workspaces/:id/members/:userId` | Workspace admin and above | Remove access. |
+| `POST /v1/workspaces` | Org owner/admin | Create `{ name, description? }`. The server assigns a UUID id. |
+| `PATCH /v1/workspaces/:workspace` | Org owner/admin, workspace admin | Update `{ name, description }` with `$set` and a `revision` check. |
+| `POST /v1/workspaces/:workspace/archive`, `POST /v1/workspaces/:workspace/unarchive` | Org owner/admin | Soft archive. `default` cannot be archived. |
+| `GET /v1/:workspace/members` | Workspace admin and above | Members with workspace roles, including implicit admins. |
+| `PUT /v1/:workspace/members/:userId` | Workspace admin and above | Set `{ role }` for an existing org member. |
+| `DELETE /v1/:workspace/members/:userId` | Workspace admin and above | Remove access. |
 
 Changed:
 
 - `GET /v1/auth/session` returns `workspaces: WorkspaceAccess[]`.
 - `POST /v1/team`, `POST /v1/team/invites`, `POST /v1/invites/accept` accept and
   apply an optional `workspace` membership.
-- Every workspace-scoped route accepts `X-Autonomous-Workspace`. Responses from
-  those routes include the same header so clients and logs can confirm scope.
-  Streaming chat hijacks the reply and writes its own headers with
-  `raw.writeHead`, bypassing hooks, so the header is added there next to the
-  manual CORS header.
+- **Breaking (W1):** every workspace-scoped route moves under
+  `/v1/:workspace/`, e.g. `POST /v1/default/chat`, `GET /v1/<id>/models`,
+  `PUT /v1/<id>/routing`, `GET /v1/<id>/telemetry/analytics`, and
+  `/v1/<id>/api-tokens`. The unprefixed forms are removed. The dashboard and
+  the README examples move in the same PR; `pnpm check:deployment` keeps
+  probing `/healthz`, which is unchanged.
 - Every workspace lifecycle change is appended to the workspace's `actions`,
   and every membership change to the member's `membershipActions`, each in the
   same single-document write as the change, with the acting member.
-- Token list, create, roll, and revoke operate on the current workspace only.
-  `workspaceId` is set from the request at creation and is not accepted in any
+- Token list, create, roll, and revoke operate on the path's workspace only.
+  `workspaceId` is set from the path at creation and is not accepted in any
   body.
-- `GET /v1/telemetry/*` and `GET /v1/providers` return only the current
+- `/v1/:workspace/telemetry/*` and `/v1/:workspace/providers` return only that
   workspace's data.
 
 Archive semantics: archiving sets `archivedAt`. Because every workspace-scoped
@@ -501,25 +509,22 @@ they are today (plaintext server-side until the MVP vault lands). Purging an
 archived workspace's data, credentials first, is a follow-up with its own
 confirmation flow.
 
-The `X-Autonomous-Workspace` header must be allowed by CORS. Set
-`allowedHeaders` explicitly in the `@fastify/cors` registration
-(`authorization`, `content-type`, `x-autonomous-workspace`) instead of relying
-on reflection. The dashboard is same-origin in production and behind the Vite
-proxy in development, so this only matters for third-party browser clients.
-
 ## 8. Dashboard
 
 - **Switcher.** The top of the sidebar shows the current workspace name with a
   menu of accessible workspaces and, for org owners and admins, **Manage
   workspaces**. It collapses to an initial when the sidebar is collapsed.
-- **URLs.** Workspace views move to `#/w/<slug>/<view>` (`dashboard`, `models`,
-  `routing`, `api-tokens`, `agent-tokens`). `team`, `profile`, and
-  `workspaces` stay instance-level (`#/team`). Legacy `#/models`-style
-  fragments redirect to the last-used workspace (a `localStorage` convenience,
-  wrapped in try/catch like the sidebar setting) or `default`. An unknown slug
-  falls back the same way with a notice.
-- **Requests.** `apiFetch` in `api.ts` sets `X-Autonomous-Workspace` from a
-  module-level current workspace id that `App` sets on navigation.
+- **URLs.** Workspace views move to `#/w/<workspace id>/<view>` (`dashboard`,
+  `models`, `routing`, `api-tokens`, `agent-tokens`), mirroring the API path.
+  `team`, `profile`, and `workspaces` stay instance-level (`#/team`). Legacy
+  `#/models`-style fragments redirect to the last-used workspace (a
+  `localStorage` convenience, wrapped in try/catch like the sidebar setting) or
+  `default`. An unknown or inaccessible id falls back the same way with a
+  notice.
+- **Requests.** The workspace API helpers in `api.ts` take the workspace id and
+  build `/v1/<id>/…` paths. W1 switches every existing call to `/v1/default/…`
+  so the dashboard keeps working when the unprefixed routes are removed; W6
+  passes the selected workspace.
 - **No cross-workspace bleed.** Workspace views render with
   `key={workspace.id}`, so switching unmounts the old view; a response for the
   previous workspace cannot land in the new one.
@@ -540,10 +545,11 @@ proxy in development, so this only matters for third-party browser clients.
 
 The work ships in two halves:
 
-1. **Expand (W1–W4).** Scoping, per-request configuration, token binding,
-   telemetry partitioning, and memberships ship while only `default` can
-   exist. Tests create extra workspaces through `WorkspaceStore` directly. The
-   behavior visible to users is unchanged.
+1. **Expand (W1–W4).** Path routes, scoping, per-request configuration, token
+   binding, telemetry partitioning, and memberships ship while only `default`
+   can exist. Tests create extra workspaces through `WorkspaceStore` directly.
+   Apart from the new `/v1/default/…` paths in W1 and the D4 permission change
+   in W4, behavior is unchanged.
 2. **Enable (W5–W6).** The lifecycle API and dashboard let people create a
    second workspace.
 
@@ -568,7 +574,12 @@ would then hide.
 
 ### 9.3 Rollback
 
-- Rolling back within W1–W4 is safe in both directions. Only `default` exists.
+- The W1 path change ships the dashboard and the API in one deployable (one
+  Worker, or one compose service), so a rollback reverts both together and
+  the dashboard never calls paths its server lacks. API clients outside the
+  dashboard must switch paths with W1 and back on a rollback to pre-W1 code;
+  there are none today.
+- Rolling back within W1–W4 is safe for data in both directions. Only `default` exists.
   Pre-workspace code reads provider documents at their unchanged `_id` by
   `config.name`, ignores `workspaceId`, and finds the routing document where it
   always was. Writes made while rolled back drop the new fields, and the read
@@ -579,19 +590,19 @@ would then hide.
   collapses isolation. Rolling back from W6 to W4 code is safe because W4 code
   is workspace-aware. The README will state this one-way door in the W5 PR.
 
-## 10. Decisions needed
+## 10. Decisions
 
-Positions are what the PR sequence assumes.
+Decided by the owner on 2026-11-08. The PR sequence follows these.
 
-| # | Question | Position | Blocks |
+| # | Question | Decision | Affects |
 | --- | --- | --- | --- |
-| D1 | Is a workspace the business-unit boundary from the MVP plan (Hyphen, OSS, Film, Personal)? | **Yes.** The MVP's `BusinessUnit` enum becomes `workspaceId`, and the cost rollup "by business unit" becomes "by workspace." Confirm this does not conflict with the design doc's multi-tenancy non-goal (it is one organization). | W1 (naming), MVP PRs 4–15 |
-| D2 | How does a signed-in member choose a workspace: header or path prefix (`/v1/w/:id/...`)? | **Header.** Routes, the permission table, and every token client stay unchanged; tokens imply their workspace anyway. A path prefix doubles the route surface during migration. | W1 |
-| D3 | May workspace admins create and manage tokens? | **Yes, in their workspace.** A token is bound to the workspace, so the blast radius matches the admin's own access. | W3 |
-| D4 | May workspace members add connections and change keys? | **Yes,** matching today's org Member. Tightening it is a separate change. | W4 |
-| D5 | Do environment providers belong only to `default`? | **Yes.** Otherwise any workspace could spend the deployment's environment keys. | W2b |
-| D6 | May workspace admins invite new people? | **No in v1.** Account creation stays with org owners and admins; workspace admins assign existing accounts. | W4 |
-| D7 | Archive only, purge later? | **Yes.** Purge (credentials first) is a follow-up with explicit confirmation. | W5 |
+| D1 | Is a workspace the business-unit boundary from the MVP plan (Hyphen, OSS, Film, Personal)? | **Yes.** The MVP's `BusinessUnit` enum becomes `workspaceId`, and cost rollups go by workspace. It stays one organization, so the design doc's multi-tenancy non-goal stands. | W1 naming, MVP PRs 4–15 |
+| D2 | How does a request name its workspace? | **In the path: `/v1/:workspace/<resource>`**, keyed by workspace id (`default`, or a UUID). The unprefixed resource routes are removed in W1 as an accepted breaking change, because the gateway has no external users yet. Tokens must use their own workspace's path. There is no workspace header and no slug. | W1 |
+| D3 | May workspace admins create and manage tokens? | **No.** API and agent tokens stay with org owners and admins, because tokens outlive the member who created them. | W3, W4 |
+| D4 | May workspace members add connections and change keys? | **No, workspace admins and org owners/admins only.** Members can read connections, use models, and edit routing. This is a behavior change for existing Members, documented in W4. | W4 |
+| D5 | Do environment providers belong only to `default`? | **Yes.** Other workspaces start empty, so no workspace can spend another's keys. | W2b |
+| D6 | May workspace admins invite new people? | **No.** Account creation stays with org owners and admins; workspace admins assign existing accounts. | W4 |
+| D7 | Archive only, purge later? | **Yes.** Archive in W5; purge (credentials first) is a follow-up with explicit confirmation. | W5 |
 
 ## 11. Security invariants
 
@@ -600,11 +611,11 @@ Each is a test, not a review note:
 1. A workspace-scoped handler cannot run without `request.workspace` set by
    the access hook; no handler reads a workspace id from a body, query string,
    or path parameter directly.
-2. A route that names a workspace in its path resolves and authorizes that
-   workspace; a disagreeing header returns 400, and a workspace admin of A
-   targeting B in the path gets 404.
+2. The workspace comes only from the `:workspace` path segment, which matches
+   only `default` or a UUID, and every route that names a workspace resolves
+   and authorizes it: a workspace admin of A targeting B gets 404.
 3. A token's `workspaceId` is fixed at creation; update and roll cannot change
-   it, and a mismatching header returns 403.
+   it, and the token used under another workspace's path returns 403.
 4. Every by-id operation on a workspace-level record filters on the resolved
    workspace: A's credentials naming B's token, connection, or member id get
    the same 404 as a missing record.
@@ -632,10 +643,12 @@ Following the repository's rule of real services, not mocks:
 - **Isolation matrix** (`workspace-isolation.integration.test.ts`, real MongoDB
   and two `openai-stub` servers): workspaces A and B each have a connection
   named `openai` pointing at a different stub. Assert chat in A reaches only
-  stub A; A's token with B's header gets 403; A's token naming B's token id in
-  `PATCH`, roll, and revoke gets 404; a member of A gets 404 for B; a workspace
-  admin of A sending header A with B in the path of a member or rename route
-  gets 400, and with only B in the path gets 404; telemetry and analytics
+  stub A; A's token calling `/v1/<B>/chat` gets 403; A's token naming B's token
+  id under A's path in `PATCH`, roll, and revoke gets 404; a member of A gets
+  404 for every `/v1/<B>/…` route; a workspace admin of A renaming B or
+  managing B's members gets 404; a workspace member of A adding a connection or
+  changing a key gets 403; a workspace admin of A creating a token gets 403;
+  the removed unprefixed routes (`/v1/models`, `/v1/chat`) return 404; telemetry and analytics
   options in A exclude B; a routing pool in A naming a model that exists only
   in B is rejected; a least-requests pool in A is unaffected by concurrent
   streams in B; archiving B blocks B's token on the next request.
@@ -661,8 +674,8 @@ Following the repository's rule of real services, not mocks:
 - **Worker runtime:** extend `pnpm test:worker` with requests to two
   workspaces in one isolate, and assert a chat request stays within the
   per-request connection limit.
-- **Dashboard:** `core/ux` tests boot the real server: the switcher sends the
-  header, switching resets views, legacy fragments redirect, and a member with
+- **Dashboard:** `core/ux` tests boot the real server: views call
+  `/v1/<selected id>/…`, switching resets views, legacy fragments redirect, and a member with
   no memberships sees the empty state.
 
 ## 13. PR sequence
@@ -671,17 +684,22 @@ Each PR updates the README for the surface it changes, keeps `pnpm lint`,
 `pnpm build`, and `pnpm test` green, and lists its acceptance criteria with
 evidence in the description.
 
-### W1: Workspace foundation (no behavior change)
+### W1: Workspace foundation and path routes (breaking API change)
 
 - Common types; `WorkspaceStore` over `gateway_workspaces` with the `default`
   upsert, `actions`, and `ensureIndexes`.
 - Route scope table with `HEAD` normalization, `onRoute` completeness check,
-  and `request.workspace` resolution (header and path). Only `default`
-  resolves; any other id is 404.
-- CORS `allowedHeaders`; the response header, including on the streaming path.
+  and `request.workspace` resolution from the path. Workspace-scoped routes
+  move under `/v1/:workspace/` (constrained to `default` or a UUID) and the
+  unprefixed forms are removed; the `routePermissions` keys move to the same
+  `/v1/:workspace/…` forms. Only `default` resolves; any other id is 404.
+- The dashboard's API helpers, the README examples, and every test move to
+  `/v1/default/…` in the same PR, so the deployed dashboard keeps working.
 
-**Accept:** every existing suite passes untouched; completeness test; two
-servers starting concurrently create one `default` document.
+**Accept:** every existing suite passes after its paths move to
+`/v1/default/…`, with no other change in behavior; completeness test;
+unprefixed resource routes return 404; two servers starting concurrently create
+one `default` document.
 
 ### W2a: Per-request configuration (default only)
 
@@ -711,8 +729,9 @@ connection rows of the isolation matrix.
 ### W3: Workspace-bound tokens and telemetry
 
 - `workspaceId` on tokens with the default read rule, by-id filters on
-  `update`, `roll`, and `revoke`, header-mismatch 403, token management scoped
-  to the current workspace.
+  `update`, `roll`, and `revoke`, 403 for a token used under another
+  workspace's path, token management scoped to the path's workspace and kept
+  with org owners and admins (D3).
 - `workspaceId` on telemetry events, the new index, sink query filters,
   bounded per-workspace in-memory partitions, scoped analytics options.
 
@@ -722,26 +741,29 @@ store-created workspaces); pre-workspace tokens and events count in `default`.
 ### W4: Memberships and workspace roles
 
 - `workspaces` on user records with the default read rule; role resolution and
-  the authorization matrix; org role-change rules; memberships on invites and
+  the authorization matrix, including D4 (connection and key changes need a
+  workspace admin or above) with the README noting the change for existing
+  Members; org role-change rules; memberships on invites and
   **Add member**; `GET /v1/auth/session` returns accessible workspaces; member
   management routes with `membershipActions` entries.
 
 **Accept:** every row of the authorization matrix as a test; existing members
-keep their access with no data rewritten; a member without memberships gets 404
+keep their access, apart from the D4 change, with no data rewritten; a member without memberships gets 404
 on workspace routes but can still sign in and change their password.
 
 ### W5: Workspace lifecycle API (the one-way door)
 
-- `GET/POST /v1/workspaces`, `PATCH /v1/workspaces/:id`, archive and
+- `GET/POST /v1/workspaces`, `PATCH /v1/workspaces/:workspace`, archive and
   unarchive.
 - README: workspaces section, endpoint list, and the rollback warning.
 
-**Accept:** the full isolation matrix passes through public APIs only; slug
-conflicts return 409; slugs cannot change; `default` cannot be archived.
+**Accept:** the full isolation matrix passes through public APIs only; new
+workspaces get server-generated UUIDs; `default` cannot be archived.
 
 ### W6: Dashboard
 
-- Switcher, `#/w/<slug>/…` routes and legacy redirects, header injection,
+- Switcher, `#/w/<id>/…` routes and legacy redirects, API calls under the
+  selected workspace's path,
   Workspaces view, Team memberships and the demotion warning, empty states.
 
 **Accept:** the dashboard tests in section 12, plus screenshots in the PR.
@@ -799,17 +821,18 @@ Findings and what changed:
 | Writes merge from process memory, so concurrent replicas lose models or routing changes | Architecture review | Fixed: field-level provider updates and `revision` compare-and-swap on routing (5.3). |
 | By-id token operations (`update`, `roll`, `revoke`) would cross workspaces if only lists were scoped | Architecture review | Fixed: by-id filter rule and invariant 4 (5.2, 11). |
 | W2 too large to review | Architecture review | Split into W2a and W2b (13). |
-| Path-named workspace routes were not bound to the authorized workspace; `PATCH /v1/workspaces/:id` skipped resolution | Aikido (two high findings) and architecture review | Fixed: `workspace-path` scope, path is authoritative, a disagreeing header gets 400 (5.1, 5.2, invariant 2). |
+| Path-named workspace routes were not bound to the authorized workspace; `PATCH /v1/workspaces/:id` skipped resolution | Aikido (two high findings) and architecture review | Fixed: the path is authoritative for every route that names a workspace (5.1, 5.2, invariant 2). Since D2, every workspace route takes its workspace from the path and there is no header. |
 | `GET /v1/workspaces` for tokens contradicted the deny-unlisted rule | Architecture review | Fixed: signed-in only (5.1, 7). |
-| Streaming chat bypasses response hooks | Architecture review | Fixed: header written beside the manual CORS header (7). |
+| Streaming chat bypasses response hooks, so a scope response header would be missing there | Architecture review | Moot since D2: the workspace is in the URL, so there is no scope header to add. |
 | Balancing counts keyed by model id would mix workspaces | Found while revising | Fixed: keyed by workspace (5.3, invariant 7). |
 | Per-request client per store exceeds the Workers connection limit | Architecture review | Fixed: one shared request client with a pool cap, in W2a (5.3). |
 | Org promotion and demotion effects on memberships unspecified | Architecture review | Fixed: memberships kept; demotion warns when it would leave none (6). |
-| `HEAD` routes in the completeness check; index creation; unbounded telemetry partitions; slug mutability; workspace audit trail | Architecture review | Fixed (5.1, 4.2, 5.4, 7). |
+| `HEAD` routes in the completeness check; index creation; unbounded telemetry partitions; slug mutability; workspace audit trail | Architecture review | Fixed (5.1, 4.2, 5.4, 7). Slugs were later dropped by D2: the path uses immutable ids. |
 | Without MongoDB, rebuilding or evicting configuration would discard saved connections and routing | Codex (P2) | Fixed: an in-memory backend per workspace that is never evicted; only derived state is rebuilt per request (5.3). |
 | A process-wide memory backend would share settings and environment credentials between `createServer` instances in one process | Aikido (medium) | Fixed: each server owns its backend and balancing state, and environment providers stay a per-server overlay (5.3). |
 | Field-level writes filtered by `workspaceId` would miss `default` connections saved before the change | Aikido (medium) | Fixed: the `default` rule applies to write filters too, writes set the field, and a zero match is a 404 (4.2, 5.3, 12). |
 | Membership audit entries on the workspace document cannot be written atomically with membership changes on the user document | Aikido (medium) | Fixed: membership changes are logged on the user document in the same write (4.2, 7). |
 | Routing compare-and-swap with `{ revision: 0 }` misses documents with no `revision` | Aikido (medium) | Fixed: the revision-0 filter is `{ $in: [0, null] }`, and the upgrade test covers the first write (4.2, 5.3, 12). |
 | Injected `registry` and `failover` objects shared by two servers would carry one server's changes to the other | Aikido (medium) | Fixed: copied into server-owned state at construction and never mutated afterwards (5.3). |
+| Injected provider objects shared by two servers in tests share their internal state | Aikido (medium) | Declined by owner decision: only tests inject a registry, the gateway never mutates injected objects, and sharing an object between two servers is the caller's choice (5.3). |
 | `OPENAI_COMPAT_NAME` is not validated, so an environment connection name could contain `:` | Architecture review | No change: environment connections are never persisted, so they never form a composite key. |
