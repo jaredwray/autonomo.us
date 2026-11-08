@@ -313,11 +313,15 @@ type WorkspaceContext = {
 - **Memory mode.** Without MongoDB, the provider and routing stores are the
   storage itself: today `addModel` and `RoutingSettingsStore.save` keep changes
   only in the store instances. The workspace-bound stores therefore read and
-  write a process-wide in-memory backend keyed by workspace, the same pattern
-  as the memory side of `AccountStore`'s `Documents`. That backend is never
-  evicted or rebuilt, so a successful change lasts until the process restarts,
-  as it does today. Only the derived registry and context are rebuilt per
-  request.
+  write an in-memory backend keyed by workspace, the same pattern as the memory
+  side of `AccountStore`'s `Documents`. Each `createServer` call creates and
+  owns its backend, exactly as each server owns its stores today, so two
+  servers in one process (as in the test suites) never share settings. The
+  backend holds saved settings only: environment providers and the `FAILOVER_*`
+  seed stay a per-server overlay applied when the registry is built, never
+  written into it. It is never evicted or rebuilt, so a successful change lasts
+  until the server stops, as it does today. Only the derived registry and
+  context are rebuilt per request.
 - **Why not a cache.** A cache keyed by a revision counter on the workspace
   document saves two small reads per request but needs a load-tag ordering
   rule, invalidation on every write path, an LRU, and an age backstop, and it
@@ -343,9 +347,10 @@ type WorkspaceContext = {
   replaces today's per-process write queue, which cannot serialize writes
   across replicas.
 - **Balancing state** is the one thing kept across requests. `ModelRouter`'s
-  active-request counts and smooth-weighted scores move into a process-wide map
-  keyed by workspace. Model ids are keyed `<workspaceId>|<connection/model>`,
-  because `openai/gpt-x` in two workspaces is two credentials: shared counts
+  active-request counts and smooth-weighted scores move into a map owned by
+  the server (one per `createServer`, as today) and keyed by workspace. Model
+  ids are keyed `<workspaceId>|<connection/model>`, because `openai/gpt-x` in
+  two workspaces is two credentials: shared counts
   would let one workspace's traffic steer another's least-requests choice. The
   map is bounded, and the existing pool-signature check already resets state
   when membership changes.
@@ -789,7 +794,8 @@ Findings and what changed:
 | Per-request client per store exceeds the Workers connection limit | Architecture review | Fixed: one shared request client with a pool cap, in W2a (5.3). |
 | Org promotion and demotion effects on memberships unspecified | Architecture review | Fixed: memberships kept; demotion warns when it would leave none (6). |
 | `HEAD` routes in the completeness check; index creation; unbounded telemetry partitions; slug mutability; workspace audit trail | Architecture review | Fixed (5.1, 4.2, 5.4, 7). |
-| Without MongoDB, rebuilding or evicting configuration would discard saved connections and routing | Codex (P2) | Fixed: a process-wide in-memory backend per workspace that is never evicted; only derived state is rebuilt per request (5.3). |
+| Without MongoDB, rebuilding or evicting configuration would discard saved connections and routing | Codex (P2) | Fixed: an in-memory backend per workspace that is never evicted; only derived state is rebuilt per request (5.3). |
+| A process-wide memory backend would share settings and environment credentials between `createServer` instances in one process | Aikido (medium) | Fixed: each server owns its backend and balancing state, and environment providers stay a per-server overlay (5.3). |
 | Field-level writes filtered by `workspaceId` would miss `default` connections saved before the change | Aikido (medium) | Fixed: the `default` rule applies to write filters too, writes set the field, and a zero match is a 404 (4.2, 5.3, 12). |
 | Membership audit entries on the workspace document cannot be written atomically with membership changes on the user document | Aikido (medium) | Fixed: membership changes are logged on the user document in the same write (4.2, 7). |
 | Routing compare-and-swap with `{ revision: 0 }` misses documents with no `revision` | Aikido (medium) | Fixed: the revision-0 filter is `{ $in: [0, null] }`, and the upgrade test covers the first write (4.2, 5.3, 12). |
