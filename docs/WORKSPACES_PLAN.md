@@ -363,8 +363,12 @@ type WorkspaceContext = {
   `registry` and `failover` options that tests pass to `createServer` play the
   same role: they become the `default` workspace's environment providers and
   seed policy, so existing suites keep working unchanged. `createServer` copies
-  them once, at construction, into server-owned state: the list of provider
-  entries and the policy value. Nothing calls `register` or `update` on the
+  them once, at construction, into server-owned state: the provider entries and
+  the policy value. `listProviders()` and `listModels()` are projections without
+  the `languageModel` and `decide` handlers, so `ProviderRegistry` gains a
+  `snapshot()` that returns a new registry holding the same provider entries
+  with copied `models` arrays and the original handlers (which are stateless
+  closures over their config). Nothing calls `register` or `update` on the
   injected objects afterwards, unlike today's `addModel` and routing saves.
   Two servers given the same object therefore never see each other's changes.
 - **Workers connections.** Per-request reads mean more stores touch MongoDB in
