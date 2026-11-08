@@ -69,6 +69,8 @@ export const MAX_BODY_LENGTH = 100_000;
 export const MAX_APPEND_LENGTH = 20_000;
 export const MAX_NOTES_PER_VAULT = 10_000;
 export const MAX_PENDING_PROPOSALS = 50;
+/** How long an approval holds a proposal while it applies; a crash only delays the decision this long. */
+export const PROPOSAL_CLAIM_MS = 60_000;
 export const MAX_REASON_LENGTH = 2000;
 export const DEFAULT_QUERY_LIMIT = 50;
 export const MAX_QUERY_LIMIT = 200;
@@ -1086,17 +1088,24 @@ export class BrainService {
 				`This proposal was already ${proposal.status}.`,
 				409,
 			);
-		const alreadyDecided = () =>
-			new BrainError("This proposal was decided by someone else.", 409);
+		const busy = () =>
+			new BrainError(
+				"Someone else is deciding this proposal. Reload it and try again.",
+				409,
+			);
 		if (request.decision === "reject") {
 			const reason = assertReason(request.reason, "Rejecting a proposal");
-			const decided = await this.repository.decideProposal(id, {
-				status: "rejected",
-				decidedAt: this.now(),
-				decidedBy: actor,
-				decisionReason: reason,
-			});
-			if (!decided) throw alreadyDecided();
+			const decided = await this.repository.decideProposal(
+				id,
+				{
+					status: "rejected",
+					decidedAt: this.now(),
+					decidedBy: actor,
+					decisionReason: reason,
+				},
+				{ now: this.now() },
+			);
+			if (!decided) throw busy();
 			if (proposal.author.kind === "agent") {
 				// The reason becomes a breadcrumb in the agent's own memory. A full
 				// vault must not undo the decision, so failures here are swallowed.
@@ -1118,21 +1127,39 @@ export class BrainService {
 					.catch(() => {});
 			}
 		} else {
-			// Claim the proposal before changing the canon, so a rejection decided
-			// at the same moment can never have its change applied anyway.
-			const claimed = await this.repository.decideProposal(id, {
-				status: "approved",
-				decidedAt: this.now(),
-				decidedBy: actor,
-				...(request.reason ? { decisionReason: request.reason } : {}),
-			});
-			if (!claimed) throw alreadyDecided();
+			// Hold a short claim while the change applies. The proposal stays
+			// pending, so a crash mid-approval never records an unapplied change,
+			// and a concurrent decision is refused until the claim ends or expires.
+			const claim = {
+				id: randomUUID(),
+				until: new Date(this.clock() + PROPOSAL_CLAIM_MS).toISOString(),
+			};
+			if (!(await this.repository.claimProposal(id, claim, this.now())))
+				throw busy();
 			try {
 				await this.applyProposal(proposal, actor);
 			} catch (error) {
-				await this.repository.reopenProposal(id);
+				// If the release fails too, the claim simply expires.
+				await this.repository
+					.releaseProposalClaim(id, claim.id)
+					.catch(() => {});
 				throw error;
 			}
+			const decided = await this.repository.decideProposal(
+				id,
+				{
+					status: "approved",
+					decidedAt: this.now(),
+					decidedBy: actor,
+					...(request.reason ? { decisionReason: request.reason } : {}),
+				},
+				{ now: this.now(), claimId: claim.id },
+			);
+			if (!decided)
+				throw new BrainError(
+					"The change was applied, but the approval outlasted its claim and was decided by someone else.",
+					409,
+				);
 		}
 		return (await this.repository.getProposal(id)) ?? proposal;
 	}

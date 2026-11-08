@@ -5,6 +5,7 @@ import type {
 	InstantRange,
 	NoteFilter,
 	NoteIndexEntry,
+	ProposalClaim,
 	ProposalDecision,
 	ProposalFilter,
 	StoredNote,
@@ -90,6 +91,8 @@ export class MemoryBrainRepository implements BrainRepository {
 	private readonly notes = new Map<string, StoredNote>();
 	private readonly vaults = new Map<string, VaultRecord>();
 	private readonly proposals = new Map<string, BrainProposal>();
+	/** Kept apart from proposals so claims never reach callers. */
+	private readonly claims = new Map<string, ProposalClaim>();
 
 	private select(filter: NoteFilter) {
 		return [...this.notes.values()].filter((note) => matches(note, filter));
@@ -231,18 +234,37 @@ export class MemoryBrainRepository implements BrainRepository {
 	async countProposals(filter: ProposalFilter) {
 		return this.selectProposals(filter).length;
 	}
-	async decideProposal(id: string, decision: ProposalDecision) {
+	private claimHeld(id: string, now: string) {
+		const claim = this.claims.get(id);
+		return claim !== undefined && claim.until > now;
+	}
+	async claimProposal(id: string, claim: ProposalClaim, now: string) {
+		const current = this.proposals.get(id);
+		if (!current || current.status !== "pending" || this.claimHeld(id, now))
+			return false;
+		this.claims.set(id, { ...claim });
+		return true;
+	}
+	async decideProposal(
+		id: string,
+		decision: ProposalDecision,
+		guard: { now: string; claimId?: string },
+	) {
 		const current = this.proposals.get(id);
 		if (!current || current.status !== "pending") return false;
+		if (
+			guard.claimId === undefined
+				? this.claimHeld(id, guard.now)
+				: this.claims.get(id)?.id !== guard.claimId
+		)
+			return false;
+		this.claims.delete(id);
 		this.proposals.set(id, { ...current, ...structuredClone(decision) });
 		return true;
 	}
-	async reopenProposal(id: string) {
-		const current = this.proposals.get(id);
-		if (!current || current.status !== "approved") return false;
-		const { decidedAt, decidedBy, decisionReason, ...pending } = current;
-		this.proposals.set(id, { ...pending, status: "pending" });
-		return true;
+	async releaseProposalClaim(id: string, claimId: string) {
+		if (this.claims.get(id)?.id !== claimId) return false;
+		return this.claims.delete(id);
 	}
 	async close() {}
 }

@@ -358,9 +358,12 @@ function contract(name: string, open: () => BrainRepository) {
 					decidedBy: actor,
 					decisionReason: "no",
 				};
-				expect(await repo.decideProposal(first.id, decision)).toBe(true);
-				expect(await repo.decideProposal(first.id, decision)).toBe(false);
-				expect(await repo.decideProposal(randomUUID(), decision)).toBe(false);
+				const now = { now: "2026-11-08T01:00:00.000Z" };
+				expect(await repo.decideProposal(first.id, decision, now)).toBe(true);
+				expect(await repo.decideProposal(first.id, decision, now)).toBe(false);
+				expect(await repo.decideProposal(randomUUID(), decision, now)).toBe(
+					false,
+				);
 				expect(await repo.getProposal(first.id)).toEqual({
 					...first,
 					...decision,
@@ -373,17 +376,65 @@ function contract(name: string, open: () => BrainRepository) {
 						await repo.listProposals({ authorId: author, status: "rejected" })
 					).map((p) => p.id),
 				).toEqual([first.id]);
-				// Only approvals reopen, and a reopened proposal is pending again.
-				expect(await repo.reopenProposal(first.id)).toBe(false);
+				// Claims: one live claim at a time, honored by every decision,
+				// released on failure, ignored once expired, and never returned.
+				const t0 = "2026-11-08T02:00:00.000Z";
+				const t1 = "2026-11-08T02:00:30.000Z";
+				const t2 = "2026-11-08T02:02:00.000Z";
+				const until = "2026-11-08T02:01:00.000Z";
 				const approval = {
 					status: "approved" as const,
-					decidedAt: "2026-11-08T02:00:00.000Z",
+					decidedAt: t1,
 					decidedBy: actor,
 				};
-				expect(await repo.decideProposal(second.id, approval)).toBe(true);
-				expect(await repo.reopenProposal(second.id)).toBe(true);
-				expect(await repo.reopenProposal(second.id)).toBe(false);
+				expect(
+					await repo.claimProposal(first.id, { id: "c0", until }, t0),
+				).toBe(false);
+				expect(
+					await repo.claimProposal(second.id, { id: "c1", until }, t0),
+				).toBe(true);
+				expect(
+					await repo.claimProposal(second.id, { id: "c2", until }, t1),
+				).toBe(false);
+				expect(
+					await repo.decideProposal(second.id, decision, { now: t1 }),
+				).toBe(false);
+				expect(
+					await repo.decideProposal(second.id, approval, {
+						now: t1,
+						claimId: "c2",
+					}),
+				).toBe(false);
 				expect(await repo.getProposal(second.id)).toEqual(second);
+				expect(await repo.releaseProposalClaim(second.id, "c2")).toBe(false);
+				expect(await repo.releaseProposalClaim(second.id, "c1")).toBe(true);
+				expect(
+					await repo.claimProposal(second.id, { id: "c3", until }, t1),
+				).toBe(true);
+				// An expired claim no longer blocks; its holder can no longer decide.
+				expect(
+					await repo.claimProposal(
+						second.id,
+						{ id: "c4", until: "2026-11-08T02:03:00.000Z" },
+						t2,
+					),
+				).toBe(true);
+				expect(
+					await repo.decideProposal(second.id, approval, {
+						now: t2,
+						claimId: "c3",
+					}),
+				).toBe(false);
+				expect(
+					await repo.decideProposal(second.id, approval, {
+						now: t2,
+						claimId: "c4",
+					}),
+				).toBe(true);
+				expect(await repo.getProposal(second.id)).toEqual({
+					...second,
+					...approval,
+				});
 			} finally {
 				await repo.close();
 			}

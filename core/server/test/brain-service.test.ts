@@ -5,6 +5,7 @@ import {
 	BrainService,
 	MAX_BODY_LENGTH,
 	MAX_PENDING_PROPOSALS,
+	PROPOSAL_CLAIM_MS,
 } from "../src/brain/brain.js";
 import { MemoryBrainRepository } from "../src/brain/memory-repository.js";
 import { BUILTIN_TEMPLATES } from "../src/brain/templates.js";
@@ -1091,5 +1092,57 @@ describe("proposals", () => {
 		).rejects.toMatchObject({ statusCode: 409 });
 		expect(await status(remove.id)).toBe("pending");
 		expect((await service.getNote("shared", "Canon")).body).toContain("newer");
+	});
+
+	it("keeps a proposal pending when an approval dies mid-way, until its claim expires", async () => {
+		const repository = new MemoryBrainRepository();
+		let now = Date.parse("2026-11-08T12:00:00Z");
+		const service = new BrainService(repository, {
+			timeZone: "UTC",
+			now: () => now,
+		});
+		const reviewer: BrainActor = { kind: "user", id: "u2", name: "Admin Ann" };
+		await service.createNote("shared", { title: "Canon", body: "v1" }, user);
+		const proposal = await service.propose(agent, {
+			action: "append",
+			title: "Canon",
+			text: "agent line",
+			reason: "r",
+		});
+		// An approval claimed the proposal and then its process died.
+		const claimed = await repository.claimProposal(
+			proposal.id,
+			{
+				id: "dead",
+				until: new Date(now + PROPOSAL_CLAIM_MS).toISOString(),
+			},
+			new Date(now).toISOString(),
+		);
+		expect(claimed).toBe(true);
+		expect((await service.listProposals({}))[0]).toMatchObject({
+			status: "pending",
+		});
+		expect((await service.listProposals({}))[0]).not.toHaveProperty("claim");
+		for (const decision of [
+			{ decision: "approve" as const },
+			{ decision: "reject" as const, reason: "No" },
+		])
+			await expect(
+				service.decideProposal(proposal.id, decision, reviewer),
+			).rejects.toMatchObject({
+				statusCode: 409,
+				message: expect.stringMatching(/Someone else is deciding/),
+			});
+		now += PROPOSAL_CLAIM_MS;
+		expect(
+			await service.decideProposal(
+				proposal.id,
+				{ decision: "approve" },
+				reviewer,
+			),
+		).toMatchObject({ status: "approved", decidedBy: reviewer });
+		expect((await service.getNote("shared", "Canon")).body).toBe(
+			"v1\nagent line",
+		);
 	});
 });

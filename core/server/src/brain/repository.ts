@@ -82,6 +82,8 @@ export type ProposalFilter = {
 	authorId?: string;
 	status?: BrainProposalStatus;
 };
+/** A time-limited reservation of a pending proposal while its approval applies. */
+export type ProposalClaim = { id: string; until: string };
 export type ProposalDecision = Required<
 	Pick<BrainProposal, "status" | "decidedAt" | "decidedBy">
 > &
@@ -129,9 +131,23 @@ export interface BrainRepository {
 	listProposals(filter: ProposalFilter): Promise<BrainProposal[]>;
 	countProposals(filter: ProposalFilter): Promise<number>;
 	/** Records a decision only while the proposal is still pending. */
-	decideProposal(id: string, decision: ProposalDecision): Promise<boolean>;
-	/** Returns an approved proposal to pending, undoing a claim whose change failed to apply. */
-	reopenProposal(id: string): Promise<boolean>;
+	/** Reserves a pending proposal for approval; fails while another unexpired claim holds it. */
+	claimProposal(
+		id: string,
+		claim: ProposalClaim,
+		now: string,
+	): Promise<boolean>;
+	/**
+	 * Decides a pending proposal and drops its claim. With `claimId`, only that
+	 * claim's holder may decide; without it, an unexpired claim blocks the decision.
+	 */
+	decideProposal(
+		id: string,
+		decision: ProposalDecision,
+		guard: { now: string; claimId?: string },
+	): Promise<boolean>;
+	/** Drops a claim whose approval failed, so the proposal can be decided at once. */
+	releaseProposalClaim(id: string, claimId: string): Promise<boolean>;
 	close(): Promise<void>;
 }
 

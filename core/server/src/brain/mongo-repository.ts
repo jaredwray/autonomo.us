@@ -8,6 +8,7 @@ import type {
 	InstantRange,
 	NoteFilter,
 	NoteIndexEntry,
+	ProposalClaim,
 	ProposalDecision,
 	ProposalFilter,
 	StoredNote,
@@ -22,7 +23,17 @@ export const BRAIN_PROPOSALS_COLLECTION = "brain_proposals";
 
 type NoteDocument = Omit<StoredNote, "id"> & { _id: string };
 type VaultDocument = Omit<VaultRecord, "id"> & { _id: string };
-type ProposalDocument = Omit<BrainProposal, "id"> & { _id: string };
+type ProposalDocument = Omit<BrainProposal, "id"> & {
+	_id: string;
+	/** Internal: an approval in progress. Never returned to callers. */
+	claim?: ProposalClaim;
+};
+const proposalOf = ({ _id, claim, ...rest }: ProposalDocument) =>
+	({ id: _id, ...rest }) as BrainProposal;
+/** No unexpired claim holds the proposal. ISO timestamps compare as strings. */
+const unclaimed = (now: string): Document => ({
+	$or: [{ claim: { $exists: false } }, { "claim.until": { $lte: now } }],
+});
 
 const DUPLICATE_KEY = 11000;
 /** Indexes are created once per process for each database. */
@@ -295,9 +306,7 @@ export class MongoBrainRepository implements BrainRepository {
 		const found = await this.storage(() =>
 			this.proposals().findOne({ _id: id }),
 		);
-		if (!found) return null;
-		const { _id, ...rest } = found;
-		return { id: _id, ...rest } as BrainProposal;
+		return found ? proposalOf(found) : null;
 	}
 	private proposalQuery(filter: ProposalFilter): Document {
 		return {
@@ -314,32 +323,46 @@ export class MongoBrainRepository implements BrainRepository {
 				.sort({ createdAt: -1, _id: -1 })
 				.toArray(),
 		);
-		return found.map(
-			({ _id, ...rest }) => ({ id: _id, ...rest }) as BrainProposal,
-		);
+		return found.map(proposalOf);
 	}
 	async countProposals(filter: ProposalFilter) {
 		return this.storage(() =>
 			this.proposals().countDocuments(this.proposalQuery(filter)),
 		);
 	}
-	async decideProposal(id: string, decision: ProposalDecision) {
+	async claimProposal(id: string, claim: ProposalClaim, now: string) {
 		const result = await this.storage(() =>
 			this.proposals().updateOne(
-				{ _id: id, status: "pending" },
-				{ $set: decision },
+				{ _id: id, status: "pending", ...unclaimed(now) },
+				{ $set: { claim } },
 			),
 		);
 		return result.matchedCount > 0;
 	}
-	async reopenProposal(id: string) {
+	async decideProposal(
+		id: string,
+		decision: ProposalDecision,
+		guard: { now: string; claimId?: string },
+	) {
 		const result = await this.storage(() =>
 			this.proposals().updateOne(
-				{ _id: id, status: "approved" },
 				{
-					$set: { status: "pending" },
-					$unset: { decidedAt: "", decidedBy: "", decisionReason: "" },
+					_id: id,
+					status: "pending",
+					...(guard.claimId === undefined
+						? unclaimed(guard.now)
+						: { "claim.id": guard.claimId }),
 				},
+				{ $set: decision, $unset: { claim: "" } },
+			),
+		);
+		return result.matchedCount > 0;
+	}
+	async releaseProposalClaim(id: string, claimId: string) {
+		const result = await this.storage(() =>
+			this.proposals().updateOne(
+				{ _id: id, "claim.id": claimId },
+				{ $unset: { claim: "" } },
 			),
 		);
 		return result.matchedCount > 0;
