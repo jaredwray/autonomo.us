@@ -994,7 +994,12 @@ export class BrainService {
 			}
 			const existing = await this.repository.getNote(vault, key);
 			if (existing) {
-				if (!request.overwrite) {
+				// A category note the Brain generated and nobody has edited yields
+				// to the real file, e.g. when an earlier import batch named the
+				// category before this batch brought its note.
+				const placeholder =
+					existing.revision === 1 && existing.createdBy.kind === "system";
+				if (!request.overwrite && !placeholder) {
 					skip("A note with this title already exists.");
 					continue;
 				}
@@ -1009,7 +1014,7 @@ export class BrainService {
 					skip("This note changed during the import.");
 					continue;
 				}
-				result.updated.push(existing.title);
+				(placeholder ? result.created : result.updated).push(existing.title);
 				for (const category of next.categories) categories.add(category);
 				continue;
 			}

@@ -824,6 +824,59 @@ describe("export and import", () => {
 	});
 });
 
+describe("import across batches", () => {
+	it("lets a category's real file replace the placeholder an earlier batch generated", async () => {
+		const { service } = brain();
+		await service.importVault(
+			agentVault,
+			{
+				files: [
+					{
+						path: "Ada Lovelace.md",
+						content:
+							'---\ncategories:\n  - "[[People]]"\n---\nFirst programmer.',
+					},
+				],
+			},
+			user,
+		);
+		expect((await service.getNote(agentVault, "People")).createdBy.kind).toBe(
+			"system",
+		);
+		const second = await service.importVault(
+			agentVault,
+			{
+				files: [
+					{ path: "Categories/People.md", content: "Everyone we work with." },
+				],
+			},
+			user,
+		);
+		expect(second).toMatchObject({ created: ["People"], skipped: [] });
+		expect((await service.getNote(agentVault, "People")).body).toBe(
+			"Everyone we work with.",
+		);
+		// A note someone wrote or edited is still protected without overwrite.
+		await service.createNote(agentVault, { title: "Mine", body: "kept" }, user);
+		const third = await service.importVault(
+			agentVault,
+			{
+				files: [
+					{ path: "Mine.md", content: "replaced?" },
+					{ path: "People.md", content: "again?" },
+				],
+			},
+			user,
+		);
+		expect(third.created).toEqual([]);
+		expect(third.skipped.map((item) => item.path)).toEqual([
+			"Mine.md",
+			"People.md",
+		]);
+		expect((await service.getNote(agentVault, "Mine")).body).toBe("kept");
+	});
+});
+
 /** Runs queued hooks inside repository calls, to land a concurrent change in a precise gap. */
 class InterleavedRepository extends MemoryBrainRepository {
 	beforeGetNote: Array<(() => Promise<unknown>) | undefined> = [];
