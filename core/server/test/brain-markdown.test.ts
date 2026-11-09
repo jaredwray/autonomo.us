@@ -326,6 +326,14 @@ describe("frontmatter", () => {
 		const file = renderMarkdown({}, body);
 		expect(parseMarkdown(file)).toEqual({ properties: {}, body });
 		expect(renderMarkdown({}, "plain")).toBe("plain");
+		// Bodies stored through the API may keep Windows or old Mac line endings.
+		for (const eol of ["\r\n", "\r"]) {
+			const raw = `---${eol}Some text`;
+			expect(parseMarkdown(renderMarkdown({}, raw))).toEqual({
+				properties: {},
+				body: "---\nSome text",
+			});
+		}
 	});
 
 	it("reads what Obsidian and older vaults write", () => {

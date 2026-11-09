@@ -368,7 +368,7 @@ export function renderMarkdown(
 ): string {
 	const frontmatter = renderFrontmatter(properties, raw);
 	// An empty block keeps a body that opens with a rule from reading as frontmatter.
-	if (!frontmatter && /^\uFEFF?---[ \t]*(?:\n|$)/.test(body))
+	if (!frontmatter && /^\uFEFF?---[ \t]*(?:\r\n?|\n|$)/.test(body))
 		return `---\n---\n${body}`;
 	return frontmatter + body;
 }
