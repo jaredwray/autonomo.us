@@ -192,8 +192,18 @@ export const MCP_TOOLS: Array<{
 	{
 		name: "brain_delete",
 		description:
-			"Deletes a note from your vault. Links to it become unresolved.",
-		inputSchema: schema({ title: title("Note title.") }, ["title"]),
+			"Deletes a note from your vault. Links to it become unresolved. Pass the revision you read to avoid deleting a newer change.",
+		inputSchema: schema(
+			{
+				title: title("Note title."),
+				revision: {
+					type: "integer",
+					description: "Revision you read; mismatches fail.",
+					minimum: 1,
+				},
+			},
+			["title"],
+		),
 	},
 	{
 		name: "brain_log",
@@ -443,6 +453,7 @@ export async function mcpRoutes(
 					agentVaultId(agent.token.id),
 					args.title as string,
 					agent.actor,
+					args.revision as number | undefined,
 				);
 				return { deleted: args.title };
 			},

@@ -54,11 +54,12 @@ export type InlineOptions = {
 	onNavigate(title: string): void;
 };
 
-// Every alternative is bounded so long runs of [ or ` stay linear: link text
-// cannot contain [, code-span openers are at most 8 backticks, URLs at most
-// 2,000 characters. Agents write bodies up to 100,000 characters.
+// Every alternative stays linear on long runs, since agents write bodies up
+// to 100,000 characters: a code span opens only at the start of a backtick
+// run (so a long run is tried once, at any length), link text cannot contain
+// [, and URLs are at most 2,000 characters.
 const INLINE =
-	/(`{1,8})([^`]|[^`][\s\S]*?[^`])\1(?!`)|(!?)\[\[([^[\]]+?)\]\]|\[([^[\]]+)\]\(([^)\s]+)\)|\*\*([^*]+?)\*\*|__([^_]+?)__|(?<![\w*])\*([^*\n]+?)\*(?![\w*])|(?<![\w_])_([^_\n]+?)_(?![\w_])|~~([^~]+?)~~|<?(https?:\/\/[^\s<>()]{0,2000}[^\s<>().,;:!?'"])>?/g;
+	/(?<!`)(`+)([^`]|[^`][\s\S]*?[^`])\1(?!`)|(!?)\[\[([^[\]]+?)\]\]|\[([^[\]]+)\]\(([^)\s]+)\)|\*\*([^*]+?)\*\*|__([^_]+?)__|(?<![\w*])\*([^*\n]+?)\*(?![\w*])|(?<![\w_])_([^_\n]+?)_(?![\w_])|~~([^~]+?)~~|<?(https?:\/\/[^\s<>()]{0,2000}[^\s<>().,;:!?'"])>?/g;
 
 function safeHref(url: string): string | null {
 	const trimmed = url.trim();

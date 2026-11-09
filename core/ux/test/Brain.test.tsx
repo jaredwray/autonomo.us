@@ -368,6 +368,33 @@ it("keeps an open draft when the vault refreshes, and still detects conflicts", 
 	);
 });
 
+it("refuses a stale delete confirmation instead of deleting a newer revision", async () => {
+	const running = await start();
+	await createNote(running, "shared", { title: "Roadmap", body: "v1" });
+	fireEvent.click(
+		await within(await notesList()).findByRole("link", { name: /^Roadmap/ }),
+	);
+	await screen.findByRole("heading", { name: "Roadmap" });
+	fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+	// Someone edits the note while the confirmation is open.
+	const patched = await running.server.inject({
+		method: "PATCH",
+		url: "/v1/brain/vaults/shared/notes/Roadmap",
+		headers: running.owner,
+		payload: { body: "v2 from a teammate" },
+	});
+	expect(patched.statusCode, patched.body).toBe(200);
+	fireEvent.click(screen.getByRole("button", { name: "Delete note" }));
+	const alert = await screen.findByRole("alert");
+	expect(alert.textContent).toContain("then confirm again");
+	expect((await readNote(running, "shared", "Roadmap")).statusCode).toBe(200);
+	fireEvent.click(within(alert).getByRole("button", { name: "Reload note" }));
+	await screen.findByText(/revision 2$/);
+	fireEvent.click(screen.getByRole("button", { name: "Delete note" }));
+	await screen.findByText("Deleted “Roadmap”.");
+	expect((await readNote(running, "shared", "Roadmap")).statusCode).toBe(404);
+});
+
 it("imports a vault past one request's limit and says when the list is capped", async () => {
 	await start();
 	await screen.findByText(/No notes yet/);

@@ -236,14 +236,25 @@ export async function brainRoutes(
 			return reply.code(created ? 201 : 200).send(note);
 		},
 	);
-	server.delete<{ Params: NoteParams }>(
+	// `?revision=` deletes only that revision, so a stale confirmation is a 409.
+	server.delete<{ Params: NoteParams; Querystring: { revision?: number } }>(
 		"/v1/brain/vaults/:vault/notes/:title",
-		{ schema: { params: noteParams } },
+		{
+			schema: {
+				params: noteParams,
+				querystring: {
+					type: "object",
+					additionalProperties: false,
+					properties: { revision: { type: "integer", minimum: 1 } },
+				},
+			},
+		},
 		async (request, reply) => {
 			await brain.deleteNote(
 				request.params.vault,
 				request.params.title,
 				actorOf(request),
+				request.query.revision,
 			);
 			return reply.code(204).send();
 		},

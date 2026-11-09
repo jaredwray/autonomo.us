@@ -176,10 +176,9 @@ export function BrainNote({
 	const start = (next: Mode) => {
 		setFormError("");
 		setConflict(false);
-		if (next === "edit") {
-			setDraft(view?.markdown ?? "");
-			setBase(view?.note.revision ?? 0);
-		}
+		if (next === "edit") setDraft(view?.markdown ?? "");
+		// Edits and deletes act on the revision the person saw.
+		if (next === "edit" || next === "delete") setBase(view?.note.revision ?? 0);
 		if (next === "rename") setNewTitle(title);
 		setMode(next);
 	};
@@ -187,7 +186,11 @@ export function BrainNote({
 		if (cause instanceof ApiError && cause.status === 409) {
 			setConflict(true);
 			setFormError(
-				`${cause.message} This note changed since you opened it. Reload to see the latest version; your draft stays in the editor until you cancel.`,
+				`${cause.message} This note changed since you opened it. ${
+					mode === "edit"
+						? "Reload to see the latest version; your draft stays in the editor until you cancel."
+						: "Reload to see the latest version, then confirm again."
+				}`,
 			);
 		} else setFormError(cause instanceof Error ? cause.message : fallback);
 	};
@@ -236,7 +239,7 @@ export function BrainNote({
 		setBusy(true);
 		setFormError("");
 		try {
-			await deleteBrainNote(vault, title);
+			await deleteBrainNote(vault, title, base);
 			onDeleted();
 		} catch (cause) {
 			fail(cause, "Could not delete the note.");

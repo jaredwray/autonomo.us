@@ -53,6 +53,8 @@ it("renders pathological lines in linear time", () => {
 		"`".repeat(100_000),
 		`| a |\n|---${" ".repeat(100_000)}x`,
 		"https://.".repeat(11_000),
+		// Unmatched runs of every length up to 447: about 100,000 characters.
+		Array.from({ length: 447 }, (_, index) => "`".repeat(index + 1)).join("x"),
 	];
 	for (const input of inputs) {
 		const started = performance.now();
@@ -87,6 +89,14 @@ it("follows CommonMark for headings, closing hashes, and fences", () => {
 	expect(screen.getByRole("heading", { name: "Closed" }).tagName).toBe("H5");
 	expect(screen.queryByRole("heading", { name: /seven/ })).toBeNull();
 	expect(screen.getByRole("link", { name: "Link" })).toBeDefined();
+	// Code spans may use any run length; links inside them stay text.
+	render(
+		<p>
+			{renderMarkdown(`${"`".repeat(9)}[[Target]]${"`".repeat(9)}`, options)}
+		</p>,
+	);
+	expect(screen.getByText("[[Target]]").tagName).toBe("CODE");
+	expect(screen.queryByRole("link", { name: "Target" })).toBeNull();
 	const blocks = document.querySelectorAll("pre");
 	expect(blocks).toHaveLength(1);
 	expect(blocks[0].dataset.language).toBe("ts");

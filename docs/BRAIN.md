@@ -172,7 +172,7 @@ Read (import and the `markdown` field): a leading byte-order mark is ignored; a 
 | `brain_create` | `title`, `template?`, `body?`, `properties?` | `BrainNote` (own vault) |
 | `brain_update` | `title`, `newTitle?`, `body?`, `properties?`, `revision?` | `BrainNote` |
 | `brain_append` | `title`, `text`, `template?` (creates the note if missing) | `BrainNote` |
-| `brain_delete` | `title` | `{ deleted: title }` |
+| `brain_delete` | `title`, `revision?` | `{ deleted: title }` |
 | `brain_log` | `text` | `BrainNote` (today's daily note) |
 | `brain_daily` | `date?` (default today), `vault?` | `BrainDaily` |
 | `brain_unresolved` | `vault?`, `limit?` (default 50) | `{ links: BrainUnresolvedLink[] }` |
@@ -193,7 +193,7 @@ The first write by an agent records its vault with the token's name.
 | `GET /v1/brain/vaults/:vault/notes/:title` | `brain:read` | `BrainNoteView` |
 | `PATCH /v1/brain/vaults/:vault/notes/:title` | `brain:edit` | `UpdateBrainNoteRequest` → `BrainNote` |
 | `POST /v1/brain/vaults/:vault/notes/:title/append` | `brain:edit` | `AppendBrainNoteRequest` → `BrainNote` (201 when created) |
-| `DELETE /v1/brain/vaults/:vault/notes/:title` | `brain:edit` | 204 |
+| `DELETE /v1/brain/vaults/:vault/notes/:title` | `brain:edit` | 204; with `?revision=` only that revision is deleted (409 otherwise) |
 | `GET /v1/brain/vaults/:vault/unresolved` | `brain:read` | `{ links: BrainUnresolvedLink[] }`; `?limit=` (default 200, max 1000) |
 | `GET /v1/brain/vaults/:vault/categories` | `brain:read` | `{ categories: BrainCategory[] }` |
 | `GET /v1/brain/vaults/:vault/daily/:date` | `brain:read` | `BrainDaily` |

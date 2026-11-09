@@ -531,8 +531,16 @@ export function appendBrainNote(
 		body: { text, template },
 	});
 }
-export function deleteBrainNote(vault: string, title: string): Promise<void> {
-	return brainRequest(notePath(vault, title), { method: "DELETE" });
+/** With `revision`, only that revision is deleted; a newer one answers 409. */
+export function deleteBrainNote(
+	vault: string,
+	title: string,
+	revision?: number,
+): Promise<void> {
+	const query = revision === undefined ? "" : `?revision=${revision}`;
+	return brainRequest(`${notePath(vault, title)}${query}`, {
+		method: "DELETE",
+	});
 }
 export function fetchBrainUnresolved(
 	vault: string,

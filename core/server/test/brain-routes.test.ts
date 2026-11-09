@@ -250,9 +250,25 @@ describe("Brain REST routes", () => {
 			(await call("GET", "/v1/brain/vaults/agent-no%20body/notes")).status,
 		).toBe(400);
 
+		const current = (await (
+			await call("GET", "/v1/brain/vaults/shared/notes/Charles%20Babbage")
+		).json()) as { note: { revision: number } };
+		const staleDelete = await call(
+			"DELETE",
+			`/v1/brain/vaults/shared/notes/Charles%20Babbage?revision=${current.note.revision + 1}`,
+		);
+		expect(staleDelete.status).toBe(409);
+		expect(
+			(
+				await call(
+					"DELETE",
+					"/v1/brain/vaults/shared/notes/Charles%20Babbage?revision=0",
+				)
+			).status,
+		).toBe(400);
 		const removed = await call(
 			"DELETE",
-			"/v1/brain/vaults/shared/notes/Charles%20Babbage",
+			`/v1/brain/vaults/shared/notes/Charles%20Babbage?revision=${current.note.revision}`,
 		);
 		expect(removed.status).toBe(204);
 		expect(

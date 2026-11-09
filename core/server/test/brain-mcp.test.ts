@@ -521,6 +521,14 @@ describe("MCP endpoint", () => {
 			links: [{ title: "Active", count: 1, sources: ["Compiler plan"] }],
 		});
 		expect(
+			(
+				await callTool(alice.secret, "brain_delete", {
+					title: "Grace Hopper",
+					revision: 999,
+				})
+			).isError,
+		).toBe(true);
+		expect(
 			(await callTool(alice.secret, "brain_delete", { title: "Grace Hopper" }))
 				.structuredContent,
 		).toEqual({
