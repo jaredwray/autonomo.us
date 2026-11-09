@@ -239,6 +239,42 @@ function contract(name: string, open: () => BrainRepository) {
 			}
 		});
 
+		it("orders titles by code unit, punctuation and accents included", async () => {
+			const repo = open();
+			const vault = `agent-${randomUUID()}` as const;
+			try {
+				for (const title of [
+					"zeta",
+					"Émile",
+					"a-b",
+					"~tilde",
+					"ab",
+					"_under",
+					"a b",
+					"eagle",
+				])
+					await repo.insertNote(note(vault, title));
+				const titles = (
+					await repo.findNotes(
+						{ vault },
+						{ sort: { by: "titleKey", direction: "asc" }, limit: 20 },
+					)
+				).map((item) => item.title);
+				expect(titles).toEqual([
+					"_under",
+					"a b",
+					"a-b",
+					"ab",
+					"eagle",
+					"zeta",
+					"~tilde",
+					"Émile",
+				]);
+			} finally {
+				await repo.close();
+			}
+		});
+
 		it("finds a day's notes", async () => {
 			const repo = open();
 			const vault = `agent-${randomUUID()}` as const;

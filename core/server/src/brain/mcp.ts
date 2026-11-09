@@ -296,7 +296,10 @@ export function argumentProblem(
 		if (input[key] === undefined) return `${key} is required`;
 	for (const [key, value] of Object.entries(input)) {
 		if (value === undefined) continue;
-		const rule = schema.properties[key];
+		// Own keys only: "constructor" or "__proto__" must not pass as known.
+		const rule = Object.hasOwn(schema.properties, key)
+			? schema.properties[key]
+			: undefined;
 		if (!rule) return `unknown argument "${key}"`;
 		if (rule.type === "string") {
 			if (typeof value !== "string") return `${key} must be a string`;

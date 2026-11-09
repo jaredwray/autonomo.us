@@ -140,7 +140,8 @@ const LINK = /(!?)\[\[([^[\]\n]*)\]\]/g;
 
 /** The note a wikilink's inner text points at, or null for attachments and empty targets. */
 export function linkTarget(inner: string): string | null {
-	let target = inner.split("|")[0].split("#")[0].trim();
+	// In a table, Obsidian writes [[Note\\|alias]]; the backslash escapes the pipe.
+	let target = inner.split("|")[0].replace(/\\$/, "").split("#")[0].trim();
 	// Obsidian links may carry a folder path; titles never contain "/".
 	target = target.split("/").filter(Boolean).at(-1) ?? "";
 	target = target.replace(/\.md$/i, "").trim();
@@ -229,7 +230,7 @@ export function rewriteLinks(text: string, from: string, to: string): string {
 				: segment.text.replace(LINK, (whole, embed: string, inner: string) => {
 						const target = linkTarget(inner);
 						if (!target || titleKey(target) !== fromKey) return whole;
-						const split = inner.search(/[#|]/);
+						const split = inner.search(/\\\||[#|]/);
 						return `${embed}[[${to}${split === -1 ? "" : inner.slice(split)}]]`;
 					}),
 		)
@@ -365,7 +366,11 @@ export function renderMarkdown(
 	body: string,
 	raw?: Set<string>,
 ): string {
-	return renderFrontmatter(properties, raw) + body;
+	const frontmatter = renderFrontmatter(properties, raw);
+	// An empty block keeps a body that opens with a rule from reading as frontmatter.
+	if (!frontmatter && /^\uFEFF?---[ \t]*(?:\n|$)/.test(body))
+		return `---\n---\n${body}`;
+	return frontmatter + body;
 }
 
 export class FrontmatterError extends BrainError {
@@ -469,10 +474,11 @@ export function parseMarkdown(markdown: string): {
 	properties: BrainProperties;
 	body: string;
 } {
-	const text = markdown.replace(/\r\n?/g, "\n");
+	const text = markdown.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n");
 	const lines = text.split("\n");
-	if (lines[0] !== "---") return { properties: {}, body: text };
-	const end = lines.indexOf("---", 1);
+	const fence = (line: string) => line.trimEnd() === "---";
+	if (!fence(lines[0])) return { properties: {}, body: text };
+	const end = lines.findIndex((line, index) => index > 0 && fence(line));
 	if (end === -1)
 		throw new FrontmatterError("Frontmatter block is never closed", 1);
 	const properties: BrainProperties = {};
@@ -513,6 +519,9 @@ export function parseMarkdown(markdown: string): {
 		if (rest === "") {
 			properties[key] = null;
 			pending = { key, line: number };
+		} else if (/^\[\[[^[\]]+\]\]$/.test(rest)) {
+			// Older vaults write `categories: [[People]]`, which means a link.
+			properties[key] = [rest];
 		} else if (rest.startsWith("[")) {
 			if (!rest.endsWith("]"))
 				throw new FrontmatterError("Unterminated flow list", number);

@@ -62,8 +62,9 @@ export function compareNotes(
 	b: Pick<StoredNote, "updatedAt" | "createdAt" | "titleKey" | "id">,
 	sort: FindOptions["sort"],
 ) {
-	const order =
-		a[sort.by].localeCompare(b[sort.by]) || a.id.localeCompare(b.id);
+	// Code-unit order, as MongoDB compares strings; localeCompare would not match.
+	const binary = (x: string, y: string) => (x < y ? -1 : x > y ? 1 : 0);
+	const order = binary(a[sort.by], b[sort.by]) || binary(a.id, b.id);
 	return sort.direction === "asc" ? order : -order;
 }
 

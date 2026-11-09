@@ -91,6 +91,19 @@ function startOfDay(date: string, timeZone: string): number {
 		);
 		instant = wall - (asUtc - instant);
 	}
+	// Where clocks skip midnight (America/Santiago in September), the computed
+	// instant is still the previous evening; the day starts at the jump.
+	if (localDate(instant, timeZone) !== date) {
+		let before = instant;
+		let after = instant + 3 * 3_600_000;
+		if (localDate(after, timeZone) !== date) return instant;
+		while (after - before > 1) {
+			const middle = Math.floor((before + after) / 2);
+			if (localDate(middle, timeZone) === date) after = middle;
+			else before = middle;
+		}
+		instant = after;
+	}
 	return instant;
 }
 

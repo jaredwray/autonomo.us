@@ -42,7 +42,7 @@ A note is `{ title, properties, body }` plus derived fields (`links`, `tags`, `c
 
 **Titles** are the identity users and agents see, and the file name on export. They are unique per vault, compared case-insensitively. A title is 1–200 characters, has no leading or trailing whitespace, does not start with `.`, and contains none of `\ / : * ? " < > | # ^ [ ]` or control characters (Obsidian's file name and link restrictions). Routes address notes by URL-encoded title.
 
-**Links.** `[[Target]]`, `[[Target|Alias]]`, `[[Target#Heading]]`, `[[Target#^block]]`, and embeds `![[Target]]` all link to `Target` (trimmed). Links inside fenced code blocks (```` ``` ```` or `~~~`) and inline code spans are ignored. Links inside property string values and list items count too, so `categories: ["[[People]]"]` links to `People`. Links resolve case-insensitively. `links` is in file order (properties, then body) and keeps the first-seen spelling, deduplicated case-insensitively. A link whose target ends in a known attachment extension (images, audio, video, PDF, `.canvas`, `.base`: `BRAIN_ATTACHMENT_EXTENSIONS`) is ignored, so `[[Node.js]]` still links to a note. `[[Note.md]]` and `[[Folder/Note]]` link to `Note`.
+**Links.** `[[Target]]`, `[[Target|Alias]]`, `[[Target#Heading]]`, `[[Target#^block]]`, and embeds `![[Target]]` all link to `Target` (trimmed). Links inside fenced code blocks (```` ``` ```` or `~~~`) and inline code spans are ignored. Links inside property string values and list items count too, so `categories: ["[[People]]"]` links to `People`. Links resolve case-insensitively. `links` is in file order (properties, then body) and keeps the first-seen spelling, deduplicated case-insensitively. A link whose target ends in a known attachment extension (images, audio, video, PDF, `.canvas`, `.base`: `BRAIN_ATTACHMENT_EXTENSIONS`) is ignored, so `[[Node.js]]` still links to a note. `[[Note.md]]` and `[[Folder/Note]]` link to `Note`, and `[[Note\|alias]]` (a pipe escaped inside a table) links to `Note`.
 
 **Tags** come from the `tags` property (a string or list; a leading `#` is stripped) and inline `#tags` in the body outside code. An inline tag starts after whitespace or line start, is made of letters, digits, `_`, `-`, `/` and emoji, and must contain at least one non-digit character. A line starting with `# ` is a heading, not a tag. Tags are stored lowercased and deduplicated.
 
@@ -50,7 +50,7 @@ A note is `{ title, properties, body }` plus derived fields (`links`, `tags`, `c
 
 **Properties** are a flat object. Keys are 1–64 characters matching `^[A-Za-z0-9_][A-Za-z0-9_ .-]*$` other than `__proto__`, at most 50 per note. Values are strings (≤ 2,000 characters), finite numbers, booleans, `null` (an empty property), or lists of up to 100 strings (≤ 2,000 characters each). Dates are `YYYY-MM-DD` strings.
 
-**Limits.** Body ≤ 100,000 characters. A vault holds at most 10,000 notes. An append adds ≤ 20,000 characters, and the result must still fit the body limit. Violations return 400 (413 is not used).
+**Limits.** Body ≤ 100,000 characters. A vault holds at most 10,000 notes. An append adds ≤ 20,000 characters, and the result must still fit the body limit. Violations return 400. (413 appears only when a request body exceeds its route's limit, such as the 5 MB import limit.)
 
 **Concurrency.** Every change increments `revision`. Updates may send the `revision` they read; a mismatch returns 409. Titles are claimed atomically (duplicate titles return 409). A rename rewrites links in other notes one by one; it is not a transaction, so a crash mid-rename can leave some links pointing at the old (now unresolved) title.
 
@@ -122,7 +122,7 @@ An owner or admin decides. **Approve** first takes a 60-second claim on the prop
 
 ## 8. Export and import ("file over app")
 
-**Export** (`GET .../export`, JSON `BrainExport`; `?format=zip` streams an uncompressed `.zip` named `<vault>.zip`):
+**Export** (`GET .../export`, JSON `BrainExport`; `?format=zip` returns an uncompressed `.zip` named `<vault>.zip`):
 
 - One file per note at `<folder>/<title>.md` (no folder means the vault root). The folder comes from the first of the note's categories that has a built-in template with a folder; notes tagged `categories` go in `Categories/`; daily notes (title `YYYY-MM-DD` with tag `daily`) go in `Daily/`.
 - Each built-in template as `Templates/<Name> Template.md`, with `{{date}}` left in place.
@@ -145,7 +145,9 @@ email:
 
 Written: keys in stored order; `null` as `key:` with nothing after; numbers and booleans bare; empty lists as `[]`; non-empty lists as `  - item` lines. A string is written bare only when it is a `YYYY-MM-DD` date or is non-empty plain text that YAML would read back as the same string (no leading/trailing space; does not start with any of `- ? : , [ ] { } # & * ! | > ' " % @` or a backtick; contains no `: ` or ` #`; is not `true`, `false`, `null`, `~`, or a number). Otherwise it is written as a JSON double-quoted string.
 
-Read (import and the `markdown` field): a frontmatter block starts with `---` on the first line and ends at the next line that is exactly `---`. Supported: `key: value` scalars (bare, double-quoted with JSON escapes, single-quoted with `''`), `key:` (null), `key: []`, flow lists `key: [a, "b"]`, and block lists of `- item`. `true`/`false` become booleans, integers and decimals become numbers (except `YYYY-MM-DD`, which stays a string), `null`/`~` become `null`. A non-string list item becomes its string form. Anything else (nested maps, `|` or `>` block scalars, anchors) is an error that names the line.
+When a note has no properties but its body starts with a `---` line (a horizontal rule), an empty block `---\n---` is written first so the file reads back the same.
+
+Read (import and the `markdown` field): a leading byte-order mark is ignored; a frontmatter block starts with a `---` line and ends at the next `---` line (trailing whitespace allowed on both). Supported: `key: value` scalars (bare, double-quoted with JSON escapes, single-quoted with `''`), `key:` (null), `key: []`, flow lists `key: [a, "b"]`, block lists of `- item`, and a bare link `key: [[Note]]` as older vaults write it (read as the list `["[[Note]]"]`). `true`/`false` become booleans, integers and decimals become numbers (except `YYYY-MM-DD`, which stays a string), `null`/`~` become `null`. A non-string list item becomes its string form. Anything else (nested maps, `|` or `>` block scalars, anchors) is an error that names the line.
 
 **Import** (`POST .../import`, `BrainImportRequest`, up to 500 files and a 5 MB body): each `.md` file becomes a note titled with its file name minus `.md`, wherever its folder. Files under `.obsidian/`, `Templates/`, or any dot-folder, and non-`.md` files, are skipped with a reason. Invalid titles, duplicate titles within the request, frontmatter errors, and limit violations skip that file with a reason. Existing titles are skipped unless `overwrite` is true, in which case the note's body and properties are replaced. Category notes are created afterwards for any missing categories.
 

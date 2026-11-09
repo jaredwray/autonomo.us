@@ -20,6 +20,7 @@ import {
 } from "../brain/brain.js";
 import { BrainError } from "../brain/errors.js";
 import { zipStore } from "../brain/zip.js";
+import { mongoErrorDetails } from "../mongo.js";
 
 const IMPORT_BODY_LIMIT = 5 * 1024 * 1024;
 const IMPORT_MAX_FILES = 500;
@@ -96,7 +97,14 @@ export async function brainRoutes(
 			typeof failure.statusCode === "number" && failure.statusCode >= 400
 				? failure.statusCode
 				: 500;
-		if (status >= 500) request.log.error(error);
+		// A BrainError's cause may be a driver error whose message holds the URI.
+		if (status >= 500)
+			request.log.error(
+				error instanceof BrainError
+					? { ...mongoErrorDetails(error), message: error.message }
+					: error,
+				"Brain request failed",
+			);
 		return reply.code(status).send({
 			error: {
 				message:

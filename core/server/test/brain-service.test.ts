@@ -61,6 +61,19 @@ describe("time", () => {
 			to: "2026-03-29T22:00:00.000Z",
 		});
 	});
+
+	it("starts a day at the clock jump where local midnight does not exist", () => {
+		// America/Santiago skips 00:00–00:59 on 2026-09-06.
+		const { from, to } = dayRange("2026-09-06", "America/Santiago");
+		expect(localDate(Date.parse(from), "America/Santiago")).toBe("2026-09-06");
+		expect(localDate(Date.parse(from) - 1, "America/Santiago")).toBe(
+			"2026-09-05",
+		);
+		expect(dayRange("2026-09-05", "America/Santiago").to).toBe(from);
+		expect(localDate(Date.parse(to) - 1, "America/Santiago")).toBe(
+			"2026-09-06",
+		);
+	});
 });
 
 describe("templates and categories", () => {
@@ -590,8 +603,38 @@ describe("finding things", () => {
 });
 
 describe("log", () => {
+	it("lands concurrent first writes of the day instead of failing one with 409", async () => {
+		const { service } = brain();
+		const logs = await Promise.allSettled([
+			service.log(agentVault, "first", agent),
+			service.log(agentVault, "second", agent),
+		]);
+		expect(logs.map((result) => result.status)).toEqual([
+			"fulfilled",
+			"fulfilled",
+		]);
+		const daily = await service.getNote(agentVault, "2026-11-08");
+		expect(daily.body).toContain("first");
+		expect(daily.body).toContain("second");
+		const appends = await Promise.allSettled([
+			service.appendNote(agentVault, "Ideas", { text: "one" }, agent),
+			service.appendNote(agentVault, "Ideas", { text: "two" }, agent),
+		]);
+		expect(appends.map((result) => result.status)).toEqual([
+			"fulfilled",
+			"fulfilled",
+		]);
+		const ideas = await service.getNote(agentVault, "Ideas");
+		expect(ideas.body).toContain("one");
+		expect(ideas.body).toContain("two");
+	});
+
 	it("appends timestamped lines under ## Log, creating the heading at the end when missing", async () => {
 		expect(appendLogLine("", "- 09:00 a")).toBe("## Log\n- 09:00 a");
+		// A heading inside a code block is not the log section.
+		expect(appendLogLine("```\n## Log\n```", "- 09:00 a")).toBe(
+			"```\n## Log\n```\n\n## Log\n- 09:00 a",
+		);
 		expect(appendLogLine("Intro\n", "- 09:00 a")).toBe(
 			"Intro\n\n## Log\n- 09:00 a",
 		);

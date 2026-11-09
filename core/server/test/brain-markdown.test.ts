@@ -321,6 +321,32 @@ describe("frontmatter", () => {
 		expect(parseMarkdown(" ---\nkey: v\n---\n").properties).toEqual({});
 	});
 
+	it("round-trips a body that starts with a horizontal rule", () => {
+		const body = "---\n\nSome text\n\n---\nmore";
+		const file = renderMarkdown({}, body);
+		expect(parseMarkdown(file)).toEqual({ properties: {}, body });
+		expect(renderMarkdown({}, "plain")).toBe("plain");
+	});
+
+	it("reads what Obsidian and older vaults write", () => {
+		expect(parseMarkdown("\uFEFF---\nrole: Lead\n---\nBody")).toEqual({
+			properties: { role: "Lead" },
+			body: "Body",
+		});
+		expect(parseMarkdown("--- \nrole: Lead\n---  \nBody")).toEqual({
+			properties: { role: "Lead" },
+			body: "Body",
+		});
+		expect(
+			parseMarkdown("---\ncategories: [[People]]\n---\n").properties,
+		).toEqual({
+			categories: ["[[People]]"],
+		});
+		expect(extractLinks(["| [[Ada Lovelace\\|Ada]] |"])).toEqual([
+			"Ada Lovelace",
+		]);
+	});
+
 	it("rejects unsupported YAML and names the line", () => {
 		const attempt = (lines: string[]) => () =>
 			parseMarkdown(["---", ...lines, "---", "body"].join("\n"));

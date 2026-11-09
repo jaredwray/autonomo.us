@@ -265,7 +265,7 @@ describe("MCP endpoint", () => {
 	});
 
 	it("checks mcp:read for tools/list and mcp:call for tools/call", async () => {
-		const { agentToken, rpc } = await start();
+		const { agentToken, post, rpc } = await start();
 		const reader = await agentToken("Reader", ["mcp:read"]);
 		const caller = await agentToken("Caller", ["mcp:call"]);
 		const none = await agentToken("None", []);
@@ -372,6 +372,20 @@ describe("MCP endpoint", () => {
 				message: expect.stringMatching(/unknown argument/),
 			},
 		});
+		for (const inherited of ["constructor", "toString", "__proto__"])
+			expect(
+				(
+					await post(
+						`{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"brain_read","arguments":{"title":"x","${inherited}":{}}}}`,
+						{ authorization: `Bearer ${caller.secret}` },
+					)
+				).body,
+			).toMatchObject({
+				error: {
+					code: -32602,
+					message: expect.stringMatching(/unknown argument/),
+				},
+			});
 		expect((await rpc(caller.secret, "tools/call", {})).body).toMatchObject({
 			error: { code: -32602 },
 		});

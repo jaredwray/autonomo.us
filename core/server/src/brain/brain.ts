@@ -156,13 +156,25 @@ function appendText(body: string, text: string) {
 /** Adds `line` to the `## Log` section, creating the heading at the end if needed. */
 export function appendLogLine(body: string, line: string): string {
 	const lines = body.split("\n");
-	const heading = lines.findIndex((item) => /^## Log\s*$/.test(item));
+	// Headings inside fenced code are text, not sections.
+	const outside: boolean[] = [];
+	let fence: string | null = null;
+	for (const item of lines) {
+		const marker = /^\s{0,3}(`{3,}|~{3,})/.exec(item)?.[1][0];
+		outside.push(fence === null && !marker);
+		if (marker && (fence === null || marker === fence))
+			fence = fence === null ? marker : null;
+	}
+	const heading = lines.findIndex(
+		(item, index) => outside[index] && /^## Log\s*$/.test(item),
+	);
 	if (heading === -1) {
 		const base = body.trimEnd();
 		return `${base ? `${base}\n\n` : ""}## Log\n${line}`;
 	}
 	const next = lines.findIndex(
-		(item, index) => index > heading && /^#{1,2}\s/.test(item),
+		(item, index) =>
+			index > heading && outside[index] && /^#{1,2}\s/.test(item),
 	);
 	let end = next === -1 ? lines.length : next;
 	while (end > heading + 1 && lines[end - 1].trim() === "") end--;
@@ -655,7 +667,7 @@ export class BrainService {
 		if (!existing && expectedRevision !== undefined) throw notFound(title);
 		if (!existing) {
 			const template = this.templateFor(request.template);
-			const note = await this.createNote(
+			const note = await this.createUnlessRaced(
 				vault,
 				{
 					title,
@@ -664,7 +676,7 @@ export class BrainService {
 				},
 				actor,
 			);
-			return { note, created: true };
+			if (note) return { note, created: true };
 		}
 		const next = await this.change(vault, title, (current) => {
 			if (
@@ -835,6 +847,28 @@ export class BrainService {
 	}
 
 	/** Appends `- HH:mm <text>` under `## Log` in today's daily note. */
+	/**
+	 * Creates a note for an append or log, or returns null when a concurrent
+	 * write created it first, so the caller appends to that note instead.
+	 */
+	private async createUnlessRaced(
+		vault: BrainVaultId,
+		request: CreateBrainNoteRequest,
+		actor: BrainActor,
+	): Promise<BrainNote | null> {
+		try {
+			return await this.createNote(vault, request, actor);
+		} catch (error) {
+			if (
+				error instanceof BrainError &&
+				error.statusCode === 409 &&
+				(await this.repository.getNote(vault, titleKey(request.title)))
+			)
+				return null;
+			throw error;
+		}
+	}
+
 	async log(
 		vault: BrainVaultId,
 		text: string,
@@ -845,8 +879,8 @@ export class BrainService {
 		const line = `- ${localTime(this.clock(), this.timeZone)} ${clean}`;
 		const today = this.today();
 		const existing = await this.repository.getNote(vault, today);
-		if (!existing)
-			return this.createNote(
+		if (!existing) {
+			const note = await this.createUnlessRaced(
 				vault,
 				{
 					title: today,
@@ -855,6 +889,8 @@ export class BrainService {
 				},
 				actor,
 			);
+			if (note) return note;
+		}
 		const next = await this.change(vault, today, (current) =>
 			this.revise(
 				current,
