@@ -364,9 +364,13 @@ type WorkspaceContext = {
   the server (one per `createServer`, as today) and keyed by workspace. Model
   ids are keyed `<workspaceId>|<connection/model>`, because `openai/gpt-x` in
   two workspaces is two credentials: shared counts
-  would let one workspace's traffic steer another's least-requests choice. The
-  map is bounded, and the existing pool-signature check already resets state
-  when membership changes.
+  would let one workspace's traffic steer another's least-requests choice.
+  Active counts are removed when they reach zero, and scores exist only for
+  pools that are still in their workspace's routing (each plan prunes the
+  rest), so the map grows with the number of pools, not with traffic. Only
+  organization admins create workspaces, so that number stays small; an
+  archived workspace's few entries stay until the process restarts. The
+  existing pool-signature check still resets state when membership changes.
 - **Environment providers** (`ANTHROPIC_API_KEY`, …, `OPENAI_COMPAT_*`) and
   `FAILOVER_*` seed the **default workspace only**, at the same precedence as
   today (a saved connection with the same name wins; `FAILOVER_*` seeds the
@@ -409,13 +413,17 @@ type WorkspaceContext = {
   decision model fails to resolve is unpriced anyway), so pass `provider.kind`
   in and make the resolver `(kind, model)`. It then needs no registry at all.
 - In-memory aggregates (`recent`, `byModel`, `totals`) become a bounded map of
-  per-workspace partitions (least recently used evicted first, default 64; an
-  evicted partition's memory-only aggregates restart from zero and say so
-  through `coverageFrom`). The 50,000-event analytics ring stays shared and is
-  filtered by `workspaceId` at query time; memory-mode coverage can then be
-  reduced by another workspace's traffic, so `coverageFrom` and `partial` are
-  computed per workspace. Memory mode is the no-Mongo fallback, so this is an
-  acceptable trade.
+  per-workspace partitions (least recently used evicted first, default 64). An
+  evicted partition's memory-only summary restarts from zero, the same as
+  after a process restart; the summary has never reported coverage, so it
+  does not say so. The 50,000-event analytics ring stays shared and is
+  filtered by `workspaceId` at query time, and its `coverageFrom` and
+  `partial` come from the shared ring. That is conservative: another
+  workspace's traffic can push a workspace's events out of the ring sooner,
+  and `partial` then reports the shortened window correctly, but the window
+  may be later than that workspace's own oldest event. Memory mode is the
+  no-Mongo fallback, so this is an acceptable trade. With MongoDB, summary and
+  analytics are queried per workspace and are unaffected.
 - `MongoTelemetrySink.querySummary` and `queryAnalytics` take the workspace
   filter. The analytics `options` lists (models, connections, callers) come
   from the filtered data, so they never leak another workspace's names.
@@ -858,3 +866,16 @@ Findings and what changed:
 | Injected `registry` and `failover` objects shared by two servers would carry one server's changes to the other | Aikido (medium) | Fixed: copied into server-owned state at construction and never mutated afterwards (5.3). |
 | Injected provider objects shared by two servers in tests share their internal state | Aikido (medium) | Declined by owner decision: only tests inject a registry, the gateway never mutates injected objects, and sharing an object between two servers is the caller's choice (5.3). |
 | `OPENAI_COMPAT_NAME` is not validated, so an environment connection name could contain `:` | Architecture review | No change: environment connections are never persisted, so they never form a composite key. |
+
+The implementation was then reviewed against this plan. It found no path from
+one workspace's data or credentials to another's. Findings and what changed:
+
+| Finding | Source | Disposition |
+| --- | --- | --- |
+| A legacy invite redeemed after the upgrade created a member with no workspaces | Implementation review, Aikido | Fixed: a member created without memberships reads as a default-workspace member, and the upgrade test redeems a legacy invite. |
+| `GET /v1/team` showed members' memberships in workspaces the caller does not share | Implementation review | Fixed: members see only the memberships they share; owners and admins see all. |
+| A route naming `:workspace` could be declared with another scope | Implementation review | Fixed: startup refuses it. |
+| Re-saving an unchanged membership wrote the user document and an audit entry | Implementation review | Fixed: a no-op membership change writes nothing. |
+| Memory-mode telemetry coverage text did not match the code | Implementation review | Plan corrected (5.4). |
+| "The balancing map is bounded" did not say by what | Implementation review | Plan corrected (5.3). |
+| Missing tests: team privacy, archived workspace read by a member, `HEAD`, a second workspace in the Workers test | Implementation review | Added. |

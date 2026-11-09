@@ -266,6 +266,36 @@ describe.skipIf(!available)("workspace isolation", () => {
 		const listed = (await inject("GET", "/v1/workspaces", memberA)).json();
 		expect(listed.canCreate).toBe(false);
 		expect(listed.workspaces).toHaveLength(1);
+		// The team list shows a member only the memberships they share.
+		await member("both@example.com", { workspaceId: a, role: "member" });
+		const team = (await inject("GET", "/v1/team", owner)).json();
+		const bothId = team.members.find(
+			(item: { email: string }) => item.email === "both@example.com",
+		).id;
+		expect(
+			(
+				await inject("PUT", `/v1/${b}/members/${bothId}`, owner, {
+					role: "member",
+				})
+			).statusCode,
+		).toBe(200);
+		const seenByMember = (await inject("GET", "/v1/team", memberA))
+			.json()
+			.members.find(
+				(item: { email: string }) => item.email === "both@example.com",
+			);
+		expect(seenByMember.workspaces).toEqual([
+			{ workspaceId: a, role: "member" },
+		]);
+		const seenByOwner = (await inject("GET", "/v1/team", owner))
+			.json()
+			.members.find(
+				(item: { email: string }) => item.email === "both@example.com",
+			);
+		expect(seenByOwner.workspaces).toHaveLength(2);
+		expect(
+			JSON.stringify((await inject("GET", "/v1/team", memberA)).json()),
+		).not.toContain(b);
 	});
 
 	it("enforces the workspace role matrix", async () => {
@@ -427,9 +457,30 @@ describe.skipIf(!available)("workspace isolation", () => {
 				permissions: ["models:read"],
 			})
 		).json().secret as string;
+		const memberB = await member("member-b@example.com", {
+			workspaceId: b,
+			role: "member",
+		});
+		expect(
+			(
+				await server.inject({
+					method: "HEAD",
+					url: `/v1/workspaces/${b}`,
+					headers: bearer(owner),
+				})
+			).statusCode,
+		).toBe(200);
 		const archived = await inject("POST", `/v1/workspaces/${b}/archive`, owner);
 		expect(archived.statusCode, archived.body).toBe(200);
 		expect(archived.json().archivedAt).not.toBeNull();
+		// A member can still see that the workspace is archived, but nothing else.
+		const details = await inject("GET", `/v1/workspaces/${b}`, memberB);
+		expect(details.statusCode).toBe(200);
+		expect(details.json()).toMatchObject({ role: "member", actions: [] });
+		expect(details.json().archivedAt).not.toBeNull();
+		expect((await inject("GET", `/v1/${b}/models`, memberB)).statusCode).toBe(
+			409,
+		);
 		expect((await inject("GET", `/v1/${b}/models`, token)).statusCode).toBe(
 			409,
 		);

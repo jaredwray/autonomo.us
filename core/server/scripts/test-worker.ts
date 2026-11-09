@@ -289,6 +289,17 @@ try {
 		})) as { token: string };
 		const auth = { authorization: `Bearer ${signedIn.token}` };
 		await request(`${workspace}/models`, 200, { headers: auth });
+		// A second workspace starts empty and resolves in the same isolate.
+		const second = (await request("/v1/workspaces", 201, {
+			method: "POST",
+			headers: { ...json, ...auth },
+			body: JSON.stringify({ name: "Second" }),
+		})) as { id: string };
+		const empty = (await request(`/v1/${second.id}/models`, 200, {
+			headers: auth,
+		})) as { models: unknown[] };
+		assert.deepEqual(empty.models, []);
+		await request(`/v1/${second.id}/routing`, 200, { headers: auth });
 		const invite = (await request("/v1/team/invites", 201, {
 			method: "POST",
 			headers: { ...json, ...auth },

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { ROUTE_RULES } from "../src/auth/access.js";
 import type { ApiConfig } from "../src/config.js";
 import {
 	ProviderRegistry,
@@ -10,6 +11,7 @@ import {
 	defaultRoutingConfig,
 	RoutingSettingsStore,
 } from "../src/routing/settings.js";
+import { createServer } from "../src/server.js";
 import { TelemetryService } from "../src/telemetry/telemetry.js";
 import { WorkspaceStore } from "../src/workspaces/store.js";
 
@@ -28,6 +30,21 @@ function registry() {
 		}),
 	);
 }
+
+describe("route scopes", () => {
+	it("refuses a route that names a workspace without workspace scope", async () => {
+		const server = createServer({ config, logger: false });
+		ROUTE_RULES.set("GET /v1/:workspace/leak", { scope: "instance" });
+		try {
+			expect(() => server.get("/v1/:workspace/leak", () => ({}))).toThrow(
+				/names a workspace, so its scope must be "workspace"/,
+			);
+		} finally {
+			ROUTE_RULES.delete("GET /v1/:workspace/leak");
+			await server.close();
+		}
+	});
+});
 
 describe("workspace stores (memory mode)", () => {
 	it("creates one default workspace with a generated UUID and refuses to archive it", async () => {

@@ -730,9 +730,24 @@ export class AccountStore {
 			this.defaultId(),
 		]);
 		const now = this.now();
+		// Owners and admins see every membership. A member sees others'
+		// memberships only in workspaces they share, so the team list never
+		// reveals who belongs to a workspace the caller cannot open.
+		const shared = AccountStore.canManage(actor)
+			? null
+			: new Set(actor.workspaces.map((item) => item.workspaceId));
+		const visible = (member: TeamMember): TeamMember =>
+			shared && member.id !== actor.id
+				? {
+						...member,
+						workspaces: member.workspaces.filter((item) =>
+							shared.has(item.workspaceId),
+						),
+					}
+				: member;
 		return {
 			members: users
-				.map((user) => publicMember(user, defaultId))
+				.map((user) => visible(publicMember(user, defaultId)))
 				.sort(
 					(a, b) =>
 						a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
@@ -1110,6 +1125,18 @@ export class AccountStore {
 		actor: TeamMember,
 	): Promise<WorkspaceMembers> {
 		const defaultId = await this.defaultId();
+		const workspaceRef = {
+			id: workspaceId,
+			isDefault: workspaceId === defaultId,
+		};
+		const seen = await this.member(userId);
+		const current =
+			memberships(seen, defaultId).find(
+				(item) => item.workspaceId === workspaceId,
+			)?.role ?? null;
+		// Nothing to change: skip the write, so a no-op never races a real edit.
+		if (seen.role === "member" && current === role && role !== null)
+			return this.workspaceMembers(workspaceRef);
 		await this.mutate(
 			this.users,
 			userId,
@@ -1145,10 +1172,7 @@ export class AccountStore {
 			},
 			missingMember(),
 		);
-		return this.workspaceMembers({
-			id: workspaceId,
-			isDefault: workspaceId === defaultId,
-		});
+		return this.workspaceMembers(workspaceRef);
 	}
 
 	async close() {

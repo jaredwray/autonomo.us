@@ -196,11 +196,19 @@ export function requireRouteScopes(server: FastifyInstance) {
 	server.addHook("onRoute", (route) => {
 		if (!route.url.startsWith("/v1/")) return;
 		const methods = Array.isArray(route.method) ? route.method : [route.method];
-		for (const method of methods)
-			if (method !== "OPTIONS" && !ROUTE_RULES.has(routeKey(method, route.url)))
+		for (const method of methods) {
+			if (method === "OPTIONS") continue;
+			const rule = ROUTE_RULES.get(routeKey(method, route.url));
+			if (!rule)
 				throw new Error(
 					`Declare a scope for ${routeKey(method, route.url)} in ROUTE_RULES before registering it.`,
 				);
+			// A route that names a workspace must resolve and authorize it.
+			if (route.url.includes(":workspace") && rule.scope !== "workspace")
+				throw new Error(
+					`${routeKey(method, route.url)} names a workspace, so its scope must be "workspace".`,
+				);
+		}
 	});
 }
 

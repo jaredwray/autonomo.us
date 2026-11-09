@@ -242,7 +242,11 @@ export function App() {
 	}, []);
 	const workspaces = gate.state === "ready" ? gate.session.workspaces : [];
 	const selected = chooseWorkspace(workspaces, route.workspaceId);
-	// Workspace calls go to the selected workspace's paths.
+	// Workspace calls go to the selected workspace's paths. This is set during
+	// render, not in an effect, so the views below (remounted per workspace by
+	// their key) already call the right paths in their first effects. The
+	// remembered workspace is per browser, so two tabs share the last choice
+	// while each keeps the workspace in its own URL.
 	setCurrentWorkspace(selected?.id ?? null);
 	const wrongWorkspace = Boolean(
 		route.workspaceId && selected && route.workspaceId !== selected.id,
