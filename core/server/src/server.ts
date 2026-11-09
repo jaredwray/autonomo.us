@@ -185,6 +185,7 @@ export function createServer(options: CreateServerOptions = {}) {
 	server.register(mcpRoutes, {
 		synapse,
 		agentTokens,
+		workspaces,
 		corsOrigins: config.corsOrigins,
 		version: packageJson.version,
 	});

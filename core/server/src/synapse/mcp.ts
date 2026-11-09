@@ -1,6 +1,5 @@
 import {
 	AGENT_TOKEN_PERMISSIONS,
-	type AgentToken,
 	type AgentTokenPermission,
 	type CreateSynapseProposalRequest,
 	SYNAPSE_SHARED_SPACE,
@@ -12,8 +11,9 @@ import {
 } from "@autonomo.us/common";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { AgentTokenStore } from "../auth/agent-tokens.js";
-import { ApiTokenError } from "../auth/token-store.js";
+import { ApiTokenError, type AuthenticatedToken } from "../auth/token-store.js";
 import { resolveCorsOrigin } from "../routes/chat.js";
+import type { WorkspaceStore } from "../workspaces/store.js";
 import { SynapseError } from "./errors.js";
 import { agentSpaceId, type SynapseService } from "./synapse.js";
 
@@ -364,11 +364,16 @@ class RpcError extends Error {
 type Args = Record<string, unknown>;
 /** Shapes checked by the service's validateProperties, not here. */
 const asProperties = (value: unknown) => value as SynapseProperties | undefined;
-type Agent = { token: AgentToken; actor: SynapseActor };
+type Agent = {
+	token: AuthenticatedToken<AgentTokenPermission>;
+	actor: SynapseActor;
+};
 
 export type McpRouteOptions = {
 	synapse: SynapseService;
 	agentTokens: AgentTokenStore;
+	/** An agent token works only while its workspace exists and is not archived. */
+	workspaces: Pick<WorkspaceStore, "get" | "defaultWorkspaceId">;
 	/** Browser origins allowed by CORS_ORIGIN; `["*"]` allows any. */
 	corsOrigins: string[];
 	version: string;
@@ -580,7 +585,7 @@ export async function mcpRoutes(
 			unauthorized(reply);
 			return undefined;
 		}
-		let token: AgentToken | null;
+		let token: AuthenticatedToken<AgentTokenPermission> | null;
 		try {
 			token = await options.agentTokens.authenticate(match[1]);
 		} catch (error) {
@@ -590,6 +595,21 @@ export async function mcpRoutes(
 		}
 		if (!token) {
 			unauthorized(reply);
+			return undefined;
+		}
+		// The same rule as REST: archiving a workspace refuses its tokens. A
+		// token without a workspace predates workspaces and belongs to the default.
+		const workspace = await options.workspaces.get(
+			token.workspaceId ?? (await options.workspaces.defaultWorkspaceId()),
+		);
+		if (!workspace) {
+			unauthorized(reply);
+			return undefined;
+		}
+		if (workspace.archivedAt) {
+			reply
+				.code(409)
+				.send({ error: { message: "This workspace is archived." } });
 			return undefined;
 		}
 		return {

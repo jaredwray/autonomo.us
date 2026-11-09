@@ -168,6 +168,39 @@ describe("MCP endpoint", () => {
 		expect(goodOrigin.status).toBe(200);
 		await rest("DELETE", `/v1/agent-tokens/${agent.token.id}`);
 		expect((await rpc(agent.secret, "ping")).status).toBe(401);
+
+		// Archiving a workspace refuses its agent tokens here too, until unarchived.
+		const workspace = await rest("POST", "/v1/workspaces", { name: "Film" });
+		expect(workspace.status).toBe(201);
+		const id = (workspace.json as { id: string }).id;
+		const film = await rest("POST", `/v1/${id}/agent-tokens`, {
+			name: "Film agent",
+			description: "",
+			ttlDays: 7,
+			permissions: ["mcp:read", "mcp:call"],
+		});
+		expect(film.status).toBe(201);
+		const filmSecret = (film.json as ApiTokenSecret).secret;
+		expect((await rpc(filmSecret, "tools/list")).status).toBe(200);
+		expect((await rest("POST", `/v1/workspaces/${id}/archive`)).status).toBe(
+			200,
+		);
+		for (const method of ["ping", "tools/list"]) {
+			const archived = await rpc(filmSecret, method);
+			expect(archived.status).toBe(409);
+			expect(archived.body).toEqual({
+				error: { message: "This workspace is archived." },
+			});
+		}
+		const called = await rpc(filmSecret, "tools/call", {
+			name: "synapse_log",
+			arguments: { text: "Still here" },
+		});
+		expect(called.status).toBe(409);
+		expect((await rest("POST", `/v1/workspaces/${id}/unarchive`)).status).toBe(
+			200,
+		);
+		expect((await rpc(filmSecret, "tools/list")).status).toBe(200);
 	});
 
 	it("speaks stateless JSON-RPC: initialize, ping, notifications, and protocol errors", async () => {
