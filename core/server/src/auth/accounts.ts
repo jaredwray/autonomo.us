@@ -444,7 +444,10 @@ export class AccountStore {
 		addedBy: string | null,
 		now: number,
 		signedIn: boolean,
-		workspaces: WorkspaceMembership[] | undefined = [],
+		// Left undefined only for an invite from before workspaces: the record
+		// then carries no field and the read rule grants the default workspace.
+		// (No default value: passing undefined must not become [].)
+		workspaces?: WorkspaceMembership[],
 	): UserRecord {
 		return {
 			...(workspaces ? { workspaces } : {}),

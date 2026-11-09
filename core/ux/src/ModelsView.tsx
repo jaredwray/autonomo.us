@@ -7,6 +7,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
 	addModel,
+	currentWorkspaceId,
 	fetchModelCatalog,
 	fetchModels,
 	fetchProviderSettings,
@@ -268,8 +269,11 @@ function AddModelForm(props: {
 					</div>
 					{provider === "typesafe" ? (
 						<p className="field-hint">
-							Jev classifies and scores data. Use it for decisions through
-							/v1/decisions; it cannot answer chat requests. Get a key from the{" "}
+							Jev classifies and scores data. Use it for decisions through{" "}
+							<code>
+								/v1/{currentWorkspaceId() ?? "<workspace id>"}/decisions
+							</code>
+							; it cannot answer chat requests. Get a key from the{" "}
 							<a
 								href="https://console.typesafe.ai"
 								target="_blank"

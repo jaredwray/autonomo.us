@@ -584,6 +584,32 @@ describe.skipIf(!available)("upgrading data saved before workspaces", () => {
 			200,
 		);
 
+		// An invite created before workspaces still grants what a member had
+		// then, the default workspace, when it is redeemed.
+		const invite = (
+			await send("POST", "/v1/team/invites", { role: "member", ttlDays: 1 })
+		).json();
+		await db
+			.collection<{ _id: string }>("gateway_invites")
+			.updateOne({ _id: invite.invite.id }, { $unset: { workspace: "" } });
+		const joined = await server.inject({
+			method: "POST",
+			url: "/v1/invites/accept",
+			payload: {
+				token: invite.token,
+				email: "invited@example.com",
+				name: "Invited",
+				password: PASSWORD,
+			},
+		});
+		expect(joined.statusCode, joined.body).toBe(201);
+		expect(joined.json().user.workspaces).toEqual([
+			{ workspaceId: defaultId, role: "member" },
+		]);
+		expect(
+			(await get(`/v1/${defaultId}/models`, joined.json().token)).statusCode,
+		).toBe(200);
+
 		// The first routing write after upgrade is not a false conflict.
 		const config = (await get(`/v1/${defaultId}/routing`)).json().config;
 		expect(
