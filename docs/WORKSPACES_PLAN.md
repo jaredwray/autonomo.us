@@ -126,9 +126,21 @@ Gateway deployment (the organization)
 | Model catalog | Telemetry events, summaries, analytics |
 | First-run setup | Workspace memberships |
 | `/health` | Future: agents, routines, approvals, storage prefixes, budgets |
+| Synapse (open question below) | |
 
 Every workspace-level record belongs to exactly one workspace, and a request
 operates on exactly one workspace. There are no cross-workspace references.
+
+**Open question: Synapse.** Synapse ([SYNAPSE.md](./SYNAPSE.md)) merged into
+`main` while this plan was being implemented, so it is gateway-wide for now:
+`/v1/synapse/...` is an instance route, `/mcp` serves agent tokens from every
+workspace, and the `shared` space is one space for the whole gateway. Agent
+spaces stay private to their agent, and agent tokens belong to one workspace,
+but any team member can read every space from the dashboard, and an API token
+with Synapse permission reaches it whatever its workspace. Making Synapse
+workspace-level (its routes under `/v1/:workspace/synapse`, one `shared` space
+and one proposal queue per workspace, members limited to the agent spaces of
+their workspaces) is the owner's call.
 
 ## 4. Data model
 

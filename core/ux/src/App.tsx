@@ -25,6 +25,7 @@ import { Icon } from "./Icons.js";
 import { ModelsView } from "./ModelsView.js";
 import { ProfileView } from "./ProfileView.js";
 import { RoutingView } from "./RoutingView.js";
+import { SynapseView } from "./SynapseView.js";
 import { TeamView } from "./TeamView.js";
 import { WorkspacesView } from "./WorkspacesView.js";
 
@@ -38,8 +39,12 @@ const workspaceViews = {
 	"api-tokens": "API Tokens",
 	"agent-tokens": "Agent Tokens",
 };
-/** Views of the whole gateway, at `#/<view>`. */
-const instanceViews = { workspaces: "Workspaces", team: "Team" };
+/** Views of the whole gateway, at `#/<view>`. Synapse is gateway-wide for now. */
+const instanceViews = {
+	synapse: "Synapse",
+	workspaces: "Workspaces",
+	team: "Team",
+};
 const viewLabels = { ...workspaceViews, ...instanceViews };
 type WorkspaceView = keyof typeof workspaceViews;
 type View = keyof typeof viewLabels | "profile";
@@ -55,8 +60,10 @@ function currentRoute(): Route {
 			workspaceId: decodeURIComponent(scoped[1]),
 		};
 	}
-	const view = window.location.hash.slice(2);
-	// A pre-workspace link such as #/models opens in the remembered workspace.
+	// Views such as Synapse keep their own state after the view name
+	// (#/synapse/<space>/<note>). A pre-workspace link such as #/models opens
+	// in the remembered workspace.
+	const view = window.location.hash.slice(2).split("/")[0] ?? "";
 	return {
 		view:
 			view === "profile" || Object.hasOwn(viewLabels, view)
@@ -506,6 +513,8 @@ export function App() {
 			<main id="main-content" tabIndex={-1} className="main-content">
 				{shown === "profile" ? (
 					<ProfileView user={user} />
+				) : shown === "synapse" ? (
+					<SynapseView user={user} />
 				) : shown === "team" ? (
 					<TeamView workspaces={workspaces} currentWorkspaceId={workspaceId} />
 				) : shown === "workspaces" ? (

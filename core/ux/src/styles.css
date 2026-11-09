@@ -866,3 +866,106 @@ a.button { text-decoration: none; }
 .workspace-role-select { appearance: none; min-width: 120px; min-height: 34px; padding: 6px 32px 6px 10px; border: 1px solid var(--hairline); border-radius: 7px; background: var(--surface-1) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23898781' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat right 10px center / 14px; color: var(--text-primary); font: inherit; font-size: 13px; cursor: pointer; }
 .workspace-role-select:enabled:hover { border-color: var(--text-muted); }
 .workspace-role-select:disabled { color: var(--text-muted); cursor: not-allowed; }
+/* Synapse */
+.synapse-view .header-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.synapse-view .page-description code, .synapse-view .field-hint code, .synapse-view .card-note code { font-size: 11px; padding: 1px 5px; border: 1px solid var(--hairline); border-radius: 4px; background: var(--page); }
+.synapse-tabs { display: flex; gap: 4px; margin: 0 0 20px; border-bottom: 1px solid var(--hairline); }
+.synapse-tabs button { margin-bottom: -1px; padding: 10px 14px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--text-secondary); font: inherit; font-size: 13px; cursor: pointer; }
+.synapse-tabs button:hover { color: var(--text-primary); }
+.synapse-tabs button[aria-selected="true"] { color: var(--text-primary); border-bottom-color: var(--series-1); font-weight: 600; }
+.synapse-layout { display: grid; grid-template-columns: minmax(240px, 320px) minmax(0, 1fr); gap: 20px; align-items: start; }
+.synapse-side { position: sticky; top: 24px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.synapse-space-field { margin: 0; }
+.synapse-sidebar { display: flex; flex-direction: column; min-width: 0; max-height: calc(100vh - 200px); margin: 0; }
+.synapse-sidebar .form-field { margin: 0 0 10px; }
+.synapse-search { max-width: none; margin: 0; }
+.synapse-list-count { margin: 0 0 6px !important; }
+.synapse-note-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; border-top: 1px solid var(--hairline); }
+.synapse-note-list a { display: block; padding: 10px 8px; border-bottom: 1px solid var(--hairline); color: inherit; text-decoration: none; }
+.synapse-note-list a:hover { background: var(--page); }
+.synapse-note-list a[aria-current="page"] { background: color-mix(in srgb, var(--series-1) 10%, var(--surface-1)); }
+.synapse-note-list strong { display: block; font-size: 13px; font-weight: 550; overflow-wrap: anywhere; }
+.synapse-note-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; font-size: 11px; color: var(--text-muted); }
+.synapse-snippet { display: -webkit-box; margin-top: 4px; font-size: 12px; color: var(--text-secondary); overflow: hidden; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
+.synapse-chip { display: inline-block; padding: 1px 8px; border: 1px solid var(--hairline); border-radius: 999px; background: var(--page); color: var(--text-secondary); font-size: 11px; white-space: nowrap; }
+.synapse-chips { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.synapse-empty-list { padding: 16px 4px; font-size: 13px; }
+.synapse-empty-list button { padding: 0; border: 0; background: transparent; color: var(--series-1); font: inherit; text-decoration: underline; cursor: pointer; }
+.synapse-main { min-width: 0; padding: 24px; margin: 0; }
+.synapse-intro h2 { font-size: 18px; }
+.synapse-note-header { display: flex; align-items: start; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 8px; }
+.synapse-note-header h2 { font-size: 22px; font-weight: 600; letter-spacing: -.4px; margin: 0 0 4px; overflow-wrap: anywhere; }
+.synapse-note-header h2:focus { outline: none; }
+.synapse-note-header .card-note { margin: 0; }
+.synapse-missing h2 { font-size: 18px; margin: 0 0 6px; }
+.synapse-properties { width: 100%; margin: 16px 0 20px; border-collapse: collapse; font-size: 12px; }
+.synapse-properties th { width: 160px; padding: 6px 12px 6px 0; border-bottom: 1px solid var(--hairline); color: var(--text-muted); font-weight: 500; text-align: left; vertical-align: top; overflow-wrap: anywhere; }
+.synapse-properties td { padding: 6px 0; border-bottom: 1px solid var(--hairline); color: var(--text-secondary); overflow-wrap: anywhere; }
+.synapse-empty-value { color: var(--text-muted); }
+.visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.synapse-markdown { font-size: 14px; line-height: 1.65; color: var(--text-primary); overflow-wrap: anywhere; }
+.synapse-markdown > :first-child { margin-top: 0; }
+.synapse-markdown h2, .synapse-markdown h3, .synapse-markdown h4, .synapse-markdown h5, .synapse-markdown h6 { margin: 20px 0 8px; font-weight: 600; letter-spacing: -.2px; }
+.synapse-markdown h2 { font-size: 18px; }
+.synapse-markdown h3 { font-size: 15px; }
+.synapse-markdown h4, .synapse-markdown h5, .synapse-markdown h6 { font-size: 14px; }
+.synapse-markdown p, .synapse-markdown ul, .synapse-markdown ol, .synapse-markdown pre, .synapse-markdown table { margin: 0 0 12px; }
+.synapse-markdown ul, .synapse-markdown ol { padding-left: 24px; }
+.synapse-markdown li.task { list-style: none; margin-left: -20px; }
+.synapse-markdown li.task input { margin: 0 8px 0 0; vertical-align: -2px; accent-color: var(--series-1); }
+.synapse-markdown blockquote { margin: 0 0 12px; padding: 4px 14px; border-left: 3px solid var(--hairline); color: var(--text-secondary); }
+.synapse-markdown pre { padding: 12px; border: 1px solid var(--hairline); border-radius: 8px; background: var(--page); font-size: 12px; overflow-x: auto; }
+.synapse-markdown code { padding: 1px 5px; border-radius: 4px; background: var(--page); font-size: 12.5px; }
+.synapse-markdown pre code { padding: 0; background: transparent; }
+.synapse-markdown hr { border: 0; border-top: 1px solid var(--hairline); margin: 16px 0; }
+.synapse-markdown table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.synapse-markdown th, .synapse-markdown td { padding: 6px 8px; border-bottom: 1px solid var(--hairline); text-align: left; vertical-align: top; }
+.synapse-markdown th { color: var(--text-muted); font-weight: 500; font-size: 12px; }
+.synapse-markdown a, .synapse-proposal a.wikilink, .synapse-sections a.wikilink { color: var(--series-1); }
+.wikilink { color: var(--series-1); text-decoration: none; border-bottom: 1px solid color-mix(in srgb, var(--series-1) 40%, transparent); }
+.wikilink:hover { border-bottom-color: var(--series-1); }
+.wikilink.unresolved { color: var(--text-muted); border-bottom-style: dashed; border-bottom-color: var(--text-muted); }
+.wikilink.embed { display: inline-block; padding: 2px 8px; border: 1px dashed var(--hairline); border-radius: 6px; }
+.wikilink.embed::before { content: "⧉ "; color: var(--text-muted); }
+.synapse-tags { display: flex; flex-wrap: wrap; gap: 4px; margin: 12px 0 0; }
+.synapse-sections { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px 24px; margin-top: 28px; padding-top: 18px; border-top: 1px solid var(--hairline); }
+.synapse-sections h3 { margin: 0 0 8px; font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: .05em; }
+.synapse-sections ul { list-style: none; margin: 0; padding: 0; }
+.synapse-sections li { padding: 4px 0; font-size: 13px; overflow-wrap: anywhere; }
+.synapse-sections .card-note { margin: 0; }
+.synapse-link-detail { display: block; color: var(--text-muted); font-size: 11px; }
+.synapse-members { grid-column: 1 / -1; }
+.synapse-breadcrumb { padding: 0; border: 0; border-bottom: 1px dashed var(--text-muted); background: transparent; color: var(--text-secondary); font: inherit; font-size: 13px; cursor: pointer; text-align: left; }
+.synapse-breadcrumb:hover { color: var(--series-1); border-bottom-color: var(--series-1); }
+.synapse-breadcrumb::after { content: " +"; color: var(--text-muted); }
+.synapse-editor textarea, .synapse-proposal textarea { width: 100%; min-height: 360px; padding: 12px; border: 1px solid var(--hairline); border-radius: 8px; background: var(--page); color: var(--text-primary); font: 12.5px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; resize: vertical; tab-size: 2; }
+.synapse-proposal textarea { min-height: 64px; font: inherit; }
+.synapse-editor textarea:focus-visible, .synapse-proposal textarea:focus-visible { outline: 2px solid var(--series-1); outline-offset: 3px; }
+.synapse-editor .form-field { margin: 12px 0; }
+.synapse-inline-form { margin: 12px 0 20px; padding: 16px; border: 1px solid var(--hairline); border-radius: 8px; }
+.synapse-inline-form .form-actions { margin-top: 14px; }
+.synapse-inline-form p { margin: 0; }
+.synapse-note .banner-error .button { margin-left: 8px; }
+.synapse-import-pickers { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 12px 0; }
+.synapse-import-pickers input[type="file"] { padding: 8px; font-size: 12px; }
+.synapse-import-overwrite { margin: 8px 0 12px; font-size: 13px; }
+.synapse-import-result p { margin: 0 0 6px; }
+.synapse-import-result ul { margin: 0; padding-left: 18px; font-size: 12px; }
+.synapse-proposals > .section-heading { gap: 24px; margin-bottom: 20px; }
+.synapse-proposals > .section-heading .page-description { margin: 0; max-width: 680px; }
+.synapse-proposal h2 { font-size: 16px; }
+.synapse-proposal-reason { margin: 8px 0 14px; font-size: 13px; color: var(--text-secondary); overflow-wrap: anywhere; }
+.synapse-diff { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.synapse-diff h3 { margin: 0 0 6px; font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: .05em; }
+.synapse-diff pre { max-height: 320px; margin: 0; padding: 12px; border: 1px solid var(--hairline); border-radius: 8px; background: var(--page); font-size: 12px; white-space: pre-wrap; overflow: auto; overflow-wrap: anywhere; }
+.synapse-proposal .form-actions { margin-top: 16px; }
+.synapse-proposal .banner-error { margin: 14px 0 0; }
+@media (max-width: 900px) {
+	.synapse-layout { grid-template-columns: 1fr; }
+	.synapse-side { position: static; }
+	.synapse-sidebar { max-height: none; }
+	.synapse-note-list { max-height: 320px; }
+	.synapse-main { padding: 16px; }
+	.synapse-diff, .synapse-import-pickers { grid-template-columns: 1fr; }
+	.synapse-properties th { width: 110px; }
+}

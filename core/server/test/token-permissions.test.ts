@@ -156,6 +156,64 @@ it.each(
 			status: 400,
 			payload: {},
 		},
+		{
+			method: "GET",
+			url: "/v1/synapse/spaces",
+			required: "synapse:read",
+			status: 200,
+		},
+		{
+			method: "GET",
+			url: "/v1/synapse/templates",
+			required: "synapse:read",
+			status: 200,
+		},
+		{
+			method: "GET",
+			url: "/v1/synapse/spaces/shared/notes?text=x",
+			required: "synapse:read",
+			status: 200,
+		},
+		{
+			method: "POST",
+			url: "/v1/synapse/spaces/shared/notes",
+			required: "synapse:edit",
+			status: 201,
+			payload: { title: "Permission note" },
+		},
+		// Read grants reach the note lookup; the 404 proves the gate let them through.
+		{
+			method: "GET",
+			url: "/v1/synapse/spaces/shared/notes/Missing%20note",
+			required: "synapse:read",
+			status: 404,
+		},
+		{
+			method: "GET",
+			url: "/v1/synapse/spaces/shared/daily/2026-11-08",
+			required: "synapse:read",
+			status: 200,
+		},
+		// Export hands out a whole space, so it needs the edit grant.
+		{
+			method: "GET",
+			url: "/v1/synapse/spaces/shared/export",
+			required: "synapse:edit",
+			status: 200,
+		},
+		{
+			method: "POST",
+			url: "/v1/synapse/spaces/shared/import",
+			required: "synapse:edit",
+			status: 200,
+			payload: { files: [] },
+		},
+		{
+			method: "GET",
+			url: "/v1/synapse/proposals",
+			required: "synapse:read",
+			status: 200,
+		},
 	] as const;
 	for (const test of cases) {
 		const allowed =
@@ -192,6 +250,12 @@ it.each(
 			{ ttlDays: 7, previousTokenTtlSeconds: 0 },
 		],
 		["DELETE", `/v1/api-tokens/${issued.token.id}`, undefined],
+		// Approvals need a person, whatever the token's grants.
+		[
+			"POST",
+			"/v1/synapse/proposals/00000000-0000-0000-0000-000000000000/decide",
+			{ decision: "approve" },
+		],
 	] as const) {
 		expect(
 			(await server.inject({ method, url, payload, headers })).statusCode,

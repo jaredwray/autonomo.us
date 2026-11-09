@@ -17,7 +17,7 @@ import { type ApiTokenStore, secretMatches, tokenHash } from "./tokens.js";
 /** How the current request authenticated. */
 export type RequestAuth =
 	| { kind: "user"; member: TeamMember; expiresAt: string }
-	| { kind: "api-token" }
+	| { kind: "api-token"; token: { id: string; name: string } }
 	/** SETUP_TOKEN: accepted only on the first-run setup routes. */
 	| { kind: "setup" };
 
@@ -61,6 +61,8 @@ type RouteRule =
 
 const workspace = (action: WorkspaceAction, allowArchived = false) =>
 	({ scope: "workspace", action, allowArchived }) as const;
+const synapse = (token: ApiTokenPermission) =>
+	({ scope: "instance", token }) as const;
 const tokenRoutes = (base: string) =>
 	[
 		[`GET ${base}`, workspace("tokens:manage")],
@@ -121,6 +123,27 @@ export const ROUTE_RULES = new Map<string, RouteRule>([
 	["GET /v1/:workspace/members", workspace("members:read")],
 	["PUT /v1/:workspace/members/:userId", workspace("members:manage")],
 	["DELETE /v1/:workspace/members/:userId", workspace("members:manage")],
+	// Synapse is gateway-wide for now, as merged from main.
+	["GET /v1/synapse/spaces", synapse("synapse:read")],
+	["GET /v1/synapse/templates", synapse("synapse:read")],
+	["GET /v1/synapse/spaces/:space/notes", synapse("synapse:read")],
+	["POST /v1/synapse/spaces/:space/notes", synapse("synapse:edit")],
+	["GET /v1/synapse/spaces/:space/notes/:title", synapse("synapse:read")],
+	["PATCH /v1/synapse/spaces/:space/notes/:title", synapse("synapse:edit")],
+	[
+		"POST /v1/synapse/spaces/:space/notes/:title/append",
+		synapse("synapse:edit"),
+	],
+	["DELETE /v1/synapse/spaces/:space/notes/:title", synapse("synapse:edit")],
+	["GET /v1/synapse/spaces/:space/unresolved", synapse("synapse:read")],
+	["GET /v1/synapse/spaces/:space/categories", synapse("synapse:read")],
+	["GET /v1/synapse/spaces/:space/daily/:date", synapse("synapse:read")],
+	// A whole space in one response, so it needs the write-level grant.
+	["GET /v1/synapse/spaces/:space/export", synapse("synapse:edit")],
+	["POST /v1/synapse/spaces/:space/import", synapse("synapse:edit")],
+	["GET /v1/synapse/proposals", synapse("synapse:read")],
+	// No token permission on purpose: approvals need a person.
+	["POST /v1/synapse/proposals/:id/decide", { scope: "instance" }],
 ]);
 
 /** What each workspace role may do, as a signed-in member. */
@@ -271,7 +294,10 @@ export function registerApiAccess(
 		} else {
 			token = await tokens.authenticate(match[1]);
 			if (!token) return unauthorized(reply);
-			request.auth = { kind: "api-token" };
+			request.auth = {
+				kind: "api-token",
+				token: { id: token.id, name: token.name },
+			};
 			request.telemetryCaller = {
 				id: `api-token:${token.id}`,
 				name: token.name,

@@ -1,5 +1,6 @@
 import cors from "@fastify/cors";
 import Fastify from "fastify";
+import packageJson from "../package.json" with { type: "json" };
 import { registerApiAccess, requireRouteScopes } from "./auth/access.js";
 import { AccountStore } from "./auth/accounts.js";
 import { AgentTokenStore } from "./auth/agent-tokens.js";
@@ -23,11 +24,16 @@ import { failoverRoutes } from "./routes/failover.js";
 import { healthRoutes } from "./routes/health.js";
 import { catalogRoutes, modelsRoutes } from "./routes/models.js";
 import { routingRoutes } from "./routes/routing.js";
+import { synapseRoutes } from "./routes/synapse.js";
 import { teamRoutes } from "./routes/team.js";
 import { telemetryRoutes } from "./routes/telemetry.js";
 import { memberRoutes, workspaceRoutes } from "./routes/workspaces.js";
 import { ModelRouter } from "./routing/router.js";
 import { RoutingSettingsStore } from "./routing/settings.js";
+import { mcpRoutes } from "./synapse/mcp.js";
+import { MemorySynapseRepository } from "./synapse/memory-repository.js";
+import { MongoSynapseRepository } from "./synapse/mongo-repository.js";
+import { SynapseService } from "./synapse/synapse.js";
 import { MongoTelemetrySink } from "./telemetry/mongo.js";
 import { TelemetryService } from "./telemetry/telemetry.js";
 import { type WorkspaceRef, WorkspaceStore } from "./workspaces/store.js";
@@ -115,6 +121,12 @@ export function createServer(options: CreateServerOptions = {}) {
 		mongo,
 		defaultWorkspaceId: () => workspaces.defaultWorkspaceId(),
 	});
+	const synapseRepository = config.mongodbUrl
+		? new MongoSynapseRepository(config.mongodbUrl)
+		: new MemorySynapseRepository();
+	const synapse = new SynapseService(synapseRepository, {
+		timeZone: config.synapseTimeZone ?? "UTC",
+	});
 	let persistenceInitialized = false;
 	const server = Fastify({
 		pluginTimeout: options.pluginTimeout,
@@ -168,6 +180,14 @@ export function createServer(options: CreateServerOptions = {}) {
 		},
 		{ prefix: "/v1/:workspace" },
 	);
+	// Synapse is gateway-wide for now, as merged from main.
+	server.register(synapseRoutes, { synapse });
+	server.register(mcpRoutes, {
+		synapse,
+		agentTokens,
+		corsOrigins: config.corsOrigins,
+		version: packageJson.version,
+	});
 	if (options.dashboardDir) registerDashboard(server, options.dashboardDir);
 
 	const initialize = async (onError?: PersistenceErrorHandler) => {
@@ -222,6 +242,7 @@ export function createServer(options: CreateServerOptions = {}) {
 			agentTokens.close(),
 			accounts.close(),
 			workspaces.close(),
+			synapseRepository.close(),
 		]);
 		const failed = results.find(
 			(result): result is PromiseRejectedResult => result.status === "rejected",

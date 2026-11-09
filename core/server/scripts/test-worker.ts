@@ -206,6 +206,9 @@ await withWorker("", async (request, logs, base) => {
 	await request("/v1/models", 401);
 	// The bare namespace reaches the API (a JSON 404), not the dashboard.
 	await request("/v1", 404);
+	// /mcp is a Worker path too: agent-token auth answers, not the asset stub.
+	await request("/mcp", 401, { method: "POST", headers: json, body: "{}" });
+	await request("/mcp", 405);
 	const auth = await setUp(request);
 	const workspace = await defaultWorkspace(request, auth);
 	await request(`${workspace}/models`, 200, { headers: auth });
