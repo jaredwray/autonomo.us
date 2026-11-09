@@ -135,14 +135,14 @@ operates on exactly one workspace. There are no cross-workspace references.
 ### 4.1 Shared types (`@autonomo.us/common`, new `workspaces.ts`)
 
 ```ts
-export const DEFAULT_WORKSPACE_ID = "default";
-
 export const WORKSPACE_ROLES = { admin: "Admin", member: "Member" } as const;
 export type WorkspaceRole = keyof typeof WORKSPACE_ROLES;
 
 export type Workspace = {
-	/** "default" for the migrated workspace, otherwise a UUID. Immutable; the `:workspace` path segment. */
+	/** Server-generated UUID, including for the default workspace. Immutable; the `:workspace` path segment. */
 	id: string;
+	/** True for exactly one workspace: the one that holds everything that existed before workspaces. */
+	isDefault: boolean;
 	name: string;
 	description: string;
 	createdAt: string;
@@ -175,9 +175,10 @@ Additions to existing types:
 
 | Collection | Today | Change |
 | --- | --- | --- |
-| `gateway_workspaces` | — | New. `{ _id, name, description, createdAt, createdBy, updatedAt, archivedAt, revision, actions }`. `_id` is `"default"` for the migrated workspace and a server-generated UUID for every other one; it never changes, so API paths and dashboard links stay valid. Names need not be unique. `actions` holds the latest 100 lifecycle changes to this document (create, rename, archive, unarchive) with actor and time, committed in the same write, like token `actions`. Membership changes are logged on the user document instead (see `gateway_users`), because that is the document they change. The `default` document is created with a `$setOnInsert` upsert, the same way `RoutingSettingsStore` creates its default document, so concurrent startups agree. Metadata edits use `$set` on named fields with a `revision` check, never a whole-document replace. |
+| `gateway_workspaces` | — | New. `{ _id, isDefault, name, description, createdAt, createdBy, updatedAt, archivedAt, revision, actions }`. `_id` is a server-generated UUID for every workspace, the default one included, and never changes, so API paths and dashboard links stay valid. Names need not be unique. `actions` holds the latest 100 lifecycle changes to this document (create, rename, archive, unarchive) with actor and time, committed in the same write, like token `actions`. Membership changes are logged on the user document instead (see `gateway_users`), because that is the document they change. The default workspace's document is created at startup under the id recorded in `gateway_instance` (next row), with a `$setOnInsert` upsert so concurrent startups agree. Metadata edits use `$set` on named fields with a `revision` check, never a whole-document replace. |
+| `gateway_instance` | — | New. One document, `{ _id: "default", defaultWorkspaceId, createdAt }`, created by `findOneAndUpdate` with a `$setOnInsert` of a fresh UUID and `upsert: true` (retrying the read once on a duplicate-key race). Concurrent startups therefore agree on a single default workspace id, and the workspace document is then upserted under it. Both writes are idempotent, so a crash between them is repaired by the next startup. The id never changes, so each process caches it after its first read. |
 | `gateway_providers` | `_id` = connection name, `{ config }` | Add a `workspaceId` field and an index on it. **`default` keeps its existing `_id` = connection name**; other workspaces use `_id: "<workspaceId>:<connection>"`. Saved connection names cannot contain `:`, so the two key spaces never collide, and no existing document is rewritten. |
-| `gateway_routing` | `_id: "default"` | `_id: <workspaceId>`, plus a `revision` field for compare-and-swap. A missing `revision` counts as 0, and the compare-and-swap filter for revision 0 is `{ revision: { $in: [0, null] } }`, because `{ revision: 0 }` does not match a missing field. The default workspace's id is `"default"`, so the existing document is already correct. |
+| `gateway_routing` | `_id: "default"` | `_id: <workspaceId>`, plus a `revision` field for compare-and-swap. A missing `revision` counts as 0, and the compare-and-swap filter for revision 0 is `{ revision: { $in: [0, null] } }`, because `{ revision: 0 }` does not match a missing field. The default workspace keeps the existing document at `_id: "default"`. That is an internal storage key that never appears in a URI, so nothing is rewritten; other workspaces use their UUID. |
 | `gateway_api_tokens`, `gateway_agent_tokens` | no workspace | `workspaceId` field and index, set on every new token. The secret format (`aut_<id>_…`) is unchanged; `authenticate` already reads the record by id and gets `workspaceId` from it. |
 | `telemetry_events` | no workspace | `workspaceId` on new events; index `{ workspaceId: 1, timestamp: 1, type: 1 }`. History is not rewritten. |
 | `gateway_users` | `role` | `workspaces: [{ workspaceId, role }]` and a multikey index on `workspaces.workspaceId` for member listings. Kept in the user document so session authentication stays one read. `membershipActions` holds the latest 100 grants, role changes, and removals for this account (workspace, actor, time, before and after), written in the same compare-and-swap as the membership change, so access never changes without its record on standalone MongoDB. A workspace's membership history is a query on `membershipActions.workspaceId`. |
@@ -185,15 +186,18 @@ Additions to existing types:
 | `gateway_setup` | — | Unchanged. |
 
 **Permanent read rules instead of backfills.** A missing `workspaceId` on a
-provider, token, or telemetry document means `default`, and a `member` account
-with no `workspaces` field is a member of `default`. These are permanent read
+provider, token, or telemetry document means the default workspace, and a
+`member` account with no `workspaces` field is a member of the default
+workspace. These are permanent read
 rules, not pre-migration fallbacks, so a document written by an older replica
 during a rolling deploy, or while rolled back, still resolves correctly. Every
-write from new code sets the field explicitly. Every filter for `default`,
-in reads and in writes, uses `{ workspaceId: { $in: ["default", null] } }`,
-which also matches missing fields; filters for any other workspace use the
-exact id. A write filter that used `workspaceId: "default"` alone would miss
-every record saved before this change. No data is rewritten,
+write from new code sets the field explicitly. Every filter for the default
+workspace, in reads and in writes, uses
+`{ workspaceId: { $in: [<default workspace id>, null] } }`, which also matches
+missing fields; filters for any other workspace use the exact id. A write
+filter that used the default workspace's id alone would miss every record
+saved before this change. In this document, `default` names that workspace;
+its id is a UUID like any other. No data is rewritten,
 so there is no backfill to order, crash, or re-run.
 
 **Indexes** (`workspaceId` on providers, tokens, and telemetry,
@@ -216,8 +220,8 @@ Every `/v1` route declares one scope in a central table next to
 
 **The workspace is always in the path (D2).** Every workspace-scoped route
 names its workspace with a `:workspace` path parameter, which is the
-workspace's id: `default` for the migrated workspace, a UUID for every other.
-The parameter is constrained to that pattern in the route definition, so it can
+workspace's UUID; the default workspace has one too, so no name appears in a
+URI. The parameter is constrained to the UUID pattern in the route definition, so it can
 never match a static segment such as `team`, `auth`, or `workspaces`. Today's
 unprefixed resource routes (`/v1/models`, `/v1/chat`, …) are removed in W1;
 the gateway has no external users yet, so the break is accepted (decision
@@ -318,7 +322,7 @@ type WorkspaceContext = {
   only in the store instances. The workspace-bound stores therefore read and
   write an in-memory backend keyed by workspace, the same pattern as the memory
   side of `AccountStore`'s `Documents`. Each `createServer` call creates and
-  owns its backend, exactly as each server owns its stores today, so two
+  owns its backend, including its own generated default workspace id, exactly as each server owns its stores today, so two
   servers in one process (as in the test suites) never share settings. The
   backend holds saved settings only: environment providers and the `FAILOVER_*`
   seed stay a per-server overlay applied when the registry is built, never
@@ -337,8 +341,8 @@ type WorkspaceContext = {
 - **Writes.** They no longer merge from process memory. Adding a model is a
   field-level update on the connection document (`$addToSet` on
   `config.models`, `$set` for a new key or Cloudflare account) filtered by
-  `{ _id, workspaceId, "config.kind" }`, where for `default` the workspace
-  clause is `{ $in: ["default", null] }` so connections saved before this
+  `{ _id, workspaceId, "config.kind" }`, where for the default workspace the
+  clause is `{ $in: [<default workspace id>, null] }` so connections saved before this
   change match. The update also sets `workspaceId`, and a zero matched count is
   a 404, never a silent in-memory success. Creating a connection is an insert,
   so a duplicate name returns 409 from the unique `_id`. Routing writes
@@ -413,8 +417,8 @@ type WorkspaceContext = {
 ### 5.5 Health and initialization
 
 `initialize()` (and `initializePersistence` in the Worker) becomes: ensure
-indexes, ensure the `default` workspace document and the `default` routing
-document (both `$setOnInsert` upserts), and read the default workspace's
+indexes, ensure the `gateway_instance` pointer, the default workspace document,
+and the default routing document (all `$setOnInsert` upserts), and read the default workspace's
 provider documents once to prove they load. The `initialized` flag on
 `/healthz` keeps its meaning (saved settings for the default workspace
 readable, routing document present), so `pnpm check:deployment` needs no
@@ -475,7 +479,7 @@ New:
 
 | Route | Who | Purpose |
 | --- | --- | --- |
-| `GET /v1/workspaces` | Any signed-in member (tokens get 403) | Accessible workspaces with the caller's role. |
+| `GET /v1/workspaces` | Any signed-in member (tokens get 403) | Accessible workspaces with the caller's role and `isDefault`. Ships in W1, read-only, so the dashboard and tests can learn the default workspace's id. |
 | `POST /v1/workspaces` | Org owner/admin | Create `{ name, description? }`. The server assigns a UUID id. |
 | `PATCH /v1/workspaces/:workspace` | Org owner/admin, workspace admin | Update `{ name, description }` with `$set` and a `revision` check. |
 | `POST /v1/workspaces/:workspace/archive`, `POST /v1/workspaces/:workspace/unarchive` | Org owner/admin | Soft archive. `default` cannot be archived. |
@@ -489,7 +493,7 @@ Changed:
 - `POST /v1/team`, `POST /v1/team/invites`, `POST /v1/invites/accept` accept and
   apply an optional `workspace` membership.
 - **Breaking (W1):** every workspace-scoped route moves under
-  `/v1/:workspace/`, e.g. `POST /v1/default/chat`, `GET /v1/<id>/models`,
+  `/v1/:workspace/`, e.g. `POST /v1/<id>/chat`, `GET /v1/<id>/models`,
   `PUT /v1/<id>/routing`, `GET /v1/<id>/telemetry/analytics`, and
   `/v1/<id>/api-tokens`. The unprefixed forms are removed. The dashboard and
   the README examples move in the same PR; `pnpm check:deployment` keeps
@@ -499,7 +503,9 @@ Changed:
   same single-document write as the change, with the acting member.
 - Token list, create, roll, and revoke operate on the path's workspace only.
   `workspaceId` is set from the path at creation and is not accepted in any
-  body.
+  body. Token responses include `workspaceId`, and the token dialog shows the
+  base path (`https://…/v1/<id>/`) to copy, so a token client knows which
+  path to call.
 - `/v1/:workspace/telemetry/*` and `/v1/:workspace/providers` return only that
   workspace's data.
 
@@ -522,11 +528,11 @@ confirmation flow.
   `team`, `profile`, and `workspaces` stay instance-level (`#/team`). Legacy
   `#/models`-style fragments redirect to the last-used workspace (a
   `localStorage` convenience, wrapped in try/catch like the sidebar setting) or
-  `default`. An unknown or inaccessible id falls back the same way with a
+  the default workspace. An unknown or inaccessible id falls back the same way with a
   notice.
 - **Requests.** The workspace API helpers in `api.ts` take the workspace id and
-  build `/v1/<id>/…` paths. W1 switches every existing call to `/v1/default/…`
-  so the dashboard keeps working when the unprefixed routes are removed; W6
+  build `/v1/<id>/…` paths. W1 switches every existing call to the default
+  workspace's path, reading its id from `GET /v1/workspaces`, so the dashboard keeps working when the unprefixed routes are removed; W6
   passes the selected workspace.
 - **No cross-workspace bleed.** Workspace views render with
   `key={workspace.id}`, so switching unmounts the old view; a response for the
@@ -551,7 +557,7 @@ The work ships in two halves:
 1. **Expand (W1–W4).** Path routes, scoping, per-request configuration, token
    binding, telemetry partitioning, and memberships ship while only `default`
    can exist. Tests create extra workspaces through `WorkspaceStore` directly.
-   Apart from the new `/v1/default/…` paths in W1 and the D4 permission change
+   Apart from the new `/v1/<id>/…` paths in W1 and the D4 permission change
    in W4, behavior is unchanged.
 2. **Enable (W5–W6).** The lifecycle API and dashboard let people create a
    second workspace.
@@ -568,7 +574,7 @@ Everything else relies on the permanent read rules in 4.2:
 | Tokens | Read as `default` while `workspaceId` is missing; new tokens set it. A token created by an older replica during a rolling deploy keeps working. |
 | Users | A `member` with no `workspaces` field is a member of `default`, so existing members keep their access, including members added by an older replica. Owners and admins need nothing. |
 | Routing | The `default` document already has the right `_id`; a missing `revision` counts as 0. |
-| Telemetry | Query-time `$in: ["default", null]`. |
+| Telemetry | Query-time `$in: [<default workspace id>, null]`. |
 
 This removes the failure modes a rewrite would bring: a crash between copying
 and deleting a document, a late migrator overwriting a newer write, and an
@@ -580,7 +586,7 @@ would then hide.
 - The W1 path change ships the dashboard and the API in one deployable (one
   Worker, or one compose service), so a rollback reverts both together for
   new page loads. A tab that already loaded the W1 dashboard keeps calling
-  `/v1/default/…` after a rollback to pre-W1 code and gets 404s until it
+  the new paths after a rollback to pre-W1 code and gets 404s until it
   reloads. No compatibility aliases are kept (D2), so that tab needs a reload.
   This is accepted because the gateway has no external users yet. API clients
   outside the dashboard must switch paths with W1, and back on a rollback;
@@ -603,7 +609,7 @@ Decided by the owner on 2026-11-08. The PR sequence follows these.
 | # | Question | Decision | Affects |
 | --- | --- | --- | --- |
 | D1 | Is a workspace the business-unit boundary from the MVP plan (Hyphen, OSS, Film, Personal)? | **Yes.** The MVP's `BusinessUnit` enum becomes `workspaceId`, and cost rollups go by workspace. It stays one organization, so the design doc's multi-tenancy non-goal stands. | W1 naming, MVP PRs 4–15 |
-| D2 | How does a request name its workspace? | **In the path: `/v1/:workspace/<resource>`**, keyed by workspace id (`default`, or a UUID). The unprefixed resource routes are removed in W1 as an accepted breaking change, because the gateway has no external users yet. Tokens must use their own workspace's path. There is no workspace header and no slug. | W1 |
+| D2 | How does a request name its workspace? | **In the path: `/v1/:workspace/<resource>`**, keyed by workspace UUID. The default workspace gets a generated UUID too, so no name appears in a URI (owner follow-up). The unprefixed resource routes are removed in W1 as an accepted breaking change, because the gateway has no external users yet. Tokens must use their own workspace's path. There is no workspace header and no slug. | W1 |
 | D3 | May workspace admins create and manage tokens? | **No.** API and agent tokens stay with org owners and admins, because tokens outlive the member who created them. | W3, W4 |
 | D4 | May workspace members add connections and change keys? | **No, workspace admins and org owners/admins only.** Members can read connections, use models, and edit routing. This is a behavior change for existing Members, documented in W4. | W4 |
 | D5 | Do environment providers belong only to `default`? | **Yes.** Other workspaces start empty, so no workspace can spend another's keys. | W2b |
@@ -618,7 +624,7 @@ Each is a test, not a review note:
    the access hook; no handler reads a workspace id from a body, query string,
    or path parameter directly.
 2. The workspace comes only from the `:workspace` path segment, which matches
-   only `default` or a UUID, and every route that names a workspace resolves
+   only a UUID, and every route that names a workspace resolves
    and authorizes it: a workspace admin of A targeting B gets 404.
 3. A token's `workspaceId` is fixed at creation; update and roll cannot change
    it, and the token used under another workspace's path returns 403.
@@ -692,20 +698,23 @@ evidence in the description.
 
 ### W1: Workspace foundation and path routes (breaking API change)
 
-- Common types; `WorkspaceStore` over `gateway_workspaces` with the `default`
-  upsert, `actions`, and `ensureIndexes`.
+- Common types; `WorkspaceStore` over `gateway_workspaces`; the
+  `gateway_instance` pointer and the default workspace's creation under a
+  generated UUID; `actions`; `ensureIndexes`; read-only `GET /v1/workspaces`.
 - Route scope table with `HEAD` normalization, `onRoute` completeness check,
   and `request.workspace` resolution from the path. Workspace-scoped routes
-  move under `/v1/:workspace/` (constrained to `default` or a UUID) and the
+  move under `/v1/:workspace/` (constrained to a UUID) and the
   unprefixed forms are removed; the `routePermissions` keys move to the same
-  `/v1/:workspace/…` forms. Only `default` resolves; any other id is 404.
+  `/v1/:workspace/…` forms. Only the default workspace resolves; any other id is 404.
 - The dashboard's API helpers, the README examples, and every test move to
-  `/v1/default/…` in the same PR, so the deployed dashboard keeps working.
+  the default workspace's `/v1/<id>/…` paths in the same PR (tests read the id
+  through a helper), so the deployed dashboard keeps working.
 
-**Accept:** every existing suite passes after its paths move to
-`/v1/default/…`, with no other change in behavior; completeness test;
-unprefixed resource routes return 404; two servers starting concurrently create
-one `default` document.
+**Accept:** every existing suite passes after its paths move to the default
+workspace's `/v1/<id>/…`, with no other change in behavior; completeness test;
+unprefixed resource routes and a non-UUID workspace segment return 404; two
+servers starting concurrently agree on one default workspace id and create one
+default workspace document.
 
 ### W2a: Per-request configuration (default only)
 
@@ -759,12 +768,12 @@ on workspace routes but can still sign in and change their password.
 
 ### W5: Workspace lifecycle API (the one-way door)
 
-- `GET/POST /v1/workspaces`, `PATCH /v1/workspaces/:workspace`, archive and
-  unarchive.
+- `POST /v1/workspaces`, `PATCH /v1/workspaces/:workspace`, archive and
+  unarchive (`GET /v1/workspaces` shipped in W1).
 - README: workspaces section, endpoint list, and the rollback warning.
 
 **Accept:** the full isolation matrix passes through public APIs only; new
-workspaces get server-generated UUIDs; `default` cannot be archived.
+workspaces get server-generated UUIDs; the default workspace (`isDefault`) cannot be archived.
 
 ### W6: Dashboard
 
@@ -787,7 +796,7 @@ follow.
 
 - **Business units.** With D1, `Agent.businessUnit` becomes `workspaceId`, and
   `CostRollup.by: "businessUnit"` becomes `"workspace"`. Platform-wide costs
-  (Captain, the gateway itself) belong to `default` or a dedicated `platform`
+  (Captain, the gateway itself) belong to the default workspace or a dedicated `platform`
   workspace.
 - **New MVP records** (agents, scope grants, routines, jobs, approvals,
   incidents, stored objects, budgets) carry `workspaceId` from their first PR,
