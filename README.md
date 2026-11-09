@@ -113,9 +113,9 @@ Open **Team** to manage access:
 
 | Role | Access |
 | --- | --- |
-| Owner | Everything, including granting, changing, and removing owners. |
-| Admin | Everything except owner accounts and owner invites. |
-| Member | Dashboard, Models, and Routing; read-only Team. No API or agent tokens, because tokens outlive the member who created them. |
+| Owner | Everything in every workspace, including granting, changing, and removing owners. |
+| Admin | Everything in every workspace except owner accounts and owner invites. |
+| Member | Only the workspaces they are added to, with a workspace role there; read-only Team. No API or agent tokens, because tokens outlive the member who created them. |
 
 There is always at least one owner, and nobody can remove themselves. Changes
 that remove an owner take a short lock on the setup record, so two owners
@@ -130,10 +130,53 @@ runs again. If a configured
 MongoDB is unreachable, sign-in and sessions fail with HTTP 503, and requests
 without credentials still get 401.
 
+## Workspaces
+
+A workspace is an isolation unit inside one gateway: it has its own provider
+connections and keys, routing, API and agent tokens, and usage telemetry.
+Nothing configured in one workspace is readable, routable, or billable from
+another. Everything that existed before workspaces belongs to the **Default**
+workspace, and keys set as environment variables belong to Default only. A new
+workspace starts empty. See the [workspaces plan](docs/WORKSPACES_PLAN.md) for
+the design.
+
+Every workspace-scoped API route names its workspace in the path:
+`/v1/<workspace id>/models`, `/v1/<workspace id>/chat`, and so on. The id is a
+UUID, including for Default. Find it in **Workspaces**, in the token dialog, or
+with `GET /v1/workspaces`. An API token belongs to one workspace and gets 403
+under any other workspace's path. An unknown workspace and one you cannot open
+both return 404.
+
+Team accounts stay gateway-wide. Owners and admins are admins of every
+workspace. Members open only the workspaces they are added to, with a
+workspace role:
+
+| Workspace role | Access |
+| --- | --- |
+| Admin | Models and connections (including keys), routing, the dashboard, renaming the workspace, and adding or removing its members. |
+| Member | The dashboard, routing, and read-only connections. |
+
+Only owners and admins create, archive, and unarchive workspaces, and manage
+API and agent tokens. Archiving refuses every token and session request to the
+workspace on the next request and keeps its data; Default cannot be archived.
+Open **Workspaces** in the sidebar to create, rename, archive, and manage
+members, and use the switcher at the top of the sidebar to change workspace.
+**Team** shows each member's workspaces, and **Add member** and **Invite
+member** grant a workspace to new members. Granting, changing, and removing
+workspace access are recorded in a membership history.
+
+Workspace configuration is read from MongoDB on every request, so a change
+made through one replica or Worker isolate applies on the next request
+everywhere. Rolling back to a release from before workspaces is safe only
+while Default is the only workspace: older releases merge every workspace's
+connections and accept every token gateway-wide.
+
 ## Gateway
 
-The dashboard has a collapsible sidebar with **Dashboard**, **Models**,
-**Routing**, **API Tokens**, **Agent Tokens**, and **Team** views.
+The dashboard has a collapsible sidebar with a workspace switcher and
+**Dashboard**, **Models**, **Routing**, **API Tokens**, **Agent Tokens**,
+**Workspaces**, and **Team** views. The first five show the selected
+workspace, and their URLs name it (`#/w/<workspace id>/models`).
 In **Models**, search active models or choose **Add model** to connect Google
 Gemini, xAI Grok, Anthropic Claude, OpenAI, Groq, Mistral, DeepSeek, OpenRouter,
 Cloudflare Workers AI, or Jev (TypeSafe). Choose a catalog suggestion or enter a
@@ -195,35 +238,38 @@ through environment variables:
 - `POST /v1/setup` — first-run only: `{ email, name, password }` creates the first owner and returns `{ token, expiresAt, user }`. Requires `Authorization: Bearer <SETUP_TOKEN>` when it is set; returns 409 once setup is complete. `GET /v1/setup/token` checks a setup token (204) before the form is shown.
 - `POST /v1/auth/session` — public sign-in with `{ email, password }`; returns `{ token, expiresAt, user }`. Send `Authorization: Bearer <token>` on later requests. `GET` returns the current identity; `DELETE` signs out that session.
 - `PUT /v1/auth/password` — signed-in member: `{ currentPassword, newPassword }`.
+- `GET /v1/workspaces` — signed-in members: the workspaces you can open, with your role in each, `isDefault`, and whether you can create workspaces.
+- `POST /v1/workspaces` — owners/admins: create `{ name, description? }`; the server assigns a UUID. `GET /v1/workspaces/:workspace` returns one workspace with its lifecycle history; `PATCH` updates `{ name, description }` (owners, admins, and workspace admins); `POST /v1/workspaces/:workspace/archive` and `/unarchive` are for owners and admins.
+- `GET /v1/:workspace/members` — workspace admins and above: who can open the workspace and the latest 100 membership changes. `PUT /v1/:workspace/members/:userId` sets `{ role }` (`admin` or `member`) for an existing member account; `DELETE` removes their access.
 - `POST /v1/invites/preview` and `POST /v1/invites/accept` — public: `{ token }` shows an invite's role and inviter; `{ token, email, name, password }` redeems it once and returns a session.
-- `GET /v1/team` — members, the latest 50 invites, and whether the caller can manage the team. Signed-in members only; API tokens get 403.
-- `POST /v1/team` — owners/admins: add `{ email, name, role, password }`. `PATCH /v1/team/:id` updates `{ name, role }`; `PUT /v1/team/:id/password` sets `{ password }` and signs that member out; `DELETE /v1/team/:id` removes them.
-- `POST /v1/team/invites` — owners/admins: `{ role, ttlDays }` with TTL `1`, `7`, or `30`; returns `{ invite, token }` once. `DELETE /v1/team/invites/:id` revokes a pending link.
+- `GET /v1/team` — members (each with their workspace memberships), the latest 50 invites, and whether the caller can manage the team. Signed-in members only; API tokens get 403.
+- `POST /v1/team` — owners/admins: add `{ email, name, role, password, workspace? }`, where `workspace` is `{ workspaceId, role }` for a member. `PATCH /v1/team/:id` updates `{ name, role }`; `PUT /v1/team/:id/password` sets `{ password }` and signs that member out; `DELETE /v1/team/:id` removes them.
+- `POST /v1/team/invites` — owners/admins: `{ role, ttlDays, workspace? }` with TTL `1`, `7`, or `30`; returns `{ invite, token }` once. `DELETE /v1/team/invites/:id` revokes a pending link.
 
-- `GET /v1/api-tokens` — token metadata, latest 100 lifecycle actions, persistence and authentication mode; never returns secrets or hashes.
-- `POST /v1/api-tokens` — create with `{ name, description, ttlDays, permissions? }`, where TTL is `1`, `7`, `30`, `180`, or `"never"`. Returns `{ token, secret }` once.
-- `PATCH /v1/api-tokens/:id` — update `{ name, description, permissions? }`. Omitted permissions stay unchanged; `[]` removes all grants.
-- `POST /v1/api-tokens/:id/roll` — issue a new secret with `{ ttlDays, previousTokenTtlSeconds }`. Overlap is 0–2592000 seconds (30 days), capped at the previous value's original expiry.
-- `DELETE /v1/api-tokens/:id` — revoke the token and all overlapping values; retains its metadata and action history.
+- `GET /v1/:workspace/api-tokens` — token metadata, latest 100 lifecycle actions, persistence and authentication mode; never returns secrets or hashes.
+- `POST /v1/:workspace/api-tokens` — create with `{ name, description, ttlDays, permissions? }`, where TTL is `1`, `7`, `30`, `180`, or `"never"`. Returns `{ token, secret }` once.
+- `PATCH /v1/:workspace/api-tokens/:id` — update `{ name, description, permissions? }`. Omitted permissions stay unchanged; `[]` removes all grants.
+- `POST /v1/:workspace/api-tokens/:id/roll` — issue a new secret with `{ ttlDays, previousTokenTtlSeconds }`. Overlap is 0–2592000 seconds (30 days), capped at the previous value's original expiry.
+- `DELETE /v1/:workspace/api-tokens/:id` — revoke the token and all overlapping values; retains its metadata and action history.
 
-- `GET /v1/agent-tokens` — agent token metadata, latest 100 lifecycle actions, persistence and authentication mode.
-- `POST /v1/agent-tokens` — create an agent credential with `{ name, description, ttlDays, permissions? }`. Returns `{ token, secret }` once; omitted permissions grant no access.
-- `PATCH /v1/agent-tokens/:id` — update `{ name, description, permissions? }`; omitted permissions stay unchanged and `[]` removes all grants.
-- `POST /v1/agent-tokens/:id/roll` — rotate with `{ ttlDays, previousTokenTtlSeconds }`, using the same TTL and overlap choices as API tokens.
-- `DELETE /v1/agent-tokens/:id` — revoke all current and overlapping values, retaining metadata and history.
+- `GET /v1/:workspace/agent-tokens` — agent token metadata, latest 100 lifecycle actions, persistence and authentication mode.
+- `POST /v1/:workspace/agent-tokens` — create an agent credential with `{ name, description, ttlDays, permissions? }`. Returns `{ token, secret }` once; omitted permissions grant no access.
+- `PATCH /v1/:workspace/agent-tokens/:id` — update `{ name, description, permissions? }`; omitted permissions stay unchanged and `[]` removes all grants.
+- `POST /v1/:workspace/agent-tokens/:id/roll` — rotate with `{ ttlDays, previousTokenTtlSeconds }`, using the same TTL and overlap choices as API tokens.
+- `DELETE /v1/:workspace/agent-tokens/:id` — revoke all current and overlapping values, retaining metadata and history.
 
-- `POST /v1/chat` — proxy a chat request; body `{ model, messages, stream?, temperature?, maxTokens? }` where `model` is `connection/model`, `auto`, or `pool/<id>`. Returns the assistant message plus `usage` token counts; with `stream: true` responds with SSE (`text-delta` events, then `finish` with usage).
-- `GET /v1/models` — routable models and providers.
-- `POST /v1/models` — add an active model; body `{ provider, connectionId?, createConnection?, model, apiKey?, accountId? }` (provider IDs: `google`, `xai`, `anthropic`, `openai`, `groq`, `mistral`, `deepseek`, `openrouter`, `cloudflare`, `typesafe`). Omit `connectionId` to use the default provider connection. Set `createConnection: true` to reject an existing name with HTTP 409. The key is required for a new connection and optional for subsequent additions to that connection. Repeated additions are idempotent; replies contain only the model ID and provider.
-- `GET /v1/providers` — supported provider names, a `connections` list with IDs, provider kinds, key-configured flags and Cloudflare account IDs, and the settings persistence mode; never includes credentials.
+- `POST /v1/:workspace/chat` — proxy a chat request; body `{ model, messages, stream?, temperature?, maxTokens? }` where `model` is `connection/model`, `auto`, or `pool/<id>`. Returns the assistant message plus `usage` token counts; with `stream: true` responds with SSE (`text-delta` events, then `finish` with usage).
+- `GET /v1/:workspace/models` — routable models and providers.
+- `POST /v1/:workspace/models` — add an active model; body `{ provider, connectionId?, createConnection?, model, apiKey?, accountId? }` (provider IDs: `google`, `xai`, `anthropic`, `openai`, `groq`, `mistral`, `deepseek`, `openrouter`, `cloudflare`, `typesafe`). Omit `connectionId` to use the default provider connection. Set `createConnection: true` to reject an existing name with HTTP 409. The key is required for a new connection and optional for subsequent additions to that connection. Repeated additions are idempotent; replies contain only the model ID and provider.
+- `GET /v1/:workspace/providers` — supported provider names, a `connections` list with IDs, provider kinds, key-configured flags and Cloudflare account IDs, and the settings persistence mode; never includes credentials.
 - `GET /v1/models/catalog` — the full multi-provider model catalog (refreshed daily at runtime; bundled `models.json` as the fallback).
-- `GET /v1/failover` — current failover policy.
-- `PUT /v1/failover` — update the failover policy; body `{ enabled?, targets?, timeoutMs? }` (partial updates keep omitted fields).
-- `GET /v1/routing` — routing `{ config, persistence }`, including Auto selection, pools, the default failover policy, and model/pool rules.
-- `PUT /v1/routing` — replace the full routing configuration; returns `{ config, persistence }`. Invalid settings are rejected before activation.
-- `GET /v1/telemetry/summary` — usage aggregates (MongoDB when available, in-memory otherwise; `?source=memory|mongodb` to force).
-- `GET /v1/telemetry/events` — recent gateway events and sink status.
-- `GET /v1/telemetry/analytics?from=<ISO timestamp>&to=<ISO timestamp>` — date-filtered model, connection, caller, and time-series analytics. Optional `model`, `provider` (connection ID), and `caller` filters apply to the entire report. Ranges are start-inclusive, end-exclusive, and limited to 90 days. Requires `telemetry:read` when API authentication is enabled.
+- `GET /v1/:workspace/failover` — current failover policy.
+- `PUT /v1/:workspace/failover` — update the failover policy; body `{ enabled?, targets?, timeoutMs? }` (partial updates keep omitted fields).
+- `GET /v1/:workspace/routing` — routing `{ config, persistence }`, including Auto selection, pools, the default failover policy, and model/pool rules.
+- `PUT /v1/:workspace/routing` — replace the full routing configuration; returns `{ config, persistence }`. Invalid settings are rejected before activation.
+- `GET /v1/:workspace/telemetry/summary` — usage aggregates (MongoDB when available, in-memory otherwise; `?source=memory|mongodb` to force).
+- `GET /v1/:workspace/telemetry/events` — recent gateway events and sink status.
+- `GET /v1/:workspace/telemetry/analytics?from=<ISO timestamp>&to=<ISO timestamp>` — date-filtered model, connection, caller, and time-series analytics. Optional `model`, `provider` (connection ID), and `caller` filters apply to the entire report. Ranges are start-inclusive, end-exclusive, and limited to 90 days. Requires `telemetry:read` when API authentication is enabled.
 
 ```bash
 # Host-run API against the compose services
@@ -232,7 +278,8 @@ OPENAI_COMPAT_BASE_URL=http://localhost:11434/v1 \
 MONGODB_URI='mongodb://autonomous:autonomous@localhost:27017/autonomous?authSource=admin' \
 pnpm --filter @autonomo.us/server dev
 
-curl -X POST http://localhost:3000/v1/chat \
+# WORKSPACE_ID: the workspace's UUID, from Workspaces or GET /v1/workspaces.
+curl -X POST http://localhost:3000/v1/$WORKSPACE_ID/chat \
   -H "content-type: application/json" \
   -d '{"model": "local/llama3.3", "messages": [{"role": "user", "content": "Hello"}]}'
 ```
@@ -250,7 +297,8 @@ which member acted. Generated tokens receive the permissions chosen in Create/Ed
 token. `/health` stays public. Entries from before team accounts may still show
 the retired owner credential or local admin as their actor.
 
-Permissions apply across the gateway for this initial version:
+A token belongs to the workspace it was created in, and its permissions apply
+within that workspace:
 
 | Resource | Choices | Access |
 | --- | --- | --- |
@@ -316,14 +364,14 @@ failover. Add `typesafe/jev-latest` using a key from the
 [TypeSafe console](https://console.typesafe.ai). The adapter calls the official
 [System One API](https://docs.typesafe.ai/api/system-one).
 
-`POST /v1/decisions` accepts native text or JSON state and named `noul`,
+`POST /v1/:workspace/decisions` accepts native text or JSON state and named `noul`,
 `choice`, or `score` questions. It returns the provider's model name, typed
 answers (including confidence/probabilities), and usage. Requests time out after
 30 seconds. Experimental image/Box inputs and long-context opt-ins are not yet
 supported. Decisions contribute to gateway usage and telemetry.
 
 ```sh
-curl http://localhost:3000/v1/decisions -H 'Content-Type: application/json' -d '{
+curl http://localhost:3000/v1/$WORKSPACE_ID/decisions -H 'Content-Type: application/json' -d '{
   "model": "typesafe/jev-latest",
   "state": "I was charged twice this month.",
   "questions": {
@@ -431,7 +479,7 @@ For example, after configuring these model IDs on your connections:
 }
 ```
 
-PUT this object to `/v1/routing`. Auto can choose the coding pool, distribute
+PUT this object to `/v1/<workspace id>/routing`. Auto can choose the coding pool, distribute
 its requests across the two OpenAI connections, and fall back to Opus if both
 pool members fail. Use provider-native IDs available to your accounts; these
 example IDs are not an entitlement check.
@@ -446,7 +494,7 @@ individually in telemetry, so request totals include that extra work.
 
 Routing settings are stored in MongoDB's `gateway_routing` collection when
 `MONGODB_URI` is configured, otherwise in memory until restart. The legacy
-`/v1/failover` endpoint and dashboard card update the same default policy and
+`/v1/:workspace/failover` endpoint and dashboard card update the same default policy and
 persist it too. Saved policies override environment defaults on startup.
 On first startup, the gateway saves the default configuration if it is missing.
 This creates the database named in `MONGODB_URI` and the routing collection;
@@ -465,7 +513,7 @@ in the API and is configurable at runtime from the dashboard's **Failover
 policy** card or directly over HTTP:
 
 ```bash
-curl -X PUT http://localhost:3000/v1/failover \
+curl -X PUT http://localhost:3000/v1/$WORKSPACE_ID/failover \
   -H "content-type: application/json" \
   -d '{"enabled": true, "targets": ["anthropic/claude-sonnet-5", "local/llama3.3"], "timeoutMs": 15000}'
 ```

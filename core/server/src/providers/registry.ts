@@ -61,6 +61,17 @@ export class ProviderRegistry {
 		return this;
 	}
 
+	/**
+	 * A new registry whose own map holds the same provider objects, unmodified,
+	 * so handlers keep their receiver. Registering into the copy never changes
+	 * this registry, which is how a server keeps an injected registry intact.
+	 */
+	snapshot(): ProviderRegistry {
+		const copy = new ProviderRegistry();
+		for (const provider of this.providers.values()) copy.register(provider);
+		return copy;
+	}
+
 	listProviders(): Array<{ name: string; kind: string }> {
 		return [...this.providers.values()].map(({ name, kind }) => ({
 			name,

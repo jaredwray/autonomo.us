@@ -1,4 +1,8 @@
-import type { AuthStatus, CurrentSession } from "@autonomo.us/common";
+import type {
+	AuthStatus,
+	CurrentSession,
+	WorkspaceAccess,
+} from "@autonomo.us/common";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AgentTokensView } from "./AgentTokensView.js";
 import { ApiTokensView } from "./ApiTokensView.js";
@@ -13,6 +17,7 @@ import {
 	credentialKind,
 	fetchAuthStatus,
 	fetchCurrentSession,
+	setCurrentWorkspace,
 	signOut,
 } from "./api.js";
 import { Dashboard } from "./Dashboard.js";
@@ -21,23 +26,76 @@ import { ModelsView } from "./ModelsView.js";
 import { ProfileView } from "./ProfileView.js";
 import { RoutingView } from "./RoutingView.js";
 import { TeamView } from "./TeamView.js";
+import { WorkspacesView } from "./WorkspacesView.js";
 
 const logoMark = new URL("./assets/logo-mark.svg", import.meta.url).href;
 
-const viewLabels = {
+/** Views of one workspace's data, at `#/w/<workspace id>/<view>`. */
+const workspaceViews = {
 	dashboard: "Dashboard",
 	models: "Models",
 	routing: "Routing",
 	"api-tokens": "API Tokens",
 	"agent-tokens": "Agent Tokens",
-	team: "Team",
 };
+/** Views of the whole gateway, at `#/<view>`. */
+const instanceViews = { workspaces: "Workspaces", team: "Team" };
+const viewLabels = { ...workspaceViews, ...instanceViews };
+type WorkspaceView = keyof typeof workspaceViews;
 type View = keyof typeof viewLabels | "profile";
-function currentView(): View {
+type Route = { view: View; workspaceId: string | null };
+const isWorkspaceView = (view: View): view is WorkspaceView =>
+	Object.hasOwn(workspaceViews, view);
+function currentRoute(): Route {
+	const scoped = /^#\/w\/([^/]+)(?:\/([\w-]+))?$/.exec(window.location.hash);
+	if (scoped) {
+		const view = (scoped[2] ?? "dashboard") as View;
+		return {
+			view: isWorkspaceView(view) ? view : "dashboard",
+			workspaceId: decodeURIComponent(scoped[1]),
+		};
+	}
 	const view = window.location.hash.slice(2);
-	return view === "profile" || Object.hasOwn(viewLabels, view)
-		? (view as View)
-		: "dashboard";
+	// A pre-workspace link such as #/models opens in the remembered workspace.
+	return {
+		view:
+			view === "profile" || Object.hasOwn(viewLabels, view)
+				? (view as View)
+				: "dashboard",
+		workspaceId: null,
+	};
+}
+const href = (view: View, workspaceId: string | null) =>
+	isWorkspaceView(view) && workspaceId
+		? `#/w/${encodeURIComponent(workspaceId)}/${view}`
+		: `#/${view}`;
+const WORKSPACE_KEY = "autonomous.workspace";
+function rememberedWorkspace(): string | null {
+	try {
+		return window.localStorage.getItem(WORKSPACE_KEY);
+	} catch {
+		return null;
+	}
+}
+function rememberWorkspace(id: string) {
+	try {
+		window.localStorage.setItem(WORKSPACE_KEY, id);
+	} catch {}
+}
+/** The workspace to show: the route's, else the remembered one, else the default. */
+function chooseWorkspace(
+	workspaces: WorkspaceAccess[],
+	requested: string | null,
+): WorkspaceAccess | null {
+	const open = workspaces.filter((workspace) => !workspace.archivedAt);
+	const remembered = rememberedWorkspace();
+	return (
+		open.find((workspace) => workspace.id === requested) ??
+		open.find((workspace) => workspace.id === remembered) ??
+		open.find((workspace) => workspace.isDefault) ??
+		open[0] ??
+		null
+	);
 }
 /** Invite secrets stay in the URL fragment, which browsers never send to servers. */
 function inviteToken() {
@@ -134,7 +192,24 @@ export function App() {
 			document.removeEventListener("keydown", handleEscape);
 		};
 	}, []);
-	const [view, setView] = useState(currentView);
+	const [route, setRoute] = useState(currentRoute);
+	const [switcherOpen, setSwitcherOpen] = useState(false);
+	const switcherRef = useRef<HTMLDivElement>(null);
+	useEffect(() => {
+		const dismiss = (event: PointerEvent) => {
+			if (!switcherRef.current?.contains(event.target as Node))
+				setSwitcherOpen(false);
+		};
+		const closeOnEscape = (event: KeyboardEvent) => {
+			if (event.key === "Escape") setSwitcherOpen(false);
+		};
+		document.addEventListener("pointerdown", dismiss);
+		document.addEventListener("keydown", closeOnEscape);
+		return () => {
+			document.removeEventListener("pointerdown", dismiss);
+			document.removeEventListener("keydown", closeOnEscape);
+		};
+	}, []);
 	const [collapsed, setCollapsed] = useState(() => {
 		try {
 			const saved = window.localStorage.getItem("autonomous.sidebar.collapsed");
@@ -145,17 +220,40 @@ export function App() {
 	});
 	useEffect(() => {
 		const navigate = () => {
-			setView(currentView());
+			setRoute(currentRoute());
 			setInvite(inviteToken());
 		};
 		window.addEventListener("hashchange", navigate);
 		return () => window.removeEventListener("hashchange", navigate);
 	}, []);
-	const go = (next: View) => {
-		window.history.replaceState(null, "", `#/${next}`);
-		setView(next);
+	const go = (next: View, workspaceId: string | null = route.workspaceId) => {
+		window.history.replaceState(null, "", href(next, workspaceId));
+		setRoute({ view: next, workspaceId });
 		setInvite(null);
 	};
+	/** Re-reads the session after a workspace is created, renamed, or archived. */
+	const refreshSession = useCallback(async () => {
+		try {
+			const session = await fetchCurrentSession();
+			setGate((current) =>
+				current.state === "ready" ? { ...current, session } : current,
+			);
+		} catch {}
+	}, []);
+	const workspaces = gate.state === "ready" ? gate.session.workspaces : [];
+	const selected = chooseWorkspace(workspaces, route.workspaceId);
+	// Workspace calls go to the selected workspace's paths.
+	setCurrentWorkspace(selected?.id ?? null);
+	const wrongWorkspace = Boolean(
+		route.workspaceId && selected && route.workspaceId !== selected.id,
+	);
+	useEffect(() => {
+		if (gate.state !== "ready" || !selected) return;
+		rememberWorkspace(selected.id);
+		// Canonical URL: a workspace view always names its workspace.
+		if (isWorkspaceView(route.view) && route.workspaceId !== selected.id)
+			window.history.replaceState(null, "", href(route.view, selected.id));
+	}, [gate.state, selected, route]);
 	const toggle = () => {
 		const next = !collapsed;
 		setCollapsed(next);
@@ -187,12 +285,17 @@ export function App() {
 			<SetupView
 				status={gate.status}
 				onComplete={(session) => {
-					go("team");
+					go("team", null);
 					setGate({
 						state: "ready",
 						status: { ...gate.status, setupComplete: true },
-						session: { user: session.user, expiresAt: session.expiresAt },
+						session: {
+							user: session.user,
+							expiresAt: session.expiresAt,
+							workspaces: [],
+						},
 					});
+					void refreshSession();
 				}}
 			/>
 		);
@@ -220,7 +323,11 @@ export function App() {
 	const allowed = (item: View) =>
 		user.role !== "member" ||
 		(item !== "api-tokens" && item !== "agent-tokens");
-	const shown = allowed(view) ? view : "dashboard";
+	const shown = allowed(route.view) ? route.view : "dashboard";
+	const openWorkspaces = workspaces.filter(
+		(workspace) => !workspace.archivedAt,
+	);
+	const workspaceId = selected?.id ?? null;
 	return (
 		<div className={`app-shell ${collapsed ? "sidebar-collapsed" : ""}`}>
 			<button
@@ -235,25 +342,99 @@ export function App() {
 			<aside className="sidebar" id="sidebar" aria-label="Sidebar">
 				<a
 					className="sidebar-brand"
-					href="#/dashboard"
+					href={href("dashboard", workspaceId)}
 					aria-label="autonomo.us home"
 					title={collapsed ? "autonomo.us" : undefined}
 				>
 					<img src={logoMark} alt="" width="36" height="29" />
 					<span className="sidebar-label">autonomo.us</span>
 				</a>
+				{selected && (
+					<div className="workspace-switcher" ref={switcherRef}>
+						{openWorkspaces.length > 1 ? (
+							<button
+								type="button"
+								className="workspace-current"
+								aria-label={`Workspace: ${selected.name}. Switch workspace`}
+								aria-expanded={switcherOpen}
+								aria-controls="workspace-menu"
+								title={collapsed ? selected.name : undefined}
+								onClick={() => setSwitcherOpen(!switcherOpen)}
+							>
+								<span className="workspace-avatar" aria-hidden="true">
+									{selected.name.slice(0, 1).toUpperCase()}
+								</span>
+								<span className="sidebar-label workspace-name">
+									<small>Workspace</small>
+									<strong>{selected.name}</strong>
+								</span>
+								<span className="sidebar-label workspace-chevron">
+									<Icon name="chevron" />
+								</span>
+							</button>
+						) : (
+							<div
+								className="workspace-current single"
+								title={collapsed ? selected.name : undefined}
+							>
+								<span className="workspace-avatar" aria-hidden="true">
+									{selected.name.slice(0, 1).toUpperCase()}
+								</span>
+								<span className="sidebar-label workspace-name">
+									<small>Workspace</small>
+									<strong>{selected.name}</strong>
+								</span>
+							</div>
+						)}
+						{switcherOpen && (
+							<div className="workspace-menu" id="workspace-menu">
+								<p className="workspace-menu-label">Switch workspace</p>
+								{openWorkspaces.map((workspace) => (
+									<a
+										key={workspace.id}
+										href={href(
+											isWorkspaceView(shown) ? shown : "dashboard",
+											workspace.id,
+										)}
+										aria-current={
+											workspace.id === selected.id ? "true" : undefined
+										}
+										onClick={() => setSwitcherOpen(false)}
+									>
+										<span className="workspace-avatar" aria-hidden="true">
+											{workspace.name.slice(0, 1).toUpperCase()}
+										</span>
+										<span>{workspace.name}</span>
+										{workspace.id === selected.id && (
+											<span className="workspace-check">Current</span>
+										)}
+									</a>
+								))}
+								<a
+									className="workspace-manage"
+									href={`${window.location.pathname}${window.location.search}#/workspaces`}
+									onClick={() => setSwitcherOpen(false)}
+								>
+									Manage workspaces
+								</a>
+							</div>
+						)}
+					</div>
+				)}
 				<nav aria-label="Main navigation">
 					{(Object.keys(viewLabels) as (keyof typeof viewLabels)[])
 						.filter(allowed)
 						.map((item) => (
 							<a
 								key={item}
-								href={`#/${item}`}
+								href={href(item, workspaceId)}
 								className={`nav-item ${shown === item ? "active" : ""}`}
 								aria-current={shown === item ? "page" : undefined}
 								aria-label={viewLabels[item]}
 								title={collapsed ? viewLabels[item] : undefined}
-								onClick={() => setView(item)}
+								onClick={() =>
+									setRoute({ view: item, workspaceId: route.workspaceId })
+								}
 							>
 								<Icon name={item} />
 								<span className="sidebar-label">{viewLabels[item]}</span>
@@ -321,18 +502,41 @@ export function App() {
 			<main id="main-content" tabIndex={-1} className="main-content">
 				{shown === "profile" ? (
 					<ProfileView user={user} />
-				) : shown === "api-tokens" ? (
-					<ApiTokensView />
-				) : shown === "agent-tokens" ? (
-					<AgentTokensView />
-				) : shown === "models" ? (
-					<ModelsView />
-				) : shown === "routing" ? (
-					<RoutingView />
 				) : shown === "team" ? (
-					<TeamView />
+					<TeamView workspaces={workspaces} currentWorkspaceId={workspaceId} />
+				) : shown === "workspaces" ? (
+					<WorkspacesView onChanged={() => void refreshSession()} />
+				) : !selected ? (
+					<div className="dashboard">
+						<header className="dashboard-header">
+							<h1>{viewLabels[shown]}</h1>
+						</header>
+						<div className="card empty-state" role="status">
+							You don't have access to a workspace yet. Ask an owner or admin to
+							add you to one.
+						</div>
+					</div>
 				) : (
-					<Dashboard />
+					// Keyed by workspace: switching unmounts the old view, so a
+					// response for the previous workspace can never land here.
+					<div key={selected.id} className="workspace-scope-root">
+						{wrongWorkspace && (
+							<p className="banner-warning workspace-fallback" role="status">
+								That workspace isn't available. Showing {selected.name}.
+							</p>
+						)}
+						{shown === "api-tokens" ? (
+							<ApiTokensView workspace={selected} />
+						) : shown === "agent-tokens" ? (
+							<AgentTokensView workspace={selected} />
+						) : shown === "models" ? (
+							<ModelsView workspace={selected} />
+						) : shown === "routing" ? (
+							<RoutingView />
+						) : (
+							<Dashboard />
+						)}
+					</div>
 				)}
 			</main>
 		</div>

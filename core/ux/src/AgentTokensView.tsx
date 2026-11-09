@@ -34,6 +34,10 @@ const config: TokenViewConfig<AgentTokenPermission> = {
 		revoke: revokeAgentToken,
 	},
 };
-export function AgentTokensView() {
-	return <TokensView config={config} />;
+export function AgentTokensView({
+	workspace,
+}: {
+	workspace?: { id: string; name: string };
+}) {
+	return <TokensView config={config} workspace={workspace} />;
 }

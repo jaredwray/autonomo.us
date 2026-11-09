@@ -14,7 +14,7 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "../src/App.js";
 import { clearCredential } from "../src/api.js";
-import { setUpOwner } from "./session.js";
+import { defaultWorkspaceId, setUpOwner } from "./session.js";
 
 // The dashboard renders against a real gateway API server (no fetch mocks):
 // each test boots @autonomo.us/server on an ephemeral port, completes first-run
@@ -38,6 +38,8 @@ type RunningApp = {
 	url: string;
 	/** Headers for direct API calls as the signed-in owner. */
 	headers: Record<string, string>;
+	/** The default workspace, where these suites run. */
+	workspaceId: string;
 	close(): Promise<void>;
 };
 
@@ -52,10 +54,13 @@ async function startApp(config: ApiConfig = BASE_CONFIG): Promise<RunningApp> {
 		telemetry,
 		url,
 		headers: {},
+		workspaceId: "",
 		close: () => server.close(),
 	};
 	running.push(app);
-	app.headers = { authorization: `Bearer ${await setUpOwner(url)}` };
+	const token = await setUpOwner(url);
+	app.headers = { authorization: `Bearer ${token}` };
+	app.workspaceId = await defaultWorkspaceId(url, token);
 	return app;
 }
 
@@ -147,7 +152,9 @@ describe("App", () => {
 			expect(screen.getByRole("button", { name: "Refresh" })).toBeDefined(),
 		);
 		const models = await (
-			await fetch(`${app.url}/v1/models`, { headers: app.headers })
+			await fetch(`${app.url}/v1/${app.workspaceId}/models`, {
+				headers: app.headers,
+			})
 		).json();
 		expect(models.models.map((item: { id: string }) => item.id)).toEqual([
 			"openai/gpt-test",
@@ -329,7 +336,7 @@ describe("App", () => {
 			expect(
 				await screen.findByText(`${provider}/second-model is now active.`),
 			).toBeDefined();
-			const response = await fetch(`${app.url}/v1/models`, {
+			const response = await fetch(`${app.url}/v1/${app.workspaceId}/models`, {
 				headers: app.headers,
 			});
 			const text = await response.text();

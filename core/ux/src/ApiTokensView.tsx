@@ -33,7 +33,7 @@ const config: TokenViewConfig<ApiTokenPermission> = {
 	namePlaceholder: "Production gateway",
 	emptyMessage: "No API tokens yet. Create a token to connect an application.",
 	permissionHint:
-		"Applies across this gateway. Edit includes Read. Uncheck all permissions for no access. Run allows chat and decisions. Only owners and admins can manage API tokens.",
+		"Applies within this workspace. Edit includes Read. Uncheck all permissions for no access. Run allows chat and decisions. Only owners and admins can manage API tokens.",
 	permissions: API_TOKEN_PERMISSIONS,
 	permissionGroups,
 	api: {
@@ -44,6 +44,10 @@ const config: TokenViewConfig<ApiTokenPermission> = {
 		revoke: revokeApiToken,
 	},
 };
-export function ApiTokensView() {
-	return <TokensView config={config} />;
+export function ApiTokensView({
+	workspace,
+}: {
+	workspace?: { id: string; name: string };
+}) {
+	return <TokensView config={config} workspace={workspace} />;
 }

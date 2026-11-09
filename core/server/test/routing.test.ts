@@ -27,7 +27,7 @@ const base: RoutingConfig = {
 	rules: [],
 	failover: { enabled: false, targets: [], timeoutMs: 1000 },
 };
-let server: ReturnType<typeof createServer>;
+let server: ReturnType<typeof createServer> & { workspaceId: string };
 let session: string;
 let chatServer: Awaited<ReturnType<typeof startOpenAIStub>>;
 let selector: http.Server;
@@ -326,7 +326,7 @@ describe("automatic selection", () => {
 				});
 				const origin = await server.listen({ port: 0, host: "127.0.0.1" });
 				const client = new AbortController();
-				const request = fetch(`${origin}/v1/chat`, {
+				const request = fetch(`${origin}/v1/${server.workspaceId}/chat`, {
 					method: "POST",
 					headers: {
 						"content-type": "application/json",

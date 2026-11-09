@@ -3,11 +3,12 @@ import {
 	type AgentTokenPermission,
 	DEFAULT_AGENT_TOKEN_PERMISSIONS,
 } from "@autonomo.us/common";
+import type { MongoConnection } from "../mongo.js";
 import { TokenStore } from "./token-store.js";
 
 /** Separate audience and collection: agent secrets cannot authenticate as API tokens. */
 export class AgentTokenStore extends TokenStore<AgentTokenPermission> {
-	constructor(mongodbUrl?: string, now = Date.now) {
+	constructor(mongo?: string | MongoConnection, now = Date.now) {
 		super(
 			{
 				collection: "gateway_agent_tokens",
@@ -16,7 +17,7 @@ export class AgentTokenStore extends TokenStore<AgentTokenPermission> {
 				permissions: AGENT_TOKEN_PERMISSIONS,
 				defaultPermissions: DEFAULT_AGENT_TOKEN_PERMISSIONS,
 			},
-			mongodbUrl,
+			mongo,
 			now,
 		);
 	}

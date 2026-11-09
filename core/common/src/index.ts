@@ -81,3 +81,19 @@ export type {
 	UsageSummary,
 } from "./types.js";
 export { PROVIDER_NAMES } from "./types.js";
+export {
+	type CreateWorkspaceRequest,
+	type MembershipAction,
+	type SetWorkspaceMemberRequest,
+	type UpdateWorkspaceRequest,
+	WORKSPACE_ROLES,
+	type Workspace,
+	type WorkspaceAccess,
+	type WorkspaceAction,
+	type WorkspaceDetails,
+	type WorkspaceList,
+	type WorkspaceMember,
+	type WorkspaceMembers,
+	type WorkspaceMembership,
+	type WorkspaceRole,
+} from "./workspaces.js";

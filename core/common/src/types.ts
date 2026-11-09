@@ -121,6 +121,8 @@ export type TokenUsage = {
 export type TelemetryEvent = {
 	id: string;
 	type: string;
+	/** Absent only on history recorded before workspaces; that history belongs to the default workspace. */
+	workspaceId?: string;
 	agentId?: string;
 	data: Record<string, unknown>;
 	timestamp: string;

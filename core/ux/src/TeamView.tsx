@@ -6,6 +6,9 @@ import {
 	type TeamMember,
 	type TeamRole,
 	type TeamSettings,
+	WORKSPACE_ROLES,
+	type WorkspaceAccess,
+	type WorkspaceRole,
 } from "@autonomo.us/common";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { PasswordFields, passwordProblem } from "./AuthScreens.js";
@@ -68,9 +71,80 @@ function RoleSelect({
 					))}
 			</select>
 			<span className="field-hint">
-				Owners and admins manage the team. Members use the dashboard. Only
-				owners can grant or change the Owner role.
+				Owners and admins manage the team and can open every workspace. Members
+				open the workspaces they are added to. Only owners can grant or change
+				the Owner role.
 			</span>
+		</div>
+	);
+}
+
+/** A member's workspace access, by workspace name. */
+function workspaceSummary(
+	member: TeamMember,
+	names: Map<string, string>,
+): string {
+	if (member.role !== "member") return "All workspaces";
+	if (!member.workspaces.length) return "None";
+	return member.workspaces
+		.map(
+			(item) =>
+				`${names.get(item.workspaceId) ?? "Unavailable workspace"}${item.role === "admin" ? " (Admin)" : ""}`,
+		)
+		.join(", ");
+}
+
+function WorkspaceAccessFields({
+	workspaces,
+	workspaceId,
+	role,
+	onWorkspace,
+	onRole,
+}: {
+	workspaces: WorkspaceAccess[];
+	workspaceId: string;
+	role: WorkspaceRole;
+	onWorkspace(id: string): void;
+	onRole(role: WorkspaceRole): void;
+}) {
+	return (
+		<div className="form-row">
+			<div className="form-field">
+				<label htmlFor="team-workspace">Workspace</label>
+				<select
+					id="team-workspace"
+					value={workspaceId}
+					onChange={(event) => onWorkspace(event.target.value)}
+				>
+					<option value="">No workspace yet</option>
+					{workspaces.map((workspace) => (
+						<option key={workspace.id} value={workspace.id}>
+							{workspace.name}
+						</option>
+					))}
+				</select>
+				<span className="field-hint">
+					Members see only the workspaces they belong to.
+				</span>
+			</div>
+			<div className="form-field">
+				<label htmlFor="team-workspace-role">Workspace role</label>
+				<select
+					id="team-workspace-role"
+					value={role}
+					disabled={!workspaceId}
+					onChange={(event) => onRole(event.target.value as WorkspaceRole)}
+				>
+					{(Object.keys(WORKSPACE_ROLES) as WorkspaceRole[]).map((item) => (
+						<option key={item} value={item}>
+							{WORKSPACE_ROLES[item]}
+						</option>
+					))}
+				</select>
+				<span className="field-hint">
+					Workspace admins add connections and manage members.
+				</span>
+			</div>
 		</div>
 	);
 }
@@ -78,15 +152,30 @@ function RoleSelect({
 function TeamForm({
 	panel,
 	allowOwner,
+	workspaces,
+	currentWorkspaceId,
 	onClose,
 	onSaved,
 }: {
 	panel: Panel;
 	allowOwner: boolean;
+	workspaces: WorkspaceAccess[];
+	currentWorkspaceId: string | null;
 	onClose(): void;
 	onSaved(message: string, link?: string): void;
 }) {
 	const member = "member" in panel ? panel.member : undefined;
+	const openWorkspaces = workspaces.filter(
+		(workspace) => !workspace.archivedAt,
+	);
+	const [workspaceId, setWorkspaceId] = useState(
+		() =>
+			openWorkspaces.find((workspace) => workspace.id === currentWorkspaceId)
+				?.id ??
+			openWorkspaces[0]?.id ??
+			"",
+	);
+	const [workspaceRole, setWorkspaceRole] = useState<WorkspaceRole>("member");
 	const [email, setEmail] = useState("");
 	const [name, setName] = useState(member?.name ?? "");
 	const [role, setRole] = useState<TeamRole>(member?.role ?? "member");
@@ -150,6 +239,10 @@ function TeamForm({
 					}
 					setBusy(true);
 					setError("");
+					const workspace =
+						role === "member" && workspaceId
+							? { workspaceId, role: workspaceRole }
+							: undefined;
 					try {
 						if (panel.kind === "add") {
 							const added = await addTeamMember({
@@ -157,12 +250,17 @@ function TeamForm({
 								name: name.trim(),
 								role,
 								password,
+								...(workspace ? { workspace } : {}),
 							});
 							onSaved(
 								`${displayName(added)} was added. Share the password with them securely; they can change it after signing in.`,
 							);
 						} else if (panel.kind === "invite") {
-							const created = await createTeamInvite({ role, ttlDays: ttl });
+							const created = await createTeamInvite({
+								role,
+								ttlDays: ttl,
+								...(workspace ? { workspace } : {}),
+							});
 							onSaved("Invite link created.", inviteLink(created.token));
 						} else if (panel.kind === "password") {
 							await changePassword(current, password);
@@ -231,6 +329,27 @@ function TeamForm({
 							allowOwner={allowOwner}
 						/>
 					)}
+					{(panel.kind === "add" || panel.kind === "invite") &&
+						role === "member" &&
+						openWorkspaces.length > 0 && (
+							<WorkspaceAccessFields
+								workspaces={openWorkspaces}
+								workspaceId={workspaceId}
+								role={workspaceRole}
+								onWorkspace={setWorkspaceId}
+								onRole={setWorkspaceRole}
+							/>
+						)}
+					{panel.kind === "edit" &&
+						member &&
+						member.role !== "member" &&
+						role === "member" && (
+							<p className="banner-warning" role="note">
+								{member.workspaces.length
+									? "As a member, they will keep only the workspaces they were added to before."
+									: "As a member, they will lose access to every workspace until you add them to one in Workspaces."}
+							</p>
+						)}
 					{panel.kind === "invite" && (
 						<>
 							<div className="form-field token-ttl">
@@ -380,7 +499,13 @@ function NewInviteLink({
 	);
 }
 
-export function TeamView() {
+export function TeamView({
+	workspaces = [],
+	currentWorkspaceId = null,
+}: {
+	workspaces?: WorkspaceAccess[];
+	currentWorkspaceId?: string | null;
+} = {}) {
 	const [data, setData] = useState<TeamSettings | null>(null);
 	const [panel, setPanel] = useState<Panel | null>(null);
 	const [link, setLink] = useState("");
@@ -413,6 +538,9 @@ export function TeamView() {
 		};
 	}, [refresh]);
 	const me = data?.members.find((member) => member.id === data.currentUserId);
+	const names = new Map(
+		workspaces.map((workspace) => [workspace.id, workspace.name]),
+	);
 	const isOwner = me?.role === "owner";
 	const canEdit = (member: TeamMember) =>
 		Boolean(data?.canManage) && (isOwner || member.role !== "owner");
@@ -497,6 +625,8 @@ export function TeamView() {
 					key={`${panel.kind}-${panel.kind === "revoke" ? panel.invite.id : "member" in panel ? panel.member.id : ""}`}
 					panel={panel}
 					allowOwner={isOwner}
+					workspaces={workspaces}
+					currentWorkspaceId={currentWorkspaceId}
 					onClose={() => setPanel(null)}
 					onSaved={(message, created) => {
 						setPanel(null);
@@ -519,6 +649,7 @@ export function TeamView() {
 								<tr>
 									<th>Member</th>
 									<th>Role</th>
+									<th>Workspaces</th>
 									<th>Joined</th>
 									<th>Last sign-in</th>
 									<th>Actions</th>
@@ -537,6 +668,7 @@ export function TeamView() {
 												)}
 											</td>
 											<td>{TEAM_ROLES[member.role]}</td>
+											<td>{workspaceSummary(member, names)}</td>
 											<td>
 												{joined(member)}
 												<small className="token-date">

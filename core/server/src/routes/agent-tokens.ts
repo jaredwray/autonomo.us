@@ -9,7 +9,7 @@ export async function agentTokenRoutes(
 ) {
 	await tokenManagementRoutes(server, {
 		...options,
-		path: "/v1/agent-tokens",
+		path: "/agent-tokens",
 		permissions: AGENT_TOKEN_PERMISSIONS,
 	});
 }

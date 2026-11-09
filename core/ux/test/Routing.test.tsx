@@ -12,7 +12,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { startOpenAIStub } from "../../server/test/openai-stub.js";
 import { App } from "../src/App.js";
 import { clearCredential } from "../src/api.js";
-import { setUpOwner } from "./session.js";
+import { defaultWorkspaceId, routeToWorkspace, setUpOwner } from "./session.js";
 
 const cleanupTasks: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -50,7 +50,9 @@ async function start() {
 		() => provider.close(),
 	);
 	vi.stubEnv("VITE_API_URL", url);
-	owner = { authorization: `Bearer ${await setUpOwner(url)}` };
+	const token = await setUpOwner(url);
+	owner = { authorization: `Bearer ${token}` };
+	routeToWorkspace(server, await defaultWorkspaceId(url, token));
 	window.history.replaceState(null, "", "#/routing");
 	render(
 		<StrictMode>

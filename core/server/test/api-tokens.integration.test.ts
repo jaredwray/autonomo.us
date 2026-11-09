@@ -4,6 +4,9 @@ import { afterAll, describe, expect, it } from "vitest";
 import { AgentTokenStore } from "../src/auth/agent-tokens.js";
 import { ApiTokenStore, tokenHash } from "../src/auth/tokens.js";
 
+/** Store-level suites run in one workspace: the default, which also owns records saved before workspaces. */
+const WS = { id: "00000000-0000-4000-8000-000000000000", isDefault: true };
+
 const url = new URL(
 	process.env.MONGODB_URI ??
 		"mongodb://autonomous:autonomous@localhost:27017/autonomous?authSource=admin",
@@ -33,6 +36,7 @@ describe.skipIf(!available)("durable API tokens", () => {
 		const api = new ApiTokenStore(url.toString());
 		try {
 			const original = await store.create(
+				WS,
 				{
 					name: "Durable agent",
 					description: "MCP",
@@ -42,6 +46,7 @@ describe.skipIf(!available)("durable API tokens", () => {
 				"owner",
 			);
 			const rolled = await store.roll(
+				WS,
 				original.token.id,
 				{ ttlDays: 7, previousTokenTtlSeconds: 3600 },
 				"owner",
@@ -59,11 +64,12 @@ describe.skipIf(!available)("durable API tokens", () => {
 				expect(await api.authenticate(issued.secret)).toBeNull();
 			}
 			expect(
-				(await api.settings(true)).tokens.some(
+				(await api.settings(WS, true)).tokens.some(
 					(token) => token.id === original.token.id,
 				),
 			).toBe(false);
 			await replica.update(
+				WS,
 				original.token.id,
 				{
 					name: "Durable agent",
@@ -76,7 +82,7 @@ describe.skipIf(!available)("durable API tokens", () => {
 				expect((await store.authenticate(issued.secret))?.permissions).toEqual([
 					"mcp:read",
 				]);
-			const before = await store.settings(true);
+			const before = await store.settings(WS, true);
 			await client.db().command({
 				collMod: "gateway_agent_tokens",
 				validator: { rejectTestWrites: { $exists: true } },
@@ -85,24 +91,25 @@ describe.skipIf(!available)("durable API tokens", () => {
 			try {
 				await expect(
 					replica.roll(
+						WS,
 						original.token.id,
 						{ ttlDays: 7, previousTokenTtlSeconds: 0 },
 						"owner",
 					),
 				).rejects.toMatchObject({ statusCode: 503 });
 				await expect(
-					replica.revoke(original.token.id, "owner"),
+					replica.revoke(WS, original.token.id, "owner"),
 				).rejects.toMatchObject({ statusCode: 503 });
-				expect(await store.settings(true)).toEqual(before);
+				expect(await store.settings(WS, true)).toEqual(before);
 			} finally {
 				await client
 					.db()
 					.command({ collMod: "gateway_agent_tokens", validator: {} });
 			}
-			await replica.revoke(original.token.id, "owner");
+			await replica.revoke(WS, original.token.id, "owner");
 			for (const issued of [original, rolled])
 				expect(await store.authenticate(issued.secret)).toBeNull();
-			expect((await store.settings(true)).actions).toHaveLength(4);
+			expect((await store.settings(WS, true)).actions).toHaveLength(4);
 		} finally {
 			await store.close();
 			await replica.close();
@@ -115,10 +122,12 @@ describe.skipIf(!available)("durable API tokens", () => {
 		const replica = new ApiTokenStore(url.toString(), () => now);
 		try {
 			const original = await store.create(
+				WS,
 				{ name: "Durable", description: "Across restarts", ttlDays: 30 },
 				"owner",
 			);
 			const rolled = await store.roll(
+				WS,
 				original.token.id,
 				{ ttlDays: 180, previousTokenTtlSeconds: 1 },
 				"owner",
@@ -138,23 +147,25 @@ describe.skipIf(!available)("durable API tokens", () => {
 			expect(await store.authenticate(original.secret)).toBeNull();
 			await Promise.all([
 				store.update(
+					WS,
 					original.token.id,
 					{ name: "Changed", description: "concurrent edit" },
 					"owner",
 				),
 				replica.roll(
+					WS,
 					original.token.id,
 					{ ttlDays: 7, previousTokenTtlSeconds: 3600 },
 					"owner",
 				),
 			]);
-			expect((await store.settings(true)).tokens[0]).toMatchObject({
+			expect((await store.settings(WS, true)).tokens[0]).toMatchObject({
 				name: "Changed",
 				ttlDays: 7,
 			});
-			await store.revoke(original.token.id, "owner");
+			await store.revoke(WS, original.token.id, "owner");
 			expect(await replica.authenticate(rolled.secret)).toBeNull();
-			expect((await replica.settings(true)).actions).toHaveLength(5);
+			expect((await replica.settings(WS, true)).actions).toHaveLength(5);
 		} finally {
 			await store.close();
 			await replica.close();
@@ -164,10 +175,11 @@ describe.skipIf(!available)("durable API tokens", () => {
 		const store = new ApiTokenStore(url.toString());
 		try {
 			const original = await store.create(
+				WS,
 				{ name: "Write failure", description: "", ttlDays: 7 },
 				"owner",
 			);
-			const before = await store.settings(true);
+			const before = await store.settings(WS, true);
 			await client.db().command({
 				collMod: "gateway_api_tokens",
 				validator: { rejectTestWrites: { $exists: true } },
@@ -175,16 +187,18 @@ describe.skipIf(!available)("durable API tokens", () => {
 			});
 			await expect(
 				store.roll(
+					WS,
 					original.token.id,
 					{ ttlDays: 30, previousTokenTtlSeconds: 0 },
 					"owner",
 				),
 			).rejects.toMatchObject({ statusCode: 503 });
 			await expect(
-				store.revoke(original.token.id, "owner"),
+				store.revoke(WS, original.token.id, "owner"),
 			).rejects.toMatchObject({ statusCode: 503 });
 			await expect(
 				store.update(
+					WS,
 					original.token.id,
 					{
 						name: "Failed permissions",
@@ -196,11 +210,12 @@ describe.skipIf(!available)("durable API tokens", () => {
 			).rejects.toMatchObject({ statusCode: 503 });
 			await expect(
 				store.create(
+					WS,
 					{ name: "Rejected", description: "", ttlDays: 1 },
 					"owner",
 				),
 			).rejects.toMatchObject({ statusCode: 503 });
-			expect(await store.settings(true)).toEqual(before);
+			expect(await store.settings(WS, true)).toEqual(before);
 			expect(await store.authenticate(original.secret)).not.toBeNull();
 		} finally {
 			await client
@@ -214,6 +229,7 @@ describe.skipIf(!available)("durable API tokens", () => {
 		const replica = new ApiTokenStore(url.toString());
 		try {
 			const original = await store.create(
+				WS,
 				{ name: "Legacy permissions", description: "", ttlDays: 30 },
 				"owner",
 			);
@@ -228,6 +244,7 @@ describe.skipIf(!available)("durable API tokens", () => {
 				(await replica.authenticate(original.secret))?.permissions,
 			).toEqual(["models:read", "inference:run"]);
 			const rolled = await store.roll(
+				WS,
 				original.token.id,
 				{ ttlDays: 30, previousTokenTtlSeconds: 3600 },
 				"owner",
@@ -237,6 +254,7 @@ describe.skipIf(!available)("durable API tokens", () => {
 				"inference:run",
 			]);
 			await store.update(
+				WS,
 				original.token.id,
 				{
 					name: "Legacy permissions",
@@ -256,6 +274,7 @@ describe.skipIf(!available)("durable API tokens", () => {
 				).toEqual(["routing:edit"]);
 			}
 			await replica.update(
+				WS,
 				original.token.id,
 				{ name: "Legacy permissions", description: "", permissions: [] },
 				"owner",
@@ -276,7 +295,7 @@ describe.skipIf(!available)("durable API tokens", () => {
 it("fails closed when configured MongoDB is unavailable", async () => {
 	const store = new ApiTokenStore("mongodb://127.0.0.1:1/unavailable");
 	try {
-		await expect(store.settings(true)).rejects.toMatchObject({
+		await expect(store.settings(WS, true)).rejects.toMatchObject({
 			statusCode: 503,
 		});
 		await expect(

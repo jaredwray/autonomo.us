@@ -184,7 +184,8 @@ it("invites a member with a one-time link that creates their account", async () 
 	expect(
 		await screen.findByRole("heading", { name: "Dashboard" }),
 	).toBeDefined();
-	expect(window.location.hash).toBe("#/dashboard");
+	// Workspace views always name their workspace in the URL.
+	expect(window.location.hash).toMatch(/^#\/w\/[0-9a-f-]{36}\/dashboard$/);
 	fireEvent.click(screen.getByRole("link", { name: "Team" }));
 	const row = (
 		await within(

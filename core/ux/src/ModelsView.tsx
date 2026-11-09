@@ -320,7 +320,11 @@ function AddModelForm(props: {
 	);
 }
 
-export function ModelsView() {
+export function ModelsView({
+	workspace,
+}: {
+	workspace?: { isDefault: boolean };
+} = {}) {
 	const [data, setData] = useState<ModelsData | null>(null);
 	const [settings, setSettings] = useState<ProviderSettings | null>(null);
 	const [catalog, setCatalog] = useState<ModelCatalog | null>(null);
@@ -506,6 +510,12 @@ export function ModelsView() {
 						<span className="field-hint">
 							Connect your preferred provider for chat or structured decisions.
 						</span>
+						{workspace && !workspace.isDefault ? (
+							<p className="field-hint">
+								This workspace starts with no connections. Keys set as
+								environment variables belong to the Default workspace.
+							</p>
+						) : null}
 						{data.providers.length > 0 ? (
 							<p className="field-hint">
 								{data.providers.map((item) => item.name).join(", ")} configured

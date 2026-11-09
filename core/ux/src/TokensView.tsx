@@ -419,8 +419,11 @@ function NewSecret<Permission extends string>({
 
 export function TokensView<Permission extends string>({
 	config,
+	workspace,
 }: {
 	config: TokenViewConfig<Permission>;
+	/** Tokens belong to one workspace and can call only its paths. */
+	workspace?: { id: string; name: string };
 }) {
 	const [data, setData] = useState<ApiTokenSettings<Permission> | null>(null);
 	const [panel, setPanel] = useState<Panel<Permission> | null>(null);
@@ -470,6 +473,12 @@ export function TokensView<Permission extends string>({
 				<div>
 					<h1>{config.title}</h1>
 					<p className="page-description">{config.description}</p>
+					{workspace && (
+						<p className="page-description workspace-scope">
+							Tokens in the <strong>{workspace.name}</strong> workspace call{" "}
+							<code>/v1/{workspace.id}/</code>
+						</p>
+					)}
 				</div>
 				<div className="header-actions">
 					<button

@@ -15,6 +15,7 @@ import type {
 	CreateAgentTokenRequest,
 	CreateApiTokenRequest,
 	CreateTeamInviteRequest,
+	CreateWorkspaceRequest,
 	CurrentSession,
 	FailoverPolicy,
 	GatewayResponse,
@@ -33,7 +34,12 @@ import type {
 	UpdateAgentTokenRequest,
 	UpdateApiTokenRequest,
 	UpdateTeamMemberRequest,
+	UpdateWorkspaceRequest,
 	UsageAnalytics,
+	WorkspaceDetails,
+	WorkspaceList,
+	WorkspaceMembers,
+	WorkspaceRole,
 } from "@autonomo.us/common";
 
 export type SinkStatus = {
@@ -48,6 +54,22 @@ export type ProviderInfo = {
 
 function apiBase(): string {
 	return import.meta.env?.VITE_API_URL ?? "";
+}
+
+/**
+ * The workspace the dashboard is showing. Every workspace-scoped call goes to
+ * `/v1/<id>/…`; the shell sets it before rendering a workspace view.
+ */
+let currentWorkspace: string | null = null;
+export function setCurrentWorkspace(id: string | null) {
+	currentWorkspace = id;
+}
+export function currentWorkspaceId(): string | null {
+	return currentWorkspace;
+}
+function ws(path: string): string {
+	if (!currentWorkspace) throw new Error("Choose a workspace first.");
+	return `/v1/${encodeURIComponent(currentWorkspace)}${path}`;
 }
 
 /**
@@ -229,11 +251,11 @@ export type ModelCatalog = {
 };
 
 export function fetchModels(): Promise<ModelsData> {
-	return getJson<ModelsData>("/v1/models");
+	return getJson<ModelsData>(ws("/models"));
 }
 
 export function fetchProviderSettings(): Promise<ProviderSettings> {
-	return getJson<ProviderSettings>("/v1/providers");
+	return getJson<ProviderSettings>(ws("/providers"));
 }
 
 export function fetchModelCatalog(): Promise<ModelCatalog> {
@@ -241,7 +263,7 @@ export function fetchModelCatalog(): Promise<ModelCatalog> {
 }
 
 export async function addModel(input: AddModelRequest): Promise<ModelInfo> {
-	const response = await apiFetch(`${apiBase()}/v1/models`, {
+	const response = await apiFetch(`${apiBase()}${ws("/models")}`, {
 		method: "POST",
 		headers: { "content-type": "application/json", accept: "application/json" },
 		body: JSON.stringify(input),
@@ -259,11 +281,11 @@ export async function addModel(input: AddModelRequest): Promise<ModelInfo> {
 }
 
 export async function fetchFailoverPolicy(): Promise<FailoverPolicy> {
-	return getJson<FailoverPolicy>("/v1/failover");
+	return getJson<FailoverPolicy>(ws("/failover"));
 }
 
 export function fetchRouting(): Promise<RoutingSettings> {
-	return getJson<RoutingSettings>("/v1/routing");
+	return getJson<RoutingSettings>(ws("/routing"));
 }
 
 async function postJson<T>(
@@ -284,14 +306,14 @@ async function postJson<T>(
 }
 
 export function updateRouting(config: RoutingConfig): Promise<RoutingSettings> {
-	return postJson("/v1/routing", "PUT", config);
+	return postJson(ws("/routing"), "PUT", config);
 }
 
 export function sendChat(
 	model: string,
 	content: string,
 ): Promise<GatewayResponse> {
-	return postJson("/v1/chat", "POST", {
+	return postJson(ws("/chat"), "POST", {
 		model,
 		messages: [{ role: "user", content }],
 	});
@@ -300,14 +322,14 @@ export function sendChat(
 export async function updateFailoverPolicy(
 	policy: FailoverPolicy,
 ): Promise<FailoverPolicy> {
-	const response = await apiFetch(`${apiBase()}/v1/failover`, {
+	const response = await apiFetch(`${apiBase()}${ws("/failover")}`, {
 		method: "PUT",
 		headers: { "content-type": "application/json", accept: "application/json" },
 		body: JSON.stringify(policy),
 	});
 	if (!response.ok) {
 		// Surface the API's own message (e.g. which target is unknown).
-		let message = `PUT /v1/failover failed with ${response.status}`;
+		let message = `PUT failover failed with ${response.status}`;
 		try {
 			const body = (await response.json()) as {
 				error?: { message?: string };
@@ -327,7 +349,7 @@ export async function fetchDashboardData(
 	for (const [key, value] of Object.entries(query))
 		if (value) params.set(key, value);
 	const response = await apiFetch(
-		`${apiBase()}/v1/telemetry/analytics?${params}`,
+		`${apiBase()}${ws("/telemetry/analytics")}?${params}`,
 		{
 			signal: signal
 				? AbortSignal.any([signal, AbortSignal.timeout(15000)])
@@ -341,59 +363,63 @@ export async function fetchDashboardData(
 }
 
 export function fetchApiTokens(): Promise<ApiTokenSettings> {
-	return getJson("/v1/api-tokens");
+	return getJson(ws("/api-tokens"));
 }
 export function createApiToken(
 	input: CreateApiTokenRequest,
 ): Promise<ApiTokenSecret> {
-	return postJson("/v1/api-tokens", "POST", input);
+	return postJson(ws("/api-tokens"), "POST", input);
 }
 export function updateApiToken(
 	id: string,
 	input: UpdateApiTokenRequest,
 ): Promise<ApiToken> {
-	return postJson(`/v1/api-tokens/${encodeURIComponent(id)}`, "PATCH", input);
+	return postJson(ws(`/api-tokens/${encodeURIComponent(id)}`), "PATCH", input);
 }
 export function rollApiToken(
 	id: string,
 	input: RollApiTokenRequest,
 ): Promise<ApiTokenSecret> {
 	return postJson(
-		`/v1/api-tokens/${encodeURIComponent(id)}/roll`,
+		ws(`/api-tokens/${encodeURIComponent(id)}/roll`),
 		"POST",
 		input,
 	);
 }
 export function revokeApiToken(id: string): Promise<ApiToken> {
-	return postJson(`/v1/api-tokens/${encodeURIComponent(id)}`, "DELETE", {});
+	return postJson(ws(`/api-tokens/${encodeURIComponent(id)}`), "DELETE", {});
 }
 
 export function fetchAgentTokens(): Promise<AgentTokenSettings> {
-	return getJson("/v1/agent-tokens");
+	return getJson(ws("/agent-tokens"));
 }
 export function createAgentToken(
 	input: CreateAgentTokenRequest,
 ): Promise<AgentTokenSecret> {
-	return postJson("/v1/agent-tokens", "POST", input);
+	return postJson(ws("/agent-tokens"), "POST", input);
 }
 export function updateAgentToken(
 	id: string,
 	input: UpdateAgentTokenRequest,
 ): Promise<AgentToken> {
-	return postJson(`/v1/agent-tokens/${encodeURIComponent(id)}`, "PATCH", input);
+	return postJson(
+		ws(`/agent-tokens/${encodeURIComponent(id)}`),
+		"PATCH",
+		input,
+	);
 }
 export function rollAgentToken(
 	id: string,
 	input: RollAgentTokenRequest,
 ): Promise<AgentTokenSecret> {
 	return postJson(
-		`/v1/agent-tokens/${encodeURIComponent(id)}/roll`,
+		ws(`/agent-tokens/${encodeURIComponent(id)}/roll`),
 		"POST",
 		input,
 	);
 }
 export function revokeAgentToken(id: string): Promise<AgentToken> {
-	return postJson(`/v1/agent-tokens/${encodeURIComponent(id)}`, "DELETE", {});
+	return postJson(ws(`/agent-tokens/${encodeURIComponent(id)}`), "DELETE", {});
 }
 
 export function fetchTeam(): Promise<TeamSettings> {
@@ -427,4 +453,56 @@ export function revokeTeamInvite(id: string): Promise<TeamInvite> {
 }
 export function removeTeamMember(id: string): Promise<TeamMember> {
 	return postJson(`/v1/team/${encodeURIComponent(id)}`, "DELETE", {});
+}
+
+export function fetchWorkspaces(): Promise<WorkspaceList> {
+	return getJson("/v1/workspaces");
+}
+export function createWorkspace(
+	input: CreateWorkspaceRequest,
+): Promise<WorkspaceDetails> {
+	return postJson("/v1/workspaces", "POST", input);
+}
+export function fetchWorkspace(id: string): Promise<WorkspaceDetails> {
+	return getJson(`/v1/workspaces/${encodeURIComponent(id)}`);
+}
+export function updateWorkspace(
+	id: string,
+	input: UpdateWorkspaceRequest,
+): Promise<WorkspaceDetails> {
+	return postJson(`/v1/workspaces/${encodeURIComponent(id)}`, "PATCH", input);
+}
+export function setWorkspaceArchived(
+	id: string,
+	archived: boolean,
+): Promise<WorkspaceDetails> {
+	return postJson(
+		`/v1/workspaces/${encodeURIComponent(id)}/${archived ? "archive" : "unarchive"}`,
+		"POST",
+		{},
+	);
+}
+export function fetchWorkspaceMembers(id: string): Promise<WorkspaceMembers> {
+	return getJson(`/v1/${encodeURIComponent(id)}/members`);
+}
+export function setWorkspaceMember(
+	id: string,
+	userId: string,
+	role: WorkspaceRole,
+): Promise<WorkspaceMembers> {
+	return postJson(
+		`/v1/${encodeURIComponent(id)}/members/${encodeURIComponent(userId)}`,
+		"PUT",
+		{ role },
+	);
+}
+export function removeWorkspaceMember(
+	id: string,
+	userId: string,
+): Promise<WorkspaceMembers> {
+	return postJson(
+		`/v1/${encodeURIComponent(id)}/members/${encodeURIComponent(userId)}`,
+		"DELETE",
+		{},
+	);
 }

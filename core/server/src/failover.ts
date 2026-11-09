@@ -57,3 +57,11 @@ export class FailoverPolicyStore {
 		return this.get();
 	}
 }
+
+/** Applies `patch` to `base` with the same trimming and clamping as the store. */
+export function mergeFailoverPolicy(
+	base: Partial<FailoverPolicy>,
+	patch: Partial<FailoverPolicy> = {},
+): FailoverPolicy {
+	return new FailoverPolicyStore(base).update(patch);
+}

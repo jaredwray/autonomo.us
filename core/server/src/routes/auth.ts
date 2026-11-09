@@ -10,6 +10,8 @@ import {
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { signedInMember } from "../auth/access.js";
 import type { AccountStore } from "../auth/accounts.js";
+import type { WorkspaceStore } from "../workspaces/store.js";
+import { accessibleWorkspaces } from "./workspaces.js";
 
 export const emailSchema = {
 	type: "string",
@@ -37,7 +39,11 @@ function sessionToken(request: FastifyRequest) {
 
 export async function authRoutes(
 	server: FastifyInstance,
-	options: { accounts: AccountStore; setupTokenConfigured: boolean },
+	options: {
+		accounts: AccountStore;
+		workspaces: WorkspaceStore;
+		setupTokenConfigured: boolean;
+	},
 ) {
 	const { accounts } = options;
 	server.addHook("onRequest", async (_request, reply) => {
@@ -82,10 +88,14 @@ export async function authRoutes(
 		async (request, reply) =>
 			reply.code(201).send(await accounts.signIn(request.body)),
 	);
-	server.get("/v1/auth/session", (request): CurrentSession => {
+	server.get("/v1/auth/session", async (request): Promise<CurrentSession> => {
 		const member = signedInMember(request);
 		const auth = request.auth as { expiresAt: string };
-		return { user: member, expiresAt: auth.expiresAt };
+		return {
+			user: member,
+			expiresAt: auth.expiresAt,
+			workspaces: await accessibleWorkspaces(member, options.workspaces),
+		};
 	});
 	server.delete("/v1/auth/session", async (request, reply) => {
 		const token = sessionToken(request);

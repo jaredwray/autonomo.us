@@ -1,38 +1,46 @@
 import { type AddModelRequest, PROVIDER_NAMES } from "@autonomo.us/common";
 import type { FastifyInstance } from "fastify";
+import { requestWorkspace } from "../auth/access.js";
 import type { ModelCatalogService } from "../model-catalog-service.js";
-import type { ProviderRegistry } from "../providers/registry.js";
 import {
 	ProviderSettingsError,
 	type ProviderSettingsStore,
 } from "../providers/settings.js";
 
-export type ModelsRouteOptions = {
-	registry: ProviderRegistry;
-	catalog: ModelCatalogService;
-	settings: ProviderSettingsStore;
-};
+/**
+ * The full multi-provider catalog (bundled models.json until the service's
+ * first successful refresh), as opposed to /v1/:workspace/models which lists
+ * only that workspace's routable models. Served from cache, never fetched on
+ * the request path. Public metadata, so it is instance-level.
+ */
+export async function catalogRoutes(
+	server: FastifyInstance,
+	options: { catalog: ModelCatalogService },
+) {
+	server.get("/v1/models/catalog", async () => options.catalog.getCatalog());
+}
 
+export type ModelsRouteOptions = { providers: ProviderSettingsStore };
+
+/** Registered under `/v1/:workspace`. */
 export async function modelsRoutes(
 	server: FastifyInstance,
 	options: ModelsRouteOptions,
 ) {
-	server.get("/v1/models", async () => {
+	server.get("/models", async (request) => {
+		const registry = await options.providers.registry(
+			requestWorkspace(request),
+		);
 		return {
-			models: options.registry.listModels(),
-			providers: options.registry.listProviders(),
+			models: registry.listModels(),
+			providers: registry.listProviders(),
 		};
 	});
 
-	// The full multi-provider catalog (bundled models.json until the service's
-	// first successful refresh), as opposed to /v1/models which lists only
-	// routable models. Served from cache — never fetches on the request path.
-	server.get("/v1/models/catalog", async () => options.catalog.getCatalog());
-
-	server.get("/v1/providers", async (_request, reply) => {
+	server.get("/providers", async (request, reply) => {
 		reply.header("cache-control", "no-store");
 		try {
-			return await options.settings.settings();
+			return await options.providers.settings(requestWorkspace(request));
 		} catch (error) {
 			if (error instanceof ProviderSettingsError)
 				return reply
@@ -43,7 +51,7 @@ export async function modelsRoutes(
 	});
 
 	server.post<{ Body: AddModelRequest }>(
-		"/v1/models",
+		"/models",
 		{
 			schema: {
 				body: {
@@ -72,7 +80,10 @@ export async function modelsRoutes(
 		async (request, reply) => {
 			reply.header("cache-control", "no-store");
 			try {
-				return await options.settings.add(request.body);
+				return await options.providers.add(
+					requestWorkspace(request),
+					request.body,
+				);
 			} catch (error) {
 				if (error instanceof ProviderSettingsError)
 					return reply

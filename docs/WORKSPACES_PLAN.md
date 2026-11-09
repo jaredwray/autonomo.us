@@ -1,6 +1,6 @@
 # Workspaces plan
 
-*Status: v0.3, November 2026. Revised after an independent architecture review ([section 16](#16-review-log)); owner decisions recorded in [section 10](#10-decisions). Owner: Jared Wray.*
+*Status: v0.4, November 2026. Implemented (W1–W6) in the same pull request as this plan. Revised after an independent architecture review ([section 16](#16-review-log)); owner decisions recorded in [section 10](#10-decisions). Owner: Jared Wray.*
 
 Nothing in this document is code. It answers whether the gateway has workspaces
 (it does not), proposes how to add them, and orders the work into reviewable
@@ -343,14 +343,20 @@ type WorkspaceContext = {
   `config.models`, `$set` for a new key or Cloudflare account) filtered by
   `{ _id, workspaceId, "config.kind" }`, where for the default workspace the
   clause is `{ $in: [<default workspace id>, null] }` so connections saved before this
-  change match. The update also sets `workspaceId`, and a zero matched count is
-  a 404, never a silent in-memory success. Creating a connection is an insert,
-  so a duplicate name returns 409 from the unique `_id`. Routing writes
+  change match. The update also sets `workspaceId`. A zero matched count means
+  the connection is new, so it is inserted; if a concurrent request inserted it
+  first, the duplicate key retries the field-level update, so simultaneous
+  additions both land. Nothing is ever kept only in memory. Explicitly creating
+  a connection (`createConnection: true`) only inserts, so a duplicate name
+  returns 409 from the unique `_id`. Routing writes
   (`PUT /v1/routing`, `PUT /v1/failover`) read the document, then
   `replaceOne({ _id, revision })` and increment `revision` (for revision 0 the
   filter is `{ $in: [0, null] }`, so a document saved before this change, or
-  rewritten by an older replica without the field, still matches); a lost race returns
-  409 "Routing changed during your request. Refresh and try again." This
+  rewritten by an older replica without the field, still matches). A full
+  `PUT /v1/routing` is a client's snapshot, so a lost race returns 409
+  "Routing changed during your request. Refresh and try again." A
+  `PUT /v1/failover` is a patch merged on the server, so a lost race re-reads
+  and re-applies it: concurrent edits to different fields both apply. This
   replaces today's per-process write queue, which cannot serialize writes
   across replicas.
 - **Balancing state** is the one thing kept across requests. `ModelRouter`'s
@@ -681,8 +687,9 @@ Following the repository's rule of real services, not mocks:
   database. Add a model in instance 1; instance 2 serves it on its next request
   without a restart (a regression test for today's load-once staleness). Add
   two different models to one connection from both instances at once and
-  assert both are saved. Race `PUT /v1/routing` against `PUT /v1/failover` and
-  assert one wins and the other gets 409, never a silent merge.
+  assert both are saved. Race two full routing replacements and assert one
+  wins and the other gets 409; race two failover patches and assert both
+  apply.
 - **Worker runtime:** extend `pnpm test:worker` with requests to two
   workspaces in one isolate, and assert a chat request stays within the
   per-request connection limit.

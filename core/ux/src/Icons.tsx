@@ -8,6 +8,8 @@ export function Icon({
 		| "api-tokens"
 		| "agent-tokens"
 		| "team"
+		| "workspaces"
+		| "chevron"
 		| "logout"
 		| "collapse"
 		| "expand"
@@ -23,6 +25,8 @@ export function Icon({
 		"agent-tokens":
 			"M12 3v3 M5 6h14v14H5z M2 10v6 M22 10v6 M9 11h.01 M15 11h.01 M9 16h6",
 		team: "M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z M2 21v-1a6 6 0 0 1 12 0v1 M16 3.5a4 4 0 0 1 0 7.5 M18 14.5a6 6 0 0 1 4 5.5v1",
+		workspaces: "M3 7l9-4 9 4-9 4-9-4z M3 7v10l9 4 9-4V7 M12 11v10",
+		chevron: "M8 9l4-4 4 4 M8 15l4 4 4-4",
 		logout:
 			"M15 4h4a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-4 M10 17l-5-5 5-5 M5 12h11",
 		collapse: "M9 4H4v16h5 M15 7l-5 5 5 5 M10 12h11",

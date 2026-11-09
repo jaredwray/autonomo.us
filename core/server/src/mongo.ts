@@ -1,5 +1,10 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { MongoClient, MongoClientOptions } from "mongodb";
+import {
+	type Collection,
+	type Document,
+	MongoClient,
+	type MongoClientOptions,
+} from "mongodb";
 
 const requestClients = new AsyncLocalStorage<Map<object, MongoClient>>();
 
@@ -32,6 +37,43 @@ export function withMongoRequestScope<T>(
 			if (failed?.status === "rejected") throw failed.reason;
 		}),
 	);
+}
+
+/**
+ * One MongoDB client shared by the control-plane stores (accounts, tokens,
+ * workspaces, providers, routing). On Workers every request opens its own
+ * sockets, so stores that each keyed their own client would multiply the
+ * connections a request opens; sharing one keeps a request well inside the
+ * per-request connection limit.
+ */
+export class MongoConnection {
+	private client?: MongoClient;
+	constructor(
+		readonly url: string,
+		private readonly create: (url: string) => MongoClient,
+	) {}
+	private current(): MongoClient {
+		const create = () => this.create(this.url);
+		let client = requestMongoClient(this, create);
+		if (!client) {
+			this.client ??= create();
+			client = this.client;
+		}
+		return client;
+	}
+	collection<T extends Document = Document>(name: string): Collection<T> {
+		return this.current().db().collection<T>(name);
+	}
+	async close(): Promise<void> {
+		const client = this.client;
+		this.client = undefined;
+		await client?.close();
+	}
+}
+
+/** True for a MongoDB duplicate-key error, which a lost insert race produces. */
+export function isDuplicateKey(error: unknown): boolean {
+	return (error as { code?: unknown } | null)?.code === 11000;
 }
 
 /** Log diagnostic codes, never driver messages that may contain a URI or key. */
@@ -75,4 +117,17 @@ export function mongoOperationDeadlines(
 		socketTimeoutMS: timeoutMs,
 		waitQueueTimeoutMS: timeoutMs,
 	};
+}
+
+/** The shared control-plane connection, with the deadlines the stores have always used. */
+export function controlPlaneConnection(url: string): MongoConnection {
+	return new MongoConnection(
+		url,
+		(target) =>
+			new MongoClient(target, {
+				serverSelectionTimeoutMS: 1500,
+				...mongoOperationDeadlines(3000),
+				readPreference: "primary",
+			}),
+	);
 }

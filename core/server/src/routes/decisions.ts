@@ -1,9 +1,11 @@
 import type { DecisionRequest } from "@autonomo.us/common";
 import type { FastifyInstance } from "fastify";
+import { requestWorkspace } from "../auth/access.js";
 import {
 	type ProviderRegistry,
 	UnknownProviderError,
 } from "../providers/registry.js";
+import type { ProviderSettingsStore } from "../providers/settings.js";
 import { DecisionProviderError } from "../providers/typesafe.js";
 import type { TelemetryService } from "../telemetry/telemetry.js";
 
@@ -18,12 +20,13 @@ const question = (type: string, criteria: object, required: string[] = []) => ({
 	properties: { type: { const: type }, instructions: content, criteria },
 });
 
+/** Registered under `/v1/:workspace`. */
 export async function decisionsRoutes(
 	server: FastifyInstance,
-	options: { registry: ProviderRegistry; telemetry: TelemetryService },
+	options: { providers: ProviderSettingsStore; telemetry: TelemetryService },
 ) {
 	server.post<{ Body: DecisionRequest }>(
-		"/v1/decisions",
+		"/decisions",
 		{
 			// Preserve the meaning of decision state before AJV's scalar coercion.
 			preValidation: async (request, reply) => {
@@ -79,9 +82,11 @@ export async function decisionsRoutes(
 		},
 		async (request, reply) => {
 			reply.header("cache-control", "no-store");
+			const workspace = requestWorkspace(request);
+			const registry = await options.providers.registry(workspace);
 			let resolved: ReturnType<ProviderRegistry["resolveProvider"]>;
 			try {
-				resolved = options.registry.resolveProvider(request.body.model);
+				resolved = registry.resolveProvider(request.body.model);
 			} catch (error) {
 				if (error instanceof UnknownProviderError)
 					return reply.code(404).send({ error: { message: error.message } });
@@ -102,9 +107,11 @@ export async function decisionsRoutes(
 				});
 				options.telemetry.recordChat({
 					operation: "decisions",
+					workspaceId: workspace.id,
 					caller: request.telemetryCaller,
 					model: resolved.id,
 					provider: resolved.provider.name,
+					providerKind: resolved.provider.kind,
 					latencyMs: Date.now() - started,
 					usage: {
 						promptTokens: result.usage.input_tokens,
@@ -120,9 +127,11 @@ export async function decisionsRoutes(
 						: "Decision request failed.";
 				options.telemetry.recordChat({
 					operation: "decisions",
+					workspaceId: workspace.id,
 					caller: request.telemetryCaller,
 					model: resolved.id,
 					provider: resolved.provider.name,
+					providerKind: resolved.provider.kind,
 					latencyMs: Date.now() - started,
 					error: message,
 					usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },

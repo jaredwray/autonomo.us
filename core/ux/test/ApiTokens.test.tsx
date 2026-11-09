@@ -11,7 +11,12 @@ import { StrictMode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { App } from "../src/App.js";
 import { clearCredential } from "../src/api.js";
-import { PASSWORD, setUpOwner } from "./session.js";
+import {
+	defaultWorkspaceId,
+	PASSWORD,
+	routeToWorkspace,
+	setUpOwner,
+} from "./session.js";
 
 const closers: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -31,7 +36,9 @@ async function start({ signIn = true } = {}) {
 	const url = await server.listen({ host: "127.0.0.1", port: 0 });
 	closers.push(() => server.close());
 	vi.stubEnv("VITE_API_URL", url);
-	await setUpOwner(url, { signIn });
+	const owner = await setUpOwner(url, { signIn });
+	// Direct API calls below use pre-workspace paths for the default workspace.
+	routeToWorkspace(server, await defaultWorkspaceId(url, owner));
 	window.history.replaceState(null, "", "#/api-tokens");
 	render(
 		<StrictMode>

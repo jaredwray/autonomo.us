@@ -9,6 +9,7 @@ import type {
 	UsageAnalytics,
 	UsageSummary,
 } from "@autonomo.us/common";
+import { inWorkspace, type WorkspaceRef } from "../workspaces/store.js";
 import {
 	bucketMs,
 	buildAnalytics,
@@ -19,6 +20,10 @@ import type { MongoTelemetrySink } from "./mongo.js";
 
 export type ChatTelemetry = {
 	operation?: "chat" | "decisions" | "routing";
+	/** The workspace the call ran in. Omitted only by callers outside a workspace (tests). */
+	workspaceId?: string;
+	/** Provider implementation kind (`openai`, `anthropic`, …), used to price the call. */
+	providerKind?: string;
 	/** Canonical routable id, e.g. `anthropic/claude-opus-4-8`. */
 	model: string;
 	provider: string;
@@ -48,6 +53,8 @@ export type TelemetryServiceOptions = {
 	maxModels?: number;
 	/** Separate bounded history for analytics; independent of the recent-event feed. */
 	maxAnalyticsEvents?: number;
+	/** Per-workspace in-memory aggregates kept; least recently used are evicted first. */
+	maxWorkspaces?: number;
 	now?: () => Date;
 };
 
@@ -55,6 +62,34 @@ export type TelemetryServiceOptions = {
 export const OVERFLOW_MODEL_KEY = "(other)";
 
 type MutableModelUsage = ModelUsage & { successLatencyTotal: number };
+type Totals = {
+	requests: number;
+	errors: number;
+	promptTokens: number;
+	completionTokens: number;
+	totalTokens: number;
+	successLatencyTotal: number;
+};
+/** In-memory aggregates for one workspace (or the whole process). */
+type Partition = {
+	recent: TelemetryEvent[];
+	byModel: Map<string, MutableModelUsage>;
+	totals: Totals;
+};
+const newPartition = (): Partition => ({
+	recent: [],
+	byModel: new Map(),
+	totals: {
+		requests: 0,
+		errors: 0,
+		promptTokens: 0,
+		completionTokens: 0,
+		totalTokens: 0,
+		successLatencyTotal: 0,
+	},
+});
+/** Events recorded outside any workspace (tests) are kept under this key. */
+const NO_WORKSPACE = "";
 
 /**
  * Records gateway telemetry. Aggregates live in memory (so the dashboard works
@@ -75,18 +110,14 @@ export class TelemetryService {
 	private pricing?: (
 		model: string,
 		provider: string,
+		providerKind?: string,
 	) => ModelPricing | undefined;
 
-	private readonly recent: TelemetryEvent[] = [];
-	private readonly byModel = new Map<string, MutableModelUsage>();
-	private totals = {
-		requests: 0,
-		errors: 0,
-		promptTokens: 0,
-		completionTokens: 0,
-		totalTokens: 0,
-		successLatencyTotal: 0,
-	};
+	/** Whole-process aggregates, for diagnostics and tests. */
+	private readonly all = newPartition();
+	/** Per-workspace aggregates, bounded; the Map's order is least recently used first. */
+	private readonly partitions = new Map<string, Partition>();
+	private readonly maxWorkspaces: number;
 
 	private pending: TelemetryEvent[] = [];
 	private timer?: ReturnType<typeof setInterval>;
@@ -103,6 +134,7 @@ export class TelemetryService {
 		this.now = options.now ?? (() => new Date());
 		this.coverageFrom = this.now().toISOString();
 		this.maxAnalyticsEvents = Math.max(1, options.maxAnalyticsEvents ?? 50_000);
+		this.maxWorkspaces = Math.max(1, options.maxWorkspaces ?? 64);
 		if (this.sink && this.flushIntervalMs > 0) {
 			this.timer = setInterval(() => {
 				this.scheduleFlush();
@@ -113,7 +145,11 @@ export class TelemetryService {
 
 	/** Records a chat completion (or failure) and returns the stored event. */
 	recordChat(chat: ChatTelemetry): TelemetryEvent {
-		const pricing = this.pricing?.(chat.model, chat.provider);
+		const pricing = this.pricing?.(
+			chat.model,
+			chat.provider,
+			chat.providerKind,
+		);
 		// Failed attempts may have missing or partial usage, so a zero token
 		// fallback cannot establish that the provider charged nothing.
 		const estimatedCostUsd =
@@ -127,6 +163,7 @@ export class TelemetryService {
 			type: chat.error
 				? "gateway.error"
 				: `gateway.${chat.operation ?? "chat"}`,
+			...(chat.workspaceId ? { workspaceId: chat.workspaceId } : {}),
 			agentId: chat.agentId,
 			data: {
 				operation: chat.operation ?? "chat",
@@ -155,7 +192,8 @@ export class TelemetryService {
 			timestamp: this.now().toISOString(),
 		};
 
-		this.aggregate(chat);
+		this.aggregate(this.all, chat);
+		this.aggregate(this.partition(chat.workspaceId ?? NO_WORKSPACE), chat);
 		this.record(event);
 		return event;
 	}
@@ -182,9 +220,13 @@ export class TelemetryService {
 					(this.analyticsCursor + 1) % this.maxAnalyticsEvents;
 			}
 		}
-		this.recent.push(event);
-		if (this.recent.length > this.maxRecent) {
-			this.recent.splice(0, this.recent.length - this.maxRecent);
+		for (const partition of [
+			this.all,
+			this.partition(event.workspaceId ?? NO_WORKSPACE),
+		]) {
+			partition.recent.push(event);
+			if (partition.recent.length > this.maxRecent)
+				partition.recent.splice(0, partition.recent.length - this.maxRecent);
 		}
 		if (this.sink) {
 			this.pending.push(event);
@@ -196,17 +238,81 @@ export class TelemetryService {
 		}
 	}
 
+	/** Gets (and marks as recently used) a workspace's partition, evicting the oldest past the bound. */
+	private partition(workspaceId: string): Partition {
+		let partition = this.partitions.get(workspaceId);
+		if (partition) this.partitions.delete(workspaceId);
+		else partition = newPartition();
+		this.partitions.set(workspaceId, partition);
+		while (this.partitions.size > this.maxWorkspaces) {
+			const oldest = this.partitions.keys().next().value as string;
+			this.partitions.delete(oldest);
+		}
+		return partition;
+	}
+
+	/**
+	 * The aggregates a caller may see: one workspace's, or the whole process
+	 * when no workspace is given (diagnostics and tests only; routes always
+	 * pass the request's workspace).
+	 */
+	private view(workspace?: WorkspaceRef): Partition {
+		if (!workspace) return this.all;
+		const own = this.partitions.get(workspace.id) ?? newPartition();
+		if (!workspace.isDefault) return own;
+		// Calls recorded outside a workspace belong to the default one.
+		const loose = this.partitions.get(NO_WORKSPACE);
+		if (!loose) return own;
+		const merged = newPartition();
+		for (const part of [own, loose]) {
+			merged.recent.push(...part.recent);
+			for (const key of Object.keys(merged.totals) as (keyof Totals)[])
+				merged.totals[key] += part.totals[key];
+			for (const [key, usage] of part.byModel) {
+				const target = merged.byModel.get(key);
+				if (!target) {
+					merged.byModel.set(key, { ...usage });
+					continue;
+				}
+				target.requests += usage.requests;
+				target.errors += usage.errors;
+				target.promptTokens += usage.promptTokens;
+				target.completionTokens += usage.completionTokens;
+				target.totalTokens += usage.totalTokens;
+				target.successLatencyTotal += usage.successLatencyTotal;
+				const successes = target.requests - target.errors;
+				target.avgLatencyMs =
+					successes > 0
+						? Math.round(target.successLatencyTotal / successes)
+						: 0;
+			}
+		}
+		merged.recent.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+		return merged;
+	}
+
+	/**
+	 * `resolve(model, provider, providerKind)` prices a call; `providerKind` is
+	 * the connection's implementation (`openai`, `anthropic`, …) when known.
+	 */
 	setPricingResolver(
-		resolve: (model: string, provider: string) => ModelPricing | undefined,
+		resolve: (
+			model: string,
+			provider: string,
+			providerKind?: string,
+		) => ModelPricing | undefined,
 	): void {
 		this.pricing = resolve;
 	}
 
-	async analytics(query: AnalyticsQuery): Promise<UsageAnalytics> {
+	async analytics(
+		query: AnalyticsQuery,
+		workspace?: WorkspaceRef,
+	): Promise<UsageAnalytics> {
 		const generatedAt = this.now().toISOString();
 		if (this.sink && (await this.drain()) && !this.durableIncomplete) {
 			try {
-				const facts = await this.sink.queryAnalytics(query);
+				const facts = await this.sink.queryAnalytics(query, workspace);
 				return buildAnalytics(facts, query, {
 					generatedAt,
 					source: "mongodb",
@@ -224,7 +330,8 @@ export class TelemetryService {
 			.filter(
 				(event) =>
 					Date.parse(event.timestamp) >= from &&
-					Date.parse(event.timestamp) < to,
+					Date.parse(event.timestamp) < to &&
+					(!workspace || inWorkspace(event.workspaceId, workspace)),
 			)
 			.map((event) => eventFact(event, bucketMs(query)));
 		return buildAnalytics(facts, query, {
@@ -236,14 +343,15 @@ export class TelemetryService {
 		});
 	}
 
-	private aggregate(chat: ChatTelemetry): void {
+	private aggregate(partition: Partition, chat: ChatTelemetry): void {
+		const { byModel, totals } = partition;
 		// Bound the map: unadvertised model ids are routable (and typos still
 		// get recorded), so distinct keys would otherwise grow forever.
 		const key =
-			this.byModel.has(chat.model) || this.byModel.size < this.maxModels
+			byModel.has(chat.model) || byModel.size < this.maxModels
 				? chat.model
 				: OVERFLOW_MODEL_KEY;
-		let usage = this.byModel.get(key);
+		let usage = byModel.get(key);
 		if (!usage) {
 			usage = {
 				model:
@@ -261,24 +369,24 @@ export class TelemetryService {
 				avgLatencyMs: 0,
 				successLatencyTotal: 0,
 			};
-			this.byModel.set(key, usage);
+			byModel.set(key, usage);
 		}
 
 		usage.requests += 1;
-		this.totals.requests += 1;
+		totals.requests += 1;
 		if (chat.error) {
 			usage.errors += 1;
-			this.totals.errors += 1;
+			totals.errors += 1;
 		} else {
 			usage.successLatencyTotal += chat.latencyMs;
-			this.totals.successLatencyTotal += chat.latencyMs;
+			totals.successLatencyTotal += chat.latencyMs;
 		}
 		usage.promptTokens += chat.usage.promptTokens;
 		usage.completionTokens += chat.usage.completionTokens;
 		usage.totalTokens += chat.usage.totalTokens;
-		this.totals.promptTokens += chat.usage.promptTokens;
-		this.totals.completionTokens += chat.usage.completionTokens;
-		this.totals.totalTokens += chat.usage.totalTokens;
+		totals.promptTokens += chat.usage.promptTokens;
+		totals.completionTokens += chat.usage.completionTokens;
+		totals.totalTokens += chat.usage.totalTokens;
 
 		const successes = usage.requests - usage.errors;
 		usage.avgLatencyMs =
@@ -286,19 +394,18 @@ export class TelemetryService {
 	}
 
 	/** In-memory usage summary for the current process lifetime. */
-	summary(): UsageSummary {
-		const successes = this.totals.requests - this.totals.errors;
+	summary(workspace?: WorkspaceRef): UsageSummary {
+		const { totals, byModel } = this.view(workspace);
+		const successes = totals.requests - totals.errors;
 		return {
-			totalRequests: this.totals.requests,
-			totalErrors: this.totals.errors,
-			promptTokens: this.totals.promptTokens,
-			completionTokens: this.totals.completionTokens,
-			totalTokens: this.totals.totalTokens,
+			totalRequests: totals.requests,
+			totalErrors: totals.errors,
+			promptTokens: totals.promptTokens,
+			completionTokens: totals.completionTokens,
+			totalTokens: totals.totalTokens,
 			avgLatencyMs:
-				successes > 0
-					? Math.round(this.totals.successLatencyTotal / successes)
-					: 0,
-			byModel: [...this.byModel.values()]
+				successes > 0 ? Math.round(totals.successLatencyTotal / successes) : 0,
+			byModel: [...byModel.values()]
 				.map(({ successLatencyTotal: _ignored, ...usage }) => usage)
 				.sort((a, b) => b.requests - a.requests),
 			source: "memory",
@@ -310,20 +417,22 @@ export class TelemetryService {
 	 * configured, pending events cannot be flushed, or the query fails —
 	 * callers fall back to the complete in-memory summary in every case.
 	 */
-	async summaryFromSink(): Promise<UsageSummary | undefined> {
+	async summaryFromSink(
+		workspace?: WorkspaceRef,
+	): Promise<UsageSummary | undefined> {
 		if (!this.sink) return undefined;
 		// A failed flush means the durable store is missing events we hold in
 		// memory — serving its summary would silently under-report.
 		if (!(await this.drain())) return undefined;
 		try {
-			return await this.sink.querySummary();
+			return await this.sink.querySummary(workspace);
 		} catch {
 			return undefined;
 		}
 	}
 
-	recentEvents(limit = 50): TelemetryEvent[] {
-		return this.recent.slice(-limit).reverse();
+	recentEvents(limit = 50, workspace?: WorkspaceRef): TelemetryEvent[] {
+		return this.view(workspace).recent.slice(-limit).reverse();
 	}
 
 	get sinkHealthy(): boolean {

@@ -17,6 +17,8 @@ export const DEFAULT_API_TOKEN_PERMISSIONS: readonly ApiTokenPermission[] = [
 
 export type ApiToken<Permission extends string = ApiTokenPermission> = {
 	id: string;
+	/** The workspace this token belongs to; it can call only `/v1/<workspaceId>/…`. */
+	workspaceId: string;
 	name: string;
 	description: string;
 	permissions: Permission[];
