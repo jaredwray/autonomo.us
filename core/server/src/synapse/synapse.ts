@@ -448,8 +448,13 @@ export class SynapseService {
 	private parentOf(space: SynapseSpaceId): SynapseSpaceId | null {
 		return inheritsGlobal(space) ? SYNAPSE_GLOBAL_SPACE : null;
 	}
-	/** Titles a space defines itself; they override its parent's notes. */
-	private async ownTitleKeys(space: SynapseSpaceId) {
+	/**
+	 * Titles a space defines itself, which override its parent's notes; null
+	 * for a space that inherits nothing. A call reads them once and passes
+	 * them to each inherited read, so one request scans the index once.
+	 */
+	private async overrides(space: SynapseSpaceId): Promise<string[] | null> {
+		if (!this.parentOf(space)) return null;
 		return (await this.repository.scanNotes(space)).map(
 			(entry) => entry.titleKey,
 		);
@@ -469,14 +474,18 @@ export class SynapseService {
 		const inherited = await this.repository.scanNotes(parent);
 		return [...own, ...inherited.filter((entry) => !keys.has(entry.titleKey))];
 	}
-	private async readNotes(filter: NoteFilter, options: FindOptions) {
+	private async readNotes(
+		filter: NoteFilter,
+		options: FindOptions,
+		overrides?: string[] | null,
+	) {
 		const parent = this.parentOf(filter.space);
 		if (!parent) return this.repository.findNotes(filter, options);
 		const offset = options.offset ?? 0;
 		const window = { sort: options.sort, limit: offset + options.limit };
 		const [own, keys] = await Promise.all([
 			this.repository.findNotes(filter, window),
-			this.ownTitleKeys(filter.space),
+			overrides ?? this.overrides(filter.space).then((keys) => keys ?? []),
 		]);
 		const inherited = await this.repository.findNotes(
 			{
@@ -490,12 +499,12 @@ export class SynapseService {
 			.sort((a, b) => compareNotes(a, b, options.sort))
 			.slice(offset, offset + options.limit);
 	}
-	private async countVisible(filter: NoteFilter) {
+	private async countVisible(filter: NoteFilter, overrides?: string[] | null) {
 		const parent = this.parentOf(filter.space);
 		if (!parent) return this.repository.countNotes(filter);
 		const [own, keys] = await Promise.all([
 			this.repository.countNotes(filter),
-			this.ownTitleKeys(filter.space),
+			overrides ?? this.overrides(filter.space).then((keys) => keys ?? []),
 		]);
 		return (
 			own +
@@ -517,7 +526,7 @@ export class SynapseService {
 			return this.repository.findDailyNotes(space, date, range, limit);
 		const [own, keys] = await Promise.all([
 			this.repository.findDailyNotes(space, date, range, limit),
-			this.ownTitleKeys(space),
+			this.overrides(space),
 		]);
 		const overridden = new Set(keys);
 		const inherited = await this.repository.findDailyNotes(
@@ -591,7 +600,7 @@ export class SynapseService {
 		const template = findTemplate(name);
 		if (!template)
 			throw new SynapseError(
-				`Unknown template "${name}". See GET /v1/synapse/templates.`,
+				`Unknown template "${name}". See synapse_templates or GET /v1/<workspace id>/synapse/templates.`,
 			);
 		return template;
 	}
@@ -641,6 +650,7 @@ export class SynapseService {
 		space: SynapseSpaceId,
 		note: StoredNote,
 		index: NoteIndexEntry[],
+		overrides: string[] | null,
 	): Promise<SynapseRelatedNote[]> {
 		const backlinks = this.backlinkCounts(index);
 		const linkKeys = new Set(note.linkKeys);
@@ -681,6 +691,7 @@ export class SynapseService {
 				titleKeys: ranked.map((item) => item.entry.titleKey),
 			},
 			{ sort: { by: "titleKey", direction: "asc" }, limit: RELATED_LIMIT },
+			overrides,
 		);
 		const byKey = new Map(notes.map((item) => [item.titleKey, item]));
 		return ranked.flatMap((item) => {
@@ -703,10 +714,18 @@ export class SynapseService {
 		title: string,
 	): Promise<SynapseNoteView> {
 		const note = await this.mustGet(space, title);
-		const [backlinks, members, index] = await Promise.all([
+		const index = await this.readIndex(space);
+		// The index already holds the space's own titles; reuse them.
+		const overrides = this.parentOf(space)
+			? index
+					.filter((entry) => entry.space === space)
+					.map((entry) => entry.titleKey)
+			: null;
+		const [backlinks, members] = await Promise.all([
 			this.readNotes(
 				{ space, linkKey: note.titleKey },
 				{ sort: { by: "updatedAt", direction: "desc" }, limit: BACKLINK_LIMIT },
+				overrides,
 			),
 			this.readNotes(
 				{ space, categoryKey: note.titleKey },
@@ -714,8 +733,8 @@ export class SynapseService {
 					sort: { by: "titleKey", direction: "asc" },
 					limit: CATEGORY_MEMBER_LIMIT,
 				},
+				overrides,
 			),
-			this.readIndex(space),
 		]);
 		const existing = new Set(index.map((entry) => entry.titleKey));
 		return {
@@ -725,7 +744,7 @@ export class SynapseService {
 				title: link,
 				exists: existing.has(titleKey(link)),
 			})),
-			related: await this.related(space, note, index),
+			related: await this.related(space, note, index, overrides),
 			categoryMembers: members.map((item) => summary(item)),
 			markdown: renderMarkdown(note.properties, note.body),
 		};
@@ -736,9 +755,14 @@ export class SynapseService {
 		space: SynapseSpaceId,
 		title: string,
 		apply: (current: StoredNote) => StoredNote | Promise<StoredNote>,
+		/** Own notes only: a missing note is 404 even when an inherited one has its title. */
+		own = false,
 	): Promise<StoredNote> {
 		for (let attempt = 0; attempt < WRITE_ATTEMPTS; attempt++) {
-			const current = await this.mustGet(space, title);
+			const current = own
+				? await this.repository.getNote(space, titleKey(title))
+				: await this.mustGet(space, title);
+			if (!current) throw notFound(title);
 			this.assertOwn(space, current);
 			const next = await apply(current);
 			if (await this.repository.replaceNote(next, current.revision))
@@ -833,14 +857,18 @@ export class SynapseService {
 			},
 		);
 		for (const note of linked) {
-			await this.change(space, note.title, (current) =>
-				this.revise(
-					current,
-					current.title,
-					rewritePropertyLinks(current.properties, from, to),
-					rewriteLinks(current.body, from, to),
-					actor,
-				),
+			await this.change(
+				space,
+				note.title,
+				(current) =>
+					this.revise(
+						current,
+						current.title,
+						rewritePropertyLinks(current.properties, from, to),
+						rewriteLinks(current.body, from, to),
+						actor,
+					),
+				true,
 			).catch((error) => {
 				if (!(error instanceof SynapseError && error.statusCode === 404))
 					throw error;
@@ -932,13 +960,18 @@ export class SynapseService {
 		let sort = query.sort ?? (terms.length ? "relevance" : "updated");
 		if (sort === "relevance" && !terms.length) sort = "updated";
 		const direction = query.direction ?? (sort === "title" ? "asc" : "desc");
-		const total = await this.countVisible(filter);
+		const overrides = await this.overrides(space);
+		const total = await this.countVisible(filter, overrides);
 		let notes: StoredNote[];
 		if (sort === "relevance") {
-			const candidates = await this.readNotes(filter, {
-				sort: { by: "updatedAt", direction: "desc" },
-				limit: RELEVANCE_CANDIDATES,
-			});
+			const candidates = await this.readNotes(
+				filter,
+				{
+					sort: { by: "updatedAt", direction: "desc" },
+					limit: RELEVANCE_CANDIDATES,
+				},
+				overrides,
+			);
 			const scored = candidates.map((note) => ({
 				note,
 				score: relevance(note, terms, text),
@@ -954,19 +987,23 @@ export class SynapseService {
 			if (direction === "asc") scored.reverse();
 			notes = scored.slice(offset, offset + limit).map((item) => item.note);
 		} else {
-			notes = await this.readNotes(filter, {
-				sort: {
-					by:
-						sort === "created"
-							? "createdAt"
-							: sort === "title"
-								? "titleKey"
-								: "updatedAt",
-					direction,
+			notes = await this.readNotes(
+				filter,
+				{
+					sort: {
+						by:
+							sort === "created"
+								? "createdAt"
+								: sort === "title"
+									? "titleKey"
+									: "updatedAt",
+						direction,
+					},
+					limit,
+					offset,
 				},
-				limit,
-				offset,
-			});
+				overrides,
+			);
 		}
 		return { notes: notes.map((note) => summary(note, terms)), total };
 	}
@@ -1030,7 +1067,8 @@ export class SynapseService {
 		if (!validDate(date))
 			throw new SynapseError("Dates are written YYYY-MM-DD.", 400);
 		const [note, entries] = await Promise.all([
-			this.readNote(space, date),
+			// The day note is the space's own: a global log is not a workspace's.
+			this.repository.getNote(space, date),
 			this.readDaily(space, date, dayRange(date, this.timeZone), DAILY_LIMIT),
 		]);
 		return {

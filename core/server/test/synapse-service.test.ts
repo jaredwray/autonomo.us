@@ -1385,23 +1385,92 @@ describe("global inheritance", () => {
 				.filter((path) => !path.startsWith("Templates/"))
 				.sort(),
 		).toEqual(["Brand voice.md", "Trailer plan.md"]);
-		// Renaming a workspace note leaves global notes alone.
+		// Backlinks span both layers: a global note can link a workspace title.
+		await service.createNote(
+			"global",
+			{ title: "Release checklist", body: "Ship the [[Trailer plan]]." },
+			user,
+		);
+		await service.createNote(
+			film,
+			{ title: "Promo", body: "Cut from the [[Trailer plan]]." },
+			user,
+		);
+		expect(
+			(await service.viewNote(film, "Trailer plan")).backlinks
+				.map((note) => `${note.space}:${note.title}`)
+				.sort(),
+		).toEqual(["global:Release checklist", "shared:Promo"]);
+		// Renaming a workspace note rewrites the workspace's links, never global ones.
 		await service.updateNote(
 			film,
 			"Trailer plan",
 			{ title: "Teaser plan" },
 			user,
 		);
-		expect((await service.getNote("global", "Style guide")).revision).toBe(1);
+		expect((await service.getNote(film, "Promo")).body).toBe(
+			"Cut from the [[Teaser plan]].",
+		);
+		expect(await service.getNote("global", "Release checklist")).toMatchObject({
+			body: "Ship the [[Trailer plan]].",
+			revision: 1,
+		});
 
 		const spaces = await service.listSpaces({
 			shared: film,
 			agentTokenIds: new Set(),
 		});
 		expect(spaces.spaces.map((space) => [space.id, space.noteCount])).toEqual([
-			["global", 3],
-			["shared", 2],
+			["global", 4],
+			["shared", 3],
 		]);
+	});
+
+	it("searches by relevance and lists daily notes across both layers", async () => {
+		const { service, set } = synapse();
+		set("2026-11-08T09:00:00Z");
+		await service.createNote(
+			"global",
+			{ title: "Onboarding", body: "How we onboard partners." },
+			user,
+		);
+		await service.createNote(
+			"global",
+			{ title: "Retro", body: "Global retro." },
+			user,
+		);
+		await service.createNote(
+			film,
+			{ title: "Partner list", body: "Onboarding status per partner." },
+			user,
+		);
+		// Film overrides Retro, so the global one leaves Film's day view.
+		await service.createNote(
+			film,
+			{ title: "Retro", body: "Film retro." },
+			user,
+		);
+		set("2026-11-08T10:00:00Z");
+		await service.createNote(
+			"global",
+			{ title: "2026-11-08", body: "Global log." },
+			user,
+		);
+		const found = await service.query(film, { text: "onboarding" });
+		expect(found.notes.map((note) => [note.title, note.space])).toEqual([
+			["Onboarding", "global"],
+			["Partner list", "shared"],
+		]);
+		expect(found.total).toBe(2);
+		const day = await service.daily(film, "2026-11-08");
+		// The day note itself is the workspace's own, so Film has none.
+		expect(day.note).toBeNull();
+		expect(
+			day.entries.map((entry) => `${entry.space}:${entry.title}`).sort(),
+		).toEqual(["global:Onboarding", "shared:Partner list", "shared:Retro"]);
+		expect((await service.daily("global", "2026-11-08")).note).toMatchObject({
+			title: "2026-11-08",
+		});
 	});
 
 	it("rewrites links in inheriting workspaces when a global note is renamed", async () => {

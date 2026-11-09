@@ -85,14 +85,7 @@ function actorOf(request: FastifyRequest): SynapseActor {
 	throw new SynapseError("Sign in or provide an API token.", 403);
 }
 
-/** IDs of the agents in the request's workspace, whose spaces it may open. */
-async function workspaceAgents(
-	request: FastifyRequest,
-	agentTokens: AgentTokenStore,
-): Promise<Set<string>> {
-	const settings = await agentTokens.settings(requestWorkspace(request), true);
-	return new Set(settings.tokens.map((token) => token.id));
-}
+const spacePattern = new RegExp(SYNAPSE_SPACE_ID_PATTERN);
 
 /**
  * Synapse inside one workspace, under `/v1/:workspace/synapse`. `shared` is
@@ -106,19 +99,14 @@ export async function synapseRoutes(
 		agentTokens,
 	}: { synapse: SynapseService; agentTokens: AgentTokenStore },
 ) {
-	server.addHook("onRequest", async (_request, reply) => {
+	server.addHook("onRequest", async (request, reply) => {
 		reply.header("cache-control", "no-store");
-	});
-	// After validation: turn the path's space into the workspace's storage key.
-	server.addHook("preHandler", async (request) => {
-		const params = request.params as { space?: SynapseSpaceId };
-		if (params.space === undefined) return;
+		// Decide access to the space before reading a body (an import is up to
+		// 5 MB). A malformed ID is left to schema validation (400).
+		const space = (request.params as { space?: string }).space;
+		if (space === undefined || !spacePattern.test(space)) return;
 		const workspace = requestWorkspace(request);
-		if (params.space === SYNAPSE_SHARED_SPACE) {
-			params.space = sharedSpaceId(workspace);
-			return;
-		}
-		if (params.space === SYNAPSE_GLOBAL_SPACE) {
+		if (space === SYNAPSE_GLOBAL_SPACE) {
 			// The global space sits above every workspace: people who run the
 			// whole gateway change it, and everyone else reads it.
 			const write = request.method !== "GET" && request.method !== "HEAD";
@@ -127,11 +115,17 @@ export async function synapseRoutes(
 					"Only owners and admins can change the global Synapse.",
 					403,
 				);
-			return;
+		} else if (space !== SYNAPSE_SHARED_SPACE) {
+			const agents = await agentTokens.ids(workspace);
+			if (!agents.has(space.slice("agent-".length)))
+				throw new SynapseError("No such space in this workspace.", 404);
 		}
-		const agents = await workspaceAgents(request, agentTokens);
-		if (!agents.has(params.space.slice("agent-".length)))
-			throw new SynapseError("No such space in this workspace.", 404);
+	});
+	// After validation: requests say `shared`; storage keys it by workspace.
+	server.addHook("preHandler", async (request) => {
+		const params = request.params as { space?: SynapseSpaceId };
+		if (params.space === SYNAPSE_SHARED_SPACE)
+			params.space = sharedSpaceId(requestWorkspace(request));
 	});
 	// Store errors carry a status; validation failures are 400s. Both answer
 	// in the gateway's `{ error: { message } }` shape.
@@ -162,7 +156,7 @@ export async function synapseRoutes(
 	server.get("/synapse/spaces", async (request) =>
 		synapse.listSpaces({
 			shared: sharedSpaceId(requestWorkspace(request)),
-			agentTokenIds: await workspaceAgents(request, agentTokens),
+			agentTokenIds: await agentTokens.ids(requestWorkspace(request)),
 		}),
 	);
 	server.get("/synapse/templates", () => ({

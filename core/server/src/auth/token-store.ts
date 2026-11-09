@@ -227,6 +227,28 @@ export class TokenStore<Permission extends string> {
 			? structuredClone(record)
 			: null;
 	}
+	/** IDs of a workspace's tokens, revoked ones included. */
+	async ids(workspace: WorkspaceRef): Promise<Set<string>> {
+		if (!this.mongodbUrl)
+			return new Set(
+				[...this.records.values()]
+					.filter((record) => inWorkspace(record.workspaceId, workspace))
+					.map((record) => record._id),
+			);
+		const records = await this.storage(() =>
+			this.collection()
+				.find(
+					{ workspaceId: workspaceFilter(workspace) },
+					{ projection: { _id: 1, workspaceId: 1 } },
+				)
+				.toArray(),
+		);
+		return new Set(
+			records
+				.filter((record) => inWorkspace(record.workspaceId, workspace))
+				.map((record) => String(record._id)),
+		);
+	}
 	async settings(
 		workspace: WorkspaceRef,
 		authenticationRequired: boolean,

@@ -160,7 +160,7 @@ it("navigates to Synapse and creates a note from a template with its properties"
 		within(screen.getByLabelText("Space"))
 			.getAllByRole("option")
 			.map((option) => option.textContent),
-	).toEqual(["Global (0 notes)", "Shared (0 notes)"]);
+	).toEqual(["Global (0 notes)", "Shared (0 notes, inherits Global)"]);
 	fireEvent.click(screen.getByRole("button", { name: "New note" }));
 	change("Title", "Ada Lovelace");
 	await screen.findByRole("option", { name: "People" });
@@ -662,7 +662,7 @@ it("lets owners approve and reject agent proposals, surfacing conflicts", async 
 				.map((option) => option.textContent),
 		).toEqual([
 			"Global (0 notes)",
-			"Shared (3 notes)",
+			"Shared (3 notes, inherits Global)",
 			"Research agent (1 note)",
 		]),
 	);

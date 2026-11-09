@@ -139,6 +139,8 @@ export class MongoSynapseRepository implements SynapseRepository {
 				key: { "author.id": 1, status: 1, createdAt: -1 },
 				name: "author_status",
 			},
+			// Each workspace lists the proposals for its own shared space.
+			{ key: { space: 1, status: 1, createdAt: -1 }, name: "space_status" },
 		]);
 	}
 	/** Runs `operation` once the indexes exist; driver failures become 503s. */

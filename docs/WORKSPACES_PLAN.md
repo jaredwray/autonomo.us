@@ -894,3 +894,15 @@ one workspace's data or credentials to another's. Findings and what changed:
 | Memory-mode telemetry coverage text did not match the code | Implementation review | Plan corrected (5.4). |
 | "The balancing map is bounded" did not say by what | Implementation review | Plan corrected (5.3). |
 | Missing tests: team privacy, archived workspace read by a member, `HEAD`, a second workspace in the Workers test | Implementation review | Added. |
+
+Global Synapse (D8) was reviewed after it was built. The review found no isolation or authorization hole. Findings and what changed:
+
+| Finding | Source | Disposition |
+| --- | --- | --- |
+| Renaming a global note left links to it unresolved in the workspaces that inherit it | Synapse review, Aikido (medium) | Fixed: the rename rewrites inherited links, except in a workspace with its own note of either title. |
+| Inherited reads scanned the workspace's title index several times per request | Synapse review | Fixed: each request reads the workspace's own titles once and reuses them. |
+| Agent space checks loaded every token and its history | Synapse review | Fixed: a projection of token IDs. |
+| Space checks ran after a request body (up to 5 MB) was read | Synapse review | Fixed: they run when the request arrives. |
+| A global day note appeared as every workspace's day note; a link rewrite racing a delete could fail on an inherited note | Synapse review | Fixed: the day note is the space's own, and link rewrites read own notes only. |
+| No index for listing proposals by workspace | Synapse review | Added. |
+| Test gaps: cross-layer backlinks, a rename that cannot touch global, inherited daily and relevance search, a workspace admin deciding proposals | Synapse review | Added. |

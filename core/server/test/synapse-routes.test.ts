@@ -548,6 +548,131 @@ describe("Synapse REST routes", () => {
 		]);
 	});
 
+	it("lets a workspace admin decide only that workspace's proposals, and refuses before reading a body", async () => {
+		const { origin, call, member } = await start();
+		const film = (
+			(await (
+				await call("POST", "/v1/workspaces", { body: { name: "Film" } })
+			).json()) as { id: string }
+		).id;
+		const added = await call("POST", "/v1/team", {
+			body: {
+				email: "film-admin@example.com",
+				name: "Film admin",
+				role: "member",
+				password: "correct horse battery",
+				workspace: { workspaceId: film, role: "admin" },
+			},
+		});
+		expect(added.status).toBe(201);
+		const filmAdmin = (
+			(await (
+				await call("POST", "/v1/auth/session", {
+					token: "",
+					body: {
+						email: "film-admin@example.com",
+						password: "correct horse battery",
+					},
+				})
+			).json()) as { token: string }
+		).token;
+		const agent = async (path: string) =>
+			(
+				(await (
+					await call("POST", path, {
+						body: {
+							name: "Agent",
+							description: "",
+							ttlDays: 7,
+							permissions: ["mcp:read", "mcp:call"],
+						},
+					})
+				).json()) as ApiTokenSecret
+			).secret;
+		const propose = async (secret: string, title: string) => {
+			const response = await fetch(`${origin}/mcp`, {
+				method: "POST",
+				headers: {
+					authorization: `Bearer ${secret}`,
+					"content-type": "application/json",
+				},
+				body: JSON.stringify({
+					jsonrpc: "2.0",
+					id: 1,
+					method: "tools/call",
+					params: {
+						name: "synapse_propose",
+						arguments: { action: "create", title, body: "b", reason: "r" },
+					},
+				}),
+			});
+			return (
+				(await response.json()) as {
+					result: { structuredContent: { id: string } };
+				}
+			).result.structuredContent.id;
+		};
+		const filmIdea = await propose(
+			await agent(`/v1/${film}/agent-tokens`),
+			"Film idea",
+		);
+		const defaultIdea = await propose(
+			await agent("/v1/agent-tokens"),
+			"Default idea",
+		);
+		const pending = async (base: string, token?: string) =>
+			(
+				(await (await call("GET", `${base}/proposals`, { token })).json()) as {
+					proposals: Array<{ id: string; space: string }>;
+				}
+			).proposals.map((item) => `${item.space}:${item.id}`);
+		expect(await pending(`/v1/${film}/synapse`, filmAdmin)).toEqual([
+			`shared:${filmIdea}`,
+		]);
+		expect(await pending("/v1/synapse")).toEqual([`shared:${defaultIdea}`]);
+		const decide = (base: string, id: string, token?: string) =>
+			call("POST", `${base}/proposals/${id}/decide`, {
+				token,
+				body: { decision: "approve" },
+			});
+		// The default workspace's proposal is not Film's to decide.
+		expect(
+			(await decide(`/v1/${film}/synapse`, defaultIdea, filmAdmin)).status,
+		).toBe(404);
+		expect((await decide("/v1/synapse", defaultIdea, filmAdmin)).status).toBe(
+			404,
+		);
+		expect(
+			(await decide(`/v1/${film}/synapse`, filmIdea, filmAdmin)).status,
+		).toBe(200);
+		// A workspace admin still cannot change Global.
+		const refused = await call(
+			"POST",
+			`/v1/${film}/synapse/spaces/global/notes`,
+			{ token: filmAdmin, body: { title: "Not mine" } },
+		);
+		expect(refused.status).toBe(403);
+		// Refusals come before the body is read: a 6 MB import gets 403 or 404, not 413.
+		const huge = {
+			files: [{ path: "Big.md", content: "x".repeat(6 * 1024 * 1024) }],
+		};
+		expect(
+			(
+				await call("POST", "/v1/synapse/spaces/global/import", {
+					token: member.token,
+					body: huge,
+				})
+			).status,
+		).toBe(403);
+		expect(
+			(
+				await call("POST", "/v1/synapse/spaces/agent-nobody/import", {
+					body: huge,
+				})
+			).status,
+		).toBe(404);
+	}, 20_000);
+
 	it("restricts proposal decisions to signed-in owners and admins", async () => {
 		const { call, member, admin, apiToken } = await start();
 		const id = "00000000-0000-0000-0000-000000000000";

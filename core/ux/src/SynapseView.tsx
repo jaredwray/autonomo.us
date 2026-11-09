@@ -38,8 +38,9 @@ import {
 
 type Panel = { kind: "new"; title: string } | { kind: "import" };
 
+/** Counts are each space's own notes; Shared also shows Global's notes. */
 const spaceLabel = (space: SynapseSpace) =>
-	`${space.kind === "global" ? "Global" : space.kind === "shared" ? "Shared" : space.name} (${space.noteCount} ${space.noteCount === 1 ? "note" : "notes"})`;
+	`${space.kind === "global" ? "Global" : space.kind === "shared" ? "Shared" : space.name} (${space.noteCount} ${space.noteCount === 1 ? "note" : "notes"}${space.kind === "shared" ? ", inherits Global" : ""})`;
 const KIND_ORDER: Record<SynapseSpace["kind"], number> = {
 	global: 0,
 	shared: 1,
