@@ -40,6 +40,7 @@ export {
 	type CreateSynapseProposalRequest,
 	type DecideSynapseProposalRequest,
 	SYNAPSE_ATTACHMENT_EXTENSIONS,
+	SYNAPSE_GLOBAL_SPACE,
 	SYNAPSE_SHARED_SPACE,
 	SYNAPSE_SPACE_ID_PATTERN,
 	type SynapseActor,

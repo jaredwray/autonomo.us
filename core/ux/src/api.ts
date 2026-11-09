@@ -552,17 +552,17 @@ async function synapseRequest<T>(
 	return (response.status === 204 ? undefined : await response.json()) as T;
 }
 const spacePath = (space: string) =>
-	`/v1/synapse/spaces/${encodeURIComponent(space)}`;
+	ws(`/synapse/spaces/${encodeURIComponent(space)}`);
 const notePath = (space: string, title: string) =>
 	`${spacePath(space)}/notes/${encodeURIComponent(title)}`;
 
 export function fetchSynapseSpaces(): Promise<SynapseSpaceList> {
-	return synapseRequest("/v1/synapse/spaces");
+	return synapseRequest(ws("/synapse/spaces"));
 }
 export function fetchSynapseTemplates(): Promise<{
 	templates: SynapseTemplate[];
 }> {
-	return synapseRequest("/v1/synapse/templates");
+	return synapseRequest(ws("/synapse/templates"));
 }
 export function fetchSynapseNotes(
 	space: string,
@@ -675,7 +675,9 @@ export function fetchSynapseProposals(
 	status?: SynapseProposalStatus,
 ): Promise<SynapseProposalList> {
 	return synapseRequest(
-		`/v1/synapse/proposals${status ? `?status=${encodeURIComponent(status)}` : ""}`,
+		ws(
+			`/synapse/proposals${status ? `?status=${encodeURIComponent(status)}` : ""}`,
+		),
 	);
 }
 export function decideSynapseProposal(
@@ -683,7 +685,7 @@ export function decideSynapseProposal(
 	input: DecideSynapseProposalRequest,
 ): Promise<SynapseProposal> {
 	return synapseRequest(
-		`/v1/synapse/proposals/${encodeURIComponent(id)}/decide`,
+		ws(`/synapse/proposals/${encodeURIComponent(id)}/decide`),
 		{
 			method: "POST",
 			body: input,

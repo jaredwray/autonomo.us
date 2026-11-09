@@ -1,4 +1,5 @@
 import {
+	SYNAPSE_GLOBAL_SPACE,
 	SYNAPSE_SHARED_SPACE,
 	type SynapseCategory,
 	type SynapseImportResult,
@@ -7,6 +8,7 @@ import {
 	type SynapseSpaceList,
 	type SynapseTemplate,
 	type TeamMember,
+	type WorkspaceAccess,
 } from "@autonomo.us/common";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -37,7 +39,18 @@ import {
 type Panel = { kind: "new"; title: string } | { kind: "import" };
 
 const spaceLabel = (space: SynapseSpace) =>
-	`${space.kind === "shared" ? "Shared" : space.name} (${space.noteCount} ${space.noteCount === 1 ? "note" : "notes"})`;
+	`${space.kind === "global" ? "Global" : space.kind === "shared" ? "Shared" : space.name} (${space.noteCount} ${space.noteCount === 1 ? "note" : "notes"})`;
+const KIND_ORDER: Record<SynapseSpace["kind"], number> = {
+	global: 0,
+	shared: 1,
+	agent: 2,
+};
+const spaceHint = (space: string) =>
+	space === SYNAPSE_GLOBAL_SPACE
+		? "The canon for every workspace. Each workspace's Shared space inherits it; owners and admins change it."
+		: space === SYNAPSE_SHARED_SPACE
+			? "This workspace's canon, including notes inherited from Global. Agents read it and change it only through proposals."
+			: "An agent's private memory, kept across token rolls. Only the team sees it here.";
 
 function NewNoteForm({
 	space,
@@ -348,7 +361,8 @@ function NotesList({
 	selected: string | null;
 	version: number;
 	onOpen(title: string): void;
-	onNewNote(): void;
+	/** Absent where the viewer cannot write, such as Global for members. */
+	onNewNote?: () => void;
 }) {
 	const [text, setText] = useState("");
 	const [query, setQuery] = useState("");
@@ -466,6 +480,15 @@ function NotesList({
 								>
 									<strong>{note.title}</strong>
 									<span className="synapse-note-meta">
+										{space === SYNAPSE_SHARED_SPACE &&
+											note.space === SYNAPSE_GLOBAL_SPACE && (
+												<span
+													className="synapse-chip synapse-inherited"
+													title="Inherited from the global Synapse"
+												>
+													Global
+												</span>
+											)}
 										{note.categories.map((item) => (
 											<span className="synapse-chip" key={item}>
 												{item}
@@ -487,7 +510,7 @@ function NotesList({
 				<div className="empty-state synapse-empty-list">
 					{filtered ? (
 						"No notes match. Try another search or category."
-					) : (
+					) : onNewNote ? (
 						<>
 							No notes yet. Agents write here through MCP, or{" "}
 							<button type="button" onClick={onNewNote}>
@@ -495,6 +518,8 @@ function NotesList({
 							</button>
 							.
 						</>
+					) : (
+						"No notes yet. Owners and admins write the global canon."
 					)}
 				</div>
 			) : null}
@@ -502,7 +527,13 @@ function NotesList({
 	);
 }
 
-export function SynapseView({ user }: { user: TeamMember }) {
+export function SynapseView({
+	user,
+	workspace,
+}: {
+	user: TeamMember;
+	workspace: WorkspaceAccess;
+}) {
 	const [route, setRoute] = useState<SynapseRoute>(() =>
 		parseSynapseRoute(window.location.hash),
 	);
@@ -560,18 +591,25 @@ export function SynapseView({ user }: { user: TeamMember }) {
 		};
 	}, []);
 	const spaceOptions: SynapseSpace[] = (() => {
-		const list = [...(spaces?.spaces ?? [])].sort((a, b) =>
-			a.kind !== b.kind
-				? a.kind === "shared"
-					? -1
-					: 1
-				: a.name.localeCompare(b.name),
+		const list = [...(spaces?.spaces ?? [])].sort(
+			(a, b) =>
+				KIND_ORDER[a.kind] - KIND_ORDER[b.kind] || a.name.localeCompare(b.name),
 		);
 		if (!list.some((space) => space.id === route.space))
 			list.push({
 				id: route.space as SynapseSpace["id"],
-				kind: route.space === SYNAPSE_SHARED_SPACE ? "shared" : "agent",
-				name: route.space === SYNAPSE_SHARED_SPACE ? "Shared" : route.space,
+				kind:
+					route.space === SYNAPSE_GLOBAL_SPACE
+						? "global"
+						: route.space === SYNAPSE_SHARED_SPACE
+							? "shared"
+							: "agent",
+				name:
+					route.space === SYNAPSE_GLOBAL_SPACE
+						? "Global"
+						: route.space === SYNAPSE_SHARED_SPACE
+							? "Shared"
+							: route.space,
 				noteCount: 0,
 				createdAt: null,
 				updatedAt: null,
@@ -601,31 +639,38 @@ export function SynapseView({ user }: { user: TeamMember }) {
 			setExporting(false);
 		}
 	};
-	const canDecide = user.role !== "member";
+	// Workspace admins decide this workspace's proposals (org owners and
+	// admins are admins everywhere); only org owners and admins change Global.
+	const canDecide = workspace.role === "admin";
+	const canEdit =
+		route.space !== SYNAPSE_GLOBAL_SPACE || user.role !== "member";
 	return (
 		<div className="dashboard synapse-view">
 			<header className="dashboard-header">
 				<div>
 					<h1>Synapse</h1>
 					<p className="page-description">
-						Linked Markdown notes: the team's shared memory and each agent's
-						private space. Notes link with <code>[[Title]]</code> and are
-						classified by category, not folders.
+						Linked Markdown notes: {workspace.name}'s shared memory, which
+						inherits the global canon, and each agent's private space. Notes
+						link with <code>[[Title]]</code> and are classified by category, not
+						folders.
 					</p>
 				</div>
 				{route.tab === "notes" && (
 					<div className="header-actions">
-						<button
-							className="button"
-							type="button"
-							disabled={Boolean(panel)}
-							onClick={() => {
-								setNotice("");
-								setPanel({ kind: "import" });
-							}}
-						>
-							Import
-						</button>
+						{canEdit && (
+							<button
+								className="button"
+								type="button"
+								disabled={Boolean(panel)}
+								onClick={() => {
+									setNotice("");
+									setPanel({ kind: "import" });
+								}}
+							>
+								Import
+							</button>
+						)}
 						<button
 							className="button"
 							type="button"
@@ -634,18 +679,20 @@ export function SynapseView({ user }: { user: TeamMember }) {
 						>
 							{exporting ? "Exporting…" : "Export .zip"}
 						</button>
-						<button
-							className="button primary"
-							type="button"
-							disabled={Boolean(panel)}
-							onClick={() => {
-								setNotice("");
-								setPanel({ kind: "new", title: "" });
-							}}
-						>
-							<Icon name="plus" />
-							New note
-						</button>
+						{canEdit && (
+							<button
+								className="button primary"
+								type="button"
+								disabled={Boolean(panel)}
+								onClick={() => {
+									setNotice("");
+									setPanel({ kind: "new", title: "" });
+								}}
+							>
+								<Icon name="plus" />
+								New note
+							</button>
+						)}
 					</div>
 				)}
 			</header>
@@ -760,11 +807,7 @@ export function SynapseView({ user }: { user: TeamMember }) {
 											</option>
 										))}
 									</select>
-									<span className="field-hint">
-										{route.space === SYNAPSE_SHARED_SPACE
-											? "The team canon. Agents read it and change it only through proposals."
-											: "An agent's private memory, kept across token rolls. Only the team sees it here."}
-									</span>
+									<span className="field-hint">{spaceHint(route.space)}</span>
 								</div>
 								<NotesList
 									key={route.space}
@@ -772,7 +815,11 @@ export function SynapseView({ user }: { user: TeamMember }) {
 									selected={route.title}
 									version={version}
 									onOpen={openNote}
-									onNewNote={() => setPanel({ kind: "new", title: "" })}
+									onNewNote={
+										canEdit
+											? () => setPanel({ kind: "new", title: "" })
+											: undefined
+									}
 								/>
 							</div>
 							<section className="card synapse-main" aria-label="Note">
@@ -782,6 +829,7 @@ export function SynapseView({ user }: { user: TeamMember }) {
 										space={route.space}
 										title={route.title}
 										version={version}
+										canEdit={canEdit}
 										onNavigate={openNote}
 										onNewNote={(title) => {
 											setNotice("");

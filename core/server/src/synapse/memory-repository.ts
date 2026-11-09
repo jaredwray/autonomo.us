@@ -23,6 +23,7 @@ function matches(note: StoredNote, filter: NoteFilter): boolean {
 		!filter.titleKeys.includes(note.titleKey)
 	)
 		return false;
+	if (filter.excludeTitleKeys?.includes(note.titleKey)) return false;
 	if (filter.linkKey !== undefined && !note.linkKeys.includes(filter.linkKey))
 		return false;
 	if (
@@ -234,6 +235,7 @@ export class MemorySynapseRepository implements SynapseRepository {
 	private selectProposals(filter: ProposalFilter) {
 		return [...this.proposals.values()].filter(
 			(proposal) =>
+				(filter.space === undefined || proposal.space === filter.space) &&
 				(filter.authorId === undefined ||
 					proposal.author.id === filter.authorId) &&
 				(filter.status === undefined || proposal.status === filter.status),

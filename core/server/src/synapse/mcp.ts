@@ -2,7 +2,6 @@ import {
 	AGENT_TOKEN_PERMISSIONS,
 	type AgentTokenPermission,
 	type CreateSynapseProposalRequest,
-	SYNAPSE_SHARED_SPACE,
 	type SynapseActor,
 	type SynapseNoteView,
 	type SynapseProperties,
@@ -15,7 +14,7 @@ import { ApiTokenError, type AuthenticatedToken } from "../auth/token-store.js";
 import { resolveCorsOrigin } from "../routes/chat.js";
 import type { WorkspaceStore } from "../workspaces/store.js";
 import { SynapseError } from "./errors.js";
-import { agentSpaceId, type SynapseService } from "./synapse.js";
+import { agentSpaceId, type SynapseService, sharedSpaceId } from "./synapse.js";
 
 export const MCP_PROTOCOL_VERSIONS = [
 	"2025-11-25",
@@ -42,7 +41,7 @@ export const MCP_INSTRUCTIONS = [
 	"Always link the first mention of a person, project, company, or idea with [[Title]], even when no note exists yet; unresolved links are breadcrumbs for future notes (synapse_unresolved).",
 	"Classify notes with the categories property by creating them from a template (synapse_templates); category and template names are plural, like People or Projects.",
 	"Write dates as YYYY-MM-DD. Record what you did and decided with synapse_log; it goes into today's daily note, so link the notes involved.",
-	'Your space is private to you. The shared space is the team canon: read it with space "shared", and change it only through synapse_propose, which a person reviews.',
+	'Your space is private to you. The shared space is your workspace\'s team canon, including notes inherited from the global Synapse: read it with space "shared", and change it only through synapse_propose, which a person reviews. Inherited notes can be overridden by proposing a note with the same title.',
 ].join("\n");
 
 type JsonSchema = {
@@ -367,6 +366,8 @@ const asProperties = (value: unknown) => value as SynapseProperties | undefined;
 type Agent = {
 	token: AuthenticatedToken<AgentTokenPermission>;
 	actor: SynapseActor;
+	/** The shared space of the agent's workspace, which inherits global. */
+	shared: SynapseSpaceId;
 };
 
 export type McpRouteOptions = {
@@ -401,9 +402,7 @@ export async function mcpRoutes(
 	);
 
 	const spaceOf = (agent: Agent, args: Args): SynapseSpaceId =>
-		args.space === "shared"
-			? SYNAPSE_SHARED_SPACE
-			: agentSpaceId(agent.token.id);
+		args.space === "shared" ? agent.shared : agentSpaceId(agent.token.id);
 
 	const tools: Record<string, (agent: Agent, args: Args) => Promise<unknown>> =
 		{
@@ -486,6 +485,7 @@ export async function mcpRoutes(
 				synapse.propose(
 					agent.actor,
 					args as unknown as CreateSynapseProposalRequest,
+					agent.shared,
 				),
 			synapse_proposals: async (agent, args) => ({
 				proposals: await synapse.listProposals({
@@ -615,6 +615,7 @@ export async function mcpRoutes(
 		return {
 			token,
 			actor: { kind: "agent", id: token.id, name: token.name },
+			shared: sharedSpaceId(workspace),
 		};
 	};
 

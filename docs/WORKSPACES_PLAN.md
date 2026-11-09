@@ -125,22 +125,24 @@ Gateway deployment (the organization)
 | Workspace list and lifecycle | API tokens and agent tokens |
 | Model catalog | Telemetry events, summaries, analytics |
 | First-run setup | Workspace memberships |
-| `/health` | Future: agents, routines, approvals, storage prefixes, budgets |
-| Synapse (open question below) | |
+| `/health` | Synapse: each workspace's `shared` space, proposals, and agent spaces |
+| Synapse: the `global` space (D8), which every workspace inherits | Future: agents, routines, approvals, storage prefixes, budgets |
 
 Every workspace-level record belongs to exactly one workspace, and a request
 operates on exactly one workspace. There are no cross-workspace references.
 
-**Open question: Synapse.** Synapse ([SYNAPSE.md](./SYNAPSE.md)) merged into
-`main` while this plan was being implemented, so it is gateway-wide for now:
-`/v1/synapse/...` is an instance route, `/mcp` serves agent tokens from every
-workspace, and the `shared` space is one space for the whole gateway. Agent
-spaces stay private to their agent, and agent tokens belong to one workspace,
-but any team member can read every space from the dashboard, and an API token
-with Synapse permission reaches it whatever its workspace. Making Synapse
-workspace-level (its routes under `/v1/:workspace/synapse`, one `shared` space
-and one proposal queue per workspace, members limited to the agent spaces of
-their workspaces) is the owner's call.
+**Synapse (D8).** Synapse ([SYNAPSE.md](./SYNAPSE.md)) merged into `main`
+while this plan was being implemented. It has one `global` space at the top,
+which only org owners and admins change, and one `shared` space per workspace
+that inherits it: reads show the workspace's own notes plus the global notes it
+does not override by title, and inherited notes are read-only in the workspace.
+Routes are under `/v1/:workspace/synapse`, agent spaces open only in their
+agent's workspace, proposals belong to the agent's workspace and are decided by
+its admins, and `/mcp` gives an agent its own workspace's `shared` space.
+Global is the one deliberate cross-workspace reference: every workspace reads
+it, and no workspace writes it. Storage keeps `shared` for the default
+workspace and uses `shared-<workspaceId>` for the others, so nothing is
+migrated (SYNAPSE.md section 11).
 
 ## 4. Data model
 
@@ -641,6 +643,7 @@ Decided by the owner on 2026-11-08. The PR sequence follows these.
 | D5 | Do environment providers belong only to `default`? | **Yes.** Other workspaces start empty, so no workspace can spend another's keys. | W2b |
 | D6 | May workspace admins invite new people? | **No.** Account creation stays with org owners and admins; workspace admins assign existing accounts. | W4 |
 | D7 | Archive only, purge later? | **Yes.** Archive in W5; purge (credentials first) is a follow-up with explicit confirmation. | W5 |
+| D8 | Where does Synapse sit? (decided 2026-11-09, after Synapse merged) | **One global Synapse at the top, inherited by every workspace's Synapse.** Each workspace's `shared` space shows its own notes plus the global notes it does not override by title; inherited notes are read-only there. Only org owners and admins change `global`. Proposals and agent spaces belong to a workspace. | Synapse |
 
 ## 11. Security invariants
 

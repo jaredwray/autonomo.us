@@ -36,45 +36,45 @@ const workspaceViews = {
 	dashboard: "Dashboard",
 	models: "Models",
 	routing: "Routing",
+	synapse: "Synapse",
 	"api-tokens": "API Tokens",
 	"agent-tokens": "Agent Tokens",
 };
-/** Views of the whole gateway, at `#/<view>`. Synapse is gateway-wide for now. */
-const instanceViews = {
-	synapse: "Synapse",
-	workspaces: "Workspaces",
-	team: "Team",
-};
+/** Views of the whole gateway, at `#/<view>`. */
+const instanceViews = { workspaces: "Workspaces", team: "Team" };
 const viewLabels = { ...workspaceViews, ...instanceViews };
 type WorkspaceView = keyof typeof workspaceViews;
 type View = keyof typeof viewLabels | "profile";
-type Route = { view: View; workspaceId: string | null };
+/** `rest` is a view's own state after its name, such as Synapse's /<space>/<note>. */
+type Route = { view: View; workspaceId: string | null; rest: string };
 const isWorkspaceView = (view: View): view is WorkspaceView =>
 	Object.hasOwn(workspaceViews, view);
 function currentRoute(): Route {
-	const scoped = /^#\/w\/([^/]+)(?:\/([\w-]+))?$/.exec(window.location.hash);
+	const scoped = /^#\/w\/([^/]+)(?:\/([\w-]+)(\/.*)?)?$/.exec(
+		window.location.hash,
+	);
 	if (scoped) {
 		const view = (scoped[2] ?? "dashboard") as View;
+		const known = isWorkspaceView(view);
 		return {
-			view: isWorkspaceView(view) ? view : "dashboard",
+			view: known ? view : "dashboard",
 			workspaceId: decodeURIComponent(scoped[1]),
+			rest: known ? (scoped[3] ?? "") : "",
 		};
 	}
-	// Views such as Synapse keep their own state after the view name
-	// (#/synapse/<space>/<note>). A pre-workspace link such as #/models opens
+	// A pre-workspace link such as #/models or #/synapse/shared/<note> opens
 	// in the remembered workspace.
-	const view = window.location.hash.slice(2).split("/")[0] ?? "";
+	const [view = "", ...rest] = window.location.hash.slice(2).split("/");
+	const known = view === "profile" || Object.hasOwn(viewLabels, view);
 	return {
-		view:
-			view === "profile" || Object.hasOwn(viewLabels, view)
-				? (view as View)
-				: "dashboard",
+		view: known ? (view as View) : "dashboard",
 		workspaceId: null,
+		rest: known && rest.length ? `/${rest.join("/")}` : "",
 	};
 }
-const href = (view: View, workspaceId: string | null) =>
+const href = (view: View, workspaceId: string | null, rest = "") =>
 	isWorkspaceView(view) && workspaceId
-		? `#/w/${encodeURIComponent(workspaceId)}/${view}`
+		? `#/w/${encodeURIComponent(workspaceId)}/${view}${rest}`
 		: `#/${view}`;
 const WORKSPACE_KEY = "autonomous.workspace";
 function rememberedWorkspace(): string | null {
@@ -235,7 +235,7 @@ export function App() {
 	}, []);
 	const go = (next: View, workspaceId: string | null = route.workspaceId) => {
 		window.history.replaceState(null, "", href(next, workspaceId));
-		setRoute({ view: next, workspaceId });
+		setRoute({ view: next, workspaceId, rest: "" });
 		setInvite(null);
 	};
 	/** Re-reads the session after a workspace is created, renamed, or archived. */
@@ -263,7 +263,11 @@ export function App() {
 		rememberWorkspace(selected.id);
 		// Canonical URL: a workspace view always names its workspace.
 		if (isWorkspaceView(route.view) && route.workspaceId !== selected.id)
-			window.history.replaceState(null, "", href(route.view, selected.id));
+			window.history.replaceState(
+				null,
+				"",
+				href(route.view, selected.id, route.rest),
+			);
 	}, [gate.state, selected, route]);
 	const toggle = () => {
 		const next = !collapsed;
@@ -444,7 +448,11 @@ export function App() {
 								aria-label={viewLabels[item]}
 								title={collapsed ? viewLabels[item] : undefined}
 								onClick={() =>
-									setRoute({ view: item, workspaceId: route.workspaceId })
+									setRoute({
+										view: item,
+										workspaceId: route.workspaceId,
+										rest: "",
+									})
 								}
 							>
 								<Icon name={item} />
@@ -513,8 +521,6 @@ export function App() {
 			<main id="main-content" tabIndex={-1} className="main-content">
 				{shown === "profile" ? (
 					<ProfileView user={user} />
-				) : shown === "synapse" ? (
-					<SynapseView user={user} />
 				) : shown === "team" ? (
 					<TeamView workspaces={workspaces} currentWorkspaceId={workspaceId} />
 				) : shown === "workspaces" ? (
@@ -544,6 +550,8 @@ export function App() {
 							<AgentTokensView workspace={selected} />
 						) : shown === "models" ? (
 							<ModelsView workspace={selected} />
+						) : shown === "synapse" ? (
+							<SynapseView user={user} workspace={selected} />
 						) : shown === "routing" ? (
 							<RoutingView />
 						) : (

@@ -174,11 +174,10 @@ connections and accept every token gateway-wide.
 ## Gateway
 
 The dashboard has a collapsible sidebar with a workspace switcher and
-**Dashboard**, **Models**, **Routing**, **API Tokens**, **Agent Tokens**,
-**Synapse**, **Workspaces**, and **Team** views. Dashboard, Models,
-Routing, and the two token views show the selected workspace, and their URLs
-name it (`#/w/<workspace id>/models`). Synapse is shared by the whole gateway
-for now.
+**Dashboard**, **Models**, **Routing**, **Synapse**, **API Tokens**,
+**Agent Tokens**, **Workspaces**, and **Team** views. All but Workspaces and
+Team show the selected workspace, and their URLs name it
+(`#/w/<workspace id>/models`).
 In **Models**, search active models or choose **Add model** to connect Google
 Gemini, xAI Grok, Anthropic Claude, OpenAI, Groq, Mistral, DeepSeek, OpenRouter,
 Cloudflare Workers AI, or Jev (TypeSafe). Choose a catalog suggestion or enter a
@@ -274,7 +273,7 @@ through environment variables:
 - `GET /v1/:workspace/telemetry/events` — recent gateway events and sink status.
 - `GET /v1/:workspace/telemetry/analytics?from=<ISO timestamp>&to=<ISO timestamp>` — date-filtered model, connection, caller, and time-series analytics. Optional `model`, `provider` (connection ID), and `caller` filters apply to the entire report. Ranges are start-inclusive, end-exclusive, and limited to 90 days. Requires `telemetry:read` when API authentication is enabled.
 
-- `/v1/synapse/...` — Synapse's notes, spaces, export/import, and proposals; see [Synapse](#synapse).
+- `/v1/:workspace/synapse/...` — Synapse's notes, spaces, export/import, and proposals; see [Synapse](#synapse).
 - `POST /mcp` — the MCP endpoint for agent tokens; see [Synapse](#synapse).
 
 ```bash
@@ -312,7 +311,7 @@ within that workspace:
 | Routing | None, Read, Edit | Read inspects routing and failover. Edit also saves those settings. |
 | Inference | None, Run | Run sends chat and decisions requests, including Auto, pools, and failover. |
 | Telemetry | None, Read | Read views usage and events. |
-| Synapse | None, Read, Edit | Read lists spaces, templates, notes, categories, unresolved links, daily views, and proposals. Edit also creates, changes, appends to, deletes, imports, and exports notes. Neither decides proposals. Synapse is shared by the whole gateway for now, so these grants reach it whatever the token's workspace. |
+| Synapse | None, Read, Edit | Read lists spaces, templates, notes, categories, unresolved links, daily views, and proposals. Edit also creates, changes, appends to, deletes, imports, and exports notes. Neither decides proposals or changes the global space. |
 
 Edit includes Read for that resource, but never Run. API token management and
 action history remain owner-only. Requests without the required permission
@@ -376,14 +375,22 @@ links, and daily notes. Every space exports to Obsidian-compatible files, and
 an Obsidian vault imports back. The full behavior is in
 [docs/SYNAPSE.md](docs/SYNAPSE.md).
 
-There are two kinds of space. `shared` is the team canon: every agent can read
-it, and agents change it only through **proposals** that an owner or admin
-approves or rejects (a rejection's reason is appended to the agent's daily
-note). `agent-<agentTokenId>` is one agent's private space, created on its first
-write and named after the token; agents cannot read each other's spaces.
-Signed-in team members read and write every space from the **Synapse** view in
-the dashboard and over `/v1/synapse`; API tokens use `synapse:read` for GET routes
-and `synapse:edit` for writes, import, and export, and never decide proposals.
+Synapse has one global canon and one Synapse per workspace. `global` is the
+gateway-wide canon: every workspace reads it, and only owners and admins change
+it. Each workspace's `shared` space is that workspace's team canon and
+**inherits** `global`: it shows the workspace's own notes plus every global note
+it does not override, and a workspace note with the same title as a global note
+overrides it in that workspace only. Inherited notes are read-only in a
+workspace; create a note with the same title to override one. Agents read their
+workspace's `shared` and change it only through **proposals** that a workspace
+admin approves or rejects (a rejection's reason is appended to the agent's
+daily note). `agent-<agentTokenId>` is one agent's private space, created on its
+first write and named after the token; agents cannot read each other's spaces,
+and the team sees an agent's space only in that agent's workspace. Signed-in
+members read and write their workspaces' spaces, and read `global`, from the
+**Synapse** view and over `/v1/<workspace id>/synapse`; API tokens use
+`synapse:read` for GET routes and `synapse:edit` for writes, import, and export
+in their workspace, read `global`, and never change it or decide proposals.
 
 Agents use Synapse over MCP. `POST /mcp` speaks Streamable HTTP in stateless
 mode (one JSON-RPC message per request, JSON responses, no sessions) and
@@ -409,14 +416,15 @@ get 405, `notifications/*` messages get 202, and any other message without an
 `id` gets 400. Tool failures (not found, validation, limits, conflicts) come
 back as tool results with `isError: true`.
 
-REST routes under `/v1/synapse`: `GET /spaces` and `GET /templates`;
+REST routes under `/v1/<workspace id>/synapse`, where `:space` is `shared`,
+`global`, or `agent-<id>`: `GET /spaces` and `GET /templates`;
 `GET|POST /spaces/:space/notes` (query with `text`, `category`, `tag`,
 `linksTo`, `sort`, `direction`, `limit`, `offset`, `where.<property>=`);
 `GET|PATCH|DELETE /spaces/:space/notes/:title` and
 `POST .../notes/:title/append`; `GET /spaces/:space/unresolved`,
 `.../categories`, `.../daily/:date`; `GET /spaces/:space/export` (JSON, or a
 `.zip` with `?format=zip`) and `POST /spaces/:space/import` (up to 500 files,
-5 MB); `GET /proposals` and `POST /proposals/:id/decide` (signed-in owners and
+5 MB); `GET /proposals` and `POST /proposals/:id/decide` (signed-in workspace
 admins only). Titles are URL-encoded; errors use `{ error: { message } }`.
 
 With `MONGODB_URI`, notes live in `synapse_notes`, space records in

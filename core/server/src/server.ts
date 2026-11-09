@@ -177,11 +177,11 @@ export function createServer(options: CreateServerOptions = {}) {
 			scoped.register(apiTokenRoutes, { tokens });
 			scoped.register(agentTokenRoutes, { tokens: agentTokens });
 			scoped.register(memberRoutes, { accounts });
+			scoped.register(synapseRoutes, { synapse, agentTokens });
 		},
 		{ prefix: "/v1/:workspace" },
 	);
-	// Synapse is gateway-wide for now, as merged from main.
-	server.register(synapseRoutes, { synapse });
+	// Agents reach their workspace's Synapse through their token.
 	server.register(mcpRoutes, {
 		synapse,
 		agentTokens,

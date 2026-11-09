@@ -49,7 +49,8 @@ export type WorkspaceAction =
 	| "workspace:lifecycle"
 	| "members:read"
 	| "members:manage"
-	| "tokens:manage";
+	| "tokens:manage"
+	| "synapse:decide";
 
 type RouteRule =
 	| { scope: "public" }
@@ -61,8 +62,29 @@ type RouteRule =
 
 const workspace = (action: WorkspaceAction, allowArchived = false) =>
 	({ scope: "workspace", action, allowArchived }) as const;
-const synapse = (token: ApiTokenPermission) =>
-	({ scope: "instance", token }) as const;
+const synapseRoutes = (base: string) =>
+	[
+		[`GET ${base}/spaces`, workspace("synapse:read")],
+		[`GET ${base}/templates`, workspace("synapse:read")],
+		[`GET ${base}/spaces/:space/notes`, workspace("synapse:read")],
+		[`POST ${base}/spaces/:space/notes`, workspace("synapse:edit")],
+		[`GET ${base}/spaces/:space/notes/:title`, workspace("synapse:read")],
+		[`PATCH ${base}/spaces/:space/notes/:title`, workspace("synapse:edit")],
+		[
+			`POST ${base}/spaces/:space/notes/:title/append`,
+			workspace("synapse:edit"),
+		],
+		[`DELETE ${base}/spaces/:space/notes/:title`, workspace("synapse:edit")],
+		[`GET ${base}/spaces/:space/unresolved`, workspace("synapse:read")],
+		[`GET ${base}/spaces/:space/categories`, workspace("synapse:read")],
+		[`GET ${base}/spaces/:space/daily/:date`, workspace("synapse:read")],
+		// A whole space in one response, so it needs the write-level grant.
+		[`GET ${base}/spaces/:space/export`, workspace("synapse:edit")],
+		[`POST ${base}/spaces/:space/import`, workspace("synapse:edit")],
+		[`GET ${base}/proposals`, workspace("synapse:read")],
+		// Not a token permission: approvals need a person.
+		[`POST ${base}/proposals/:id/decide`, workspace("synapse:decide")],
+	] as const;
 const tokenRoutes = (base: string) =>
 	[
 		[`GET ${base}`, workspace("tokens:manage")],
@@ -123,27 +145,9 @@ export const ROUTE_RULES = new Map<string, RouteRule>([
 	["GET /v1/:workspace/members", workspace("members:read")],
 	["PUT /v1/:workspace/members/:userId", workspace("members:manage")],
 	["DELETE /v1/:workspace/members/:userId", workspace("members:manage")],
-	// Synapse is gateway-wide for now, as merged from main.
-	["GET /v1/synapse/spaces", synapse("synapse:read")],
-	["GET /v1/synapse/templates", synapse("synapse:read")],
-	["GET /v1/synapse/spaces/:space/notes", synapse("synapse:read")],
-	["POST /v1/synapse/spaces/:space/notes", synapse("synapse:edit")],
-	["GET /v1/synapse/spaces/:space/notes/:title", synapse("synapse:read")],
-	["PATCH /v1/synapse/spaces/:space/notes/:title", synapse("synapse:edit")],
-	[
-		"POST /v1/synapse/spaces/:space/notes/:title/append",
-		synapse("synapse:edit"),
-	],
-	["DELETE /v1/synapse/spaces/:space/notes/:title", synapse("synapse:edit")],
-	["GET /v1/synapse/spaces/:space/unresolved", synapse("synapse:read")],
-	["GET /v1/synapse/spaces/:space/categories", synapse("synapse:read")],
-	["GET /v1/synapse/spaces/:space/daily/:date", synapse("synapse:read")],
-	// A whole space in one response, so it needs the write-level grant.
-	["GET /v1/synapse/spaces/:space/export", synapse("synapse:edit")],
-	["POST /v1/synapse/spaces/:space/import", synapse("synapse:edit")],
-	["GET /v1/synapse/proposals", synapse("synapse:read")],
-	// No token permission on purpose: approvals need a person.
-	["POST /v1/synapse/proposals/:id/decide", { scope: "instance" }],
+	// Synapse: each workspace's shared space inherits the global one. Writes
+	// to `global` also need an org owner or admin (routes/synapse.ts).
+	...synapseRoutes("/v1/:workspace/synapse"),
 ]);
 
 /** What each workspace role may do, as a signed-in member. */
@@ -154,6 +158,8 @@ const MEMBER_ACTIONS = new Set<WorkspaceAction>([
 	"routing:edit",
 	"inference:run",
 	"telemetry:read",
+	"synapse:read",
+	"synapse:edit",
 ]);
 const ADMIN_ACTIONS = new Set<WorkspaceAction>([
 	...MEMBER_ACTIONS,
@@ -162,6 +168,7 @@ const ADMIN_ACTIONS = new Set<WorkspaceAction>([
 	"workspace:update",
 	"members:read",
 	"members:manage",
+	"synapse:decide",
 ]);
 /** Org owners and admins only (D3: tokens outlive the member who made them). */
 const ORG_ACTIONS = new Set<WorkspaceAction>([
@@ -191,6 +198,7 @@ const ACTION_LABELS: Record<WorkspaceAction, string> = {
 	"members:read": "Members: Read",
 	"members:manage": "Members: Manage",
 	"tokens:manage": "Tokens: Manage",
+	"synapse:decide": "Synapse: Decide proposals",
 };
 
 /** The signed-in member for team and account routes. */

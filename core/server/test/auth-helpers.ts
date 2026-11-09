@@ -53,7 +53,7 @@ export const bearer = (token: string) => ({ authorization: `Bearer ${token}` });
 
 /** Resources that live under `/v1/:workspace/` (the catalog stays instance-level). */
 const WORKSPACE_RESOURCES =
-	/^\/v1\/(models(?!\/catalog)|providers|routing|failover|chat|decisions|telemetry|api-tokens|agent-tokens|members)(?=[/?]|$)/;
+	/^\/v1\/(models(?!\/catalog)|providers|routing|failover|chat|decisions|telemetry|api-tokens|agent-tokens|members|synapse)(?=[/?]|$)/;
 
 /**
  * Rewrites a pre-workspace path (`/v1/models`) to the same resource in a

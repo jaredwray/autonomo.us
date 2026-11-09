@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
-import type { SynapseActor, SynapseProposal } from "@autonomo.us/common";
+import type {
+	SynapseActor,
+	SynapseProposal,
+	SynapseSpaceId,
+} from "@autonomo.us/common";
 import { MongoClient } from "mongodb";
 import { afterAll, describe, expect, it } from "vitest";
 import { MemorySynapseRepository } from "../src/synapse/memory-repository.js";
@@ -23,7 +27,7 @@ afterAll(async () => {
 const actor: SynapseActor = { kind: "user", id: "u", name: "U" };
 
 function note(
-	space: "shared" | `agent-${string}`,
+	space: SynapseSpaceId,
 	title: string,
 	extra: Partial<StoredNote> = {},
 ): StoredNote {
@@ -55,6 +59,55 @@ function note(
 /** Every implementation must pass the same expectations. */
 function contract(name: string, open: () => SynapseRepository) {
 	describe(name, () => {
+		it("excludes title keys and filters proposals by the shared space they target", async () => {
+			const repo = open();
+			try {
+				const space: SynapseSpaceId = `shared-${randomUUID()}`;
+				for (const title of ["Ada", "Bob", "Cy"])
+					await repo.insertNote(note(space, title));
+				const sort = { by: "titleKey" as const, direction: "asc" as const };
+				expect(
+					(
+						await repo.findNotes(
+							{ space, excludeTitleKeys: ["bob"] },
+							{ sort, limit: 10 },
+						)
+					).map((item) => item.title),
+				).toEqual(["Ada", "Cy"]);
+				expect(
+					await repo.countNotes({ space, excludeTitleKeys: ["ada", "cy"] }),
+				).toBe(1);
+				expect(await repo.countNotes({ space, excludeTitleKeys: [] })).toBe(3);
+				const author = randomUUID();
+				const proposal = (target: SynapseSpaceId): SynapseProposal => ({
+					id: randomUUID(),
+					space: target,
+					action: "create",
+					title: "T",
+					body: "b",
+					reason: "r",
+					status: "pending",
+					author: { kind: "agent", id: author, name: "A" },
+					createdAt: "2026-11-08T00:00:00.000Z",
+					baseRevision: null,
+				});
+				const mine = proposal(space);
+				await repo.insertProposal(mine);
+				await repo.insertProposal(proposal("shared"));
+				expect(
+					(await repo.listProposals({ space, authorId: author })).map(
+						(item) => item.id,
+					),
+				).toEqual([mine.id]);
+				expect(
+					await repo.countProposals({ space: "shared", authorId: author }),
+				).toBe(1);
+				expect(await repo.countProposals({ authorId: author })).toBe(2);
+			} finally {
+				await repo.close();
+			}
+		});
+
 		it("claims titles uniquely per space and compares revisions on replace and delete", async () => {
 			const repo = open();
 			try {

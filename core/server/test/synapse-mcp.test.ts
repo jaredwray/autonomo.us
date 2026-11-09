@@ -584,6 +584,7 @@ describe("MCP endpoint", () => {
 		).toBe(true);
 		const spaces = await rest("GET", "/v1/synapse/spaces");
 		expect((spaces.json as { spaces: unknown[] }).spaces).toEqual([
+			expect.objectContaining({ id: "global" }),
 			expect.objectContaining({ id: "shared" }),
 			expect.objectContaining({
 				id: `agent-${alice.token.id}`,
@@ -760,5 +761,97 @@ describe("MCP endpoint", () => {
 		expect(
 			(await callTool(bob.secret, "synapse_daily", {})).structuredContent,
 		).toMatchObject({ note: null });
+	});
+
+	it("gives an agent its workspace's shared space with global notes, and files proposals there", async () => {
+		const { rest, callTool } = await start();
+		const workspace = await rest("POST", "/v1/workspaces", { name: "Film" });
+		const film = (workspace.json as { id: string }).id;
+		const created = await rest("POST", `/v1/${film}/agent-tokens`, {
+			name: "Film agent",
+			description: "",
+			ttlDays: 7,
+			permissions: ["mcp:read", "mcp:call"],
+		});
+		const agent = created.json as ApiTokenSecret;
+		await rest("POST", "/v1/synapse/spaces/global/notes", {
+			title: "Brand voice",
+			body: "Plain words.",
+		});
+		await rest("POST", "/v1/synapse/spaces/shared/notes", {
+			title: "Default roadmap",
+			body: "Only in the default workspace.",
+		});
+		await rest("POST", `/v1/${film}/synapse/spaces/shared/notes`, {
+			title: "Trailer plan",
+			body: "Film only.",
+		});
+
+		const search = await callTool(agent.secret, "synapse_search", {
+			space: "shared",
+		});
+		expect(
+			(search.structuredContent as { notes: Array<{ title: string }> }).notes
+				.map((note) => note.title)
+				.sort(),
+		).toEqual(["Brand voice", "Trailer plan"]);
+		const read = await callTool(agent.secret, "synapse_read", {
+			title: "Brand voice",
+			space: "shared",
+		});
+		expect(read.structuredContent).toMatchObject({
+			note: { title: "Brand voice", space: "global" },
+		});
+		// Changing an inherited note means overriding it in the workspace.
+		const update = await callTool(agent.secret, "synapse_propose", {
+			action: "update",
+			title: "Brand voice",
+			body: "Cinematic.",
+			reason: "Film tone.",
+		});
+		expect(update.isError).toBe(true);
+		const override = await callTool(agent.secret, "synapse_propose", {
+			action: "create",
+			title: "Brand voice",
+			body: "Cinematic.",
+			reason: "Film tone.",
+		});
+		const id = (override.structuredContent as { id: string }).id;
+		const pending = (path: string) =>
+			rest("GET", `${path}/synapse/proposals?status=pending`).then((response) =>
+				(response.json as { proposals: Array<{ id: string }> }).proposals.map(
+					(item) => item.id,
+				),
+			);
+		expect(await pending(`/v1/${film}`)).toEqual([id]);
+		expect(await pending("/v1")).toEqual([]);
+		expect(
+			(
+				await rest("POST", `/v1/synapse/proposals/${id}/decide`, {
+					decision: "approve",
+				})
+			).status,
+		).toBe(404);
+		expect(
+			(
+				await rest("POST", `/v1/${film}/synapse/proposals/${id}/decide`, {
+					decision: "approve",
+				})
+			).status,
+		).toBe(200);
+		const viewed = await rest(
+			"GET",
+			`/v1/${film}/synapse/spaces/shared/notes/Brand%20voice`,
+		);
+		expect(viewed.json).toMatchObject({
+			note: { space: "shared", body: "Cinematic." },
+		});
+		const global = await rest(
+			"GET",
+			"/v1/synapse/spaces/shared/notes/Brand%20voice",
+		);
+		expect(global.json).toMatchObject({
+			note: { space: "global", body: "Plain words." },
+		});
 	});
 });
