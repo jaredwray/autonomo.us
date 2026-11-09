@@ -230,7 +230,8 @@ it("edits Markdown, shows unresolved links as breadcrumbs, and resolves them whe
 	fireEvent.click(screen.getByRole("button", { name: "Save note" }));
 	const link = await screen.findByRole("link", { name: "Babbage" });
 	expect(link.className).toContain("unresolved");
-	expect(screen.getByRole("heading", { name: "Work" }).tagName).toBe("H3");
+	// Page h1, note title h2, so the body's ## is h4.
+	expect(screen.getByRole("heading", { name: "Work" }).tagName).toBe("H4");
 	expect(screen.getByText("engine").tagName).toBe("STRONG");
 	expect(screen.getByText("code").tagName).toBe("CODE");
 	expect(screen.getByRole("checkbox", { name: "Open task" })).toBeDefined();
@@ -309,6 +310,127 @@ it("reports a save conflict and lets the editor reload", async () => {
 	await screen.findByText("v2 draft", { selector: "p" });
 	expect((await readNote(running, "shared", "Roadmap")).json().note.body).toBe(
 		"v2 draft",
+	);
+});
+
+it("keeps an open draft when the vault refreshes, and still detects conflicts", async () => {
+	const running = await start();
+	await createNote(running, "shared", { title: "Roadmap", body: "v1" });
+	fireEvent.click(
+		await within(await notesList()).findByRole("link", { name: /^Roadmap/ }),
+	);
+	await screen.findByRole("heading", { name: "Roadmap" });
+	fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+	change("Markdown source", "v2 draft");
+	// An import elsewhere refreshes the vault while the editor is open.
+	fireEvent.click(screen.getByRole("button", { name: "Import" }));
+	fireEvent.change(screen.getByLabelText("Markdown files"), {
+		target: { files: [new File(["Other body."], "Other.md")] },
+	});
+	await screen.findByText(/1 Markdown file/);
+	fireEvent.click(
+		within(
+			screen.getByRole("region", { name: "Import into the shared vault" }),
+		).getByRole("button", { name: "Import" }),
+	);
+	await screen.findByText("Imported: 1 created, 0 updated, 0 skipped.");
+	await within(await notesList()).findByText("2 notes");
+	const source = screen.getByLabelText(
+		"Markdown source",
+	) as HTMLTextAreaElement;
+	expect(source.value).toBe("v2 draft");
+	expect(document.activeElement?.id).not.toBe("brain-note-title");
+	// A change made meanwhile is still a conflict, not an overwrite.
+	const patched = await running.server.inject({
+		method: "PATCH",
+		url: "/v1/brain/vaults/shared/notes/Roadmap",
+		headers: running.owner,
+		payload: { body: "v1 shipped" },
+	});
+	expect(patched.statusCode, patched.body).toBe(200);
+	// The import form is still open from the first round.
+	fireEvent.change(screen.getByLabelText("Markdown files"), {
+		target: { files: [new File(["Third."], "Third.md")] },
+	});
+	await screen.findByText(/1 Markdown file/);
+	fireEvent.click(
+		within(
+			screen.getByRole("region", { name: "Import into the shared vault" }),
+		).getByRole("button", { name: "Import" }),
+	);
+	await within(await notesList()).findByText("3 notes");
+	fireEvent.click(screen.getByRole("button", { name: "Save note" }));
+	expect((await screen.findByRole("alert")).textContent).toContain(
+		"changed since you opened it",
+	);
+	expect((await readNote(running, "shared", "Roadmap")).json().note.body).toBe(
+		"v1 shipped",
+	);
+});
+
+it("imports a vault past one request's limit and says when the list is capped", async () => {
+	await start();
+	await screen.findByText(/No notes yet/);
+	fireEvent.click(screen.getByRole("button", { name: "Import" }));
+	fireEvent.change(screen.getByLabelText("Markdown files"), {
+		target: {
+			files: Array.from(
+				{ length: 501 },
+				(_, index) => new File([`Body ${index}`], `Note ${index}.md`),
+			),
+		},
+	});
+	await screen.findByText(/501 Markdown files/);
+	fireEvent.click(
+		within(
+			screen.getByRole("region", { name: "Import into the shared vault" }),
+		).getByRole("button", { name: "Import" }),
+	);
+	await screen.findByText(
+		"Imported: 501 created, 0 updated, 0 skipped.",
+		undefined,
+		{
+			timeout: 10_000,
+		},
+	);
+	await within(await notesList()).findByText(
+		/501 notes · showing the first 200; search or filter to narrow/,
+	);
+});
+
+it("moves between Brain tabs with the arrow keys and keeps field ids unique", async () => {
+	const running = await start();
+	await createNote(running, "shared", { title: "Roadmap", body: "v1" });
+	const notesTab = await screen.findByRole("tab", { name: "Notes" });
+	expect(notesTab.getAttribute("aria-controls")).toBe("brain-panel");
+	expect(screen.getByRole("tabpanel").getAttribute("aria-labelledby")).toBe(
+		"brain-tab-notes",
+	);
+	notesTab.focus();
+	fireEvent.keyDown(notesTab, { key: "ArrowRight" });
+	const proposalsTab = screen.getByRole("tab", { name: "Proposals" });
+	await waitFor(() =>
+		expect(proposalsTab.getAttribute("aria-selected")).toBe("true"),
+	);
+	expect(document.activeElement).toBe(proposalsTab);
+	expect(proposalsTab.tabIndex).toBe(0);
+	expect(screen.getByRole("tab", { name: "Notes" }).tabIndex).toBe(-1);
+	fireEvent.keyDown(proposalsTab, { key: "Home" });
+	await waitFor(() =>
+		expect(
+			screen.getByRole("tab", { name: "Notes" }).getAttribute("aria-selected"),
+		).toBe("true"),
+	);
+	// The rename field and the New note title can be open together.
+	fireEvent.click(
+		await within(await notesList()).findByRole("link", { name: /^Roadmap/ }),
+	);
+	await screen.findByRole("heading", { name: "Roadmap" });
+	fireEvent.click(screen.getByRole("button", { name: "Rename" }));
+	fireEvent.click(screen.getByRole("button", { name: "New note" }));
+	expect(document.querySelectorAll("#brain-new-title")).toHaveLength(1);
+	expect((screen.getByLabelText("New title") as HTMLInputElement).value).toBe(
+		"Roadmap",
 	);
 });
 

@@ -23,6 +23,7 @@ import { BrainProposals } from "./BrainProposals.js";
 import {
 	downloadBlob,
 	filesToBrainFiles,
+	importBatches,
 	vaultRelativePath,
 } from "./brain-files.js";
 import {
@@ -222,13 +223,29 @@ function ImportForm({
 					setError("");
 					try {
 						const entries = await filesToBrainFiles(markdown);
-						const outcome = await importBrainNotes(vault, {
-							files: entries,
-							overwrite,
-						});
-						setResult(outcome);
-						setFiles([]);
-						onImported(outcome);
+						const outcome: BrainImportResult = {
+							created: [],
+							updated: [],
+							skipped: [],
+						};
+						try {
+							for (const files of importBatches(entries)) {
+								const part = await importBrainNotes(vault, {
+									files,
+									overwrite,
+								});
+								outcome.created.push(...part.created);
+								outcome.updated.push(...part.updated);
+								outcome.skipped.push(...part.skipped);
+							}
+							setFiles([]);
+						} finally {
+							// Earlier batches stay imported even when a later one fails.
+							if (outcome.created.length || outcome.updated.length) {
+								setResult(outcome);
+								onImported(outcome);
+							} else if (outcome.skipped.length) setResult(outcome);
+						}
 					} catch (cause) {
 						setError(
 							cause instanceof Error
@@ -419,7 +436,11 @@ function NotesList({
 			<p className="card-note brain-list-count" role="status">
 				{loading && !notes
 					? "Loading notes…"
-					: `${total} ${total === 1 ? "note" : "notes"}${filtered ? " match" : ""}`}
+					: `${total} ${total === 1 ? "note" : "notes"}${filtered ? " match" : ""}${
+							notes && notes.length < total
+								? ` · showing the first ${notes.length}; search or filter to narrow`
+								: ""
+						}`}
 			</p>
 			{error && (
 				<div className="banner-error" role="alert">
@@ -556,6 +577,12 @@ export function BrainView({ user }: { user: TeamMember }) {
 	})();
 	const openNote = (title: string) =>
 		navigate({ tab: "notes", vault: route.vault, title });
+	const showTab = (tab: BrainRoute["tab"]) =>
+		navigate(
+			tab === "notes"
+				? { tab: "notes", vault: route.vault, title: null }
+				: { ...route, tab: "proposals" },
+		);
 	const exportZip = async () => {
 		setExporting(true);
 		setError("");
@@ -619,25 +646,44 @@ export function BrainView({ user }: { user: TeamMember }) {
 					</div>
 				)}
 			</header>
-			<div className="brain-tabs" role="tablist" aria-label="Brain sections">
-				<button
-					type="button"
-					role="tab"
-					aria-selected={route.tab === "notes"}
-					onClick={() =>
-						navigate({ tab: "notes", vault: route.vault, title: null })
-					}
-				>
-					Notes
-				</button>
-				<button
-					type="button"
-					role="tab"
-					aria-selected={route.tab === "proposals"}
-					onClick={() => navigate({ ...route, tab: "proposals" })}
-				>
-					Proposals
-				</button>
+			{/* ARIA tabs: arrow keys, Home, and End move between them; one panel follows. */}
+			<div
+				className="brain-tabs"
+				role="tablist"
+				aria-label="Brain sections"
+				onKeyDown={(event) => {
+					const order = ["notes", "proposals"] as const;
+					const at = order.indexOf(route.tab);
+					const next =
+						event.key === "ArrowRight"
+							? order[(at + 1) % order.length]
+							: event.key === "ArrowLeft"
+								? order[(at + order.length - 1) % order.length]
+								: event.key === "Home"
+									? order[0]
+									: event.key === "End"
+										? order[order.length - 1]
+										: null;
+					if (!next) return;
+					event.preventDefault();
+					showTab(next);
+					document.getElementById(`brain-tab-${next}`)?.focus();
+				}}
+			>
+				{(["notes", "proposals"] as const).map((tab) => (
+					<button
+						key={tab}
+						type="button"
+						role="tab"
+						id={`brain-tab-${tab}`}
+						aria-controls="brain-panel"
+						aria-selected={route.tab === tab}
+						tabIndex={route.tab === tab ? 0 : -1}
+						onClick={() => showTab(tab)}
+					>
+						{tab === "notes" ? "Notes" : "Proposals"}
+					</button>
+				))}
 			</div>
 			{error && (
 				<div className="banner-error" role="alert">
@@ -655,113 +701,123 @@ export function BrainView({ user }: { user: TeamMember }) {
 					API restarts.
 				</p>
 			)}
-			{route.tab === "proposals" ? (
-				<BrainProposals
-					canDecide={canDecide}
-					version={version}
-					onDecided={changed}
-				/>
-			) : (
-				<>
-					{panel?.kind === "new" && (
-						<NewNoteForm
-							key={`new-${panel.title}`}
-							vault={route.vault}
-							templates={templates}
-							initialTitle={panel.title}
-							onClose={() => setPanel(null)}
-							onCreated={(title) => {
-								setPanel(null);
-								setNotice(`Created “${title}”.`);
-								changed();
-								openNote(title);
-							}}
-						/>
-					)}
-					{panel?.kind === "import" && (
-						<ImportForm
-							vault={route.vault}
-							onClose={() => setPanel(null)}
-							onImported={changed}
-						/>
-					)}
-					<div className="brain-layout">
-						<div className="brain-side">
-							<div className="form-field brain-vault-field">
-								<label htmlFor="brain-vault">Vault</label>
-								<select
-									id="brain-vault"
-									value={route.vault}
-									onChange={(event) =>
-										navigate({
-											tab: "notes",
-											vault: event.target.value,
-											title: null,
-										})
-									}
-								>
-									{vaultOptions.map((vault) => (
-										<option key={vault.id} value={vault.id}>
-											{vaultLabel(vault)}
-										</option>
-									))}
-								</select>
-								<span className="field-hint">
-									{route.vault === BRAIN_SHARED_VAULT
-										? "The team canon. Agents read it and change it only through proposals."
-										: "An agent's private memory, kept across token rolls. Only the team sees it here."}
-								</span>
-							</div>
-							<NotesList
-								key={route.vault}
+			<div
+				role="tabpanel"
+				id="brain-panel"
+				aria-labelledby={`brain-tab-${route.tab}`}
+			>
+				{route.tab === "proposals" ? (
+					<BrainProposals
+						canDecide={canDecide}
+						version={version}
+						onDecided={changed}
+					/>
+				) : (
+					<>
+						{panel?.kind === "new" && (
+							<NewNoteForm
+								key={`new-${panel.title}`}
 								vault={route.vault}
-								selected={route.title}
-								version={version}
-								onOpen={openNote}
-								onNewNote={() => setPanel({ kind: "new", title: "" })}
+								templates={templates}
+								initialTitle={panel.title}
+								onClose={() => setPanel(null)}
+								onCreated={(title) => {
+									setPanel(null);
+									setNotice(`Created “${title}”.`);
+									changed();
+									openNote(title);
+								}}
 							/>
-						</div>
-						<section className="card brain-main" aria-label="Note">
-							{route.title ? (
-								<BrainNote
-									key={`${route.vault}/${route.title.toLowerCase()}`}
-									vault={route.vault}
-									title={route.title}
-									version={version}
-									onNavigate={openNote}
-									onNewNote={(title) => {
-										setNotice("");
-										setPanel({ kind: "new", title });
-									}}
-									onChanged={(title) => {
-										changed();
-										if (title !== route.title) openNote(title);
-									}}
-									onDeleted={() => {
-										setNotice(`Deleted “${route.title}”.`);
-										changed();
-										navigate({ tab: "notes", vault: route.vault, title: null });
-									}}
-								/>
-							) : (
-								<div className="brain-intro">
-									<h2>Pick a note</h2>
-									<p className="card-note">
-										Choose a note from the list, search for one, or create a new
-										note from a template. A note's page shows its properties,
-										body, backlinks, related notes, and the links that don't
-										resolve yet.
-									</p>
-									<p className="card-note">
-										Vault: <strong>{route.vault}</strong>
-										{vaults && ` · time zone ${vaults.timeZone}`}
-									</p>
+						)}
+						{panel?.kind === "import" && (
+							<ImportForm
+								vault={route.vault}
+								onClose={() => setPanel(null)}
+								onImported={changed}
+							/>
+						)}
+						<div className="brain-layout">
+							<div className="brain-side">
+								<div className="form-field brain-vault-field">
+									<label htmlFor="brain-vault">Vault</label>
+									<select
+										id="brain-vault"
+										value={route.vault}
+										onChange={(event) =>
+											navigate({
+												tab: "notes",
+												vault: event.target.value,
+												title: null,
+											})
+										}
+									>
+										{vaultOptions.map((vault) => (
+											<option key={vault.id} value={vault.id}>
+												{vaultLabel(vault)}
+											</option>
+										))}
+									</select>
+									<span className="field-hint">
+										{route.vault === BRAIN_SHARED_VAULT
+											? "The team canon. Agents read it and change it only through proposals."
+											: "An agent's private memory, kept across token rolls. Only the team sees it here."}
+									</span>
 								</div>
-							)}
-						</section>
-					</div>
-				</>
-			)}
+								<NotesList
+									key={route.vault}
+									vault={route.vault}
+									selected={route.title}
+									version={version}
+									onOpen={openNote}
+									onNewNote={() => setPanel({ kind: "new", title: "" })}
+								/>
+							</div>
+							<section className="card brain-main" aria-label="Note">
+								{route.title ? (
+									<BrainNote
+										key={`${route.vault}/${route.title.toLowerCase()}`}
+										vault={route.vault}
+										title={route.title}
+										version={version}
+										onNavigate={openNote}
+										onNewNote={(title) => {
+											setNotice("");
+											setPanel({ kind: "new", title });
+										}}
+										onChanged={(title) => {
+											changed();
+											if (title !== route.title) openNote(title);
+										}}
+										onDeleted={() => {
+											setNotice(`Deleted “${route.title}”.`);
+											changed();
+											navigate({
+												tab: "notes",
+												vault: route.vault,
+												title: null,
+											});
+										}}
+									/>
+								) : (
+									<div className="brain-intro">
+										<h2>Pick a note</h2>
+										<p className="card-note">
+											Choose a note from the list, search for one, or create a
+											new note from a template. A note's page shows its
+											properties, body, backlinks, related notes, and the links
+											that don't resolve yet.
+										</p>
+										<p className="card-note">
+											Vault: <strong>{route.vault}</strong>
+											{vaults && ` · time zone ${vaults.timeZone}`}
+										</p>
+									</div>
+								)}
+							</section>
+						</div>
+					</>
+				)}
+			</div>
 		</div>
 	);
 }

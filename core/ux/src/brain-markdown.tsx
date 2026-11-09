@@ -27,7 +27,10 @@ export function parseWikilink(
 	embed = false,
 ): WikilinkTarget | null {
 	const pipe = inner.indexOf("|");
-	const path = (pipe === -1 ? inner : inner.slice(0, pipe)).trim();
+	// In a table, Obsidian writes [[Note\\|alias]]; the backslash escapes the pipe.
+	const path = (pipe === -1 ? inner : inner.slice(0, pipe))
+		.replace(/\\$/, "")
+		.trim();
 	const alias = pipe === -1 ? "" : inner.slice(pipe + 1).trim();
 	const hash = path.indexOf("#");
 	const fragment = hash === -1 ? "" : path.slice(hash);
@@ -51,8 +54,11 @@ export type InlineOptions = {
 	onNavigate(title: string): void;
 };
 
+// Every alternative is bounded so long runs of [ or ` stay linear: link text
+// cannot contain [, code-span openers are at most 8 backticks, URLs at most
+// 2,000 characters. Agents write bodies up to 100,000 characters.
 const INLINE =
-	/(`+)([^`]|[^`][\s\S]*?[^`])\1(?!`)|(!?)\[\[([^[\]]+?)\]\]|\[([^\]]+)\]\(([^)\s]+)\)|\*\*([^*]+?)\*\*|__([^_]+?)__|(?<![\w*])\*([^*\n]+?)\*(?![\w*])|(?<![\w_])_([^_\n]+?)_(?![\w_])|~~([^~]+?)~~|<?(https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"])>?/g;
+	/(`{1,8})([^`]|[^`][\s\S]*?[^`])\1(?!`)|(!?)\[\[([^[\]]+?)\]\]|\[([^[\]]+)\]\(([^)\s]+)\)|\*\*([^*]+?)\*\*|__([^_]+?)__|(?<![\w*])\*([^*\n]+?)\*(?![\w*])|(?<![\w_])_([^_\n]+?)_(?![\w_])|~~([^~]+?)~~|<?(https?:\/\/[^\s<>()]{0,2000}[^\s<>().,;:!?'"])>?/g;
 
 function safeHref(url: string): string | null {
 	const trimmed = url.trim();
@@ -154,12 +160,12 @@ function renderLines(lines: string[], options: InlineOptions): ReactNode[] {
 	return out;
 }
 
-const FENCE = /^(\s{0,3})(`{3,}|~{3,})\s*(\S*)/;
-const HEADING = /^(#{1,6})\s+(.*?)\s*#*\s*$/;
+// A backtick fence opens only when the rest of the line has no backtick
+// (```code``` is an inline span), as on the server.
+const FENCE = /^\s{0,3}(?:(`{3,})([^`]*)|(~{3,})(.*))$/;
 const RULE = /^\s{0,3}([-*_])(\s*\1){2,}\s*$/;
 const QUOTE = /^\s{0,3}>\s?(.*)$/;
 const LIST_ITEM = /^(\s*)([-*+]|\d{1,9}[.)])\s+(.*)$/;
-const TABLE_SEPARATOR = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
 const TASK = /^\[([ xX])\]\s+(.*)$/;
 
 type ListItem = { text: string[]; children: ListNode[] };
@@ -167,9 +173,26 @@ type ListNode = { ordered: boolean; start: number; items: ListItem[] };
 
 const indentOf = (line: string) => /^\s*/.exec(line)?.[0].length ?? 0;
 const isBlank = (line: string) => line.trim() === "";
+/**
+ * An ATX heading, parsed by scanning rather than a regex (the obvious pattern
+ * backtracks cubically on long lines). A closing run of # counts only after
+ * whitespace, so "## C#" keeps its #.
+ */
+function parseHeading(line: string): { level: number; text: string } | null {
+	const level = /^#{1,6}/.exec(line)?.[0].length ?? 0;
+	if (!level || (line.length > level && !/[ \t]/.test(line[level])))
+		return null;
+	let text = line.slice(level).trim();
+	let end = text.length;
+	while (end > 0 && text[end - 1] === "#") end--;
+	if (end < text.length && (end === 0 || /[ \t]/.test(text[end - 1])))
+		text = text.slice(0, end).trimEnd();
+	return { level, text };
+}
+
 const startsBlock = (line: string) =>
 	FENCE.test(line) ||
-	HEADING.test(line) ||
+	parseHeading(line) !== null ||
 	RULE.test(line) ||
 	QUOTE.test(line) ||
 	LIST_ITEM.test(line);
@@ -289,6 +312,12 @@ function splitRow(line: string): string[] {
 	return cells;
 }
 
+/** A table's |---|:--:| row, checked cell by cell (a single regex backtracks quadratically). */
+function isTableSeparator(line: string): boolean {
+	const cells = splitRow(line);
+	return cells.length > 0 && cells.every((cell) => /^:?-+:?$/.test(cell));
+}
+
 export function renderMarkdown(
 	source: string,
 	options: InlineOptions,
@@ -307,7 +336,8 @@ export function renderMarkdown(
 		}
 		const fence = FENCE.exec(line);
 		if (fence) {
-			const marker = fence[2];
+			const marker = fence[1] ?? fence[3];
+			const language = (fence[2] ?? fence[4]).trim().split(/\s/)[0];
 			const code: string[] = [];
 			i++;
 			while (i < lines.length) {
@@ -323,18 +353,18 @@ export function renderMarkdown(
 			}
 			i++;
 			blocks.push(
-				<pre key={key} data-language={fence[3] || undefined}>
+				<pre key={key} data-language={language || undefined}>
 					<code>{code.join("\n")}</code>
 				</pre>,
 			);
 			continue;
 		}
-		const heading = HEADING.exec(line);
+		const heading = parseHeading(line);
 		if (heading) {
-			// The note title is the page's heading, so body headings start one level down.
-			const level = Math.min(heading[1].length + 1, 6);
-			const Tag = `h${level}` as "h2" | "h3" | "h4" | "h5" | "h6";
-			blocks.push(<Tag key={key}>{renderInline(heading[2], options)}</Tag>);
+			// The page is h1 and the note title h2, so body headings start at h3.
+			const level = Math.min(heading.level + 2, 6);
+			const Tag = `h${level}` as "h3" | "h4" | "h5" | "h6";
+			blocks.push(<Tag key={key}>{renderInline(heading.text, options)}</Tag>);
 			i++;
 			continue;
 		}
@@ -373,7 +403,7 @@ export function renderMarkdown(
 		if (
 			line.includes("|") &&
 			lines[i + 1] !== undefined &&
-			TABLE_SEPARATOR.test(lines[i + 1]) &&
+			isTableSeparator(lines[i + 1]) &&
 			lines[i + 1].includes("|")
 		) {
 			const header = splitRow(line);

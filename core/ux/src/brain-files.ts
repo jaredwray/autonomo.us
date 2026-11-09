@@ -48,3 +48,38 @@ export function downloadBlob(blob: Blob, name: string) {
 	anchor.remove();
 	setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+
+/** The server takes at most 500 files and 5 MB per import request. */
+export const IMPORT_BATCH_FILES = 500;
+export const IMPORT_BATCH_BYTES = 4_000_000;
+
+/**
+ * Splits import entries into requests the server accepts, so a vault larger
+ * than one request's limits still imports. A file too big for any batch goes
+ * alone and the server reports it.
+ */
+export function importBatches(
+	files: BrainFile[],
+	maxFiles = IMPORT_BATCH_FILES,
+	maxBytes = IMPORT_BATCH_BYTES,
+): BrainFile[][] {
+	const encoder = new TextEncoder();
+	const batches: BrainFile[][] = [];
+	let current: BrainFile[] = [];
+	let bytes = 0;
+	for (const file of files) {
+		const size = encoder.encode(JSON.stringify(file)).length + 1;
+		if (
+			current.length &&
+			(current.length >= maxFiles || bytes + size > maxBytes)
+		) {
+			batches.push(current);
+			current = [];
+			bytes = 0;
+		}
+		current.push(file);
+		bytes += size;
+	}
+	if (current.length) batches.push(current);
+	return batches;
+}

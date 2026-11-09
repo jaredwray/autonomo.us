@@ -1,5 +1,6 @@
-import { render } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { expect, it } from "vitest";
+import { importBatches } from "../src/brain-files.js";
 import {
 	MAX_NESTING,
 	parseWikilink,
@@ -40,4 +41,74 @@ it("renders deeply nested quotes and lists as text past the nesting limit", () =
 	const lists = render(<div>{renderMarkdown(lines.join("\n"), options)}</div>);
 	expect(lists.container.querySelectorAll("ul")).toHaveLength(MAX_NESTING);
 	expect(lists.container.textContent).toContain("item 1999");
+});
+
+it("renders pathological lines in linear time", () => {
+	const inputs = [
+		`# a${" ".repeat(100_000)}x`,
+		`text\n# a${" ".repeat(100_000)}x`,
+		`# ${"#".repeat(50_000)}x`,
+		"[".repeat(100_000),
+		"[[".repeat(50_000),
+		"`".repeat(100_000),
+		`| a |\n|---${" ".repeat(100_000)}x`,
+		"https://.".repeat(11_000),
+	];
+	for (const input of inputs) {
+		const started = performance.now();
+		render(<div>{renderMarkdown(input, options)}</div>).unmount();
+		expect(performance.now() - started, input.slice(0, 12)).toBeLessThan(1500);
+	}
+});
+
+it("follows CommonMark for headings, closing hashes, and fences", () => {
+	render(
+		<div>
+			{renderMarkdown(
+				[
+					"# Top",
+					"## C#",
+					"### Closed ###",
+					"####### seven",
+					"```inline code```",
+					"",
+					"After [[Link]].",
+					"",
+					"```ts",
+					"const a = 1;",
+					"```",
+				].join("\n"),
+				options,
+			)}
+		</div>,
+	);
+	expect(screen.getByRole("heading", { name: "Top" }).tagName).toBe("H3");
+	expect(screen.getByRole("heading", { name: "C#" }).tagName).toBe("H4");
+	expect(screen.getByRole("heading", { name: "Closed" }).tagName).toBe("H5");
+	expect(screen.queryByRole("heading", { name: /seven/ })).toBeNull();
+	expect(screen.getByRole("link", { name: "Link" })).toBeDefined();
+	const blocks = document.querySelectorAll("pre");
+	expect(blocks).toHaveLength(1);
+	expect(blocks[0].dataset.language).toBe("ts");
+	expect(parseWikilink("Ada Lovelace\\|Ada")).toMatchObject({
+		title: "Ada Lovelace",
+		label: "Ada",
+	});
+});
+
+it("splits imports into requests the server accepts", () => {
+	const file = (index: number, size = 10) => ({
+		path: `Note ${index}.md`,
+		content: "x".repeat(size),
+	});
+	const many = Array.from({ length: 1001 }, (_, index) => file(index));
+	expect(importBatches(many).map((batch) => batch.length)).toEqual([
+		500, 500, 1,
+	]);
+	const big = [file(1, 600), file(2, 600), file(3, 600)];
+	expect(importBatches(big, 500, 1300).map((batch) => batch.length)).toEqual([
+		2, 1,
+	]);
+	expect(importBatches([file(1, 5000)], 500, 1000)).toHaveLength(1);
+	expect(importBatches([])).toEqual([]);
 });

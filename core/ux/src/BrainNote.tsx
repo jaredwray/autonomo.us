@@ -113,10 +113,12 @@ export function BrainNote({
 	const [busy, setBusy] = useState(false);
 	const [formError, setFormError] = useState("");
 	const [conflict, setConflict] = useState(false);
+	/** The revision the draft was written against; saves send it, so a change made meanwhile is a 409, not an overwrite. */
+	const [base, setBase] = useState(0);
 	const sequence = useRef(0);
 	const heading = useRef<HTMLHeadingElement>(null);
 
-	const load = useCallback(async () => {
+	const load = useCallback(async (): Promise<BrainNoteView | null> => {
 		const request = ++sequence.current;
 		setLoading(true);
 		try {
@@ -124,6 +126,7 @@ export function BrainNote({
 			if (request === sequence.current) {
 				setView(result);
 				setError(null);
+				return result;
 			}
 		} catch (cause) {
 			if (request === sequence.current) {
@@ -137,20 +140,28 @@ export function BrainNote({
 		} finally {
 			if (request === sequence.current) setLoading(false);
 		}
+		return null;
 	}, [vault, title]);
-	// biome-ignore lint/correctness/useExhaustiveDependencies: `version` re-reads the note after the vault changed elsewhere
+	// A `version` bump re-reads the note after the vault changed elsewhere. It
+	// leaves an open editor and its draft alone; saving still sends `base`.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: `version` triggers the re-read
 	useEffect(() => {
-		setMode("read");
-		setFormError("");
-		setConflict(false);
 		void load();
 		return () => {
 			sequence.current++;
 		};
 	}, [load, version]);
+	// Focus the title when the note first shows and after leaving a form, not on every refresh.
+	const focusedNote = useRef<string | null>(null);
+	const previousMode = useRef<Mode>(mode);
 	useEffect(() => {
-		if (view && mode === "read")
+		const leftForm = previousMode.current !== "read" && mode === "read";
+		previousMode.current = mode;
+		if (!view || mode !== "read") return;
+		if (leftForm || focusedNote.current !== view.note.id) {
+			focusedNote.current = view.note.id;
 			heading.current?.focus({ preventScroll: true });
+		}
 	}, [view, mode]);
 
 	const options: InlineOptions = {
@@ -165,7 +176,10 @@ export function BrainNote({
 	const start = (next: Mode) => {
 		setFormError("");
 		setConflict(false);
-		if (next === "edit") setDraft(view?.markdown ?? "");
+		if (next === "edit") {
+			setDraft(view?.markdown ?? "");
+			setBase(view?.note.revision ?? 0);
+		}
 		if (next === "rename") setNewTitle(title);
 		setMode(next);
 	};
@@ -184,7 +198,7 @@ export function BrainNote({
 		try {
 			await updateBrainNote(vault, title, {
 				markdown: draft,
-				revision: view.note.revision,
+				revision: base,
 			});
 			setMode("read");
 			onChanged(title);
@@ -235,7 +249,9 @@ export function BrainNote({
 		setConflict(false);
 		setFormError("");
 		try {
-			await load();
+			// The draft now deliberately replaces the latest revision.
+			const fresh = await load();
+			if (fresh) setBase(fresh.note.revision);
 		} finally {
 			setBusy(false);
 		}
@@ -380,9 +396,9 @@ export function BrainNote({
 					}}
 				>
 					<div className="form-field">
-						<label htmlFor="brain-new-title">New title</label>
+						<label htmlFor="brain-rename-title">New title</label>
 						<input
-							id="brain-new-title"
+							id="brain-rename-title"
 							required
 							maxLength={200}
 							value={newTitle}

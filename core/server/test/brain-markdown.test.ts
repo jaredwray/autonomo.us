@@ -355,6 +355,18 @@ describe("frontmatter", () => {
 		]);
 	});
 
+	it("parses long frontmatter lines in linear time", () => {
+		const started = performance.now();
+		expect(() => parseMarkdown(`---\nx${" ".repeat(200_000)}y\n---\n`)).toThrow(
+			/key: value/,
+		);
+		expect(
+			parseMarkdown(`---\nnote: ${"word ".repeat(40_000)}\n---\n`).properties
+				.note,
+		).toHaveLength(199_999);
+		expect(performance.now() - started).toBeLessThan(1000);
+	});
+
 	it("rejects unsupported YAML and names the line", () => {
 		const attempt = (lines: string[]) => () =>
 			parseMarkdown(["---", ...lines, "---", "body"].join("\n"));

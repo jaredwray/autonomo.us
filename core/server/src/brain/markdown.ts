@@ -500,9 +500,13 @@ export function parseMarkdown(markdown: string): {
 		}
 		if (/^\s/.test(line))
 			throw new FrontmatterError("Nested mappings are not supported", number);
-		const entry = /^([^:]+?)\s*:(?:\s(.*))?$/.exec(line);
-		if (!entry) throw new FrontmatterError("Expected `key: value`", number);
-		const key = entry[1].trim();
+		// A scan, not a regex: a lazy key plus \s* backtracks quadratically on
+		// a long line without a colon, which import would let anyone send.
+		const colon = line.indexOf(":");
+		const after = colon === -1 ? "" : line.slice(colon + 1);
+		if (colon <= 0 || (after !== "" && !/^\s/.test(after)))
+			throw new FrontmatterError("Expected `key: value`", number);
+		const key = line.slice(0, colon).trim();
 		if (
 			key.length === 0 ||
 			key.length > PROPERTY_KEY_MAX_LENGTH ||
@@ -514,7 +518,7 @@ export function parseMarkdown(markdown: string): {
 			);
 		if (Object.hasOwn(properties, key))
 			throw new FrontmatterError(`Duplicate property "${key}"`, number);
-		const rest = (entry[2] ?? "").trim();
+		const rest = after.trim();
 		pending = null;
 		if (rest === "") {
 			properties[key] = null;
