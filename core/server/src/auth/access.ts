@@ -11,7 +11,7 @@ import { type ApiTokenStore, secretMatches, tokenHash } from "./tokens.js";
 /** How the current request authenticated. */
 export type RequestAuth =
 	| { kind: "user"; member: TeamMember; expiresAt: string }
-	| { kind: "api-token" }
+	| { kind: "api-token"; token: { id: string; name: string } }
 	/** SETUP_TOKEN: accepted only on the first-run setup routes. */
 	| { kind: "setup" };
 
@@ -54,6 +54,22 @@ const routePermissions = new Map<string, ApiTokenPermission>([
 	["GET /v1/telemetry/summary", "telemetry:read"],
 	["GET /v1/telemetry/events", "telemetry:read"],
 	["GET /v1/telemetry/analytics", "telemetry:read"],
+	["GET /v1/synapse/spaces", "synapse:read"],
+	["GET /v1/synapse/templates", "synapse:read"],
+	["GET /v1/synapse/spaces/:space/notes", "synapse:read"],
+	["POST /v1/synapse/spaces/:space/notes", "synapse:edit"],
+	["GET /v1/synapse/spaces/:space/notes/:title", "synapse:read"],
+	["PATCH /v1/synapse/spaces/:space/notes/:title", "synapse:edit"],
+	["POST /v1/synapse/spaces/:space/notes/:title/append", "synapse:edit"],
+	["DELETE /v1/synapse/spaces/:space/notes/:title", "synapse:edit"],
+	["GET /v1/synapse/spaces/:space/unresolved", "synapse:read"],
+	["GET /v1/synapse/spaces/:space/categories", "synapse:read"],
+	["GET /v1/synapse/spaces/:space/daily/:date", "synapse:read"],
+	// A whole space in one response, so it needs the write-level grant.
+	["GET /v1/synapse/spaces/:space/export", "synapse:edit"],
+	["POST /v1/synapse/spaces/:space/import", "synapse:edit"],
+	["GET /v1/synapse/proposals", "synapse:read"],
+	// POST /v1/synapse/proposals/:id/decide is absent on purpose: approvals need a person.
 ]);
 
 /**
@@ -111,7 +127,10 @@ export function registerApiAccess(
 		}
 		const token = await tokens.authenticate(match[1]);
 		if (!token) return unauthorized(reply);
-		request.auth = { kind: "api-token" };
+		request.auth = {
+			kind: "api-token",
+			token: { id: token.id, name: token.name },
+		};
 		request.telemetryCaller = {
 			id: `api-token:${token.id}`,
 			name: token.name,

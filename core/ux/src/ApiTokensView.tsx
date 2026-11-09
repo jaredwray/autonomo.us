@@ -24,6 +24,11 @@ const permissionGroups = [
 	},
 	{ resource: "inference", label: "Inference", choices: ["inference:run"] },
 	{ resource: "telemetry", label: "Telemetry", choices: ["telemetry:read"] },
+	{
+		resource: "synapse",
+		label: "Synapse",
+		choices: ["synapse:read", "synapse:edit"],
+	},
 ] as const;
 
 const config: TokenViewConfig<ApiTokenPermission> = {
@@ -33,7 +38,7 @@ const config: TokenViewConfig<ApiTokenPermission> = {
 	namePlaceholder: "Production gateway",
 	emptyMessage: "No API tokens yet. Create a token to connect an application.",
 	permissionHint:
-		"Applies across this gateway. Edit includes Read. Uncheck all permissions for no access. Run allows chat and decisions. Only owners and admins can manage API tokens.",
+		"Applies across this gateway. Edit includes Read. Uncheck all permissions for no access. Run allows chat and decisions. Synapse: Edit also covers import and export; proposals are decided by people only. Only owners and admins can manage API tokens.",
 	permissions: API_TOKEN_PERMISSIONS,
 	permissionGroups,
 	api: {

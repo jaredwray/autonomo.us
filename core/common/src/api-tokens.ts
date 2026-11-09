@@ -8,6 +8,8 @@ export const API_TOKEN_PERMISSIONS = {
 	"routing:edit": "Routing: Edit",
 	"inference:run": "Inference: Run",
 	"telemetry:read": "Telemetry: Read",
+	"synapse:read": "Synapse: Read",
+	"synapse:edit": "Synapse: Edit",
 } as const;
 export type ApiTokenPermission = keyof typeof API_TOKEN_PERMISSIONS;
 export const DEFAULT_API_TOKEN_PERMISSIONS: readonly ApiTokenPermission[] = [

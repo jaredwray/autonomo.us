@@ -1,5 +1,6 @@
 import cors from "@fastify/cors";
 import Fastify from "fastify";
+import packageJson from "../package.json" with { type: "json" };
 import { registerApiAccess } from "./auth/access.js";
 import { AccountStore } from "./auth/accounts.js";
 import { AgentTokenStore } from "./auth/agent-tokens.js";
@@ -23,10 +24,15 @@ import { failoverRoutes } from "./routes/failover.js";
 import { healthRoutes } from "./routes/health.js";
 import { modelsRoutes } from "./routes/models.js";
 import { routingRoutes } from "./routes/routing.js";
+import { synapseRoutes } from "./routes/synapse.js";
 import { teamRoutes } from "./routes/team.js";
 import { telemetryRoutes } from "./routes/telemetry.js";
 import { ModelRouter } from "./routing/router.js";
 import { RoutingSettingsStore } from "./routing/settings.js";
+import { mcpRoutes } from "./synapse/mcp.js";
+import { MemorySynapseRepository } from "./synapse/memory-repository.js";
+import { MongoSynapseRepository } from "./synapse/mongo-repository.js";
+import { SynapseService } from "./synapse/synapse.js";
 import { MongoTelemetrySink } from "./telemetry/mongo.js";
 import { TelemetryService } from "./telemetry/telemetry.js";
 
@@ -107,6 +113,12 @@ export function createServer(options: CreateServerOptions = {}) {
 	const tokens = new ApiTokenStore(config.mongodbUrl);
 	const agentTokens = new AgentTokenStore(config.mongodbUrl);
 	const accounts = new AccountStore({ mongodbUrl: config.mongodbUrl });
+	const synapseRepository = config.mongodbUrl
+		? new MongoSynapseRepository(config.mongodbUrl)
+		: new MemorySynapseRepository();
+	const synapse = new SynapseService(synapseRepository, {
+		timeZone: config.synapseTimeZone ?? "UTC",
+	});
 	let persistenceInitialized = false;
 	const server = Fastify({
 		pluginTimeout: options.pluginTimeout,
@@ -147,6 +159,13 @@ export function createServer(options: CreateServerOptions = {}) {
 	});
 	server.register(telemetryRoutes, { telemetry });
 	server.register(decisionsRoutes, { registry, telemetry });
+	server.register(synapseRoutes, { synapse });
+	server.register(mcpRoutes, {
+		synapse,
+		agentTokens,
+		corsOrigins: config.corsOrigins,
+		version: packageJson.version,
+	});
 	if (options.dashboardDir) registerDashboard(server, options.dashboardDir);
 
 	const initialize = async (onError?: PersistenceErrorHandler) => {
@@ -187,6 +206,7 @@ export function createServer(options: CreateServerOptions = {}) {
 		await agentTokens.close();
 		await accounts.close();
 		await routing.close();
+		await synapseRepository.close();
 		await telemetry.close();
 	});
 
@@ -201,6 +221,7 @@ export function createServer(options: CreateServerOptions = {}) {
 				agentTokens.close(),
 				accounts.close(),
 				routing.close(),
+				synapseRepository.close(),
 			]);
 			const failed = results.find(
 				(result): result is PromiseRejectedResult =>

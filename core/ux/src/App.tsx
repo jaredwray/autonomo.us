@@ -20,6 +20,7 @@ import { Icon } from "./Icons.js";
 import { ModelsView } from "./ModelsView.js";
 import { ProfileView } from "./ProfileView.js";
 import { RoutingView } from "./RoutingView.js";
+import { SynapseView } from "./SynapseView.js";
 import { TeamView } from "./TeamView.js";
 
 const logoMark = new URL("./assets/logo-mark.svg", import.meta.url).href;
@@ -28,13 +29,15 @@ const viewLabels = {
 	dashboard: "Dashboard",
 	models: "Models",
 	routing: "Routing",
+	synapse: "Synapse",
 	"api-tokens": "API Tokens",
 	"agent-tokens": "Agent Tokens",
 	team: "Team",
 };
 type View = keyof typeof viewLabels | "profile";
 function currentView(): View {
-	const view = window.location.hash.slice(2);
+	// Views such as Synapse keep their own state after the view name (#/synapse/<space>/<note>).
+	const view = window.location.hash.slice(2).split("/")[0] ?? "";
 	return view === "profile" || Object.hasOwn(viewLabels, view)
 		? (view as View)
 		: "dashboard";
@@ -329,6 +332,8 @@ export function App() {
 					<ModelsView />
 				) : shown === "routing" ? (
 					<RoutingView />
+				) : shown === "synapse" ? (
+					<SynapseView user={user} />
 				) : shown === "team" ? (
 					<TeamView />
 				) : (

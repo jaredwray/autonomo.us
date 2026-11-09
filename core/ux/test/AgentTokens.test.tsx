@@ -57,7 +57,7 @@ it("manages agent tokens with independent MCP permissions and a separate action 
 			.getByRole("link", { name: "Agent Tokens" })
 			.getAttribute("aria-current"),
 	).toBe("page");
-	expect(screen.getByText(/MCP server is not available yet/)).toBeDefined();
+	expect(screen.getByText(/MCP endpoint at \/mcp/)).toBeDefined();
 	fireEvent.click(screen.getByRole("button", { name: "Create token" }));
 	expect(screen.queryByRole("checkbox", { name: "Models: Read" })).toBeNull();
 	for (const name of ["MCP: Read", "MCP: Call"])

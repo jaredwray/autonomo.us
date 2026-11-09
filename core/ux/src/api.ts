@@ -14,8 +14,10 @@ import type {
 	AuthStatus,
 	CreateAgentTokenRequest,
 	CreateApiTokenRequest,
+	CreateSynapseNoteRequest,
 	CreateTeamInviteRequest,
 	CurrentSession,
+	DecideSynapseProposalRequest,
 	FailoverPolicy,
 	GatewayResponse,
 	InvitePreview,
@@ -26,12 +28,28 @@ import type {
 	RoutingConfig,
 	RoutingSettings,
 	SetupRequest,
+	SynapseCategory,
+	SynapseDaily,
+	SynapseExport,
+	SynapseImportRequest,
+	SynapseImportResult,
+	SynapseNote,
+	SynapseNoteList,
+	SynapseNoteView,
+	SynapseProposal,
+	SynapseProposalList,
+	SynapseProposalStatus,
+	SynapseQuery,
+	SynapseSpaceList,
+	SynapseTemplate,
+	SynapseUnresolvedLink,
 	TeamInvite,
 	TeamInviteSecret,
 	TeamMember,
 	TeamSettings,
 	UpdateAgentTokenRequest,
 	UpdateApiTokenRequest,
+	UpdateSynapseNoteRequest,
 	UpdateTeamMemberRequest,
 	UsageAnalytics,
 } from "@autonomo.us/common";
@@ -427,4 +445,171 @@ export function revokeTeamInvite(id: string): Promise<TeamInvite> {
 }
 export function removeTeamMember(id: string): Promise<TeamMember> {
 	return postJson(`/v1/team/${encodeURIComponent(id)}`, "DELETE", {});
+}
+
+/** A failed request whose HTTP status matters to the caller (404, 409). */
+export class ApiError extends Error {
+	readonly status: number;
+	constructor(message: string, status: number) {
+		super(message);
+		this.name = "ApiError";
+		this.status = status;
+	}
+}
+async function synapseRequest<T>(
+	path: string,
+	{ method = "GET", body }: { method?: string; body?: unknown } = {},
+): Promise<T> {
+	const headers = new Headers({ accept: "application/json" });
+	if (body !== undefined) headers.set("content-type", "application/json");
+	const response = await apiFetch(`${apiBase()}${path}`, {
+		method,
+		headers,
+		body: body === undefined ? undefined : JSON.stringify(body),
+	});
+	if (!response.ok)
+		throw new ApiError(
+			await errorMessage(response, `Request failed (${response.status})`),
+			response.status,
+		);
+	return (response.status === 204 ? undefined : await response.json()) as T;
+}
+const spacePath = (space: string) =>
+	`/v1/synapse/spaces/${encodeURIComponent(space)}`;
+const notePath = (space: string, title: string) =>
+	`${spacePath(space)}/notes/${encodeURIComponent(title)}`;
+
+export function fetchSynapseSpaces(): Promise<SynapseSpaceList> {
+	return synapseRequest("/v1/synapse/spaces");
+}
+export function fetchSynapseTemplates(): Promise<{
+	templates: SynapseTemplate[];
+}> {
+	return synapseRequest("/v1/synapse/templates");
+}
+export function fetchSynapseNotes(
+	space: string,
+	query: SynapseQuery = {},
+): Promise<SynapseNoteList> {
+	const params = new URLSearchParams();
+	const { where, ...rest } = query;
+	for (const [key, value] of Object.entries(rest))
+		if (value !== undefined && value !== "") params.set(key, String(value));
+	for (const [key, value] of Object.entries(where ?? {}))
+		params.set(`where.${key}`, String(value));
+	const search = params.toString();
+	return synapseRequest(
+		`${spacePath(space)}/notes${search ? `?${search}` : ""}`,
+	);
+}
+export function createSynapseNote(
+	space: string,
+	input: CreateSynapseNoteRequest,
+): Promise<SynapseNote> {
+	return synapseRequest(`${spacePath(space)}/notes`, {
+		method: "POST",
+		body: input,
+	});
+}
+export function fetchSynapseNote(
+	space: string,
+	title: string,
+): Promise<SynapseNoteView> {
+	return synapseRequest(notePath(space, title));
+}
+export function updateSynapseNote(
+	space: string,
+	title: string,
+	input: UpdateSynapseNoteRequest,
+): Promise<SynapseNote> {
+	return synapseRequest(notePath(space, title), {
+		method: "PATCH",
+		body: input,
+	});
+}
+export function appendSynapseNote(
+	space: string,
+	title: string,
+	text: string,
+	template?: string,
+): Promise<SynapseNote> {
+	return synapseRequest(`${notePath(space, title)}/append`, {
+		method: "POST",
+		body: { text, template },
+	});
+}
+/** With `revision`, only that revision is deleted; a newer one answers 409. */
+export function deleteSynapseNote(
+	space: string,
+	title: string,
+	revision?: number,
+): Promise<void> {
+	const query = revision === undefined ? "" : `?revision=${revision}`;
+	return synapseRequest(`${notePath(space, title)}${query}`, {
+		method: "DELETE",
+	});
+}
+export function fetchSynapseUnresolved(
+	space: string,
+): Promise<{ links: SynapseUnresolvedLink[] }> {
+	return synapseRequest(`${spacePath(space)}/unresolved`);
+}
+export function fetchSynapseCategories(
+	space: string,
+): Promise<{ categories: SynapseCategory[] }> {
+	return synapseRequest(`${spacePath(space)}/categories`);
+}
+export function fetchSynapseDaily(
+	space: string,
+	date: string,
+): Promise<SynapseDaily> {
+	return synapseRequest(
+		`${spacePath(space)}/daily/${encodeURIComponent(date)}`,
+	);
+}
+export function fetchSynapseExport(space: string): Promise<SynapseExport> {
+	return synapseRequest(`${spacePath(space)}/export`);
+}
+/** The space as an Obsidian-compatible zip, fetched with the session credential. */
+export async function fetchSynapseExportZip(space: string): Promise<Blob> {
+	const response = await apiFetch(
+		`${apiBase()}${spacePath(space)}/export?format=zip`,
+		{
+			headers: { accept: "application/zip" },
+		},
+	);
+	if (!response.ok)
+		throw new ApiError(
+			await errorMessage(response, `Export failed (${response.status})`),
+			response.status,
+		);
+	return response.blob();
+}
+export function importSynapseNotes(
+	space: string,
+	input: SynapseImportRequest,
+): Promise<SynapseImportResult> {
+	return synapseRequest(`${spacePath(space)}/import`, {
+		method: "POST",
+		body: input,
+	});
+}
+export function fetchSynapseProposals(
+	status?: SynapseProposalStatus,
+): Promise<SynapseProposalList> {
+	return synapseRequest(
+		`/v1/synapse/proposals${status ? `?status=${encodeURIComponent(status)}` : ""}`,
+	);
+}
+export function decideSynapseProposal(
+	id: string,
+	input: DecideSynapseProposalRequest,
+): Promise<SynapseProposal> {
+	return synapseRequest(
+		`/v1/synapse/proposals/${encodeURIComponent(id)}/decide`,
+		{
+			method: "POST",
+			body: input,
+		},
+	);
 }

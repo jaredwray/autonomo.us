@@ -19,9 +19,9 @@ const config: TokenViewConfig<AgentTokenPermission> = {
 	emptyMessage:
 		"No agent tokens yet. Create a token for an agent’s MCP connection.",
 	connectionNote:
-		"Prepare credentials for the upcoming MCP connection. The MCP server is not available yet.",
+		"Agents connect to the MCP endpoint at /mcp (Streamable HTTP) with an agent token as the bearer credential. It serves Synapse tools: the agent's private space, the shared space, and proposals.",
 	permissionHint:
-		"MCP Read is for discovering tools and reading resources and prompts. MCP Call is for running tools. Select both when an agent needs both. These grants are reserved for the upcoming MCP server and do not grant API access. Only owners and admins can manage agent tokens.",
+		"MCP Read lists the available tools. MCP Call runs them, which is how an agent reads and writes its Synapse. Select both for a working agent. Agent tokens grant no REST API access. Only owners and admins can manage agent tokens.",
 	permissions: AGENT_TOKEN_PERMISSIONS,
 	permissionGroups: [
 		{ resource: "mcp", label: "MCP", choices: ["mcp:read", "mcp:call"] },
