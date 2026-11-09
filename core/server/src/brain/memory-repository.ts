@@ -57,14 +57,29 @@ function matches(note: StoredNote, filter: NoteFilter): boolean {
 	return true;
 }
 
+/**
+ * MongoDB compares strings by UTF-8 bytes, which is code-point order. Plain
+ * `<` compares UTF-16 code units and disagrees for characters above U+FFFF.
+ */
+export function codePointOrder(x: string, y: string): number {
+	let index = 0;
+	while (index < x.length && index < y.length) {
+		const a = x.codePointAt(index) as number;
+		const b = y.codePointAt(index) as number;
+		if (a !== b) return a - b;
+		index += a > 0xffff ? 2 : 1;
+	}
+	// Equal so far, so the shorter string is a prefix of the longer.
+	return x.length - y.length;
+}
+
 export function compareNotes(
 	a: Pick<StoredNote, "updatedAt" | "createdAt" | "titleKey" | "id">,
 	b: Pick<StoredNote, "updatedAt" | "createdAt" | "titleKey" | "id">,
 	sort: FindOptions["sort"],
 ) {
-	// Code-unit order, as MongoDB compares strings; localeCompare would not match.
-	const binary = (x: string, y: string) => (x < y ? -1 : x > y ? 1 : 0);
-	const order = binary(a[sort.by], b[sort.by]) || binary(a.id, b.id);
+	const order =
+		codePointOrder(a[sort.by], b[sort.by]) || codePointOrder(a.id, b.id);
 	return sort.direction === "asc" ? order : -order;
 }
 

@@ -239,7 +239,7 @@ function contract(name: string, open: () => BrainRepository) {
 			}
 		});
 
-		it("orders titles by code unit, punctuation and accents included", async () => {
+		it("orders titles by code point like MongoDB, punctuation, accents, and emoji included", async () => {
 			const repo = open();
 			const vault = `agent-${randomUUID()}` as const;
 			try {
@@ -252,6 +252,8 @@ function contract(name: string, open: () => BrainRepository) {
 					"_under",
 					"a b",
 					"eagle",
+					"\uFFFD mark",
+					"\u{1F600} smile",
 				])
 					await repo.insertNote(note(vault, title));
 				const titles = (
@@ -269,6 +271,8 @@ function contract(name: string, open: () => BrainRepository) {
 					"zeta",
 					"~tilde",
 					"Émile",
+					"\uFFFD mark",
+					"\u{1F600} smile",
 				]);
 			} finally {
 				await repo.close();
