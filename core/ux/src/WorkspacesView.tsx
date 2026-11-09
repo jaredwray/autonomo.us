@@ -213,6 +213,7 @@ function MembersPanel({
 											"Admin (from team role)"
 										) : (
 											<select
+												className="workspace-role-select"
 												aria-label={`Workspace role for ${member.name || member.email}`}
 												value={member.role}
 												disabled={busy}

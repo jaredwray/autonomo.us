@@ -323,8 +323,10 @@ function AddModelForm(props: {
 export function ModelsView({
 	workspace,
 }: {
-	workspace?: { isDefault: boolean };
+	workspace?: { isDefault: boolean; role?: "admin" | "member" };
 } = {}) {
+	// Workspace members read connections; admins add them and change keys.
+	const canEdit = workspace?.role !== "member";
 	const [data, setData] = useState<ModelsData | null>(null);
 	const [settings, setSettings] = useState<ProviderSettings | null>(null);
 	const [catalog, setCatalog] = useState<ModelCatalog | null>(null);
@@ -389,18 +391,24 @@ export function ModelsView({
 						Manage the models available to your agents.
 					</p>
 				</div>
-				<button
-					ref={addButton}
-					className="button primary"
-					type="button"
-					disabled={!settings || adding}
-					onClick={() => {
-						setAdding(true);
-						setNotice("");
-					}}
-				>
-					<Icon name="plus" /> Add model
-				</button>
+				{canEdit ? (
+					<button
+						ref={addButton}
+						className="button primary"
+						type="button"
+						disabled={!settings || adding}
+						onClick={() => {
+							setAdding(true);
+							setNotice("");
+						}}
+					>
+						<Icon name="plus" /> Add model
+					</button>
+				) : (
+					<p className="card-note">
+						Ask a workspace admin to add models or change keys.
+					</p>
+				)}
 			</header>
 			{notice ? (
 				<p className="success-notice" role="status">
@@ -522,14 +530,16 @@ export function ModelsView({
 								without an advertised model list.
 							</p>
 						) : null}
-						<button
-							type="button"
-							className="button"
-							disabled={!settings || adding}
-							onClick={() => setAdding(true)}
-						>
-							<Icon name="plus" /> Add your first model
-						</button>
+						{canEdit && (
+							<button
+								type="button"
+								className="button"
+								disabled={!settings || adding}
+								onClick={() => setAdding(true)}
+							>
+								<Icon name="plus" /> Add your first model
+							</button>
+						)}
 					</div>
 				) : filtered.length === 0 ? (
 					<div className="models-empty">
