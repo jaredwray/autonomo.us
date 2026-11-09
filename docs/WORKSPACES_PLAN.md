@@ -241,11 +241,14 @@ action.") there.
 routes. Fastify has matched the route and parsed `request.params` before
 `onRequest`, so the workspace id is known from the path:
 
-1. **API or agent token:** the token's `workspaceId` must equal the path's
+1. **API token:** the token's `workspaceId` must equal the path's
    workspace. Otherwise reject with 403 ("This token belongs to another
    workspace."), so a misconfigured client fails loudly instead of acting
    somewhere it did not intend. Lifecycle and member routes are signed-in only,
-   so tokens get 403 there.
+   so tokens get 403 there. Agent tokens stay what they are today: they never
+   authenticate a REST request. The future MCP gateway authenticates them
+   through `AgentTokenStore` and applies the same workspace check before
+   handling an MCP request.
 2. **Signed-in member:** the path's workspace is the target, subject to the
    membership check below.
 3. Because the id is in the path, the token or session read, the workspace
