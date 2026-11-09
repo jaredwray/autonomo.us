@@ -1404,6 +1404,43 @@ describe("global inheritance", () => {
 		]);
 	});
 
+	it("rewrites links in inheriting workspaces when a global note is renamed", async () => {
+		const { service } = synapse();
+		await service.createNote(
+			"global",
+			{ title: "Pricing", body: "Free." },
+			user,
+		);
+		await service.createNote(
+			film,
+			{ title: "Launch", body: "See [[Pricing]] and [[Pricing#Tiers|tiers]]." },
+			user,
+		);
+		await service.createNote(
+			"shared",
+			{ title: "Roadmap", properties: { ref: "[[Pricing]]" } },
+			user,
+		);
+		// Games overrides Pricing, so its links point at its own note.
+		await service.createNote(games, { title: "Pricing", body: "Games." }, user);
+		await service.createNote(
+			games,
+			{ title: "Plan", body: "Read [[Pricing]]." },
+			user,
+		);
+		await service.updateNote("global", "Pricing", { title: "Plans" }, user);
+		expect((await service.getNote(film, "Launch")).body).toBe(
+			"See [[Plans]] and [[Plans#Tiers|tiers]].",
+		);
+		expect((await service.getNote("shared", "Roadmap")).properties.ref).toBe(
+			"[[Plans]]",
+		);
+		expect((await service.getNote(games, "Plan")).body).toBe(
+			"Read [[Pricing]].",
+		);
+		expect(await service.unresolved(film)).toEqual([]);
+	});
+
 	it("files proposals per workspace and refuses changes to inherited notes", async () => {
 		const { service } = synapse();
 		await service.createNote(

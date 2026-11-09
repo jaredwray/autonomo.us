@@ -787,10 +787,35 @@ export class SynapseService {
 			throw renamed && (await this.repository.getNote(space, next.titleKey))
 				? titleTaken(newTitle)
 				: changed();
-		if (renamed)
+		if (renamed) {
 			await this.rewriteLinksTo(space, current.title, newTitle, actor);
+			if (space === SYNAPSE_GLOBAL_SPACE)
+				await this.rewriteInheritedLinks(current.title, newTitle, actor);
+		}
 		await this.afterWrite(space, actor, next.categories);
 		return publicNote(next);
+	}
+
+	/**
+	 * A renamed global note keeps the links to it in every workspace that
+	 * inherits it. A workspace that has its own note with either title keeps
+	 * its links: they point at, or would land on, that workspace's note.
+	 */
+	private async rewriteInheritedLinks(
+		from: string,
+		to: string,
+		actor: SynapseActor,
+	) {
+		const spaces = (await this.repository.spaceStats())
+			.map((item) => item.space)
+			.filter(inheritsGlobal);
+		for (const space of spaces) {
+			const [old, taken] = await Promise.all([
+				this.repository.getNote(space, titleKey(from)),
+				this.repository.getNote(space, titleKey(to)),
+			]);
+			if (!old && !taken) await this.rewriteLinksTo(space, from, to, actor);
+		}
 	}
 
 	/** Rewrites [[Old]] links note by note; not a transaction (docs/SYNAPSE.md §3). */
