@@ -834,11 +834,17 @@ export class SynapseService {
 			.map((item) => item.space)
 			.filter(inheritsGlobal);
 		for (const space of spaces) {
-			const [old, taken] = await Promise.all([
-				this.repository.getNote(space, titleKey(from)),
-				this.repository.getNote(space, titleKey(to)),
-			]);
-			if (!old && !taken) await this.rewriteLinksTo(space, from, to, actor);
+			// Checked again before each note, so an override created during the
+			// rename stops it in that workspace.
+			const inherits = async () => {
+				const [old, taken] = await Promise.all([
+					this.repository.getNote(space, titleKey(from)),
+					this.repository.getNote(space, titleKey(to)),
+				]);
+				return !old && !taken;
+			};
+			if (await inherits())
+				await this.rewriteLinksTo(space, from, to, actor, inherits);
 		}
 	}
 
@@ -848,6 +854,8 @@ export class SynapseService {
 		from: string,
 		to: string,
 		actor: SynapseActor,
+		/** Checked before each note; false stops the rewrite. */
+		proceed?: () => Promise<boolean>,
 	) {
 		const linked = await this.repository.findNotes(
 			{ space, linkKey: titleKey(from) },
@@ -857,6 +865,7 @@ export class SynapseService {
 			},
 		);
 		for (const note of linked) {
+			if (proceed && !(await proceed())) return;
 			await this.change(
 				space,
 				note.title,

@@ -1510,6 +1510,45 @@ describe("global inheritance", () => {
 		expect(await service.unresolved(film)).toEqual([]);
 	});
 
+	it("stops rewriting a workspace's links when it overrides the old title mid-rename", async () => {
+		// Creates Film's own "Pricing" right after the rename lists Film's links.
+		class Racing extends MemorySynapseRepository {
+			race?: () => Promise<void>;
+			override async findNotes(
+				...args: Parameters<MemorySynapseRepository["findNotes"]>
+			) {
+				const found = await super.findNotes(...args);
+				const race = this.race;
+				if (race && args[0].space === film && args[0].linkKey) {
+					this.race = undefined;
+					await race();
+				}
+				return found;
+			}
+		}
+		const repository = new Racing();
+		const service = new SynapseService(repository, { timeZone: "UTC" });
+		await service.createNote(
+			"global",
+			{ title: "Pricing", body: "Free." },
+			user,
+		);
+		await service.createNote(
+			film,
+			{ title: "Launch", body: "See [[Pricing]]." },
+			user,
+		);
+		repository.race = async () => {
+			await service.createNote(film, { title: "Pricing", body: "Film." }, user);
+		};
+		await service.updateNote("global", "Pricing", { title: "Plans" }, user);
+		expect(repository.race).toBeUndefined();
+		expect((await service.getNote(film, "Launch")).body).toBe(
+			"See [[Pricing]].",
+		);
+		expect((await service.getNote(film, "Pricing")).body).toBe("Film.");
+	});
+
 	it("files proposals per workspace and refuses changes to inherited notes", async () => {
 		const { service } = synapse();
 		await service.createNote(
