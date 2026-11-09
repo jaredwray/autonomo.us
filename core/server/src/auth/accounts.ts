@@ -7,6 +7,7 @@ import {
 	type ChangePasswordRequest,
 	type CreateTeamInviteRequest,
 	type InvitePreview,
+	type MembershipAction,
 	PASSWORD_MAX_LENGTH,
 	PASSWORD_MIN_LENGTH,
 	type SetupRequest,
@@ -17,9 +18,13 @@ import {
 	type TeamRole,
 	type TeamSettings,
 	type UpdateTeamMemberRequest,
+	type WorkspaceMember,
+	type WorkspaceMembers,
+	type WorkspaceMembership,
+	type WorkspaceRole,
 } from "@autonomo.us/common";
-import { type Collection, type Document, MongoClient } from "mongodb";
-import { mongoOperationDeadlines, requestMongoClient } from "../mongo.js";
+import type { Collection, Document } from "mongodb";
+import { controlPlaneConnection, type MongoConnection } from "../mongo.js";
 import { hashPassword, verifyDecoy, verifyPassword } from "./passwords.js";
 import { secretMatches, tokenHash } from "./token-store.js";
 
@@ -50,9 +55,16 @@ const SESSION_PATTERN = new RegExp(`^ses_(${UUID})_[A-Za-z0-9_-]{43}$`);
 const INVITE_PATTERN = new RegExp(`^inv_(${UUID})_[A-Za-z0-9_-]{43}$`);
 
 type Session = { hash: string; createdAt: string; expiresAt: string };
-type UserRecord = Omit<TeamMember, "id"> & {
+type UserRecord = Omit<TeamMember, "id" | "workspaces"> & {
 	_id: string;
 	revision: number;
+	/**
+	 * Missing on accounts created before workspaces: a member without the field
+	 * belongs to the default workspace (a permanent read rule, not a backfill).
+	 */
+	workspaces?: WorkspaceMembership[];
+	/** Latest 100 membership changes, written in the same write as the change. */
+	membershipActions?: MembershipAction[];
 	passwordHash: string;
 	/** Recent failed sign-ins, newest first, for throttling. */
 	failedSignIns: string[];
@@ -71,7 +83,9 @@ type SetupRecord = {
 	/** Serializes changes that remove an owner, so two can't drop the last one. */
 	ownerLock?: { holder: string; expiresAt: string } | null;
 };
-type InviteRecord = Omit<TeamInvite, "id" | "status"> & {
+type InviteRecord = Omit<TeamInvite, "id" | "status" | "workspace"> & {
+	/** Missing on invites created before workspaces: redeem as a default-workspace member. */
+	workspace?: WorkspaceMembership | null;
 	_id: string;
 	revision: number;
 	hash: string;
@@ -107,7 +121,23 @@ function assertPassword(password: string) {
 		);
 }
 
-function publicMember(record: UserRecord): TeamMember {
+/** Stored memberships, with the pre-workspace rule applied to accounts that have none. */
+export function memberships(
+	record: { role: TeamRole; workspaces?: WorkspaceMembership[] },
+	defaultWorkspaceId: string,
+): WorkspaceMembership[] {
+	if (record.workspaces) return structuredClone(record.workspaces);
+	return record.role === "member"
+		? [{ workspaceId: defaultWorkspaceId, role: "member" }]
+		: [];
+}
+
+const MAX_MEMBERSHIP_ACTIONS = 100;
+
+function publicMember(
+	record: UserRecord,
+	defaultWorkspaceId: string,
+): TeamMember {
 	return {
 		id: record._id,
 		email: record.email,
@@ -118,6 +148,7 @@ function publicMember(record: UserRecord): TeamMember {
 		joinedVia: record.joinedVia,
 		addedBy: record.addedBy,
 		lastSignInAt: record.lastSignInAt,
+		workspaces: memberships(record, defaultWorkspaceId),
 	};
 }
 
@@ -139,6 +170,7 @@ function publicInvite(record: InviteRecord, now: number): TeamInvite {
 		acceptedAt: record.acceptedAt,
 		acceptedBy: record.acceptedBy,
 		revokedAt: record.revokedAt,
+		workspace: record.workspace ?? null,
 	};
 }
 
@@ -168,6 +200,45 @@ function recentFailures(record: UserRecord, now: number) {
 }
 
 const actorName = (actor: TeamMember) => actor.name || actor.email;
+
+/** Owners and admins see every workspace, so only members carry memberships. */
+function assertMembershipRole(
+	role: TeamRole,
+	workspace: WorkspaceMembership | undefined,
+) {
+	if (workspace && role !== "member")
+		throw new AccountError(
+			"Owners and admins can open every workspace. Choose a workspace only for members.",
+		);
+}
+
+function membershipAction(
+	record: { _id: string; email: string },
+	workspaceId: string,
+	actor: TeamMember,
+	change: {
+		before: WorkspaceRole | null;
+		after: WorkspaceRole | null;
+		at: string;
+	},
+): MembershipAction {
+	return {
+		id: randomUUID(),
+		workspaceId,
+		userId: record._id,
+		userEmail: record.email,
+		action:
+			change.before === null
+				? "granted"
+				: change.after === null
+					? "removed"
+					: "changed",
+		before: change.before,
+		after: change.after,
+		actorName: actorName(actor),
+		timestamp: change.at,
+	};
+}
 
 /** MongoDB or process memory with the same compare-and-swap semantics. */
 class Documents<T extends Stored> {
@@ -259,7 +330,8 @@ class Documents<T extends Stored> {
  * request so removals and role changes apply across API replicas.
  */
 export class AccountStore {
-	private client?: MongoClient;
+	private readonly mongo?: MongoConnection;
+	private fallbackWorkspaceId?: string;
 	private readonly users: Documents<UserRecord>;
 	private readonly setup: Documents<SetupRecord>;
 	private readonly invites: Documents<InviteRecord>;
@@ -267,11 +339,23 @@ export class AccountStore {
 	private indexed = false;
 	readonly persistence: "mongodb" | "memory";
 	constructor(
-		private readonly options: { mongodbUrl?: string; now?: () => number } = {},
+		private readonly options: {
+			mongodbUrl?: string;
+			/** A shared connection; takes precedence over `mongodbUrl`. */
+			mongo?: MongoConnection;
+			now?: () => number;
+			/** Resolves the default workspace's id, for accounts that predate workspaces. */
+			defaultWorkspaceId?: () => Promise<string>;
+		} = {},
 	) {
+		this.mongo =
+			options.mongo ??
+			(options.mongodbUrl
+				? controlPlaneConnection(options.mongodbUrl)
+				: undefined);
 		const mongo = (name: string) =>
-			options.mongodbUrl ? () => this.collection(name) : undefined;
-		this.persistence = options.mongodbUrl ? "mongodb" : "memory";
+			this.mongo ? () => this.collection(name) : undefined;
+		this.persistence = this.mongo ? "mongodb" : "memory";
 		this.users = new Documents(mongo("gateway_users"), "email");
 		this.setup = new Documents(mongo("gateway_setup"));
 		this.invites = new Documents(mongo("gateway_invites"));
@@ -280,18 +364,14 @@ export class AccountStore {
 		return (this.options.now ?? Date.now)();
 	}
 	private collection(name: string) {
-		const create = () =>
-			new MongoClient(this.options.mongodbUrl as string, {
-				serverSelectionTimeoutMS: 1500,
-				...mongoOperationDeadlines(3000),
-				readPreference: "primary",
-			});
-		let client = requestMongoClient(this, create);
-		if (!client) {
-			this.client ??= create();
-			client = this.client;
-		}
-		return client.db().collection(name);
+		return (this.mongo as MongoConnection).collection(name);
+	}
+	/** The default workspace's id, used to project accounts that predate workspaces. */
+	private async defaultId(): Promise<string> {
+		if (this.options.defaultWorkspaceId)
+			return this.options.defaultWorkspaceId();
+		this.fallbackWorkspaceId ??= randomUUID();
+		return this.fallbackWorkspaceId;
 	}
 	private async storage<T>(operation: () => Promise<T>): Promise<T> {
 		try {
@@ -331,8 +411,10 @@ export class AccountStore {
 	}
 	/** `idempotent` accepts an insert that already happened (same ID). */
 	private async insertUser(record: UserRecord, idempotent = false) {
-		if (this.options.mongodbUrl && !this.indexed) {
-			await this.collection("gateway_users")
+		if (this.mongo && !this.indexed) {
+			const users = this.collection("gateway_users");
+			await users.createIndex({ "workspaces.workspaceId": 1 }).catch(() => {});
+			await users
 				.createIndex({ email: 1 }, { unique: true, name: "email_unique" })
 				.then(() => {
 					this.indexed = true;
@@ -362,8 +444,13 @@ export class AccountStore {
 		addedBy: string | null,
 		now: number,
 		signedIn: boolean,
+		// Left undefined only for an invite from before workspaces: the record
+		// then carries no field and the read rule grants the default workspace.
+		// (No default value: passing undefined must not become [].)
+		workspaces?: WorkspaceMembership[],
 	): UserRecord {
 		return {
+			...(workspaces ? { workspaces } : {}),
 			_id: randomUUID(),
 			revision: 0,
 			email: normalizeEmail(input.email),
@@ -482,7 +569,7 @@ export class AccountStore {
 		}
 		await this.forgetEmbeddedOwner(record._id);
 		this.completed = true;
-		return { ...session, user: publicMember(record) };
+		return { ...session, user: publicMember(record, await this.defaultId()) };
 	}
 	private setupDone() {
 		return new AccountError("Setup is already complete. Sign in instead.", 409);
@@ -502,6 +589,7 @@ export class AccountStore {
 		const failures = recentFailures(user, this.now());
 		if (failures.length >= SIGN_IN_MAX_FAILURES) throw this.throttled(failures);
 		const valid = await verifyPassword(input.password, user.passwordHash);
+		const defaultId = await this.defaultId();
 		type Outcome =
 			| { kind: "throttled"; failures: string[] }
 			| { kind: "incorrect" }
@@ -523,7 +611,10 @@ export class AccountStore {
 				record.lastSignInAt = iso(now);
 				return {
 					kind: "signed-in",
-					session: { ...issueSession(record, now), user: publicMember(record) },
+					session: {
+						...issueSession(record, now),
+						user: publicMember(record, defaultId),
+					},
 				};
 			},
 			incorrect(),
@@ -554,7 +645,10 @@ export class AccountStore {
 				Date.parse(item.expiresAt) > now && secretMatches(token, item.hash),
 		);
 		return session
-			? { member: publicMember(record), expiresAt: session.expiresAt }
+			? {
+					member: publicMember(record, await this.defaultId()),
+					expiresAt: session.expiresAt,
+				}
 			: null;
 	}
 
@@ -630,14 +724,30 @@ export class AccountStore {
 	}
 
 	async team(actor: TeamMember): Promise<TeamSettings> {
-		const [users, invites] = await Promise.all([
+		const [users, invites, defaultId] = await Promise.all([
 			this.storage(() => this.users.list()),
 			this.storage(() => this.invites.list()),
+			this.defaultId(),
 		]);
 		const now = this.now();
+		// Owners and admins see every membership. A member sees others'
+		// memberships only in workspaces they share, so the team list never
+		// reveals who belongs to a workspace the caller cannot open.
+		const shared = AccountStore.canManage(actor)
+			? null
+			: new Set(actor.workspaces.map((item) => item.workspaceId));
+		const visible = (member: TeamMember): TeamMember =>
+			shared && member.id !== actor.id
+				? {
+						...member,
+						workspaces: member.workspaces.filter((item) =>
+							shared.has(item.workspaceId),
+						),
+					}
+				: member;
 		return {
 			members: users
-				.map(publicMember)
+				.map((user) => visible(publicMember(user, defaultId)))
 				.sort(
 					(a, b) =>
 						a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
@@ -684,6 +794,7 @@ export class AccountStore {
 	): Promise<TeamMember> {
 		this.authorize(actor, [input.role]);
 		assertPassword(input.password);
+		assertMembershipRole(input.role, input.workspace);
 		await this.assertEmailAvailable(normalizeEmail(input.email));
 		const record = this.newUser(
 			input,
@@ -692,9 +803,18 @@ export class AccountStore {
 			actorName(actor),
 			this.now(),
 			false,
+			input.workspace ? [input.workspace] : [],
 		);
+		if (input.workspace)
+			record.membershipActions = [
+				membershipAction(record, input.workspace.workspaceId, actor, {
+					before: null,
+					after: input.workspace.role,
+					at: record.createdAt,
+				}),
+			];
 		await this.insertUser(record);
-		return publicMember(record);
+		return publicMember(record, await this.defaultId());
 	}
 
 	/**
@@ -750,6 +870,7 @@ export class AccountStore {
 	): Promise<TeamMember> {
 		const current = await this.member(id);
 		this.authorize(actor, [current.role, input.role]);
+		const defaultId = await this.defaultId();
 		const demotes = current.role === "owner" && input.role !== "owner";
 		const apply = async (fence?: () => void) => {
 			const owners = demotes ? await this.ownerCount() : 0;
@@ -764,10 +885,13 @@ export class AccountStore {
 						if (owners <= 1) throw lastOwner();
 					}
 					fence?.();
+					// Stored memberships stay as they are: dormant while the account
+					// is an owner or admin, and in force again after a demotion.
+					record.workspaces = memberships(record, defaultId);
 					record.name = input.name.trim();
 					record.role = input.role;
 					record.updatedAt = iso(now);
-					return publicMember(record);
+					return publicMember(record, defaultId);
 				},
 				missingMember(),
 			);
@@ -787,6 +911,7 @@ export class AccountStore {
 			throw new AccountError("Use Change password for your own account.", 409);
 		assertPassword(password);
 		const passwordHash = await hashPassword(password);
+		const defaultId = await this.defaultId();
 		return this.mutate(
 			this.users,
 			id,
@@ -797,7 +922,7 @@ export class AccountStore {
 				record.sessions = [];
 				record.failedSignIns = [];
 				record.updatedAt = iso(now);
-				return publicMember(record);
+				return publicMember(record, defaultId);
 			},
 			missingMember(),
 		);
@@ -821,7 +946,7 @@ export class AccountStore {
 			// everywhere. The revision check refuses a member changed meanwhile.
 			if (!(await this.storage(() => this.users.remove(id, record.revision))))
 				throw changedMember();
-			return publicMember(record);
+			return publicMember(record, await this.defaultId());
 		};
 		return seen.role === "owner" ? this.withOwnerLock(remove) : remove();
 	}
@@ -831,6 +956,7 @@ export class AccountStore {
 		actor: TeamMember,
 	): Promise<TeamInviteSecret> {
 		this.authorize(actor, [input.role]);
+		assertMembershipRole(input.role, input.workspace);
 		const now = this.now();
 		const id = randomUUID();
 		const { secret, hash, masked } = newSecret("inv", id);
@@ -847,6 +973,7 @@ export class AccountStore {
 			acceptedBy: null,
 			acceptedUserId: null,
 			revokedAt: null,
+			workspace: input.workspace ?? null,
 		};
 		await this.storage(() => this.invites.insert(record));
 		return { invite: publicInvite(record, now), token: secret };
@@ -905,6 +1032,13 @@ export class AccountStore {
 			invite.createdBy,
 			now,
 			true,
+			// An invite from before workspaces grants what a member had then:
+			// the default workspace, through the missing-field read rule.
+			invite.workspace === undefined
+				? undefined
+				: invite.workspace
+					? [invite.workspace]
+					: [],
 		);
 		await this.mutate(
 			this.invites,
@@ -937,12 +1071,111 @@ export class AccountStore {
 			).catch(() => {});
 			throw error;
 		}
-		return { ...session, user: publicMember(record) };
+		return { ...session, user: publicMember(record, await this.defaultId()) };
+	}
+
+	/** Everyone who can open `workspaceId`, and its recent membership changes. */
+	async workspaceMembers(workspace: {
+		id: string;
+		isDefault: boolean;
+	}): Promise<WorkspaceMembers> {
+		const [users, defaultId] = await Promise.all([
+			this.storage(() => this.users.list()),
+			this.defaultId(),
+		]);
+		const members: WorkspaceMember[] = [];
+		for (const user of users) {
+			const implicit = user.role !== "member";
+			const membership = memberships(user, defaultId).find(
+				(item) => item.workspaceId === workspace.id,
+			);
+			if (!implicit && !membership) continue;
+			members.push({
+				id: user._id,
+				email: user.email,
+				name: user.name,
+				orgRole: user.role,
+				role: implicit ? "admin" : (membership as WorkspaceMembership).role,
+				implicit,
+			});
+		}
+		return {
+			members: members.sort(
+				(a, b) =>
+					Number(b.implicit) - Number(a.implicit) ||
+					a.email.localeCompare(b.email),
+			),
+			actions: users
+				.flatMap((user) => user.membershipActions ?? [])
+				.filter((action) => action.workspaceId === workspace.id)
+				.sort((a, b) => b.timestamp.localeCompare(a.timestamp))
+				.slice(0, MAX_MEMBERSHIP_ACTIONS),
+		};
+	}
+
+	/**
+	 * Grants or changes a member's role in a workspace. The membership and its
+	 * audit entry live in the member's own document, so both commit in one
+	 * compare-and-swap even on standalone MongoDB.
+	 */
+	async setWorkspaceMember(
+		workspaceId: string,
+		userId: string,
+		role: WorkspaceRole | null,
+		actor: TeamMember,
+	): Promise<WorkspaceMembers> {
+		const defaultId = await this.defaultId();
+		const workspaceRef = {
+			id: workspaceId,
+			isDefault: workspaceId === defaultId,
+		};
+		const seen = await this.member(userId);
+		const current =
+			memberships(seen, defaultId).find(
+				(item) => item.workspaceId === workspaceId,
+			)?.role ?? null;
+		// Nothing to change: skip the write, so a no-op never races a real edit.
+		if (seen.role === "member" && current === role && role !== null)
+			return this.workspaceMembers(workspaceRef);
+		await this.mutate(
+			this.users,
+			userId,
+			(record, now) => {
+				if (record.role !== "member")
+					throw new AccountError(
+						"Owners and admins already have access to every workspace.",
+						409,
+					);
+				const current = memberships(record, defaultId);
+				const before =
+					current.find((item) => item.workspaceId === workspaceId)?.role ??
+					null;
+				if (before === null && role === null)
+					throw new AccountError(
+						"This person is not a member of the workspace.",
+						404,
+					);
+				if (before === role) return;
+				record.workspaces = [
+					...current.filter((item) => item.workspaceId !== workspaceId),
+					...(role ? [{ workspaceId, role }] : []),
+				];
+				record.membershipActions = [
+					membershipAction(record, workspaceId, actor, {
+						before,
+						after: role,
+						at: iso(now),
+					}),
+					...(record.membershipActions ?? []),
+				].slice(0, MAX_MEMBERSHIP_ACTIONS);
+				record.updatedAt = iso(now);
+			},
+			missingMember(),
+		);
+		return this.workspaceMembers(workspaceRef);
 	}
 
 	async close() {
-		const client = this.client;
-		this.client = undefined;
-		await client?.close();
+		await this.mongo?.close();
 	}
 }

@@ -338,9 +338,11 @@ describe("usage analytics", () => {
 			}),
 		);
 		cleanups.push(() => server.close());
+		// Call sites pass the connection's implementation kind with every call.
 		const event = telemetry.recordChat({
 			model: "work/paid",
 			provider: "work",
+			providerKind: "openai",
 			usage,
 			latencyMs: 10,
 		});

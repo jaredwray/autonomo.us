@@ -11,7 +11,12 @@ import { StrictMode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { App } from "../src/App.js";
 import { clearCredential, setSessionToken } from "../src/api.js";
-import { PASSWORD, setUpOwner } from "./session.js";
+import {
+	defaultWorkspaceId,
+	PASSWORD,
+	routeToWorkspace,
+	setUpOwner,
+} from "./session.js";
 
 // Synapse dashboard runs against a real gateway API server (no fetch
 // mocks): each test boots @autonomo.us/server on an ephemeral port, completes
@@ -42,8 +47,10 @@ async function boot(): Promise<Running> {
 	const url = await server.listen({ host: "127.0.0.1", port: 0 });
 	closers.push(() => server.close());
 	vi.stubEnv("VITE_API_URL", url);
-	const owner = { authorization: `Bearer ${await setUpOwner(url)}` };
-	return { server, url, owner };
+	const token = await setUpOwner(url);
+	// Synapse lives in a workspace; these tests use the default one.
+	routeToWorkspace(server, await defaultWorkspaceId(url, token));
+	return { server, url, owner: { authorization: `Bearer ${token}` } };
 }
 function renderAt(hash: string) {
 	window.history.replaceState(null, "", hash);
@@ -58,6 +65,11 @@ async function start(hash = "#/synapse") {
 	renderAt(hash);
 	return running;
 }
+/** Synapse URLs sit inside the selected workspace: #/w/<id>/synapse/... */
+const expectHash = (path: string) =>
+	expect(window.location.hash).toBe(
+		`#/w/${window.location.hash.split("/")[2]}/${path}`,
+	);
 const change = (label: string, value: string) =>
 	fireEvent.change(screen.getByLabelText(label), { target: { value } });
 const noteRegion = () => screen.getByRole("region", { name: "Note" });
@@ -89,10 +101,15 @@ async function readNote(
 		headers: owner,
 	});
 }
-async function createAgent({ server, owner }: Running) {
+async function createAgent({ server, url, owner }: Running) {
+	// Agent tokens belong to a workspace; Synapse itself is gateway-wide.
+	const workspace = await defaultWorkspaceId(
+		url,
+		owner.authorization.replace(/^Bearer /, ""),
+	);
 	const response = await server.inject({
 		method: "POST",
-		url: "/v1/agent-tokens",
+		url: `/v1/${workspace}/agent-tokens`,
 		headers: owner,
 		payload: {
 			name: "Research agent",
@@ -143,7 +160,7 @@ it("navigates to Synapse and creates a note from a template with its properties"
 		within(screen.getByLabelText("Space"))
 			.getAllByRole("option")
 			.map((option) => option.textContent),
-	).toEqual(["Shared (0 notes)"]);
+	).toEqual(["Global (0 notes)", "Shared (0 notes, inherits Global)"]);
 	fireEvent.click(screen.getByRole("button", { name: "New note" }));
 	change("Title", "Ada Lovelace");
 	await screen.findByRole("option", { name: "People" });
@@ -151,7 +168,7 @@ it("navigates to Synapse and creates a note from a template with its properties"
 	expect(screen.getByText(/Properties: .*role.*created/)).toBeDefined();
 	fireEvent.click(screen.getByRole("button", { name: "Create note" }));
 	await screen.findByRole("heading", { name: "Ada Lovelace" });
-	expect(window.location.hash).toBe("#/synapse/shared/Ada%20Lovelace");
+	expectHash("synapse/shared/Ada%20Lovelace");
 	const table = within(properties());
 	const keys = table.getAllByRole("rowheader").map((cell) => cell.textContent);
 	expect(keys).toHaveLength(6);
@@ -173,7 +190,7 @@ it("navigates to Synapse and creates a note from a template with its properties"
 	expect(within(await notesList()).getByText("2 notes")).toBeDefined();
 	fireEvent.click(table.getByRole("link", { name: "People" }));
 	await screen.findByRole("heading", { name: "People" });
-	expect(window.location.hash).toBe("#/synapse/shared/People");
+	expectHash("synapse/shared/People");
 	const members = within(
 		await screen.findByRole("region", { name: /^Notes in People/ }),
 	);
@@ -268,7 +285,7 @@ it("edits Markdown, shows unresolved links as breadcrumbs, and resolves them whe
 	// Following a wikilink in the body navigates.
 	fireEvent.click(screen.getByRole("link", { name: "Babbage" }));
 	await screen.findByRole("heading", { name: "Charles Babbage" });
-	expect(window.location.hash).toBe("#/synapse/shared/Charles%20Babbage");
+	expectHash("synapse/shared/Charles%20Babbage");
 	const stored = (await readNote(running, "shared", "Ada Lovelace")).json();
 	expect([...stored.note.links].sort()).toEqual(["Charles Babbage", "People"]);
 	expect(stored.note.categories).toEqual(["People"]);
@@ -513,7 +530,7 @@ it("searches, filters by category, renames with link rewriting, and deletes", as
 	change("New title", "Ada King");
 	fireEvent.click(screen.getByRole("button", { name: "Rename note" }));
 	await screen.findByRole("heading", { name: "Ada King" });
-	expect(window.location.hash).toBe("#/synapse/shared/Ada%20King");
+	expectHash("synapse/shared/Ada%20King");
 	await list.findByRole("link", { name: /^Ada King/ });
 	expect(
 		(await readNote(running, "shared", "Analytical Engine")).json().note.body,
@@ -524,7 +541,7 @@ it("searches, filters by category, renames with link rewriting, and deletes", as
 	await list.findByText("1 note match");
 	expect(list.queryByRole("link", { name: /^Ada King/ })).toBeNull();
 	expect(within(noteRegion()).getByText("Pick a note")).toBeDefined();
-	expect(window.location.hash).toBe("#/synapse/shared");
+	expectHash("synapse/shared");
 	expect((await readNote(running, "shared", "Ada King")).statusCode).toBe(404);
 	// The deleted note's title is now a breadcrumb from the project note.
 	change("Category", "");
@@ -564,7 +581,7 @@ it("lets owners approve and reject agent proposals, surfacing conflicts", async 
 	});
 	await within(await notesList()).findByText("1 note");
 	fireEvent.click(screen.getByRole("tab", { name: "Proposals" }));
-	expect(window.location.hash).toBe("#/synapse/proposals");
+	expectHash("synapse/proposals");
 	const create = within(
 		await screen.findByRole("article", { name: "Create Release checklist" }),
 	);
@@ -643,10 +660,14 @@ it("lets owners approve and reject agent proposals, surfacing conflicts", async 
 			within(screen.getByLabelText("Space"))
 				.getAllByRole("option")
 				.map((option) => option.textContent),
-		).toEqual(["Shared (3 notes)", "Research agent (1 note)"]),
+		).toEqual([
+			"Global (0 notes)",
+			"Shared (3 notes, inherits Global)",
+			"Research agent (1 note)",
+		]),
 	);
 	change("Space", `agent-${agent.token.id}`);
-	expect(window.location.hash).toBe(`#/synapse/agent-${agent.token.id}`);
+	expectHash(`synapse/agent-${agent.token.id}`);
 	fireEvent.click(
 		await within(await notesList()).findByRole("link", {
 			name: new RegExp(`^${today()}`),
@@ -665,6 +686,8 @@ it("shows members the proposals read-only", async () => {
 	closers.push(() => server.close());
 	vi.stubEnv("VITE_API_URL", url);
 	const ownerToken = await setUpOwner(url, { signIn: false });
+	const workspaceId = await defaultWorkspaceId(url, ownerToken);
+	routeToWorkspace(server, workspaceId);
 	const running: Running = {
 		server,
 		url,
@@ -679,6 +702,7 @@ it("shows members the proposals read-only", async () => {
 			name: "Member",
 			role: "member",
 			password: PASSWORD,
+			workspace: { workspaceId, role: "member" },
 		},
 	});
 	expect(added.statusCode, added.body).toBe(201);
@@ -700,7 +724,7 @@ it("shows members the proposals read-only", async () => {
 	await screen.findByRole("article", { name: "Create Style guide" });
 	expect(
 		screen.getByText(
-			"Owners and admins decide proposals. You can read them here.",
+			"Workspace admins decide proposals. You can read them here.",
 		),
 	).toBeDefined();
 	expect(screen.queryByRole("button", { name: /^Approve/ })).toBeNull();
@@ -708,8 +732,62 @@ it("shows members the proposals read-only", async () => {
 	// Members still read and write spaces from the dashboard.
 	fireEvent.click(screen.getByRole("tab", { name: "Notes" }));
 	expect(screen.getByRole("button", { name: "New note" })).toBeDefined();
+	// Global is read-only for members.
+	fireEvent.change(await screen.findByLabelText("Space"), {
+		target: { value: "global" },
+	});
+	await screen.findByText(/owners and admins change it/);
+	expect(screen.queryByRole("button", { name: "New note" })).toBeNull();
+	expect(screen.queryByRole("button", { name: "Import" })).toBeNull();
+	fireEvent.change(screen.getByLabelText("Space"), {
+		target: { value: "shared" },
+	});
+	await screen.findByRole("button", { name: "New note" });
 	expect(screen.getByRole("link", { name: "Synapse" })).toBeDefined();
 	expect(screen.queryByRole("link", { name: "Agent Tokens" })).toBeNull();
+});
+
+it("shows global notes in Shared as read-only until the workspace overrides them", async () => {
+	const running = await start();
+	await createNote(running, "global", {
+		title: "Brand voice",
+		body: "Plain words.",
+	});
+	const list = within(await notesList());
+	const link = await list.findByRole("link", { name: /^Brand voice/ });
+	expect(within(link).getByText("Global")).toBeDefined();
+	fireEvent.click(link);
+	await screen.findByRole("heading", { name: "Brand voice" });
+	expect(
+		screen.getByText(
+			/Inherited from the global Synapse, so it is read-only here/,
+		),
+	).toBeDefined();
+	expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
+	// Overriding creates the workspace's own note with the same title.
+	fireEvent.click(
+		screen.getByRole("button", { name: "Override in this workspace" }),
+	);
+	expect((screen.getByLabelText("Title") as HTMLInputElement).value).toBe(
+		"Brand voice",
+	);
+	fireEvent.click(screen.getByRole("button", { name: "Create note" }));
+	await screen.findByText(/This note has no body yet/);
+	expect(screen.queryByText(/Inherited from the global Synapse/)).toBeNull();
+	expect(screen.getByRole("button", { name: "Edit" })).toBeDefined();
+	// Global keeps its note, and owners can edit it there.
+	fireEvent.change(screen.getByLabelText("Space"), {
+		target: { value: "global" },
+	});
+	fireEvent.click(
+		await within(await notesList()).findByRole("link", {
+			name: /^Brand voice/,
+		}),
+	);
+	// The list's snippet shows the body too, so wait for the note's own actions.
+	expect(await screen.findByRole("button", { name: "Edit" })).toBeDefined();
+	expect(screen.queryByText(/Inherited from the global Synapse/)).toBeNull();
+	expectHash("synapse/global/Brand%20voice");
 });
 
 it("imports Markdown files and a vault folder, then exports the space as a zip", async () => {

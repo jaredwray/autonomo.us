@@ -1,9 +1,7 @@
 import {
 	AGENT_TOKEN_PERMISSIONS,
-	type AgentToken,
 	type AgentTokenPermission,
 	type CreateSynapseProposalRequest,
-	SYNAPSE_SHARED_SPACE,
 	type SynapseActor,
 	type SynapseNoteView,
 	type SynapseProperties,
@@ -12,10 +10,11 @@ import {
 } from "@autonomo.us/common";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { AgentTokenStore } from "../auth/agent-tokens.js";
-import { ApiTokenError } from "../auth/token-store.js";
+import { ApiTokenError, type AuthenticatedToken } from "../auth/token-store.js";
 import { resolveCorsOrigin } from "../routes/chat.js";
+import type { WorkspaceStore } from "../workspaces/store.js";
 import { SynapseError } from "./errors.js";
-import { agentSpaceId, type SynapseService } from "./synapse.js";
+import { agentSpaceId, type SynapseService, sharedSpaceId } from "./synapse.js";
 
 export const MCP_PROTOCOL_VERSIONS = [
 	"2025-11-25",
@@ -42,7 +41,7 @@ export const MCP_INSTRUCTIONS = [
 	"Always link the first mention of a person, project, company, or idea with [[Title]], even when no note exists yet; unresolved links are breadcrumbs for future notes (synapse_unresolved).",
 	"Classify notes with the categories property by creating them from a template (synapse_templates); category and template names are plural, like People or Projects.",
 	"Write dates as YYYY-MM-DD. Record what you did and decided with synapse_log; it goes into today's daily note, so link the notes involved.",
-	'Your space is private to you. The shared space is the team canon: read it with space "shared", and change it only through synapse_propose, which a person reviews.',
+	'Your space is private to you. The shared space is your workspace\'s team canon, including notes inherited from the global Synapse: read it with space "shared", and change it only through synapse_propose, which a person reviews. Inherited notes can be overridden by proposing a note with the same title.',
 ].join("\n");
 
 type JsonSchema = {
@@ -364,11 +363,18 @@ class RpcError extends Error {
 type Args = Record<string, unknown>;
 /** Shapes checked by the service's validateProperties, not here. */
 const asProperties = (value: unknown) => value as SynapseProperties | undefined;
-type Agent = { token: AgentToken; actor: SynapseActor };
+type Agent = {
+	token: AuthenticatedToken<AgentTokenPermission>;
+	actor: SynapseActor;
+	/** The shared space of the agent's workspace, which inherits global. */
+	shared: SynapseSpaceId;
+};
 
 export type McpRouteOptions = {
 	synapse: SynapseService;
 	agentTokens: AgentTokenStore;
+	/** An agent token works only while its workspace exists and is not archived. */
+	workspaces: Pick<WorkspaceStore, "get" | "defaultWorkspaceId">;
 	/** Browser origins allowed by CORS_ORIGIN; `["*"]` allows any. */
 	corsOrigins: string[];
 	version: string;
@@ -396,9 +402,7 @@ export async function mcpRoutes(
 	);
 
 	const spaceOf = (agent: Agent, args: Args): SynapseSpaceId =>
-		args.space === "shared"
-			? SYNAPSE_SHARED_SPACE
-			: agentSpaceId(agent.token.id);
+		args.space === "shared" ? agent.shared : agentSpaceId(agent.token.id);
 
 	const tools: Record<string, (agent: Agent, args: Args) => Promise<unknown>> =
 		{
@@ -481,6 +485,7 @@ export async function mcpRoutes(
 				synapse.propose(
 					agent.actor,
 					args as unknown as CreateSynapseProposalRequest,
+					agent.shared,
 				),
 			synapse_proposals: async (agent, args) => ({
 				proposals: await synapse.listProposals({
@@ -580,7 +585,7 @@ export async function mcpRoutes(
 			unauthorized(reply);
 			return undefined;
 		}
-		let token: AgentToken | null;
+		let token: AuthenticatedToken<AgentTokenPermission> | null;
 		try {
 			token = await options.agentTokens.authenticate(match[1]);
 		} catch (error) {
@@ -592,9 +597,25 @@ export async function mcpRoutes(
 			unauthorized(reply);
 			return undefined;
 		}
+		// The same rule as REST: archiving a workspace refuses its tokens. A
+		// token without a workspace predates workspaces and belongs to the default.
+		const workspace = await options.workspaces.get(
+			token.workspaceId ?? (await options.workspaces.defaultWorkspaceId()),
+		);
+		if (!workspace) {
+			unauthorized(reply);
+			return undefined;
+		}
+		if (workspace.archivedAt) {
+			reply
+				.code(409)
+				.send({ error: { message: "This workspace is archived." } });
+			return undefined;
+		}
 		return {
 			token,
 			actor: { kind: "agent", id: token.id, name: token.name },
+			shared: sharedSpaceId(workspace),
 		};
 	};
 

@@ -24,17 +24,21 @@ It covers the **agent memory** and **shared memory** tiers from the design doc. 
 
 Deliberate departures: agents append a timestamped log to the daily note (kepano leaves daily notes empty), because an agent's history of what it did is the most common memory it needs. Evergreen notes use `categories: [[Evergreen]]` instead of the `0🌲` tag. There is no rating property in templates.
 
-## 2. Spaces and access
+## 2. Spaces, workspaces, and access
 
-- **`shared`**: the team canon (character sheets, brand voice, standing decisions). Every agent with `mcp:call` can read it. Agents never write it directly: they file a **proposal**, which an owner or admin approves or rejects. Approval applies the change; a rejection's reason is appended to the author agent's daily note, so the agent learns from it (design doc: "reject reasons flow back into the author agent's memory").
-- **`agent-<agentTokenId>`**: one agent's private space, created on first write. The agent token ID is stable across rolls, so rotating a credential keeps the memory. The space's display name is the token name at the last write. Agents cannot read each other's spaces.
+Synapse lives inside [workspaces](./WORKSPACES_PLAN.md), with one global canon above them all:
+
+- **`global`**: the gateway-wide canon (company-wide brand voice, policies, people). Every workspace reads it. Only owners and admins change it, from the dashboard or the REST API.
+- **`shared`**: one per workspace, that workspace's team canon (character sheets, its brand voice, standing decisions). It **inherits `global`**: reading `shared` shows the workspace's own notes plus every global note whose title the workspace does not use. A workspace note with the same title as a global note overrides it in that workspace only. Inherited notes are read-only in `shared` (409 "inherited from the global Synapse"); to change one for a workspace, create a note with its title there. Links, backlinks, related notes, categories, unresolved links, search, and daily views all see the inherited notes; export, import, and the note limit cover the workspace's own notes. Every agent with `mcp:call` reads its workspace's `shared`. Agents never write it directly: they file a **proposal**, which a workspace admin approves or rejects. Approval applies the change; a rejection's reason is appended to the author agent's daily note, so the agent learns from it (design doc: "reject reasons flow back into the author agent's memory").
+- **`agent-<agentTokenId>`**: one agent's private space, created on first write. The agent token ID is stable across rolls, so rotating a credential keeps the memory. The space's display name is the token name at the last write. Agents cannot read each other's spaces, and the dashboard and REST API open an agent's space only in that agent's workspace. Agent spaces do not inherit `global`.
 
 | Principal | Access |
 | --- | --- |
-| Agent token (`agt_…`) over MCP | `mcp:read`: `tools/list`. `mcp:call`: call tools. Read and write its own space; read `shared`; propose changes to `shared`; list its own proposals. |
-| Signed-in team member (any role) | Read and write every space from the dashboard and `/v1/synapse`, including importing and exporting. |
-| Owner or admin | Also decides proposals. |
-| API token | `synapse:read` for GET routes, `synapse:edit` (includes read) for writes, import, and export. Never decides proposals: approvals need a person. |
+| Agent token (`agt_…`) over MCP | `mcp:read`: `tools/list`. `mcp:call`: call tools. Read and write its own space; read its workspace's `shared` (with global notes); propose changes to that `shared`; list its own proposals. Refused while its workspace is archived. |
+| Signed-in team member with access to a workspace | Read and write that workspace's `shared` and its agents' spaces, and read `global`, from the dashboard and `/v1/<workspace id>/synapse`, including importing and exporting. |
+| Workspace admin (and owners and admins, who are admins of every workspace) | Also decides that workspace's proposals. |
+| Owner or admin | Also changes `global`. |
+| API token (bound to one workspace) | `synapse:read` for GET routes, `synapse:edit` (includes read) for writes, import, and export, in its workspace. Reads `global`, never changes it, and never decides proposals: approvals need a person. |
 
 ## 3. Notes
 
@@ -54,7 +58,7 @@ A note is `{ title, properties, body }` plus derived fields (`links`, `tags`, `c
 
 **Concurrency.** Every change increments `revision`. Updates may send the `revision` they read; a mismatch returns 409. Titles are claimed atomically (duplicate titles return 409). A rename rewrites links in other notes one by one; it is not a transaction, so a crash mid-rename can leave some links pointing at the old (now unresolved) title.
 
-**Rename rewrite.** When `Old` becomes `New`, every `[[Old…]]` in the space (body and property strings, any casing of `Old`) is rewritten to `[[New…]]`, keeping any `#heading`, `|alias`, and the `!` of embeds. Links inside code are left alone, as they are not links. Notes whose `categories` used `Old` now use `New`.
+**Rename rewrite.** When `Old` becomes `New`, every `[[Old…]]` in the space (body and property strings, any casing of `Old`) is rewritten to `[[New…]]`, keeping any `#heading`, `|alias`, and the `!` of embeds. Links inside code are left alone, as they are not links. Notes whose `categories` used `Old` now use `New`. Renaming a note in `global` also rewrites links in every workspace's `shared` space that inherits it, except in a workspace that has its own note titled `Old` or `New` (its links point at, or would land on, its own note). That check repeats before each note, so a workspace that creates such a note during the rename keeps its remaining links.
 
 **Category notes.** When a create, update, append, or import leaves a note with a category that has no note, Synapse creates that category note with `tags: ["categories"]` and the built-in template's description as its body (or an empty body for custom categories).
 
@@ -82,7 +86,7 @@ Every template with a category also sets `categories: ["[[<Category>]]"]`. Descr
 
 ## 5. Finding things
 
-**Query** (`SynapseQuery`, `GET /v1/synapse/spaces/:space/notes`): all given filters must match.
+**Query** (`SynapseQuery`, `GET /v1/<workspace id>/synapse/spaces/:space/notes`): all given filters must match.
 
 - `text`: every whitespace-separated term (case-insensitive) appears in the title, body, or any property value. Relevance ranks a note higher when terms appear in the title (exact title match highest, then title contains all terms), then by how many times terms appear in the body, then by `updatedAt`.
 - `category`, `tag` (nested tags match: `projects` matches `projects/active`), `linksTo` (backlinks), and `where` (property equality; list properties match when any item matches; strings compare case-insensitively after stripping `[[ ]]`).
@@ -109,10 +113,10 @@ A rejected proposal appends `- HH:mm Proposal to <action> [[<title>]] in the sha
 
 ## 7. Proposals (reviewed writes to `shared`)
 
-An agent files `{ action, title, newTitle?, body?, properties?, text?, reason }`:
+A proposal belongs to the workspace of the agent that filed it and changes that workspace's own `shared` notes. Workspace admins see and decide only their workspace's proposals; another workspace's proposal is 404. An agent files `{ action, title, newTitle?, body?, properties?, text?, reason }`:
 
-- `create`: the title must not exist in `shared` (400 if it does). `body` and/or `properties`.
-- `update`: the note must exist (404 otherwise). Optional `newTitle`, `body`, `properties` (merged). At least one change.
+- `create`: the title must not exist among the workspace's own notes (400 if it does). A title only `global` has is allowed and overrides that note in the workspace. `body` and/or `properties`.
+- `update`: the note must exist (404 otherwise). Optional `newTitle`, `body`, `properties` (merged). At least one change. For `update`, `append`, and `delete`, a note the workspace only inherits is refused with 409: propose `create` to override it.
 - `append`: the note must exist (404 otherwise); `text` required.
 - `delete`: the note must exist (404 otherwise).
 
@@ -182,34 +186,38 @@ Read (import and the `markdown` field): a leading byte-order mark is ignored; a 
 
 The first write by an agent records its space with the token's name.
 
-## 10. REST API (`/v1/synapse`)
+## 10. REST API (`/v1/<workspace id>/synapse`)
+
+Every route is under the workspace, like the rest of the workspace API: `/v1/<workspace id>/synapse/...`. `:space` is `shared` (this workspace's, with global notes), `global`, or `agent-<id>` for an agent of this workspace (404 for any other agent). Writes to `global` need a signed-in owner or admin (403 otherwise). The table shows paths after the workspace prefix.
 
 | Route | Permission (API tokens) | Purpose |
 | --- | --- | --- |
-| `GET /v1/synapse/spaces` | `synapse:read` | `SynapseSpaceList`: `shared` (always listed) and agent spaces with notes. |
-| `GET /v1/synapse/templates` | `synapse:read` | `{ templates }` |
-| `GET /v1/synapse/spaces/:space/notes` | `synapse:read` | `SynapseNoteList`. Query string: `text`, `category`, `tag`, `linksTo`, `sort`, `direction`, `limit`, `offset`, and `where.<property>=<value>`. |
-| `POST /v1/synapse/spaces/:space/notes` | `synapse:edit` | `CreateSynapseNoteRequest` → 201 `SynapseNote` |
-| `GET /v1/synapse/spaces/:space/notes/:title` | `synapse:read` | `SynapseNoteView` |
-| `PATCH /v1/synapse/spaces/:space/notes/:title` | `synapse:edit` | `UpdateSynapseNoteRequest` → `SynapseNote` |
-| `POST /v1/synapse/spaces/:space/notes/:title/append` | `synapse:edit` | `AppendSynapseNoteRequest` → `SynapseNote` (201 when created) |
-| `DELETE /v1/synapse/spaces/:space/notes/:title` | `synapse:edit` | 204; with `?revision=` only that revision is deleted (409 otherwise) |
-| `GET /v1/synapse/spaces/:space/unresolved` | `synapse:read` | `{ links: SynapseUnresolvedLink[] }`; `?limit=` (default 200, max 1000) |
-| `GET /v1/synapse/spaces/:space/categories` | `synapse:read` | `{ categories: SynapseCategory[] }` |
-| `GET /v1/synapse/spaces/:space/daily/:date` | `synapse:read` | `SynapseDaily` |
-| `GET /v1/synapse/spaces/:space/export` | `synapse:edit` | `SynapseExport`, or a zip with `?format=zip` |
-| `POST /v1/synapse/spaces/:space/import` | `synapse:edit` | `SynapseImportRequest` → `SynapseImportResult` |
-| `GET /v1/synapse/proposals` | `synapse:read` | `SynapseProposalList`; `?status=` |
-| `POST /v1/synapse/proposals/:id/decide` | none (signed-in owner or admin only) | `DecideSynapseProposalRequest` → `SynapseProposal` |
+| `GET /synapse/spaces` | `synapse:read` | `SynapseSpaceList`: `global` and `shared` (always listed, with their own note counts) and this workspace's agent spaces with notes. |
+| `GET /synapse/templates` | `synapse:read` | `{ templates }` |
+| `GET /synapse/spaces/:space/notes` | `synapse:read` | `SynapseNoteList`. Query string: `text`, `category`, `tag`, `linksTo`, `sort`, `direction`, `limit`, `offset`, and `where.<property>=<value>`. |
+| `POST /synapse/spaces/:space/notes` | `synapse:edit` | `CreateSynapseNoteRequest` → 201 `SynapseNote` |
+| `GET /synapse/spaces/:space/notes/:title` | `synapse:read` | `SynapseNoteView` |
+| `PATCH /synapse/spaces/:space/notes/:title` | `synapse:edit` | `UpdateSynapseNoteRequest` → `SynapseNote` |
+| `POST /synapse/spaces/:space/notes/:title/append` | `synapse:edit` | `AppendSynapseNoteRequest` → `SynapseNote` (201 when created) |
+| `DELETE /synapse/spaces/:space/notes/:title` | `synapse:edit` | 204; with `?revision=` only that revision is deleted (409 otherwise) |
+| `GET /synapse/spaces/:space/unresolved` | `synapse:read` | `{ links: SynapseUnresolvedLink[] }`; `?limit=` (default 200, max 1000) |
+| `GET /synapse/spaces/:space/categories` | `synapse:read` | `{ categories: SynapseCategory[] }` |
+| `GET /synapse/spaces/:space/daily/:date` | `synapse:read` | `SynapseDaily` |
+| `GET /synapse/spaces/:space/export` | `synapse:edit` | `SynapseExport`, or a zip with `?format=zip` |
+| `POST /synapse/spaces/:space/import` | `synapse:edit` | `SynapseImportRequest` → `SynapseImportResult` |
+| `GET /synapse/proposals` | `synapse:read` | `SynapseProposalList`; `?status=` |
+| `POST /synapse/proposals/:id/decide` | none (signed-in workspace admin only) | `DecideSynapseProposalRequest` → `SynapseProposal` |
 
-Export needs `synapse:edit` because it hands out a space's full contents in one request. Unknown space IDs that match the pattern are empty spaces (reads return empty results; writes create them). IDs that do not match `SYNAPSE_SPACE_ID_PATTERN` return 400. Errors use the gateway's `{ error: { message } }` shape.
+Export needs `synapse:edit` because it hands out a space's full contents in one request. Spaces are created by their first write, so a space with no notes reads as empty. IDs that do not match `SYNAPSE_SPACE_ID_PATTERN` return 400. Errors use the gateway's `{ error: { message } }` shape.
 
 ## 11. Persistence
 
 With `MONGODB_URI`, notes live in `synapse_notes`, space records in `synapse_spaces`, and proposals in `synapse_proposals`. Each note document stores the public fields plus lowercased `titleKey`, `linkKeys`, `categoryKeys`, `tagKeys`, and `searchText`, with indexes on `{space, titleKey}` (unique), `{space, linkKeys}`, `{space, categoryKeys}`, `{space, tagKeys}`, and `{space, updatedAt}`. Indexes are created once per process on first use. Queries run in MongoDB; text terms use escaped, anchored-free regexes over `searchText`, and relevance ranking runs on at most 1,000 candidates. Without MongoDB, the same repository contract is implemented in memory and lasts until restart. If a configured MongoDB is unavailable, Synapse routes and tools fail with 503 (tools: `isError`).
 
+Storage keys qualify the shared space by workspace: `global`, `shared` for the default workspace (the key Synapse used before workspaces, so existing notes and proposals stay with the default workspace), `shared-<workspaceId>` for any other workspace, and `agent-<agentTokenId>`. Requests and responses always say `shared`. A proposal stores the storage key of the shared space it targets. Inherited reads query both keys and skip global notes whose titles the workspace defines.
+
 Every MongoDB client follows the gateway's per-request rules (`requestMongoClient`, closed in `releaseRequestResources`) so Synapse works in the Worker.
 
 ## 12. Dashboard
 
-**Synapse** in the sidebar: pick a space (Shared or an agent), search and filter by category, browse notes, read a note (properties with clickable links, rendered Markdown with clickable wikilinks and dimmed unresolved ones, backlinks, related notes, unresolved outgoing links, category members), create from a template, edit the note's Markdown source, rename, delete, import an Obsidian vault folder or `.md` files (split into requests within the import limits, so a vault of any size imports), and export the space as a `.zip`. Note bodies render with a small React-only Markdown renderer whose patterns are linear-time, since agents write up to 100,000 characters per note. A **Proposals** tab lists pending agent proposals with the current and proposed text, and owners and admins approve or reject with a reason.
+**Synapse** in the sidebar, inside the selected workspace (`#/w/<workspace id>/synapse/...`): pick a space (Global, the workspace's Shared, or one of its agents), search and filter by category, browse notes, read a note (properties with clickable links, rendered Markdown with clickable wikilinks and dimmed unresolved ones, backlinks, related notes, unresolved outgoing links, category members), create from a template, edit the note's Markdown source, rename, delete, import an Obsidian vault folder or `.md` files (split into requests within the import limits, so a vault of any size imports), and export the space as a `.zip`. Note bodies render with a small React-only Markdown renderer whose patterns are linear-time, since agents write up to 100,000 characters per note. A **Proposals** tab lists pending agent proposals with the current and proposed text, and workspace admins approve or reject with a reason. In Shared, notes inherited from Global carry a **Global** chip and open read-only, with **Override in this workspace** to create the workspace's own note with that title. Global is read-only for members.

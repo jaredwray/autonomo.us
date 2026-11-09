@@ -2,14 +2,16 @@ import {
 	SYNAPSE_SHARED_SPACE,
 	SYNAPSE_SPACE_ID_PATTERN,
 } from "@autonomo.us/common";
+import { currentWorkspaceId } from "./api.js";
 
 /**
- * Synapse keeps its place in the URL fragment so reloads and shared links
- * land on the same space and note:
- *   #/synapse                      shared space, no note
- *   #/synapse/proposals            the Proposals tab
- *   #/synapse/<space>              a space
- *   #/synapse/<space>/<title>      a note (title URL-encoded)
+ * Synapse keeps its place in the URL fragment, after the workspace
+ * (#/w/<workspace id>/synapse...), so reloads and shared links land on the
+ * same space and note:
+ *   .../synapse                      shared space, no note
+ *   .../synapse/proposals            the Proposals tab
+ *   .../synapse/<space>              a space (shared, global, or agent-<id>)
+ *   .../synapse/<space>/<title>      a note (title URL-encoded)
  */
 export type SynapseRoute = {
 	tab: "notes" | "proposals";
@@ -27,7 +29,11 @@ const decode = (part: string) => {
 };
 
 export function parseSynapseRoute(hash: string): SynapseRoute {
-	const parts = hash.replace(/^#\/?/, "").split("/");
+	// Inside a workspace: #/w/<workspace id>/synapse/...
+	const parts = hash
+		.replace(/^#\/?/, "")
+		.replace(/^w\/[^/]+\//, "")
+		.split("/");
 	const fallback: SynapseRoute = {
 		tab: "notes",
 		space: SYNAPSE_SHARED_SPACE,
@@ -42,11 +48,15 @@ export function parseSynapseRoute(hash: string): SynapseRoute {
 }
 
 export function synapseHash(route: SynapseRoute): string {
-	if (route.tab === "proposals") return "#/synapse/proposals";
+	const workspace = currentWorkspaceId();
+	const base = workspace
+		? `#/w/${encodeURIComponent(workspace)}/synapse`
+		: "#/synapse";
+	if (route.tab === "proposals") return `${base}/proposals`;
 	const space = encodeURIComponent(route.space);
 	return route.title
-		? `#/synapse/${space}/${encodeURIComponent(route.title)}`
-		: `#/synapse/${space}`;
+		? `${base}/${space}/${encodeURIComponent(route.title)}`
+		: `${base}/${space}`;
 }
 
 export const noteHash = (space: string, title: string) =>

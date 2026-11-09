@@ -15,8 +15,7 @@ import {
 	MODEL_CATALOG_CACHE_KEY,
 	ModelCatalogService,
 } from "../src/model-catalog-service.js";
-import { ProviderRegistry } from "../src/providers/registry.js";
-import { modelsRoutes } from "../src/routes/models.js";
+import { catalogRoutes } from "../src/routes/models.js";
 import { createServer } from "../src/server.js";
 import { withSession } from "./auth-helpers.js";
 
@@ -639,8 +638,7 @@ describe("GET /v1/models/catalog", () => {
 			},
 		};
 		const server = Fastify({ logger: false });
-		await server.register(modelsRoutes, {
-			registry: new ProviderRegistry(),
+		await server.register(catalogRoutes, {
 			catalog: new ModelCatalogService({ base: catalog }),
 		});
 		const response = await server.inject({

@@ -4,9 +4,13 @@ import {
 	type ApiTokenSecret,
 } from "@autonomo.us/common";
 import { afterEach, expect, it } from "vitest";
-import { createServer } from "../src/server.js";
-import { completeSetup } from "./auth-helpers.js";
+import { createServer as createGatewayServer } from "../src/server.js";
+import { completeSetup, routeToDefaultWorkspace } from "./auth-helpers.js";
 import { startOpenAIStub } from "./openai-stub.js";
+
+/** Servers here exercise the default workspace through pre-workspace paths. */
+const createServer = (options?: Parameters<typeof createGatewayServer>[0]) =>
+	routeToDefaultWorkspace(createGatewayServer(options));
 
 /** The owner account's session, set by start(). */
 let ownerHeaders: Record<string, string> = {};
@@ -36,7 +40,10 @@ async function start() {
 		},
 		logger: false,
 	});
-	server.get("/v1/unlisted", () => ({ secret: "must not be exposed" }));
+	// Every /v1 route needs a declared scope; an unscoped one cannot be registered.
+	expect(() =>
+		server.get("/v1/unlisted", () => ({ secret: "must not be exposed" })),
+	).toThrow(/Declare a scope for GET \/v1\/unlisted/);
 	cleanups.push(() => server.close(), stub.close);
 	ownerHeaders = {
 		authorization: `Bearer ${(await completeSetup(server)).token}`,
@@ -243,7 +250,6 @@ it.each(
 			{ ttlDays: 7, previousTokenTtlSeconds: 0 },
 		],
 		["DELETE", `/v1/api-tokens/${issued.token.id}`, undefined],
-		["GET", "/v1/unlisted", undefined],
 		// Approvals need a person, whatever the token's grants.
 		[
 			"POST",
@@ -421,7 +427,8 @@ it("uses normalized routes to protect encoded API URLs", async () => {
 		})
 	).json<ApiTokenSecret>();
 	const headers = { authorization: `Bearer ${issued.secret}` };
-	for (const prefix of ["/v1", "/v%31", "/%761", "/%76%31"]) {
+	for (const encoded of ["/v1", "/v%31", "/%761", "/%76%31"]) {
+		const prefix = `${encoded}/${server.workspaceId}`;
 		expect((await server.inject(`${prefix}/api-tokens`)).statusCode).toBe(401);
 		expect(
 			(await server.inject({ url: `${prefix}/api-tokens`, headers }))
@@ -462,7 +469,7 @@ it("uses normalized routes to protect encoded API URLs", async () => {
 		expect(
 			(
 				await server.inject({
-					url: `${prefix}/auth/session`,
+					url: `${encoded}/auth/session`,
 					headers: ownerHeaders,
 				})
 			).statusCode,

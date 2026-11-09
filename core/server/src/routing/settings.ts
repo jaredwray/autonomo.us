@@ -3,10 +3,14 @@ import type {
 	RoutingConfig,
 	RoutingSettings,
 } from "@autonomo.us/common";
-import { MongoClient } from "mongodb";
-import type { FailoverPolicyStore } from "../failover.js";
-import { mongoOperationDeadlines, requestMongoClient } from "../mongo.js";
+import { DEFAULT_FAILOVER_POLICY, mergeFailoverPolicy } from "../failover.js";
+import {
+	controlPlaneConnection,
+	isDuplicateKey,
+	type MongoConnection,
+} from "../mongo.js";
 import type { ProviderRegistry } from "../providers/registry.js";
+import type { WorkspaceRef } from "../workspaces/store.js";
 
 export class RoutingError extends Error {
 	constructor(
@@ -111,123 +115,195 @@ export function validateRouting(
 	for (const id of config.failover.targets) chat(id);
 }
 
-/** Serializes writes and publishes settings only after MongoDB acknowledges them. */
+type RoutingDocument = {
+	_id: string;
+	config: RoutingConfig;
+	/** Compare-and-swap counter; missing on documents saved before workspaces. */
+	revision?: number;
+};
+type Stored = { config: RoutingConfig; revision: number };
+
+/**
+ * One routing document per workspace, read on every request so a change is
+ * visible to every replica and Worker isolate on its next request. Writes are
+ * a compare-and-swap on `revision`: a lost race returns 409 instead of
+ * silently merging. The default workspace keeps its document at `_id:
+ * "default"`, an internal key that never appears in a URI.
+ */
 export class RoutingSettingsStore {
-	private config: RoutingConfig;
-	private client?: MongoClient;
-	private loaded = false;
-	private loading?: Promise<void>;
-	private writes: Promise<unknown> = Promise.resolve();
-	constructor(
-		private readonly registry: ProviderRegistry,
-		private readonly failover: FailoverPolicyStore,
-		private readonly mongodbUrl?: string,
-	) {
-		this.config = defaultRoutingConfig(failover.get());
+	private readonly mongo?: MongoConnection;
+	/** Memory mode: this server's routing, keyed by workspace id. */
+	private readonly memory = new Map<string, Stored>();
+	private readonly seedPolicy: FailoverPolicy;
+
+	constructor(seedPolicy: FailoverPolicy, mongo?: string | MongoConnection) {
+		// Copied once: the environment (or injected) policy seeds only the
+		// default workspace, and only when its document is first created.
+		this.seedPolicy = mergeFailoverPolicy(seedPolicy);
+		this.mongo =
+			typeof mongo === "string" ? controlPlaneConnection(mongo) : mongo;
 	}
+
+	get persistence(): "mongodb" | "memory" {
+		return this.mongo ? "mongodb" : "memory";
+	}
+
 	private collection() {
-		const create = () =>
-			new MongoClient(this.mongodbUrl as string, {
-				serverSelectionTimeoutMS: 1500,
-				...mongoOperationDeadlines(3000),
-			});
-		let client = requestMongoClient(this, create);
-		if (!client) {
-			this.client ??= create();
-			client = this.client;
+		return (this.mongo as MongoConnection).collection<RoutingDocument>(
+			"gateway_routing",
+		);
+	}
+
+	private key(workspace: WorkspaceRef) {
+		return workspace.isDefault ? "default" : workspace.id;
+	}
+
+	private seed(workspace: WorkspaceRef): RoutingConfig {
+		return defaultRoutingConfig(
+			workspace.isDefault
+				? structuredClone(this.seedPolicy)
+				: { ...DEFAULT_FAILOVER_POLICY, targets: [] },
+		);
+	}
+
+	private async read(workspace: WorkspaceRef): Promise<Stored> {
+		if (!this.mongo) {
+			const stored = this.memory.get(workspace.id) ?? {
+				config: this.seed(workspace),
+				revision: 0,
+			};
+			return structuredClone(stored);
 		}
-		return client
-			.db()
-			.collection<{ _id: string; config: RoutingConfig }>("gateway_routing");
-	}
-	async initialize(): Promise<void> {
-		if (this.loaded) return;
-		this.loading ??= (async () => {
-			try {
-				if (this.mongodbUrl) {
-					const collection = this.collection();
-					// The first write creates the configured database and collection.
-					// Concurrent startups must use whichever defaults were saved first.
-					const saved =
-						(await collection.findOne({ _id: "default" })) ??
-						(await collection.findOneAndUpdate(
-							{ _id: "default" },
-							{ $setOnInsert: { config: this.config } },
-							{ upsert: true, returnDocument: "after" },
-						));
-					if (!saved) throw new Error("Could not initialize routing settings.");
-					this.config = saved.config;
-					this.failover.update(saved.config.failover);
+		try {
+			const collection = this.collection();
+			const _id = this.key(workspace);
+			// The first read creates the document. Concurrent requests use
+			// whichever defaults were saved first.
+			let saved = await collection.findOne({ _id });
+			if (!saved) {
+				try {
+					saved = await collection.findOneAndUpdate(
+						{ _id },
+						{ $setOnInsert: { config: this.seed(workspace), revision: 0 } },
+						{ upsert: true, returnDocument: "after" },
+					);
+				} catch (error) {
+					if (!isDuplicateKey(error)) throw error;
+					saved = await collection.findOne({ _id });
 				}
-				this.loaded = true;
-			} catch (error) {
-				throw new RoutingError(
-					"Routing settings are unavailable. Check MongoDB and retry.",
-					503,
-					{ cause: error },
-				);
 			}
-		})().finally(() => {
-			this.loading = undefined;
-		});
-		return this.loading;
+			if (!saved) throw new Error("Could not initialize routing settings.");
+			return {
+				config: {
+					...saved.config,
+					failover: mergeFailoverPolicy(saved.config.failover),
+				},
+				revision: saved.revision ?? 0,
+			};
+		} catch (error) {
+			throw new RoutingError(
+				"Routing settings are unavailable. Check MongoDB and retry.",
+				503,
+				{ cause: error },
+			);
+		}
 	}
-	get(): RoutingConfig {
-		return structuredClone({ ...this.config, failover: this.failover.get() });
+
+	async config(workspace: WorkspaceRef): Promise<RoutingConfig> {
+		return (await this.read(workspace)).config;
 	}
-	async settings(): Promise<RoutingSettings> {
-		await this.initialize();
+
+	async settings(workspace: WorkspaceRef): Promise<RoutingSettings> {
 		return {
-			config: this.get(),
-			persistence: this.mongodbUrl ? "mongodb" : "memory",
+			config: await this.config(workspace),
+			persistence: this.persistence,
 		};
 	}
-	update(config: RoutingConfig) {
-		return this.enqueue(() => this.save(config));
-	}
-	updateFailover(patch: Partial<FailoverPolicy>) {
-		return this.enqueue(async () => {
-			await this.initialize();
-			const config = this.get();
-			config.failover = { ...config.failover, ...patch };
-			await this.save(config, false);
-			return this.failover.get();
-		});
-	}
-	private enqueue<T>(write: () => Promise<T>): Promise<T> {
-		const result = this.writes.then(write);
-		this.writes = result.catch(() => {});
-		return result;
-	}
-	private async save(
+
+	async update(
+		workspace: WorkspaceRef,
 		config: RoutingConfig,
-		validate = true,
+		registry: ProviderRegistry,
 	): Promise<RoutingSettings> {
-		await this.initialize();
 		const next = structuredClone(config);
-		if (validate) validateRouting(next, this.registry);
-		if (this.mongodbUrl) {
+		validateRouting(next, registry);
+		next.failover = mergeFailoverPolicy(next.failover);
+		const { revision } = await this.read(workspace);
+		await this.write(workspace, next, revision);
+		return { config: next, persistence: this.persistence };
+	}
+
+	/**
+	 * A partial edit merged on the server, so a lost race is retried against a
+	 * fresh read: concurrent edits to different fields both apply. A full
+	 * `update` is a client's snapshot instead, and a lost race returns 409.
+	 */
+	async updateFailover(
+		workspace: WorkspaceRef,
+		patch: Partial<FailoverPolicy>,
+	): Promise<FailoverPolicy> {
+		for (let attempt = 0; ; attempt++) {
+			const { config, revision } = await this.read(workspace);
+			config.failover = mergeFailoverPolicy(config.failover, patch);
 			try {
-				await this.collection().replaceOne(
-					{ _id: "default" },
-					{ _id: "default", config: next },
-					{ upsert: true },
-				);
-			} catch {
-				throw new RoutingError(
-					"Could not save routing settings. Check MongoDB and retry.",
-					503,
-				);
+				await this.write(workspace, config, revision);
+				return config.failover;
+			} catch (error) {
+				if (
+					attempt >= 4 ||
+					!(error instanceof RoutingError) ||
+					error.statusCode !== 409
+				)
+					throw error;
 			}
 		}
-		this.config = next;
-		this.failover.update(next.failover);
-		return this.settings();
 	}
+
+	private async write(
+		workspace: WorkspaceRef,
+		config: RoutingConfig,
+		revision: number,
+	) {
+		const changed = () =>
+			new RoutingError(
+				"Routing changed during your request. Refresh and try again.",
+				409,
+			);
+		if (!this.mongo) {
+			if ((this.memory.get(workspace.id)?.revision ?? 0) !== revision)
+				throw changed();
+			this.memory.set(workspace.id, {
+				config: structuredClone(config),
+				revision: revision + 1,
+			});
+			return;
+		}
+		const _id = this.key(workspace);
+		let matched: number;
+		try {
+			matched = (
+				await this.collection().replaceOne(
+					// A document saved before workspaces has no revision: match it as 0.
+					{
+						_id,
+						revision:
+							revision === 0
+								? { $in: [0, null as unknown as number] }
+								: revision,
+					},
+					{ config, revision: revision + 1 },
+				)
+			).matchedCount;
+		} catch {
+			throw new RoutingError(
+				"Could not save routing settings. Check MongoDB and retry.",
+				503,
+			);
+		}
+		if (!matched) throw changed();
+	}
+
 	async close() {
-		await this.writes;
-		const client = this.client;
-		this.client = undefined;
-		await client?.close();
+		await this.mongo?.close();
 	}
 }

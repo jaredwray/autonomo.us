@@ -7,6 +7,7 @@ import {
 	MAX_PENDING_PROPOSALS,
 	PROPOSAL_CLAIM_MS,
 	SynapseService,
+	sharedSpaceId,
 } from "../src/synapse/synapse.js";
 import { BUILTIN_TEMPLATES } from "../src/synapse/templates.js";
 import { dayRange, localDate, localTime } from "../src/synapse/time.js";
@@ -280,6 +281,7 @@ describe("notes", () => {
 		expect(appended.note.revision).toBe(2);
 		const spaces = await service.listSpaces();
 		expect(spaces.spaces).toEqual([
+			expect.objectContaining({ id: "global", kind: "global", noteCount: 0 }),
 			expect.objectContaining({
 				id: "shared",
 				kind: "shared",
@@ -1254,5 +1256,346 @@ describe("proposals", () => {
 		expect((await service.getNote("shared", "Canon")).body).toBe(
 			"v1\nagent line",
 		);
+	});
+});
+
+describe("global inheritance", () => {
+	const film = sharedSpaceId({ id: "film", isDefault: false });
+	const games = sharedSpaceId({ id: "games", isDefault: false });
+
+	it("shows global notes in every workspace's shared space until a workspace overrides them", async () => {
+		const { service, tick } = synapse();
+		expect(film).toBe("shared-film");
+		expect(sharedSpaceId({ id: "default-id", isDefault: true })).toBe("shared");
+		await service.createNote(
+			"global",
+			{
+				title: "Brand voice",
+				body: "Plain words. See [[Style guide]].",
+				template: "Evergreen",
+			},
+			user,
+		);
+		tick();
+		await service.createNote(
+			"global",
+			{ title: "Style guide", body: "Short sentences." },
+			user,
+		);
+		tick();
+		await service.createNote(
+			film,
+			{ title: "Trailer plan", body: "Follow the [[Brand voice]]." },
+			user,
+		);
+
+		// Each workspace and the default see the global notes as their own.
+		for (const space of [film, games, "shared"] as SynapseSpaceId[]) {
+			const viewed = await service.viewNote(space, "Brand voice");
+			expect(viewed.note).toMatchObject({ space: "global", revision: 1 });
+			expect(viewed.outgoing).toEqual([
+				{ title: "Evergreen", exists: true },
+				{ title: "Style guide", exists: true },
+			]);
+		}
+		const listed = await service.query(film, { sort: "title" });
+		expect(listed.notes.map((note) => [note.title, note.space])).toEqual([
+			["Brand voice", "global"],
+			["Evergreen", "global"],
+			["Style guide", "global"],
+			["Trailer plan", "shared"],
+		]);
+		expect(listed.total).toBe(4);
+		// Paging walks one merged order.
+		const page = await service.query(film, {
+			sort: "title",
+			limit: 2,
+			offset: 1,
+		});
+		expect(page.notes.map((note) => note.title)).toEqual([
+			"Evergreen",
+			"Style guide",
+		]);
+		expect(
+			(await service.query(games, { text: "trailer" })).notes,
+		).toHaveLength(0);
+		// Links into global are resolved, and backlinks span both layers.
+		expect(await service.unresolved(film)).toEqual([]);
+		expect(
+			(await service.viewNote(film, "Brand voice")).backlinks.map(
+				(note) => note.title,
+			),
+		).toEqual(["Trailer plan"]);
+		expect(
+			(await service.categories(film)).find(
+				(item) => item.title === "Evergreen",
+			),
+		).toMatchObject({ count: 1, exists: true });
+
+		// Inherited notes are read-only in the workspace.
+		const readOnly = /inherited from the global Synapse/;
+		await expect(
+			service.updateNote(film, "Brand voice", { body: "Loud." }, user),
+		).rejects.toMatchObject({
+			statusCode: 409,
+			message: expect.stringMatching(readOnly),
+		});
+		await expect(
+			service.appendNote(film, "Brand voice", { text: "More." }, user),
+		).rejects.toMatchObject({ statusCode: 409 });
+		await expect(
+			service.deleteNote(film, "Brand voice", user),
+		).rejects.toMatchObject({ statusCode: 409 });
+
+		// Creating a note with the same title overrides it in that workspace only.
+		tick();
+		const override = await service.createNote(
+			film,
+			{ title: "Brand voice", body: "Cinematic and warm." },
+			user,
+		);
+		expect(override.space).toBe("shared");
+		expect((await service.getNote(film, "Brand voice")).body).toBe(
+			"Cinematic and warm.",
+		);
+		expect((await service.getNote(games, "Brand voice")).body).toBe(
+			"Plain words. See [[Style guide]].",
+		);
+		expect((await service.getNote("global", "Brand voice")).body).toBe(
+			"Plain words. See [[Style guide]].",
+		);
+		const after = await service.query(film, { sort: "title" });
+		expect(after.notes.map((note) => [note.title, note.space])).toEqual([
+			["Brand voice", "shared"],
+			["Evergreen", "global"],
+			["Style guide", "global"],
+			["Trailer plan", "shared"],
+		]);
+		expect(after.total).toBe(4);
+		expect(
+			await service.updateNote(film, "Brand voice", { body: "Warm." }, user),
+		).toMatchObject({ revision: 2, space: "shared" });
+
+		// Export and the note limit cover the workspace's own notes only.
+		const exported = await service.exportSpace(film);
+		expect(exported.space).toBe("shared");
+		expect(
+			exported.files
+				.map((file) => file.path)
+				.filter((path) => !path.startsWith("Templates/"))
+				.sort(),
+		).toEqual(["Brand voice.md", "Trailer plan.md"]);
+		// Backlinks span both layers: a global note can link a workspace title.
+		await service.createNote(
+			"global",
+			{ title: "Release checklist", body: "Ship the [[Trailer plan]]." },
+			user,
+		);
+		await service.createNote(
+			film,
+			{ title: "Promo", body: "Cut from the [[Trailer plan]]." },
+			user,
+		);
+		expect(
+			(await service.viewNote(film, "Trailer plan")).backlinks
+				.map((note) => `${note.space}:${note.title}`)
+				.sort(),
+		).toEqual(["global:Release checklist", "shared:Promo"]);
+		// Renaming a workspace note rewrites the workspace's links, never global ones.
+		await service.updateNote(
+			film,
+			"Trailer plan",
+			{ title: "Teaser plan" },
+			user,
+		);
+		expect((await service.getNote(film, "Promo")).body).toBe(
+			"Cut from the [[Teaser plan]].",
+		);
+		expect(await service.getNote("global", "Release checklist")).toMatchObject({
+			body: "Ship the [[Trailer plan]].",
+			revision: 1,
+		});
+
+		const spaces = await service.listSpaces({
+			shared: film,
+			agentTokenIds: new Set(),
+		});
+		expect(spaces.spaces.map((space) => [space.id, space.noteCount])).toEqual([
+			["global", 4],
+			["shared", 3],
+		]);
+	});
+
+	it("searches by relevance and lists daily notes across both layers", async () => {
+		const { service, set } = synapse();
+		set("2026-11-08T09:00:00Z");
+		await service.createNote(
+			"global",
+			{ title: "Onboarding", body: "How we onboard partners." },
+			user,
+		);
+		await service.createNote(
+			"global",
+			{ title: "Retro", body: "Global retro." },
+			user,
+		);
+		await service.createNote(
+			film,
+			{ title: "Partner list", body: "Onboarding status per partner." },
+			user,
+		);
+		// Film overrides Retro, so the global one leaves Film's day view.
+		await service.createNote(
+			film,
+			{ title: "Retro", body: "Film retro." },
+			user,
+		);
+		set("2026-11-08T10:00:00Z");
+		await service.createNote(
+			"global",
+			{ title: "2026-11-08", body: "Global log." },
+			user,
+		);
+		const found = await service.query(film, { text: "onboarding" });
+		expect(found.notes.map((note) => [note.title, note.space])).toEqual([
+			["Onboarding", "global"],
+			["Partner list", "shared"],
+		]);
+		expect(found.total).toBe(2);
+		const day = await service.daily(film, "2026-11-08");
+		// The day note itself is the workspace's own, so Film has none.
+		expect(day.note).toBeNull();
+		expect(
+			day.entries.map((entry) => `${entry.space}:${entry.title}`).sort(),
+		).toEqual(["global:Onboarding", "shared:Partner list", "shared:Retro"]);
+		expect((await service.daily("global", "2026-11-08")).note).toMatchObject({
+			title: "2026-11-08",
+		});
+	});
+
+	it("rewrites links in inheriting workspaces when a global note is renamed", async () => {
+		const { service } = synapse();
+		await service.createNote(
+			"global",
+			{ title: "Pricing", body: "Free." },
+			user,
+		);
+		await service.createNote(
+			film,
+			{ title: "Launch", body: "See [[Pricing]] and [[Pricing#Tiers|tiers]]." },
+			user,
+		);
+		await service.createNote(
+			"shared",
+			{ title: "Roadmap", properties: { ref: "[[Pricing]]" } },
+			user,
+		);
+		// Games overrides Pricing, so its links point at its own note.
+		await service.createNote(games, { title: "Pricing", body: "Games." }, user);
+		await service.createNote(
+			games,
+			{ title: "Plan", body: "Read [[Pricing]]." },
+			user,
+		);
+		await service.updateNote("global", "Pricing", { title: "Plans" }, user);
+		expect((await service.getNote(film, "Launch")).body).toBe(
+			"See [[Plans]] and [[Plans#Tiers|tiers]].",
+		);
+		expect((await service.getNote("shared", "Roadmap")).properties.ref).toBe(
+			"[[Plans]]",
+		);
+		expect((await service.getNote(games, "Plan")).body).toBe(
+			"Read [[Pricing]].",
+		);
+		expect(await service.unresolved(film)).toEqual([]);
+	});
+
+	it("stops rewriting a workspace's links when it overrides the old title mid-rename", async () => {
+		// Creates Film's own "Pricing" right after the rename lists Film's links.
+		class Racing extends MemorySynapseRepository {
+			race?: () => Promise<void>;
+			override async findNotes(
+				...args: Parameters<MemorySynapseRepository["findNotes"]>
+			) {
+				const found = await super.findNotes(...args);
+				const race = this.race;
+				if (race && args[0].space === film && args[0].linkKey) {
+					this.race = undefined;
+					await race();
+				}
+				return found;
+			}
+		}
+		const repository = new Racing();
+		const service = new SynapseService(repository, { timeZone: "UTC" });
+		await service.createNote(
+			"global",
+			{ title: "Pricing", body: "Free." },
+			user,
+		);
+		await service.createNote(
+			film,
+			{ title: "Launch", body: "See [[Pricing]]." },
+			user,
+		);
+		repository.race = async () => {
+			await service.createNote(film, { title: "Pricing", body: "Film." }, user);
+		};
+		await service.updateNote("global", "Pricing", { title: "Plans" }, user);
+		expect(repository.race).toBeUndefined();
+		expect((await service.getNote(film, "Launch")).body).toBe(
+			"See [[Pricing]].",
+		);
+		expect((await service.getNote(film, "Pricing")).body).toBe("Film.");
+	});
+
+	it("files proposals per workspace and refuses changes to inherited notes", async () => {
+		const { service } = synapse();
+		await service.createNote(
+			"global",
+			{ title: "Pricing", body: "Free tier." },
+			user,
+		);
+		await expect(
+			service.propose(
+				agent,
+				{
+					action: "update",
+					title: "Pricing",
+					body: "Paid.",
+					reason: "Change.",
+				},
+				film,
+			),
+		).rejects.toMatchObject({ statusCode: 409 });
+		const proposal = await service.propose(
+			agent,
+			{
+				action: "create",
+				title: "Pricing",
+				body: "Film pricing.",
+				reason: "Film differs.",
+			},
+			film,
+		);
+		expect(proposal).toMatchObject({ space: "shared", baseRevision: null });
+		expect(
+			(await service.listProposals({ space: film })).map((item) => item.id),
+		).toEqual([proposal.id]);
+		expect(await service.listProposals({ space: "shared" })).toEqual([]);
+		expect(await service.listProposals({ space: games })).toEqual([]);
+		// Another workspace's reviewer cannot see or decide it.
+		await expect(
+			service.decideProposal(proposal.id, { decision: "approve" }, user, games),
+		).rejects.toMatchObject({ statusCode: 404 });
+		const approved = await service.decideProposal(
+			proposal.id,
+			{ decision: "approve" },
+			user,
+			film,
+		);
+		expect(approved).toMatchObject({ status: "approved", space: "shared" });
+		expect((await service.getNote(film, "Pricing")).body).toBe("Film pricing.");
+		expect((await service.getNote(games, "Pricing")).body).toBe("Free tier.");
 	});
 });

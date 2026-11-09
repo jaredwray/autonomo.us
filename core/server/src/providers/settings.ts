@@ -4,10 +4,14 @@ import {
 	PROVIDER_NAMES,
 	type ProviderSettings,
 } from "@autonomo.us/common";
-import { MongoClient } from "mongodb";
 import type { ApiConfig, ProviderConfig } from "../config.js";
-import { mongoOperationDeadlines, requestMongoClient } from "../mongo.js";
-import { type ProviderRegistry, providerFromConfig } from "./registry.js";
+import {
+	controlPlaneConnection,
+	isDuplicateKey,
+	type MongoConnection,
+} from "../mongo.js";
+import { type WorkspaceRef, workspaceFilter } from "../workspaces/store.js";
+import { ProviderRegistry, providerFromConfig } from "./registry.js";
 
 export class ProviderSettingsError extends Error {
 	constructor(
@@ -19,69 +23,118 @@ export class ProviderSettingsError extends Error {
 	}
 }
 
-/** Credentials are server-only. Public methods return explicit safe projections. */
+type ProviderDocument = {
+	_id: string;
+	/** Missing on connections saved before workspaces: those belong to the default workspace. */
+	workspaceId?: string;
+	config: ProviderConfig;
+};
+
+/**
+ * Saved provider connections per workspace, read on every request so every
+ * replica and Worker isolate sees a change on its next request. The default
+ * workspace keeps its connections at `_id` = connection name, as before
+ * workspaces; other workspaces use `<workspaceId>:<connection>`. Saved
+ * connection names cannot contain `:`, so the two key spaces never collide.
+ *
+ * Environment providers (and a registry injected into `createServer`) belong
+ * to the default workspace only; they are an overlay applied when the registry
+ * is built and are never written into the store. Credentials are server-only:
+ * public methods return explicit safe projections.
+ */
 export class ProviderSettingsStore {
-	private readonly configs = new Map<string, ProviderConfig>();
-	private client?: MongoClient;
-	private loaded = false;
-	private loading?: Promise<void>;
-	private writes: Promise<unknown> = Promise.resolve();
+	private readonly env = new Map<string, ProviderConfig>();
+	private readonly envRegistry: ProviderRegistry;
+	private readonly mongo?: MongoConnection;
+	/** Memory mode: this server's saved connections, keyed by workspace id. */
+	private readonly memory = new Map<string, Map<string, ProviderConfig>>();
+	private indexed = false;
 
 	constructor(
-		private readonly config: ApiConfig,
-		private readonly registry: ProviderRegistry,
+		config: ApiConfig,
+		envRegistry: ProviderRegistry,
+		mongo?: string | MongoConnection,
 	) {
 		for (const provider of config.providers)
-			this.configs.set(provider.name, provider);
+			this.env.set(provider.name, provider);
+		// Copied once: later saves never register into the injected registry.
+		this.envRegistry = envRegistry.snapshot();
+		this.mongo =
+			typeof mongo === "string" ? controlPlaneConnection(mongo) : mongo;
+	}
+
+	get persistence(): "mongodb" | "memory" {
+		return this.mongo ? "mongodb" : "memory";
 	}
 
 	private collection() {
-		const create = () =>
-			new MongoClient(this.config.mongodbUrl as string, {
-				serverSelectionTimeoutMS: 1500,
-				...mongoOperationDeadlines(3000),
-			});
-		let client = requestMongoClient(this, create);
-		if (!client) {
-			this.client ??= create();
-			client = this.client;
+		return (this.mongo as MongoConnection).collection<ProviderDocument>(
+			"gateway_providers",
+		);
+	}
+
+	async ensureIndexes(): Promise<void> {
+		if (!this.mongo || this.indexed) return;
+		await this.collection().createIndex({ workspaceId: 1 });
+		this.indexed = true;
+	}
+
+	private documentId(workspace: WorkspaceRef, name: string) {
+		return workspace.isDefault ? name : `${workspace.id}:${name}`;
+	}
+
+	/** This workspace's saved connections, keyed by connection name. */
+	private async saved(
+		workspace: WorkspaceRef,
+	): Promise<Map<string, ProviderConfig>> {
+		if (!this.mongo)
+			return new Map(
+				[...(this.memory.get(workspace.id)?.entries() ?? [])].map(
+					([name, config]) => [name, structuredClone(config)],
+				),
+			);
+		try {
+			const documents = await this.collection()
+				.find({ workspaceId: workspaceFilter(workspace) })
+				.toArray();
+			return new Map(documents.map(({ config }) => [config.name, config]));
+		} catch (error) {
+			throw new ProviderSettingsError(
+				"Model settings are unavailable. Check the MongoDB connection and retry.",
+				503,
+				{ cause: error },
+			);
 		}
-		return client
-			.db()
-			.collection<{ _id: string; config: ProviderConfig }>("gateway_providers");
 	}
 
-	async initialize(): Promise<void> {
-		if (this.loaded) return;
-		this.loading ??= this.load().finally(() => {
-			this.loading = undefined;
-		});
-		return this.loading;
+	/** Saved connections win over environment providers with the same name. */
+	private async configs(
+		workspace: WorkspaceRef,
+	): Promise<Map<string, ProviderConfig>> {
+		const saved = await this.saved(workspace);
+		return workspace.isDefault ? new Map([...this.env, ...saved]) : saved;
 	}
 
-	private async load(): Promise<void> {
-		if (this.config.mongodbUrl) {
-			try {
-				const documents = await this.collection().find({}).toArray();
-				for (const { config } of documents) {
-					this.registry.register(providerFromConfig(config));
-					this.configs.set(config.name, config);
-				}
-			} catch (error) {
-				throw new ProviderSettingsError(
-					"Model settings are unavailable. Check the MongoDB connection and retry.",
-					503,
-					{ cause: error },
-				);
-			}
-		}
-		this.loaded = true;
+	/** A registry for one request: built fresh, never shared across requests. */
+	async registry(workspace: WorkspaceRef): Promise<ProviderRegistry> {
+		const registry = workspace.isDefault
+			? this.envRegistry.snapshot()
+			: new ProviderRegistry();
+		for (const config of (await this.saved(workspace)).values())
+			registry.register(providerFromConfig(config));
+		return registry;
 	}
 
-	async settings(): Promise<ProviderSettings> {
-		await this.initialize();
+	/** Proves saved settings for the default workspace load (health and startup). */
+	async check(workspace: WorkspaceRef): Promise<void> {
+		await this.saved(workspace);
+	}
+
+	async settings(workspace: WorkspaceRef): Promise<ProviderSettings> {
+		const configs = await this.configs(workspace);
+		const cloudflare = configs.get("cloudflare");
 		return {
-			connections: [...this.configs.values()]
+			connections: [...configs.values()]
 				.filter((config) => config.kind !== "openai-compatible")
 				.map((config) => ({
 					id: config.name,
@@ -94,29 +147,21 @@ export class ProviderSettingsStore {
 			providers: Object.entries(PROVIDER_NAMES).map(([id, name]) => ({
 				id: id as ManagedProvider,
 				name,
-				configured: Boolean(this.configs.get(id)?.apiKey),
+				configured: Boolean(configs.get(id)?.apiKey),
 				...(id === "cloudflare"
-					? { accountId: this.cloudflareAccountId() }
+					? {
+							accountId:
+								cloudflare?.kind === "cloudflare"
+									? cloudflare.accountId
+									: undefined,
+						}
 					: {}),
 			})),
-			persistence: this.config.mongodbUrl ? "mongodb" : "memory",
+			persistence: this.persistence,
 		};
 	}
 
-	private cloudflareAccountId() {
-		const config = this.configs.get("cloudflare");
-		return config?.kind === "cloudflare" ? config.accountId : undefined;
-	}
-
-	add(input: AddModelRequest) {
-		// Serialize read/merge/write so concurrent additions cannot lose models.
-		const result = this.writes.then(() => this.addModel(input));
-		this.writes = result.catch(() => {});
-		return result;
-	}
-
-	private async addModel(input: AddModelRequest) {
-		await this.initialize();
+	async add(workspace: WorkspaceRef, input: AddModelRequest) {
 		const connectionId = input.connectionId ?? input.provider;
 		if (!/^[a-z][a-z0-9_-]{0,63}$/.test(connectionId)) {
 			throw new ProviderSettingsError(
@@ -133,7 +178,8 @@ export class ProviderSettingsStore {
 				409,
 			);
 		}
-		const existing = this.configs.get(connectionId);
+		const configs = await this.configs(workspace);
+		const existing = configs.get(connectionId);
 		if (connectionId === "pool" && !existing) {
 			throw new ProviderSettingsError(
 				"The connection name 'pool' is reserved for routing pools.",
@@ -152,15 +198,17 @@ export class ProviderSettingsStore {
 				409,
 			);
 		}
-		const apiKey = input.apiKey?.trim() || existing?.apiKey;
+		const newKey = input.apiKey?.trim() || undefined;
+		const apiKey = newKey ?? existing?.apiKey;
 		if (!apiKey)
 			throw new ProviderSettingsError(
 				"An API key is required to connect this provider.",
 				400,
 			);
 		const model = input.model.trim();
+		const newAccount = input.accountId?.trim() || undefined;
 		const accountId =
-			input.accountId?.trim() ||
+			newAccount ??
 			(existing?.kind === "cloudflare" ? existing.accountId : undefined);
 		if (
 			input.provider === "cloudflare" &&
@@ -185,24 +233,14 @@ export class ProviderSettingsStore {
 			...(input.provider === "cloudflare" ? { accountId } : {}),
 			models: [...new Set([...(existing?.models ?? []), model])],
 		};
+		// Validates the config before anything is saved.
 		const provider = providerFromConfig(config);
-		if (this.config.mongodbUrl) {
-			try {
-				await this.collection().replaceOne(
-					{ _id: config.name },
-					{ _id: config.name, config },
-					{ upsert: true },
-				);
-			} catch {
-				throw new ProviderSettingsError(
-					"Could not save the model. Check the MongoDB connection and retry.",
-					503,
-				);
-			}
-		}
-		// Only publish the change after durable storage succeeds.
-		this.configs.set(config.name, config);
-		this.registry.register(provider);
+		await this.save(workspace, config, {
+			model,
+			apiKey: newKey,
+			accountId: newAccount,
+			create: Boolean(input.createConnection),
+		});
 		return {
 			id: `${config.name}/${model}`,
 			provider: config.name,
@@ -211,10 +249,98 @@ export class ProviderSettingsStore {
 		};
 	}
 
+	/**
+	 * Inserts a new connection, or updates an existing one field by field, so a
+	 * concurrent change from another replica is never overwritten with a value
+	 * this request merely read: the key and account change only when the
+	 * request supplied them, and models are added with `$addToSet`.
+	 */
+	private async save(
+		workspace: WorkspaceRef,
+		config: ProviderConfig,
+		change: {
+			model: string;
+			apiKey?: string;
+			accountId?: string;
+			create: boolean;
+		},
+	) {
+		if (!this.mongo) {
+			const saved = this.memory.get(workspace.id) ?? new Map();
+			const current = saved.get(config.name);
+			saved.set(
+				config.name,
+				current
+					? {
+							...current,
+							...(change.apiKey ? { apiKey: change.apiKey } : {}),
+							...(change.accountId ? { accountId: change.accountId } : {}),
+							models: [...new Set([...current.models, change.model])],
+						}
+					: structuredClone(config),
+			);
+			this.memory.set(workspace.id, saved);
+			return;
+		}
+		const _id = this.documentId(workspace, config.name);
+		const exists = () =>
+			new ProviderSettingsError(
+				"A connection with this name already exists. Choose that connection or use a different name.",
+				409,
+			);
+		try {
+			await this.ensureIndexes().catch(() => {});
+			const collection = this.collection();
+			// A concurrent addition can insert the connection between our update
+			// and insert; the retry then applies this change field by field.
+			for (let attempt = 0; attempt < 3; attempt++) {
+				if (!change.create) {
+					const update = await collection.updateOne(
+						{
+							_id,
+							workspaceId: workspaceFilter(workspace),
+							"config.kind": config.kind,
+						},
+						{
+							$set: {
+								workspaceId: workspace.id,
+								...(change.apiKey ? { "config.apiKey": change.apiKey } : {}),
+								...(change.accountId
+									? { "config.accountId": change.accountId }
+									: {}),
+							},
+							$addToSet: { "config.models": change.model },
+						},
+					);
+					if (update.matchedCount) return;
+				}
+				try {
+					await collection.insertOne({
+						_id,
+						workspaceId: workspace.id,
+						config,
+					});
+					return;
+				} catch (error) {
+					if (!isDuplicateKey(error)) throw error;
+					// Creating never touches an existing connection.
+					if (change.create) throw exists();
+				}
+			}
+			throw new ProviderSettingsError(
+				"This connection changed during your request. Refresh and try again.",
+				409,
+			);
+		} catch (error) {
+			if (error instanceof ProviderSettingsError) throw error;
+			throw new ProviderSettingsError(
+				"Could not save the model. Check the MongoDB connection and retry.",
+				503,
+			);
+		}
+	}
+
 	async close(): Promise<void> {
-		await this.writes;
-		const client = this.client;
-		this.client = undefined;
-		await client?.close();
+		await this.mongo?.close();
 	}
 }

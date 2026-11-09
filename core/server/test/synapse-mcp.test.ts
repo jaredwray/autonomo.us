@@ -2,7 +2,12 @@ import type { ApiTokenSecret, SynapseNoteView } from "@autonomo.us/common";
 import { afterEach, describe, expect, it } from "vitest";
 import { createServer } from "../src/server.js";
 import type { MCP_TOOLS } from "../src/synapse/mcp.js";
-import { completeSetup, joinWithInvite } from "./auth-helpers.js";
+import {
+	completeSetup,
+	defaultWorkspaceId,
+	inWorkspace,
+	joinWithInvite,
+} from "./auth-helpers.js";
 
 const ALLOWED_ORIGIN = "http://localhost:5173";
 const cleanups: Array<() => Promise<unknown>> = [];
@@ -33,13 +38,15 @@ async function start() {
 	cleanups.push(() => server.close());
 	const origin = await server.listen({ port: 0, host: "127.0.0.1" });
 	const owner = await completeSetup(server);
+	// Token routes live under the default workspace; Synapse is gateway-wide.
+	const workspaceId = await defaultWorkspaceId(server, owner.token);
 	const rest = async (
 		method: string,
 		path: string,
 		body?: unknown,
 		token = owner.token,
 	) => {
-		const response = await fetch(`${origin}${path}`, {
+		const response = await fetch(`${origin}${inWorkspace(path, workspaceId)}`, {
 			method,
 			headers: {
 				authorization: `Bearer ${token}`,
@@ -161,6 +168,39 @@ describe("MCP endpoint", () => {
 		expect(goodOrigin.status).toBe(200);
 		await rest("DELETE", `/v1/agent-tokens/${agent.token.id}`);
 		expect((await rpc(agent.secret, "ping")).status).toBe(401);
+
+		// Archiving a workspace refuses its agent tokens here too, until unarchived.
+		const workspace = await rest("POST", "/v1/workspaces", { name: "Film" });
+		expect(workspace.status).toBe(201);
+		const id = (workspace.json as { id: string }).id;
+		const film = await rest("POST", `/v1/${id}/agent-tokens`, {
+			name: "Film agent",
+			description: "",
+			ttlDays: 7,
+			permissions: ["mcp:read", "mcp:call"],
+		});
+		expect(film.status).toBe(201);
+		const filmSecret = (film.json as ApiTokenSecret).secret;
+		expect((await rpc(filmSecret, "tools/list")).status).toBe(200);
+		expect((await rest("POST", `/v1/workspaces/${id}/archive`)).status).toBe(
+			200,
+		);
+		for (const method of ["ping", "tools/list"]) {
+			const archived = await rpc(filmSecret, method);
+			expect(archived.status).toBe(409);
+			expect(archived.body).toEqual({
+				error: { message: "This workspace is archived." },
+			});
+		}
+		const called = await rpc(filmSecret, "tools/call", {
+			name: "synapse_log",
+			arguments: { text: "Still here" },
+		});
+		expect(called.status).toBe(409);
+		expect((await rest("POST", `/v1/workspaces/${id}/unarchive`)).status).toBe(
+			200,
+		);
+		expect((await rpc(filmSecret, "tools/list")).status).toBe(200);
 	});
 
 	it("speaks stateless JSON-RPC: initialize, ping, notifications, and protocol errors", async () => {
@@ -544,6 +584,7 @@ describe("MCP endpoint", () => {
 		).toBe(true);
 		const spaces = await rest("GET", "/v1/synapse/spaces");
 		expect((spaces.json as { spaces: unknown[] }).spaces).toEqual([
+			expect.objectContaining({ id: "global" }),
 			expect.objectContaining({ id: "shared" }),
 			expect.objectContaining({
 				id: `agent-${alice.token.id}`,
@@ -720,5 +761,97 @@ describe("MCP endpoint", () => {
 		expect(
 			(await callTool(bob.secret, "synapse_daily", {})).structuredContent,
 		).toMatchObject({ note: null });
+	});
+
+	it("gives an agent its workspace's shared space with global notes, and files proposals there", async () => {
+		const { rest, callTool } = await start();
+		const workspace = await rest("POST", "/v1/workspaces", { name: "Film" });
+		const film = (workspace.json as { id: string }).id;
+		const created = await rest("POST", `/v1/${film}/agent-tokens`, {
+			name: "Film agent",
+			description: "",
+			ttlDays: 7,
+			permissions: ["mcp:read", "mcp:call"],
+		});
+		const agent = created.json as ApiTokenSecret;
+		await rest("POST", "/v1/synapse/spaces/global/notes", {
+			title: "Brand voice",
+			body: "Plain words.",
+		});
+		await rest("POST", "/v1/synapse/spaces/shared/notes", {
+			title: "Default roadmap",
+			body: "Only in the default workspace.",
+		});
+		await rest("POST", `/v1/${film}/synapse/spaces/shared/notes`, {
+			title: "Trailer plan",
+			body: "Film only.",
+		});
+
+		const search = await callTool(agent.secret, "synapse_search", {
+			space: "shared",
+		});
+		expect(
+			(search.structuredContent as { notes: Array<{ title: string }> }).notes
+				.map((note) => note.title)
+				.sort(),
+		).toEqual(["Brand voice", "Trailer plan"]);
+		const read = await callTool(agent.secret, "synapse_read", {
+			title: "Brand voice",
+			space: "shared",
+		});
+		expect(read.structuredContent).toMatchObject({
+			note: { title: "Brand voice", space: "global" },
+		});
+		// Changing an inherited note means overriding it in the workspace.
+		const update = await callTool(agent.secret, "synapse_propose", {
+			action: "update",
+			title: "Brand voice",
+			body: "Cinematic.",
+			reason: "Film tone.",
+		});
+		expect(update.isError).toBe(true);
+		const override = await callTool(agent.secret, "synapse_propose", {
+			action: "create",
+			title: "Brand voice",
+			body: "Cinematic.",
+			reason: "Film tone.",
+		});
+		const id = (override.structuredContent as { id: string }).id;
+		const pending = (path: string) =>
+			rest("GET", `${path}/synapse/proposals?status=pending`).then((response) =>
+				(response.json as { proposals: Array<{ id: string }> }).proposals.map(
+					(item) => item.id,
+				),
+			);
+		expect(await pending(`/v1/${film}`)).toEqual([id]);
+		expect(await pending("/v1")).toEqual([]);
+		expect(
+			(
+				await rest("POST", `/v1/synapse/proposals/${id}/decide`, {
+					decision: "approve",
+				})
+			).status,
+		).toBe(404);
+		expect(
+			(
+				await rest("POST", `/v1/${film}/synapse/proposals/${id}/decide`, {
+					decision: "approve",
+				})
+			).status,
+		).toBe(200);
+		const viewed = await rest(
+			"GET",
+			`/v1/${film}/synapse/spaces/shared/notes/Brand%20voice`,
+		);
+		expect(viewed.json).toMatchObject({
+			note: { space: "shared", body: "Cinematic." },
+		});
+		const global = await rest(
+			"GET",
+			"/v1/synapse/spaces/shared/notes/Brand%20voice",
+		);
+		expect(global.json).toMatchObject({
+			note: { space: "global", body: "Plain words." },
+		});
 	});
 });

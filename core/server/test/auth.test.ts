@@ -8,16 +8,22 @@ import {
 	SIGN_IN_WINDOW_MS,
 } from "../src/auth/accounts.js";
 import { hashPassword, verifyPassword } from "../src/auth/passwords.js";
-import { createServer } from "../src/server.js";
+import { createServer as createGatewayServer } from "../src/server.js";
 import {
 	authServer,
 	bearer,
 	completeSetup,
 	joinWithInvite,
+	learnWorkspace,
 	PASSWORD,
+	routeToDefaultWorkspace,
 	signIn,
 } from "./auth-helpers.js";
 import { startStubProvider } from "./helpers.js";
+
+/** Servers here exercise the default workspace through pre-workspace paths. */
+const createServer = (options?: Parameters<typeof createGatewayServer>[0]) =>
+	routeToDefaultWorkspace(createGatewayServer(options));
 
 const cleanup: Array<() => Promise<unknown>> = [];
 afterEach(async () => {
@@ -66,6 +72,7 @@ describe("first-run setup", () => {
 		});
 		expect(done.statusCode).toBe(201);
 		const session = done.json();
+		await learnWorkspace(server, session.token);
 		expect(session.token).toMatch(/^ses_[0-9a-f-]{36}_[\w-]{43}$/);
 		expect(session.user).toMatchObject({
 			email: "ada@example.com",

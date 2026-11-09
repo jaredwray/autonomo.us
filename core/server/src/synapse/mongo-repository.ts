@@ -71,6 +71,8 @@ function noteQuery(filter: NoteFilter): Document {
 	if (filter.titleKey !== undefined) query.titleKey = filter.titleKey;
 	if (filter.titleKeys !== undefined)
 		and.push({ titleKey: { $in: filter.titleKeys } });
+	if (filter.excludeTitleKeys?.length)
+		and.push({ titleKey: { $nin: filter.excludeTitleKeys } });
 	if (filter.linkKey !== undefined) and.push({ linkKeys: filter.linkKey });
 	if (filter.linkKeys !== undefined)
 		and.push({ linkKeys: { $in: filter.linkKeys } });
@@ -137,6 +139,8 @@ export class MongoSynapseRepository implements SynapseRepository {
 				key: { "author.id": 1, status: 1, createdAt: -1 },
 				name: "author_status",
 			},
+			// Each workspace lists the proposals for its own shared space.
+			{ key: { space: 1, status: 1, createdAt: -1 }, name: "space_status" },
 		]);
 	}
 	/** Runs `operation` once the indexes exist; driver failures become 503s. */
@@ -313,6 +317,7 @@ export class MongoSynapseRepository implements SynapseRepository {
 	}
 	private proposalQuery(filter: ProposalFilter): Document {
 		return {
+			...(filter.space === undefined ? {} : { space: filter.space }),
 			...(filter.authorId === undefined
 				? {}
 				: { "author.id": filter.authorId }),

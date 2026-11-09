@@ -7,6 +7,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
 	addModel,
+	currentWorkspaceId,
 	fetchModelCatalog,
 	fetchModels,
 	fetchProviderSettings,
@@ -268,8 +269,11 @@ function AddModelForm(props: {
 					</div>
 					{provider === "typesafe" ? (
 						<p className="field-hint">
-							Jev classifies and scores data. Use it for decisions through
-							/v1/decisions; it cannot answer chat requests. Get a key from the{" "}
+							Jev classifies and scores data. Use it for decisions through{" "}
+							<code>
+								/v1/{currentWorkspaceId() ?? "<workspace id>"}/decisions
+							</code>
+							; it cannot answer chat requests. Get a key from the{" "}
 							<a
 								href="https://console.typesafe.ai"
 								target="_blank"
@@ -320,7 +324,13 @@ function AddModelForm(props: {
 	);
 }
 
-export function ModelsView() {
+export function ModelsView({
+	workspace,
+}: {
+	workspace?: { isDefault: boolean; role?: "admin" | "member" };
+} = {}) {
+	// Workspace members read connections; admins add them and change keys.
+	const canEdit = workspace?.role !== "member";
 	const [data, setData] = useState<ModelsData | null>(null);
 	const [settings, setSettings] = useState<ProviderSettings | null>(null);
 	const [catalog, setCatalog] = useState<ModelCatalog | null>(null);
@@ -385,18 +395,24 @@ export function ModelsView() {
 						Manage the models available to your agents.
 					</p>
 				</div>
-				<button
-					ref={addButton}
-					className="button primary"
-					type="button"
-					disabled={!settings || adding}
-					onClick={() => {
-						setAdding(true);
-						setNotice("");
-					}}
-				>
-					<Icon name="plus" /> Add model
-				</button>
+				{canEdit ? (
+					<button
+						ref={addButton}
+						className="button primary"
+						type="button"
+						disabled={!settings || adding}
+						onClick={() => {
+							setAdding(true);
+							setNotice("");
+						}}
+					>
+						<Icon name="plus" /> Add model
+					</button>
+				) : (
+					<p className="card-note">
+						Ask a workspace admin to add models or change keys.
+					</p>
+				)}
 			</header>
 			{notice ? (
 				<p className="success-notice" role="status">
@@ -506,20 +522,28 @@ export function ModelsView() {
 						<span className="field-hint">
 							Connect your preferred provider for chat or structured decisions.
 						</span>
+						{workspace && !workspace.isDefault ? (
+							<p className="field-hint">
+								This workspace starts with no connections. Keys set as
+								environment variables belong to the Default workspace.
+							</p>
+						) : null}
 						{data.providers.length > 0 ? (
 							<p className="field-hint">
 								{data.providers.map((item) => item.name).join(", ")} configured
 								without an advertised model list.
 							</p>
 						) : null}
-						<button
-							type="button"
-							className="button"
-							disabled={!settings || adding}
-							onClick={() => setAdding(true)}
-						>
-							<Icon name="plus" /> Add your first model
-						</button>
+						{canEdit && (
+							<button
+								type="button"
+								className="button"
+								disabled={!settings || adding}
+								onClick={() => setAdding(true)}
+							>
+								<Icon name="plus" /> Add your first model
+							</button>
+						)}
 					</div>
 				) : filtered.length === 0 ? (
 					<div className="models-empty">

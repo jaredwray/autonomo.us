@@ -1,7 +1,12 @@
 import type { ApiTokenSecret } from "@autonomo.us/common";
 import { afterEach, describe, expect, it } from "vitest";
 import { createServer } from "../src/server.js";
-import { completeSetup, joinWithInvite } from "./auth-helpers.js";
+import {
+	completeSetup,
+	defaultWorkspaceId,
+	inWorkspace,
+	joinWithInvite,
+} from "./auth-helpers.js";
 
 type Call = (
 	method: string,
@@ -27,6 +32,8 @@ async function start() {
 	cleanups.push(() => server.close());
 	const origin = await server.listen({ port: 0, host: "127.0.0.1" });
 	const owner = await completeSetup(server);
+	// Token routes live under the default workspace; Synapse is gateway-wide.
+	const workspaceId = await defaultWorkspaceId(server, owner.token);
 	const admin = await joinWithInvite(
 		server,
 		owner.token,
@@ -43,7 +50,7 @@ async function start() {
 		path,
 		{ token = owner.token, body, headers } = {},
 	) =>
-		fetch(`${origin}${path}`, {
+		fetch(`${origin}${inWorkspace(path, workspaceId)}`, {
 			method,
 			headers: {
 				...(token ? { authorization: `Bearer ${token}` } : {}),
@@ -74,7 +81,10 @@ describe("Synapse REST routes", () => {
 		expect(spaces.status).toBe(200);
 		expect(spaces.headers.get("cache-control")).toBe("no-store");
 		expect(await spaces.json()).toEqual({
-			spaces: [expect.objectContaining({ id: "shared", noteCount: 0 })],
+			spaces: [
+				expect.objectContaining({ id: "global", kind: "global", noteCount: 0 }),
+				expect.objectContaining({ id: "shared", noteCount: 0 }),
+			],
 			persistence: "memory",
 			timeZone: "UTC",
 		});
@@ -248,12 +258,11 @@ describe("Synapse REST routes", () => {
 			(await call("GET", "/v1/synapse/spaces/shared/daily/2026-02-30")).status,
 		).toBe(400);
 
-		// Unknown agent space IDs are empty spaces; bad IDs are 400.
-		expect(
-			await (await call("GET", "/v1/synapse/spaces/agent-nobody/notes")).json(),
-		).toEqual({
-			notes: [],
-			total: 0,
+		// Agent spaces open only for this workspace's agents; bad IDs are 400.
+		const nobody = await call("GET", "/v1/synapse/spaces/agent-nobody/notes");
+		expect(nobody.status).toBe(404);
+		expect(await nobody.json()).toEqual({
+			error: { message: "No such space in this workspace." },
 		});
 		expect(
 			(await call("GET", "/v1/synapse/spaces/agent-no%20body/notes")).status,
@@ -334,15 +343,33 @@ describe("Synapse REST routes", () => {
 			(await call("GET", "/v1/synapse/spaces/shared/export?format=tar")).status,
 		).toBe(400);
 
-		const imported = await call("POST", "/v1/synapse/spaces/agent-abc/import", {
-			body: {
-				files: [
-					...files.files,
-					{ path: "Loose.md", content: "---\ntags: [x]\n---\nLoose body" },
-					{ path: ".obsidian/workspace.json", content: "{}" },
-				],
+		// An agent's space opens only for agents of this workspace.
+		const agent = (await (
+			await call("POST", "/v1/agent-tokens", {
+				body: { name: "Importer", description: "", ttlDays: 7 },
+			})
+		).json()) as ApiTokenSecret;
+		const agentSpace = `agent-${agent.token.id}`;
+		expect(
+			(
+				await call("POST", "/v1/synapse/spaces/agent-abc/import", {
+					body: { files: [] },
+				})
+			).status,
+		).toBe(404);
+		const imported = await call(
+			"POST",
+			`/v1/synapse/spaces/${agentSpace}/import`,
+			{
+				body: {
+					files: [
+						...files.files,
+						{ path: "Loose.md", content: "---\ntags: [x]\n---\nLoose body" },
+						{ path: ".obsidian/workspace.json", content: "{}" },
+					],
+				},
 			},
-		});
+		);
 		expect(imported.status).toBe(200);
 		const result = (await imported.json()) as {
 			created: string[];
@@ -363,11 +390,12 @@ describe("Synapse REST routes", () => {
 				}
 			).spaces,
 		).toEqual([
+			expect.objectContaining({ id: "global", noteCount: 0 }),
 			expect.objectContaining({ id: "shared", noteCount: 2 }),
 			expect.objectContaining({
-				id: "agent-abc",
-				name: "agent-abc",
-				agentTokenId: "abc",
+				id: agentSpace,
+				name: agentSpace,
+				agentTokenId: agent.token.id,
 				noteCount: 3,
 			}),
 		]);
@@ -393,6 +421,258 @@ describe("Synapse REST routes", () => {
 		});
 	}, 20_000);
 
+	it("keeps Synapse per workspace, inherits global, and lets only owners and admins change global", async () => {
+		const { call, member, admin, apiToken } = await start();
+		const created = await call("POST", "/v1/workspaces", {
+			body: { name: "Film" },
+		});
+		expect(created.status).toBe(201);
+		const film = ((await created.json()) as { id: string }).id;
+		const create = (
+			base: string,
+			space: string,
+			title: string,
+			token?: string,
+		) =>
+			call("POST", `${base}/spaces/${space}/notes`, {
+				token,
+				body: { title, body: `${title} body.` },
+			});
+		const titles = async (base: string, space: string, token?: string) => {
+			const response = await call(
+				"GET",
+				`${base}/spaces/${space}/notes?sort=title`,
+				{
+					token,
+				},
+			);
+			expect(response.status).toBe(200);
+			return (
+				(await response.json()) as {
+					notes: Array<{ title: string; space: string }>;
+				}
+			).notes.map((item) => `${item.space}:${item.title}`);
+		};
+		const defaults = "/v1/synapse";
+		const filmBase = `/v1/${film}/synapse`;
+
+		// Owners and admins write global; members and API tokens only read it.
+		expect((await create(defaults, "global", "Brand voice")).status).toBe(201);
+		expect(
+			(await create(filmBase, "global", "Style guide", admin.token)).status,
+		).toBe(201);
+		const refused = await create(
+			defaults,
+			"global",
+			"Members note",
+			member.token,
+		);
+		expect(refused.status).toBe(403);
+		expect(await refused.json()).toEqual({
+			error: {
+				message: "Only owners and admins can change the global Synapse.",
+			},
+		});
+		const token = await apiToken(["synapse:edit"]);
+		expect((await create(defaults, "global", "Token note", token)).status).toBe(
+			403,
+		);
+		expect(await titles(defaults, "global", member.token)).toEqual([
+			"global:Brand voice",
+			"global:Style guide",
+		]);
+		expect(await titles(defaults, "global", token)).toHaveLength(2);
+
+		// Each workspace's shared space holds its own notes plus global ones.
+		expect((await create(filmBase, "shared", "Trailer plan")).status).toBe(201);
+		expect(
+			(await create(defaults, "shared", "Roadmap", member.token)).status,
+		).toBe(201);
+		expect(await titles(filmBase, "shared")).toEqual([
+			"global:Brand voice",
+			"global:Style guide",
+			"shared:Trailer plan",
+		]);
+		expect(await titles(defaults, "shared", member.token)).toEqual([
+			"global:Brand voice",
+			"shared:Roadmap",
+			"global:Style guide",
+		]);
+		// An inherited note is read-only in a workspace until it is overridden.
+		const inherited = await call(
+			"PATCH",
+			`${filmBase}/spaces/shared/notes/Brand%20voice`,
+			{ body: { body: "Cinematic." } },
+		);
+		expect(inherited.status).toBe(409);
+		expect((await create(filmBase, "shared", "Brand voice")).status).toBe(201);
+		expect(await titles(filmBase, "shared")).toContain("shared:Brand voice");
+		expect(await titles(defaults, "shared", member.token)).toContain(
+			"global:Brand voice",
+		);
+
+		// A member of the default workspace cannot reach Film, and its token
+		// stays in its own workspace.
+		expect(
+			(await call("GET", `${filmBase}/spaces`, { token: member.token })).status,
+		).toBe(404);
+		expect((await call("GET", `${filmBase}/spaces`, { token })).status).toBe(
+			403,
+		);
+
+		// Agent spaces open only in their agent's workspace.
+		const agent = (await (
+			await call("POST", `/v1/${film}/agent-tokens`, {
+				body: { name: "Film agent", description: "", ttlDays: 7 },
+			})
+		).json()) as ApiTokenSecret;
+		const space = `agent-${agent.token.id}`;
+		expect((await create(filmBase, space, "Scratch")).status).toBe(201);
+		expect(
+			(await call("GET", `${defaults}/spaces/${space}/notes`)).status,
+		).toBe(404);
+		const listed = (await (await call("GET", `${filmBase}/spaces`)).json()) as {
+			spaces: Array<{ id: string; noteCount: number }>;
+		};
+		expect(listed.spaces.map((item) => [item.id, item.noteCount])).toEqual([
+			["global", 2],
+			["shared", 2],
+			[space, 1],
+		]);
+		const defaultSpaces = (await (
+			await call("GET", `${defaults}/spaces`)
+		).json()) as { spaces: Array<{ id: string }> };
+		expect(defaultSpaces.spaces.map((item) => item.id)).toEqual([
+			"global",
+			"shared",
+		]);
+	});
+
+	it("lets a workspace admin decide only that workspace's proposals, and refuses before reading a body", async () => {
+		const { origin, call, member } = await start();
+		const film = (
+			(await (
+				await call("POST", "/v1/workspaces", { body: { name: "Film" } })
+			).json()) as { id: string }
+		).id;
+		const added = await call("POST", "/v1/team", {
+			body: {
+				email: "film-admin@example.com",
+				name: "Film admin",
+				role: "member",
+				password: "correct horse battery",
+				workspace: { workspaceId: film, role: "admin" },
+			},
+		});
+		expect(added.status).toBe(201);
+		const filmAdmin = (
+			(await (
+				await call("POST", "/v1/auth/session", {
+					token: "",
+					body: {
+						email: "film-admin@example.com",
+						password: "correct horse battery",
+					},
+				})
+			).json()) as { token: string }
+		).token;
+		const agent = async (path: string) =>
+			(
+				(await (
+					await call("POST", path, {
+						body: {
+							name: "Agent",
+							description: "",
+							ttlDays: 7,
+							permissions: ["mcp:read", "mcp:call"],
+						},
+					})
+				).json()) as ApiTokenSecret
+			).secret;
+		const propose = async (secret: string, title: string) => {
+			const response = await fetch(`${origin}/mcp`, {
+				method: "POST",
+				headers: {
+					authorization: `Bearer ${secret}`,
+					"content-type": "application/json",
+				},
+				body: JSON.stringify({
+					jsonrpc: "2.0",
+					id: 1,
+					method: "tools/call",
+					params: {
+						name: "synapse_propose",
+						arguments: { action: "create", title, body: "b", reason: "r" },
+					},
+				}),
+			});
+			return (
+				(await response.json()) as {
+					result: { structuredContent: { id: string } };
+				}
+			).result.structuredContent.id;
+		};
+		const filmIdea = await propose(
+			await agent(`/v1/${film}/agent-tokens`),
+			"Film idea",
+		);
+		const defaultIdea = await propose(
+			await agent("/v1/agent-tokens"),
+			"Default idea",
+		);
+		const pending = async (base: string, token?: string) =>
+			(
+				(await (await call("GET", `${base}/proposals`, { token })).json()) as {
+					proposals: Array<{ id: string; space: string }>;
+				}
+			).proposals.map((item) => `${item.space}:${item.id}`);
+		expect(await pending(`/v1/${film}/synapse`, filmAdmin)).toEqual([
+			`shared:${filmIdea}`,
+		]);
+		expect(await pending("/v1/synapse")).toEqual([`shared:${defaultIdea}`]);
+		const decide = (base: string, id: string, token?: string) =>
+			call("POST", `${base}/proposals/${id}/decide`, {
+				token,
+				body: { decision: "approve" },
+			});
+		// The default workspace's proposal is not Film's to decide.
+		expect(
+			(await decide(`/v1/${film}/synapse`, defaultIdea, filmAdmin)).status,
+		).toBe(404);
+		expect((await decide("/v1/synapse", defaultIdea, filmAdmin)).status).toBe(
+			404,
+		);
+		expect(
+			(await decide(`/v1/${film}/synapse`, filmIdea, filmAdmin)).status,
+		).toBe(200);
+		// A workspace admin still cannot change Global.
+		const refused = await call(
+			"POST",
+			`/v1/${film}/synapse/spaces/global/notes`,
+			{ token: filmAdmin, body: { title: "Not mine" } },
+		);
+		expect(refused.status).toBe(403);
+		// Refusals come before the body is read: a 6 MB import gets 403 or 404, not 413.
+		const huge = {
+			files: [{ path: "Big.md", content: "x".repeat(6 * 1024 * 1024) }],
+		};
+		expect(
+			(
+				await call("POST", "/v1/synapse/spaces/global/import", {
+					token: member.token,
+					body: huge,
+				})
+			).status,
+		).toBe(403);
+		expect(
+			(
+				await call("POST", "/v1/synapse/spaces/agent-nobody/import", {
+					body: huge,
+				})
+			).status,
+		).toBe(404);
+	}, 20_000);
+
 	it("restricts proposal decisions to signed-in owners and admins", async () => {
 		const { call, member, admin, apiToken } = await start();
 		const id = "00000000-0000-0000-0000-000000000000";
@@ -404,7 +684,7 @@ describe("Synapse REST routes", () => {
 		const asMember = await decide(member.token);
 		expect(asMember.status).toBe(403);
 		expect(await asMember.json()).toEqual({
-			error: { message: expect.stringMatching(/owners and admins/) },
+			error: { message: expect.stringMatching(/workspace admin/) },
 		});
 		expect((await decide(await apiToken(["synapse:edit"]))).status).toBe(403);
 		expect((await decide(admin.token)).status).toBe(404);

@@ -1,7 +1,7 @@
 import cors from "@fastify/cors";
 import Fastify from "fastify";
 import packageJson from "../package.json" with { type: "json" };
-import { registerApiAccess } from "./auth/access.js";
+import { registerApiAccess, requireRouteScopes } from "./auth/access.js";
 import { AccountStore } from "./auth/accounts.js";
 import { AgentTokenStore } from "./auth/agent-tokens.js";
 import { ApiTokenStore } from "./auth/tokens.js";
@@ -9,7 +9,7 @@ import { type ApiConfig, configFromEnv } from "./config.js";
 import { registerDashboard } from "./dashboard.js";
 import { FailoverPolicyStore } from "./failover.js";
 import { ModelCatalogService } from "./model-catalog-service.js";
-import { mongoErrorDetails } from "./mongo.js";
+import { controlPlaneConnection, mongoErrorDetails } from "./mongo.js";
 import {
 	type ProviderRegistry,
 	registryFromConfig,
@@ -22,11 +22,12 @@ import { chatRoutes } from "./routes/chat.js";
 import { decisionsRoutes } from "./routes/decisions.js";
 import { failoverRoutes } from "./routes/failover.js";
 import { healthRoutes } from "./routes/health.js";
-import { modelsRoutes } from "./routes/models.js";
+import { catalogRoutes, modelsRoutes } from "./routes/models.js";
 import { routingRoutes } from "./routes/routing.js";
 import { synapseRoutes } from "./routes/synapse.js";
 import { teamRoutes } from "./routes/team.js";
 import { telemetryRoutes } from "./routes/telemetry.js";
+import { memberRoutes, workspaceRoutes } from "./routes/workspaces.js";
 import { ModelRouter } from "./routing/router.js";
 import { RoutingSettingsStore } from "./routing/settings.js";
 import { mcpRoutes } from "./synapse/mcp.js";
@@ -35,6 +36,7 @@ import { MongoSynapseRepository } from "./synapse/mongo-repository.js";
 import { SynapseService } from "./synapse/synapse.js";
 import { MongoTelemetrySink } from "./telemetry/mongo.js";
 import { TelemetryService } from "./telemetry/telemetry.js";
+import { type WorkspaceRef, WorkspaceStore } from "./workspaces/store.js";
 
 const releases = new WeakMap<ReturnType<typeof Fastify>, () => Promise<void>>();
 type PersistenceErrorHandler = (
@@ -80,9 +82,18 @@ export type CreateServerOptions = {
 
 export function createServer(options: CreateServerOptions = {}) {
 	const config = options.config ?? configFromEnv();
+	// Environment providers, or a registry a caller injects: the default
+	// workspace's overlay. The settings store copies it and never writes into it.
 	const registry = options.registry ?? registryFromConfig(config);
-	const settings = new ProviderSettingsStore(config, registry);
-	const failover = options.failover ?? new FailoverPolicyStore(config.failover);
+	const mongo = config.mongodbUrl
+		? controlPlaneConnection(config.mongodbUrl)
+		: undefined;
+	const workspaces = new WorkspaceStore(mongo);
+	const providers = new ProviderSettingsStore(config, registry, mongo);
+	const routing = new RoutingSettingsStore(
+		(options.failover ?? new FailoverPolicyStore(config.failover)).get(),
+		mongo,
+	);
 	const modelCatalog = options.modelCatalog ?? new ModelCatalogService();
 	const telemetry =
 		options.telemetry ??
@@ -93,10 +104,9 @@ export function createServer(options: CreateServerOptions = {}) {
 			flushIntervalMs: options.releaseMongoPerRequest ? 0 : undefined,
 		});
 
-	telemetry.setPricingResolver((id, provider) => {
-		const kind = registry
-			.listProviders()
-			.find((connection) => connection.name === provider)?.kind;
+	// Priced by the connection's implementation kind, which every call site
+	// knows; custom OpenAI-compatible endpoints stay unpriced.
+	telemetry.setPricingResolver((id, provider, kind) => {
 		if (!kind || kind === "openai-compatible") return undefined;
 		const model = id.startsWith(`${provider}/`)
 			? id.slice(provider.length + 1)
@@ -104,15 +114,13 @@ export function createServer(options: CreateServerOptions = {}) {
 		return modelCatalog.getPricing(kind, model);
 	});
 
-	const routing = new RoutingSettingsStore(
-		registry,
-		failover,
-		config.mongodbUrl,
-	);
-	const router = new ModelRouter(registry, routing, telemetry);
-	const tokens = new ApiTokenStore(config.mongodbUrl);
-	const agentTokens = new AgentTokenStore(config.mongodbUrl);
-	const accounts = new AccountStore({ mongodbUrl: config.mongodbUrl });
+	const router = new ModelRouter(telemetry);
+	const tokens = new ApiTokenStore(mongo);
+	const agentTokens = new AgentTokenStore(mongo);
+	const accounts = new AccountStore({
+		mongo,
+		defaultWorkspaceId: () => workspaces.defaultWorkspaceId(),
+	});
 	const synapseRepository = config.mongodbUrl
 		? new MongoSynapseRepository(config.mongodbUrl)
 		: new MemorySynapseRepository();
@@ -128,13 +136,15 @@ export function createServer(options: CreateServerOptions = {}) {
 				: { redact: ["req.headers.authorization"] },
 	});
 
+	// Before any route: a /v1 route without a declared scope fails to register.
+	requireRouteScopes(server);
 	server.register(cors, {
 		origin: config.corsOrigins.includes("*") ? true : config.corsOrigins,
 		methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
 	});
 	// Install after CORS so browsers can read authentication failures too.
 	server.after(() =>
-		registerApiAccess(server, tokens, accounts, config.setupToken),
+		registerApiAccess(server, tokens, accounts, workspaces, config.setupToken),
 	);
 	server.register(healthRoutes, {
 		config,
@@ -142,27 +152,40 @@ export function createServer(options: CreateServerOptions = {}) {
 	});
 	server.register(authRoutes, {
 		accounts,
+		workspaces,
 		setupTokenConfigured: Boolean(config.setupToken),
 	});
-	server.register(teamRoutes, { accounts });
-	server.register(apiTokenRoutes, { tokens });
-	server.register(agentTokenRoutes, { tokens: agentTokens });
-	server.register(modelsRoutes, { registry, catalog: modelCatalog, settings });
-	server.register(failoverRoutes, { failover, registry, routing });
-	server.register(routingRoutes, { routing });
-	server.register(chatRoutes, {
-		registry,
-		telemetry,
-		failover,
-		router,
-		corsOrigins: config.corsOrigins,
-	});
-	server.register(telemetryRoutes, { telemetry });
-	server.register(decisionsRoutes, { registry, telemetry });
-	server.register(synapseRoutes, { synapse });
+	server.register(teamRoutes, { accounts, workspaces });
+	server.register(workspaceRoutes, { workspaces });
+	server.register(catalogRoutes, { catalog: modelCatalog });
+	// Everything a workspace owns lives under its id. The access hook resolves
+	// and authorizes `:workspace` before any of these handlers run.
+	server.register(
+		async (scoped) => {
+			scoped.register(modelsRoutes, { providers });
+			scoped.register(failoverRoutes, { providers, routing });
+			scoped.register(routingRoutes, { routing, providers });
+			scoped.register(chatRoutes, {
+				providers,
+				routing,
+				router,
+				telemetry,
+				corsOrigins: config.corsOrigins,
+			});
+			scoped.register(decisionsRoutes, { providers, telemetry });
+			scoped.register(telemetryRoutes, { telemetry });
+			scoped.register(apiTokenRoutes, { tokens });
+			scoped.register(agentTokenRoutes, { tokens: agentTokens });
+			scoped.register(memberRoutes, { accounts });
+			scoped.register(synapseRoutes, { synapse, agentTokens });
+		},
+		{ prefix: "/v1/:workspace" },
+	);
+	// Agents reach their workspace's Synapse through their token.
 	server.register(mcpRoutes, {
 		synapse,
 		agentTokens,
+		workspaces,
 		corsOrigins: config.corsOrigins,
 		version: packageJson.version,
 	});
@@ -170,8 +193,15 @@ export function createServer(options: CreateServerOptions = {}) {
 
 	const initialize = async (onError?: PersistenceErrorHandler) => {
 		let initialized = true;
+		let defaultWorkspace: WorkspaceRef | undefined;
 		try {
-			await settings.initialize();
+			defaultWorkspace = await workspaces.defaultWorkspace();
+			await Promise.all([
+				providers.ensureIndexes(),
+				tokens.ensureIndexes(),
+				agentTokens.ensureIndexes(),
+			]);
+			await providers.check(defaultWorkspace);
 		} catch (error) {
 			initialized = false;
 			server.log.warn(
@@ -181,7 +211,10 @@ export function createServer(options: CreateServerOptions = {}) {
 			onError?.("providers", error);
 		}
 		try {
-			await routing.initialize();
+			// Creates the default workspace's routing document when it is missing.
+			await routing.config(
+				defaultWorkspace ?? (await workspaces.defaultWorkspace()),
+			);
 		} catch (error) {
 			initialized = false;
 			server.log.warn(
@@ -199,37 +232,30 @@ export function createServer(options: CreateServerOptions = {}) {
 			await initialize();
 		});
 
+	const closeAll = async () => {
+		// Every store drops its client even when another one fails to close;
+		// a client left behind would be reused from a later request.
+		const results = await Promise.allSettled([
+			telemetry.close(),
+			providers.close(),
+			routing.close(),
+			tokens.close(),
+			agentTokens.close(),
+			accounts.close(),
+			workspaces.close(),
+			synapseRepository.close(),
+		]);
+		const failed = results.find(
+			(result): result is PromiseRejectedResult => result.status === "rejected",
+		);
+		if (failed) throw failed.reason;
+	};
 	server.addHook("onClose", async () => {
 		modelCatalog.stop();
-		await settings.close();
-		await tokens.close();
-		await agentTokens.close();
-		await accounts.close();
-		await routing.close();
-		await synapseRepository.close();
-		await telemetry.close();
+		await closeAll();
 	});
 
-	if (options.releaseMongoPerRequest) {
-		releases.set(server, async () => {
-			// Every store drops its client even when another one fails to close;
-			// a client left behind would be reused from a later request.
-			const results = await Promise.allSettled([
-				telemetry.close(),
-				settings.close(),
-				tokens.close(),
-				agentTokens.close(),
-				accounts.close(),
-				routing.close(),
-				synapseRepository.close(),
-			]);
-			const failed = results.find(
-				(result): result is PromiseRejectedResult =>
-					result.status === "rejected",
-			);
-			if (failed) throw failed.reason;
-		});
-	}
+	if (options.releaseMongoPerRequest) releases.set(server, closeAll);
 
 	return server;
 }

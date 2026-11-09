@@ -3,12 +3,13 @@ import {
 	type ApiTokenPermission,
 	DEFAULT_API_TOKEN_PERMISSIONS,
 } from "@autonomo.us/common";
+import type { MongoConnection } from "../mongo.js";
 import { TokenStore } from "./token-store.js";
 
 export { ApiTokenError, secretMatches, tokenHash } from "./token-store.js";
 
 export class ApiTokenStore extends TokenStore<ApiTokenPermission> {
-	constructor(mongodbUrl?: string, now = Date.now) {
+	constructor(mongo?: string | MongoConnection, now = Date.now) {
 		super(
 			{
 				collection: "gateway_api_tokens",
@@ -17,7 +18,7 @@ export class ApiTokenStore extends TokenStore<ApiTokenPermission> {
 				permissions: API_TOKEN_PERMISSIONS,
 				defaultPermissions: DEFAULT_API_TOKEN_PERMISSIONS,
 			},
-			mongodbUrl,
+			mongo,
 			now,
 		);
 	}

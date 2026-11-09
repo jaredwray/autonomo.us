@@ -42,6 +42,8 @@ export type NoteFilter = {
 	space: SynapseSpaceId;
 	titleKey?: string;
 	titleKeys?: string[];
+	/** Notes whose title is none of these, e.g. global notes a workspace overrides. */
+	excludeTitleKeys?: string[];
 	/** Notes linking to this title. */
 	linkKey?: string;
 	/** Notes linking to any of these titles. */
@@ -79,6 +81,8 @@ export type SpaceStats = {
 };
 
 export type ProposalFilter = {
+	/** The shared space a proposal targets: one per workspace. */
+	space?: SynapseSpaceId;
 	authorId?: string;
 	status?: SynapseProposalStatus;
 };

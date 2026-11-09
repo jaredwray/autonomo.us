@@ -1,6 +1,8 @@
 import type { RoutingConfig } from "@autonomo.us/common";
 import type { FastifyInstance } from "fastify";
+import { requestWorkspace } from "../auth/access.js";
 import { MAX_FAILOVER_TIMEOUT_MS } from "../failover.js";
+import type { ProviderSettingsStore } from "../providers/settings.js";
 import type { RoutingSettingsStore } from "../routing/settings.js";
 
 const id = { type: "string", minLength: 1, maxLength: 512, pattern: "^\\S+$" };
@@ -97,17 +99,25 @@ const schema = {
 	},
 };
 
+/** Registered under `/v1/:workspace`. Targets resolve only within the workspace. */
 export async function routingRoutes(
 	server: FastifyInstance,
-	options: { routing: RoutingSettingsStore },
+	options: { routing: RoutingSettingsStore; providers: ProviderSettingsStore },
 ) {
-	server.get("/v1/routing", (_request, reply) => {
+	server.get("/routing", (request, reply) => {
 		reply.header("cache-control", "no-store");
-		return options.routing.settings();
+		return options.routing.settings(requestWorkspace(request));
 	});
 	server.put<{ Body: RoutingConfig }>(
-		"/v1/routing",
+		"/routing",
 		{ schema: { body: schema } },
-		(request) => options.routing.update(request.body),
+		async (request) => {
+			const workspace = requestWorkspace(request);
+			return options.routing.update(
+				workspace,
+				request.body,
+				await options.providers.registry(workspace),
+			);
+		},
 	);
 }

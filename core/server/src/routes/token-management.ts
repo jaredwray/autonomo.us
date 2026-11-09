@@ -5,7 +5,7 @@ import {
 	type UpdateApiTokenRequest,
 } from "@autonomo.us/common";
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { signedInMember } from "../auth/access.js";
+import { requestWorkspace, signedInMember } from "../auth/access.js";
 import { AccountError, AccountStore } from "../auth/accounts.js";
 import { ApiTokenError, type TokenStore } from "../auth/token-store.js";
 
@@ -61,8 +61,11 @@ export async function tokenManagementRoutes<Permission extends string>(
 			);
 		}
 	});
-	// Every /v1 request is authenticated; token management needs a signed-in member.
-	server.get(options.path, () => options.tokens.settings(true));
+	// Every /v1 request is authenticated; token management needs a signed-in
+	// member. Every operation is limited to the path's workspace.
+	server.get(options.path, (request) =>
+		options.tokens.settings(requestWorkspace(request), true),
+	);
 	server.post<{ Body: CreateApiTokenRequest<Permission> }>(
 		options.path,
 		{
@@ -77,7 +80,12 @@ export async function tokenManagementRoutes<Permission extends string>(
 		},
 		async (request, reply) => {
 			const { actor, name } = tokenActor(request);
-			const result = await options.tokens.create(request.body, actor, name);
+			const result = await options.tokens.create(
+				requestWorkspace(request),
+				request.body,
+				actor,
+				name,
+			);
 			return reply.code(201).send(result);
 		},
 	);
@@ -100,6 +108,7 @@ export async function tokenManagementRoutes<Permission extends string>(
 		(request) => {
 			const { actor, name } = tokenActor(request);
 			return options.tokens.update(
+				requestWorkspace(request),
 				request.params.id,
 				request.body,
 				actor,
@@ -129,7 +138,13 @@ export async function tokenManagementRoutes<Permission extends string>(
 		},
 		(request) => {
 			const { actor, name } = tokenActor(request);
-			return options.tokens.roll(request.params.id, request.body, actor, name);
+			return options.tokens.roll(
+				requestWorkspace(request),
+				request.params.id,
+				request.body,
+				actor,
+				name,
+			);
 		},
 	);
 	server.delete<{ Params: { id: string } }>(
@@ -137,7 +152,12 @@ export async function tokenManagementRoutes<Permission extends string>(
 		{ schema: { params } },
 		(request) => {
 			const { actor, name } = tokenActor(request);
-			return options.tokens.revoke(request.params.id, actor, name);
+			return options.tokens.revoke(
+				requestWorkspace(request),
+				request.params.id,
+				actor,
+				name,
+			);
 		},
 	);
 }

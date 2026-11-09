@@ -3,9 +3,16 @@ import { afterEach, describe, expect, it } from "vitest";
 import { AgentTokenStore } from "../src/auth/agent-tokens.js";
 import { ApiTokenStore, tokenHash } from "../src/auth/tokens.js";
 import { configFromEnv } from "../src/config.js";
-import { createServer } from "../src/server.js";
-import { completeSetup } from "./auth-helpers.js";
+import { createServer as createGatewayServer } from "../src/server.js";
+import { completeSetup, routeToDefaultWorkspace } from "./auth-helpers.js";
 import { startStubProvider } from "./helpers.js";
+
+/** Servers here exercise the default workspace through pre-workspace paths. */
+const createServer = (options?: Parameters<typeof createGatewayServer>[0]) =>
+	routeToDefaultWorkspace(createGatewayServer(options));
+
+/** Store-level suites run in one workspace: the default, which also owns records saved before workspaces. */
+const WS = { id: "00000000-0000-4000-8000-000000000000", isDefault: true };
 
 const input = {
 	name: "Production",
@@ -24,7 +31,7 @@ describe.each([ApiTokenStore, AgentTokenStore])("%s lifecycle", (Store) => {
 	)("enforces TTL %s at the exact expiry boundary", async (ttlDays) => {
 		let now = Date.parse("2026-10-31T12:00:00Z");
 		const store = new Store(undefined, () => now);
-		const issued = await store.create({ ...input, ttlDays }, actor);
+		const issued = await store.create(WS, { ...input, ttlDays }, actor);
 		expect(await store.authenticate(issued.secret)).toMatchObject({
 			name: input.name,
 			status: "active",
@@ -38,15 +45,16 @@ describe.each([ApiTokenStore, AgentTokenStore])("%s lifecycle", (Store) => {
 			expect(await store.authenticate(issued.secret)).not.toBeNull();
 			now++;
 			expect(await store.authenticate(issued.secret)).toBeNull();
-			expect((await store.settings(true)).tokens[0].status).toBe("expired");
+			expect((await store.settings(WS, true)).tokens[0].status).toBe("expired");
 		}
 	});
 	it("preserves earlier roll deadlines and caps overlap at original expiry", async () => {
 		let now = Date.parse("2026-10-31T12:00:00Z");
 		const store = new Store(undefined, () => now);
-		const first = await store.create({ ...input, ttlDays: 1 }, actor);
+		const first = await store.create(WS, { ...input, ttlDays: 1 }, actor);
 		now += 86_400_000 - 5000;
 		const second = await store.roll(
+			WS,
 			first.token.id,
 			{ ttlDays: 7, previousTokenTtlSeconds: 3600 },
 			actor,
@@ -56,6 +64,7 @@ describe.each([ApiTokenStore, AgentTokenStore])("%s lifecycle", (Store) => {
 		);
 		now += 1000;
 		const third = await store.roll(
+			WS,
 			first.token.id,
 			{ ttlDays: "never", previousTokenTtlSeconds: 2 },
 			actor,
@@ -69,13 +78,16 @@ describe.each([ApiTokenStore, AgentTokenStore])("%s lifecycle", (Store) => {
 		now += 2000;
 		expect(await store.authenticate(first.secret)).toBeNull();
 		expect(await store.authenticate(third.secret)).not.toBeNull();
-		expect((await store.settings(true)).tokens[0].previousTokens).toEqual([]);
+		expect((await store.settings(WS, true)).tokens[0].previousTokens).toEqual(
+			[],
+		);
 	});
 	it("supports immediate rolling, renews expired tokens, and revokes all values", async () => {
 		let now = Date.now();
 		const store = new Store(undefined, () => now);
-		const first = await store.create({ ...input, ttlDays: 1 }, actor);
+		const first = await store.create(WS, { ...input, ttlDays: 1 }, actor);
 		const second = await store.roll(
+			WS,
 			first.token.id,
 			{ ttlDays: 1, previousTokenTtlSeconds: 0 },
 			actor,
@@ -83,6 +95,7 @@ describe.each([ApiTokenStore, AgentTokenStore])("%s lifecycle", (Store) => {
 		expect(await store.authenticate(first.secret)).toBeNull();
 		now += 86_400_000;
 		const third = await store.roll(
+			WS,
 			first.token.id,
 			{ ttlDays: 7, previousTokenTtlSeconds: 3600 },
 			actor,
@@ -90,30 +103,32 @@ describe.each([ApiTokenStore, AgentTokenStore])("%s lifecycle", (Store) => {
 		expect(await store.authenticate(second.secret)).toBeNull();
 		expect(third.token.previousTokens).toEqual([]);
 		const fourth = await store.roll(
+			WS,
 			first.token.id,
 			{ ttlDays: 7, previousTokenTtlSeconds: 3600 },
 			actor,
 		);
-		await store.revoke(first.token.id, actor);
+		await store.revoke(WS, first.token.id, actor);
 		for (const { secret } of [first, second, third, fourth])
 			expect(await store.authenticate(secret)).toBeNull();
-		expect((await store.settings(true)).tokens[0]).toMatchObject({
+		expect((await store.settings(WS, true)).tokens[0]).toMatchObject({
 			status: "revoked",
 			previousTokens: [],
 		});
 		await expect(
 			store.roll(
+				WS,
 				first.token.id,
 				{ ttlDays: 7, previousTokenTtlSeconds: 0 },
 				actor,
 			),
 		).rejects.toMatchObject({ statusCode: 409 });
 		await expect(
-			store.update(first.token.id, input, actor),
+			store.update(WS, first.token.id, input, actor),
 		).rejects.toMatchObject({ statusCode: 409 });
-		await store.revoke(first.token.id, actor);
+		await store.revoke(WS, first.token.id, actor);
 		expect(
-			(await store.settings(true)).actions.filter(
+			(await store.settings(WS, true)).actions.filter(
 				(item) => item.action === "revoked",
 			),
 		).toHaveLength(1);
@@ -121,20 +136,22 @@ describe.each([ApiTokenStore, AgentTokenStore])("%s lifecycle", (Store) => {
 	it("retains redacted bounded history and serializes concurrent edits", async () => {
 		let now = Date.now();
 		const store = new Store(undefined, () => now++);
-		const token = await store.create(input, actor);
+		const token = await store.create(WS, input, actor);
 		await Promise.all([
 			store.update(
+				WS,
 				token.token.id,
 				{ name: "Renamed", description: "Updated" },
 				actor,
 			),
 			store.roll(
+				WS,
 				token.token.id,
 				{ ttlDays: 180, previousTokenTtlSeconds: 10 },
 				actor,
 			),
 		]);
-		const settings = await store.settings(true);
+		const settings = await store.settings(WS, true);
 		expect(settings.tokens[0]).toMatchObject({ name: "Renamed", ttlDays: 180 });
 		expect(settings.actions.map((item) => item.action)).toEqual([
 			"rolled",
@@ -144,34 +161,36 @@ describe.each([ApiTokenStore, AgentTokenStore])("%s lifecycle", (Store) => {
 		expect(JSON.stringify(settings)).not.toContain(token.secret);
 		expect(JSON.stringify(settings)).not.toContain(tokenHash(token.secret));
 		for (let i = 0; i < 101; i++)
-			await store.update(token.token.id, input, actor);
-		expect((await store.settings(true)).actions).toHaveLength(100);
+			await store.update(WS, token.token.id, input, actor);
+		expect((await store.settings(WS, true)).actions).toHaveLength(100);
 		expect(await store.authenticate("invalid")).toBeNull();
 		expect(
 			await store.authenticate(`${token.secret.slice(0, -1)}!`),
 		).toBeNull();
-		await expect(store.revoke("missing", actor)).rejects.toMatchObject({
+		await expect(store.revoke(WS, "missing", actor)).rejects.toMatchObject({
 			statusCode: 404,
 		});
 	});
 	it("bounds overlapping values without invalidating a live version", async () => {
 		const store = new Store();
-		const first = await store.create(input, actor);
+		const first = await store.create(WS, input, actor);
 		for (let i = 0; i < 19; i++)
 			await store.roll(
+				WS,
 				first.token.id,
 				{ ttlDays: 30, previousTokenTtlSeconds: 3600 },
 				actor,
 			);
 		await expect(
 			store.roll(
+				WS,
 				first.token.id,
 				{ ttlDays: 30, previousTokenTtlSeconds: 3600 },
 				actor,
 			),
 		).rejects.toMatchObject({ statusCode: 409 });
 		expect(await store.authenticate(first.secret)).not.toBeNull();
-		expect((await store.settings(true)).actions).toHaveLength(20);
+		expect((await store.settings(WS, true)).actions).toHaveLength(20);
 	});
 });
 

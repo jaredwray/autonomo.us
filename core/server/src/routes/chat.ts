@@ -7,21 +7,19 @@ import type {
 } from "@autonomo.us/common";
 import { generateText, type LanguageModelUsage, streamText } from "ai";
 import type { FastifyInstance, FastifyReply } from "fastify";
-import {
-	DEFAULT_FAILOVER_POLICY,
-	type FailoverPolicyStore,
-} from "../failover.js";
-import type { ProviderRegistry, ResolvedModel } from "../providers/registry.js";
+import { requestWorkspace } from "../auth/access.js";
+import type { ResolvedModel } from "../providers/registry.js";
 import { UnknownProviderError } from "../providers/registry.js";
+import type { ProviderSettingsStore } from "../providers/settings.js";
 import type { ModelRouter, RoutingPlan } from "../routing/router.js";
+import type { RoutingSettingsStore } from "../routing/settings.js";
 import type { TelemetryService } from "../telemetry/telemetry.js";
 
 export type ChatRouteOptions = {
-	registry: ProviderRegistry;
+	providers: ProviderSettingsStore;
+	routing: RoutingSettingsStore;
+	router: ModelRouter;
 	telemetry: TelemetryService;
-	/** Failover policy; treated as disabled when omitted. */
-	failover?: FailoverPolicyStore;
-	router?: ModelRouter;
 	/** Origins allowed on the SSE path; `["*"]` allows any. */
 	corsOrigins?: string[];
 };
@@ -123,17 +121,23 @@ function startAttemptTimeout(timeoutMs: number): AttemptTimeout {
 	};
 }
 
+/** Registered under `/v1/:workspace`: every candidate resolves in that workspace. */
 export async function chatRoutes(
 	server: FastifyInstance,
 	options: ChatRouteOptions,
 ) {
-	const { registry, telemetry } = options;
+	const { telemetry } = options;
 
 	server.post(
-		"/v1/chat",
+		"/chat",
 		{ schema: { body: chatBodySchema } },
 		async (request, reply) => {
 			const body = request.body as GatewayRequest & { model: string };
+			const workspace = requestWorkspace(request);
+			const [registry, config] = await Promise.all([
+				options.providers.registry(workspace),
+				options.routing.config(workspace),
+			]);
 			const client = new AbortController();
 			const disconnected = () => {
 				if (!reply.raw.writableEnded) client.abort();
@@ -146,47 +150,32 @@ export async function chatRoutes(
 			let plan: RoutingPlan | undefined;
 			try {
 				try {
-					plan = await options.router?.plan(
+					plan = await options.router.plan(
+						{ workspaceId: workspace.id, registry, config },
 						body,
 						client.signal,
 						request.telemetryCaller,
 					);
 					client.signal.throwIfAborted();
-					requested = plan?.candidates[0] ?? registry.resolve(body.model);
+					requested = plan.candidates[0];
 				} catch (error) {
 					if (client.signal.aborted) return reply.hijack();
 					if (error instanceof UnknownProviderError) {
 						return reply.status(404).send({
 							error: {
 								type: "unknown_model",
-								message: `${error.message}. See GET /v1/models for available models.`,
+								message: `${error.message}. See GET /v1/${workspace.id}/models for available models.`,
 							},
 						});
 					}
 					throw error;
 				}
 
-				// Attempt order: the requested model, then (when failover is on) each
-				// policy target that resolves. Stale targets — providers removed since
-				// the policy was saved — are skipped rather than failing the request.
-				const policy = options.failover?.get() ?? DEFAULT_FAILOVER_POLICY;
-				const candidates = plan?.candidates ?? [requested];
-				if (!plan && policy.enabled) {
-					for (const target of policy.targets) {
-						try {
-							const resolved = registry.resolve(target);
-							if (!candidates.some((c) => c.id === resolved.id)) {
-								candidates.push(resolved);
-							}
-						} catch {}
-					}
-				}
-				// Arm the attempt timeout only when there is somewhere to fail over to;
-				// with no usable fallback it would just abort slow-but-successful
-				// requests without buying anything.
-				const attemptTimeoutMs =
-					plan?.timeoutMs ??
-					(policy.enabled && candidates.length > 1 ? policy.timeoutMs : 0);
+				// Attempt order comes from the router: the requested model, then the
+				// applicable failover targets that resolve in this workspace. Its
+				// timeout is armed only when there is somewhere to fail over to.
+				const candidates = plan.candidates;
+				const attemptTimeoutMs = plan.timeoutMs;
 
 				if (body.stream) {
 					return await streamChat(
@@ -197,6 +186,7 @@ export async function chatRoutes(
 						attemptTimeoutMs,
 						options,
 						client.signal,
+						workspace.id,
 						plan,
 					);
 				}
@@ -206,8 +196,8 @@ export async function chatRoutes(
 					if (client.signal.aborted) return reply.hijack();
 					const release =
 						candidate === requested
-							? plan?.release
-							: options.router?.acquire(candidate.id);
+							? plan.release
+							: options.router.acquire(workspace.id, candidate.id);
 					const started = performance.now();
 					const timeout = startAttemptTimeout(attemptTimeoutMs);
 					try {
@@ -226,8 +216,10 @@ export async function chatRoutes(
 
 						const usage = toTokenUsage(result.usage);
 						telemetry.recordChat({
+							workspaceId: workspace.id,
 							model: candidate.id,
 							provider: candidate.provider.name,
+							providerKind: candidate.provider.kind,
 							agentId: body.agentId,
 							caller: request.telemetryCaller,
 							usage,
@@ -246,7 +238,7 @@ export async function chatRoutes(
 							usage,
 							finishReason: result.finishReason,
 							createdAt: new Date().toISOString(),
-							...(plan?.decision ? { routing: plan.decision } : {}),
+							...(plan.decision ? { routing: plan.decision } : {}),
 							...(attempts.length > 0
 								? { failover: { requestedModel: requested.id, attempts } }
 								: {}),
@@ -257,8 +249,10 @@ export async function chatRoutes(
 							? timeoutMessage(attemptTimeoutMs)
 							: errorMessage(error);
 						telemetry.recordChat({
+							workspaceId: workspace.id,
 							model: candidate.id,
 							provider: candidate.provider.name,
+							providerKind: candidate.provider.kind,
 							agentId: body.agentId,
 							caller: request.telemetryCaller,
 							usage: EMPTY_USAGE,
@@ -304,6 +298,7 @@ async function streamChat(
 	attemptTimeoutMs: number,
 	options: ChatRouteOptions,
 	clientSignal: AbortSignal,
+	workspaceId: string,
 	plan?: RoutingPlan,
 ) {
 	const { telemetry } = options;
@@ -341,7 +336,9 @@ async function streamChat(
 		if (clientSignal.aborted || raw.destroyed) break;
 		const candidate = candidates[index];
 		const release =
-			index === 0 ? plan?.release : options.router?.acquire(candidate.id);
+			index === 0
+				? plan?.release
+				: options.router.acquire(workspaceId, candidate.id);
 		const started = performance.now();
 		let usage: TokenUsage = EMPTY_USAGE;
 		let finishReason: string | undefined;
@@ -406,8 +403,10 @@ async function streamChat(
 		}
 
 		telemetry.recordChat({
+			workspaceId,
 			model: candidate.id,
 			provider: candidate.provider.name,
+			providerKind: candidate.provider.kind,
 			agentId: body.agentId,
 			caller: reply.request.telemetryCaller,
 			usage,

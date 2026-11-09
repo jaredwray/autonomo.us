@@ -14,14 +14,20 @@ import type {
 	RollApiTokenRequest,
 	UpdateApiTokenRequest,
 } from "@autonomo.us/common";
-import { MongoClient } from "mongodb";
-import { mongoOperationDeadlines, requestMongoClient } from "../mongo.js";
+import { controlPlaneConnection, type MongoConnection } from "../mongo.js";
+import {
+	inWorkspace,
+	type WorkspaceRef,
+	workspaceFilter,
+} from "../workspaces/store.js";
 
 type Credential = { hash: string; prefix: string; expiresAt: string | null };
 type TokenRecord<Permission extends string> = Omit<
 	ApiToken<Permission>,
-	"id" | "status" | "previousTokens" | "permissions"
+	"id" | "status" | "previousTokens" | "permissions" | "workspaceId"
 > & {
+	/** Missing on tokens created before workspaces: those belong to the default workspace. */
+	workspaceId?: string;
 	/** Legacy records receive the defaults for their token audience. */
 	permissions?: Permission[];
 	_id: string;
@@ -123,9 +129,11 @@ function publicToken<Permission extends string>(
 	record: TokenRecord<Permission>,
 	now: number,
 	profile: TokenProfile<Permission>,
+	workspace: WorkspaceRef,
 ): ApiToken<Permission> {
 	return {
 		id: record._id,
+		workspaceId: record.workspaceId ?? workspace.id,
 		name: record.name,
 		description: record.description,
 		permissions: effectivePermissions(record, profile),
@@ -158,32 +166,42 @@ export type TokenProfile<Permission extends string> = {
 	defaultPermissions: readonly Permission[];
 };
 
-/** Each Mongo document commits credentials and their audit events atomically.
- * Reads go to Mongo every time so revocation works across API replicas.
+/** A token as the access hook sees it. A null `workspaceId` means the default workspace. */
+export type AuthenticatedToken<Permission extends string> = Omit<
+	ApiToken<Permission>,
+	"workspaceId"
+> & { workspaceId: string | null };
+
+/**
+ * Each Mongo document commits credentials and their audit events atomically.
+ * Reads go to Mongo every time so revocation works across API replicas. Every
+ * token belongs to one workspace, and every by-id operation filters on it, so
+ * a request in workspace A can never read or change workspace B's token.
  */
 export class TokenStore<Permission extends string> {
-	private client?: MongoClient;
+	private readonly mongo?: MongoConnection;
 	private readonly records = new Map<string, TokenRecord<Permission>>();
+	private indexed = false;
 	constructor(
 		private readonly profile: TokenProfile<Permission>,
-		private readonly mongodbUrl?: string,
+		mongo?: string | MongoConnection,
 		private readonly now = Date.now,
-	) {}
+	) {
+		this.mongo =
+			typeof mongo === "string" ? controlPlaneConnection(mongo) : mongo;
+	}
+	private get mongodbUrl() {
+		return Boolean(this.mongo);
+	}
 	private collection() {
-		const create = () =>
-			new MongoClient(this.mongodbUrl as string, {
-				serverSelectionTimeoutMS: 1500,
-				...mongoOperationDeadlines(3000),
-				readPreference: "primary",
-			});
-		let client = requestMongoClient(this, create);
-		if (!client) {
-			this.client ??= create();
-			client = this.client;
-		}
-		return client
-			.db()
-			.collection<TokenRecord<Permission>>(this.profile.collection);
+		return (this.mongo as MongoConnection).collection<TokenRecord<Permission>>(
+			this.profile.collection,
+		);
+	}
+	async ensureIndexes(): Promise<void> {
+		if (!this.mongo || this.indexed) return;
+		await this.collection().createIndex({ workspaceId: 1 });
+		this.indexed = true;
 	}
 	private async storage<T>(operation: () => Promise<T>): Promise<T> {
 		try {
@@ -196,21 +214,59 @@ export class TokenStore<Permission extends string> {
 			);
 		}
 	}
-	private async read(id: string) {
+	private async read(workspace: WorkspaceRef, id: string) {
 		const record = this.mongodbUrl
-			? await this.storage(() => this.collection().findOne({ _id: id }))
+			? await this.storage(() =>
+					this.collection().findOne({
+						_id: id,
+						workspaceId: workspaceFilter(workspace),
+					}),
+				)
 			: this.records.get(id);
-		return record ? structuredClone(record) : null;
+		return record && inWorkspace(record.workspaceId, workspace)
+			? structuredClone(record)
+			: null;
+	}
+	/** IDs of a workspace's tokens, revoked ones included. */
+	async ids(workspace: WorkspaceRef): Promise<Set<string>> {
+		if (!this.mongodbUrl)
+			return new Set(
+				[...this.records.values()]
+					.filter((record) => inWorkspace(record.workspaceId, workspace))
+					.map((record) => record._id),
+			);
+		const records = await this.storage(() =>
+			this.collection()
+				.find(
+					{ workspaceId: workspaceFilter(workspace) },
+					{ projection: { _id: 1, workspaceId: 1 } },
+				)
+				.toArray(),
+		);
+		return new Set(
+			records
+				.filter((record) => inWorkspace(record.workspaceId, workspace))
+				.map((record) => String(record._id)),
+		);
 	}
 	async settings(
+		workspace: WorkspaceRef,
 		authenticationRequired: boolean,
 	): Promise<ApiTokenSettings<Permission>> {
 		const records = this.mongodbUrl
-			? await this.storage(() => this.collection().find().toArray())
-			: [...this.records.values()];
+			? await this.storage(() =>
+					this.collection()
+						.find({ workspaceId: workspaceFilter(workspace) })
+						.toArray(),
+				)
+			: [...this.records.values()].filter((record) =>
+					inWorkspace(record.workspaceId, workspace),
+				);
 		return {
 			tokens: records
-				.map((record) => publicToken(record, this.now(), this.profile))
+				.map((record) =>
+					publicToken(record, this.now(), this.profile, workspace),
+				)
 				.sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
 			actions: records
 				.flatMap((record) => structuredClone(record.actions))
@@ -241,6 +297,7 @@ export class TokenStore<Permission extends string> {
 		record.actions = record.actions.slice(0, 100);
 	}
 	async create(
+		workspace: WorkspaceRef,
 		input: CreateApiTokenRequest<Permission>,
 		actor: ApiTokenAction["actor"],
 		actorName?: string,
@@ -251,6 +308,7 @@ export class TokenStore<Permission extends string> {
 		const { secret, credential } = issue(id, expiry, this.profile.prefix);
 		const record: TokenRecord<Permission> = {
 			_id: id,
+			workspaceId: workspace.id,
 			revision: 0,
 			name: input.name.trim(),
 			description: input.description.trim(),
@@ -276,19 +334,25 @@ export class TokenStore<Permission extends string> {
 			`${expiry ? `Expires ${expiry}.` : "Never expires."} Permissions: ${permissionSummary(effectivePermissions(record, this.profile), this.profile)}.`,
 			actorName,
 		);
-		if (this.mongodbUrl)
+		if (this.mongodbUrl) {
+			await this.ensureIndexes().catch(() => {});
 			await this.storage(() => this.collection().insertOne(record));
-		else this.records.set(id, record);
-		return { token: publicToken(record, now, this.profile), secret };
+		} else this.records.set(id, record);
+		return {
+			token: publicToken(record, now, this.profile, workspace),
+			secret,
+		};
 	}
 	private async mutate<T>(
+		workspace: WorkspaceRef,
 		id: string,
 		change: (record: TokenRecord<Permission>, now: number) => T,
 	): Promise<T> {
 		for (let attempt = 0; attempt < 5; attempt++) {
-			const record = await this.read(id);
+			const record = await this.read(workspace, id);
 			if (!record) throw new ApiTokenError("Token not found.", 404);
 			const revision = record.revision;
+			record.workspaceId ??= workspace.id;
 			const now = this.now();
 			record.updatedAt = new Date(now).toISOString();
 			const result = change(record, now);
@@ -310,12 +374,13 @@ export class TokenStore<Permission extends string> {
 		);
 	}
 	update(
+		workspace: WorkspaceRef,
 		id: string,
 		input: UpdateApiTokenRequest<Permission>,
 		actor: ApiTokenAction["actor"],
 		actorName?: string,
 	) {
-		return this.mutate(id, (record, now) => {
+		return this.mutate(workspace, id, (record, now) => {
 			if (record.revokedAt)
 				throw new ApiTokenError("Revoked tokens cannot be edited.", 409);
 			record.name = input.name.trim();
@@ -335,16 +400,17 @@ export class TokenStore<Permission extends string> {
 					: "Name and description updated.",
 				actorName,
 			);
-			return publicToken(record, now, this.profile);
+			return publicToken(record, now, this.profile, workspace);
 		});
 	}
 	roll(
+		workspace: WorkspaceRef,
 		id: string,
 		input: RollApiTokenRequest,
 		actor: ApiTokenAction["actor"],
 		actorName?: string,
 	): Promise<ApiTokenSecret<Permission>> {
-		return this.mutate(id, (record, now) => {
+		return this.mutate(workspace, id, (record, now) => {
 			if (record.revokedAt)
 				throw new ApiTokenError("Revoked tokens cannot be rolled.", 409);
 			record.permissions = effectivePermissions(record, this.profile);
@@ -380,11 +446,19 @@ export class TokenStore<Permission extends string> {
 				`Previous token overlap: ${input.previousTokenTtlSeconds} seconds (never beyond its existing expiry). New token ${expiry ? `expires ${expiry}` : "never expires"}.`,
 				actorName,
 			);
-			return { token: publicToken(record, now, this.profile), secret };
+			return {
+				token: publicToken(record, now, this.profile, workspace),
+				secret,
+			};
 		});
 	}
-	revoke(id: string, actor: ApiTokenAction["actor"], actorName?: string) {
-		return this.mutate(id, (record, now) => {
+	revoke(
+		workspace: WorkspaceRef,
+		id: string,
+		actor: ApiTokenAction["actor"],
+		actorName?: string,
+	) {
+		return this.mutate(workspace, id, (record, now) => {
 			if (!record.revokedAt) {
 				record.revokedAt = record.updatedAt;
 				record.credentials = [];
@@ -396,26 +470,35 @@ export class TokenStore<Permission extends string> {
 					actorName,
 				);
 			}
-			return publicToken(record, now, this.profile);
+			return publicToken(record, now, this.profile, workspace);
 		});
 	}
-	async authenticate(secret: string): Promise<ApiToken<Permission> | null> {
+	async authenticate(
+		secret: string,
+	): Promise<AuthenticatedToken<Permission> | null> {
 		const match =
 			/^([a-z]+)_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})_[A-Za-z0-9_-]{43}$/.exec(
 				secret,
 			);
 		if (!match || match[1] !== this.profile.prefix) return null;
-		const record = await this.read(match[2]);
-		if (!record || record.revokedAt) return null;
-		return record.credentials.some(
+		const id = match[2];
+		const stored = this.mongodbUrl
+			? await this.storage(() => this.collection().findOne({ _id: id }))
+			: this.records.get(id);
+		if (!stored || stored.revokedAt) return null;
+		return stored.credentials.some(
 			(item) => live(item, this.now()) && secretMatches(secret, item.hash),
 		)
-			? publicToken(record, this.now(), this.profile)
+			? {
+					...publicToken(stored, this.now(), this.profile, {
+						id: "",
+						isDefault: false,
+					}),
+					workspaceId: stored.workspaceId ?? null,
+				}
 			: null;
 	}
 	async close() {
-		const client = this.client;
-		this.client = undefined;
-		await client?.close();
+		await this.mongo?.close();
 	}
 }

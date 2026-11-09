@@ -86,6 +86,7 @@ describe.skipIf(!available)("database initialization", () => {
 		expect(await settings().findOne({ _id: "default" })).toEqual({
 			_id: "default",
 			config: defaults,
+			revision: 0,
 		});
 		await server.close();
 
@@ -101,6 +102,7 @@ describe.skipIf(!available)("database initialization", () => {
 		expect(await settings().findOne({ _id: "default" })).toEqual({
 			_id: "default",
 			config: defaults,
+			revision: 0,
 		});
 	});
 
@@ -148,6 +150,7 @@ describe.skipIf(!available)("database initialization", () => {
 		expect(await settings().findOne({ _id: "default" })).toEqual({
 			_id: "default",
 			config: recovered.json().config,
+			revision: 0,
 		});
 	});
 });

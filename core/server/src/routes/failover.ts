@@ -1,16 +1,13 @@
 import type { FailoverPolicy } from "@autonomo.us/common";
 import type { FastifyInstance } from "fastify";
-import {
-	type FailoverPolicyStore,
-	MAX_FAILOVER_TIMEOUT_MS,
-} from "../failover.js";
-import type { ProviderRegistry } from "../providers/registry.js";
+import { requestWorkspace } from "../auth/access.js";
+import { MAX_FAILOVER_TIMEOUT_MS } from "../failover.js";
+import type { ProviderSettingsStore } from "../providers/settings.js";
 import type { RoutingSettingsStore } from "../routing/settings.js";
 
 export type FailoverRouteOptions = {
-	failover: FailoverPolicyStore;
-	routing?: RoutingSettingsStore;
-	registry: ProviderRegistry;
+	providers: ProviderSettingsStore;
+	routing: RoutingSettingsStore;
 };
 
 const failoverBodySchema = {
@@ -31,23 +28,22 @@ const failoverBodySchema = {
 	},
 } as const;
 
+/** The workspace's default failover policy. Registered under `/v1/:workspace`. */
 export async function failoverRoutes(
 	server: FastifyInstance,
 	options: FailoverRouteOptions,
 ) {
-	const { failover, registry } = options;
-
-	server.get("/v1/failover", async () => {
-		await options.routing?.initialize();
-		return failover.get();
+	server.get("/failover", async (request) => {
+		return (await options.routing.config(requestWorkspace(request))).failover;
 	});
 
 	server.put(
-		"/v1/failover",
+		"/failover",
 		{ schema: { body: failoverBodySchema } },
 		async (request, reply) => {
+			const workspace = requestWorkspace(request);
 			const patch = request.body as Partial<FailoverPolicy>;
-
+			const registry = await options.providers.registry(workspace);
 			const unknown = (patch.targets ?? []).filter((target) => {
 				try {
 					registry.resolve(target);
@@ -60,14 +56,11 @@ export async function failoverRoutes(
 				return reply.status(400).send({
 					error: {
 						type: "unknown_target",
-						message: `Unknown failover target${unknown.length > 1 ? "s" : ""}: ${unknown.join(", ")}. See GET /v1/models for routable ids.`,
+						message: `Unknown failover target${unknown.length > 1 ? "s" : ""}: ${unknown.join(", ")}. See GET /v1/${workspace.id}/models for routable ids.`,
 					},
 				});
 			}
-
-			return options.routing
-				? options.routing.updateFailover(patch)
-				: failover.update(patch);
+			return options.routing.updateFailover(workspace, patch);
 		},
 	);
 }

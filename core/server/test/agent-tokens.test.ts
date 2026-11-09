@@ -3,8 +3,15 @@ import type { AgentTokenSecret } from "@autonomo.us/common";
 import { afterEach, expect, it } from "vitest";
 import { AgentTokenStore } from "../src/auth/agent-tokens.js";
 import { ApiTokenStore, tokenHash } from "../src/auth/tokens.js";
-import { createServer } from "../src/server.js";
-import { completeSetup } from "./auth-helpers.js";
+import { createServer as createGatewayServer } from "../src/server.js";
+import { completeSetup, routeToDefaultWorkspace } from "./auth-helpers.js";
+
+/** Servers here exercise the default workspace through pre-workspace paths. */
+const createServer = (options?: Parameters<typeof createGatewayServer>[0]) =>
+	routeToDefaultWorkspace(createGatewayServer(options));
+
+/** Store-level suites run in one workspace: the default, which also owns records saved before workspaces. */
+const WS = { id: "00000000-0000-4000-8000-000000000000", isDefault: true };
 
 /** The signed-in owner's session, set by start(). */
 let headers: Record<string, string> = {};
@@ -30,8 +37,8 @@ async function start() {
 it("keeps agent authentication separate, defaults to no grants, and applies permission edits to all values", async () => {
 	const agents = new AgentTokenStore();
 	const api = new ApiTokenStore();
-	const agent = await agents.create(input, "owner");
-	const application = await api.create(input, "owner");
+	const agent = await agents.create(WS, input, "owner");
+	const application = await api.create(WS, input, "owner");
 	expect(agent.secret).toMatch(/^agt_/);
 	expect(agent.token.permissions).toEqual([]);
 	expect(await api.authenticate(agent.secret)).toBeNull();
@@ -40,11 +47,13 @@ it("keeps agent authentication separate, defaults to no grants, and applies perm
 		await api.authenticate(agent.secret.replace(/^agt_/, "aut_")),
 	).toBeNull();
 	const rolled = await agents.roll(
+		WS,
 		agent.token.id,
 		{ ttlDays: 7, previousTokenTtlSeconds: 3600 },
 		"owner",
 	);
 	await agents.update(
+		WS,
 		agent.token.id,
 		{ ...input, permissions: ["mcp:read", "mcp:call"] },
 		"owner",
@@ -54,12 +63,17 @@ it("keeps agent authentication separate, defaults to no grants, and applies perm
 			"mcp:read",
 			"mcp:call",
 		]);
-	await agents.update(agent.token.id, { ...input, permissions: [] }, "owner");
-	await agents.update(agent.token.id, input, "owner");
+	await agents.update(
+		WS,
+		agent.token.id,
+		{ ...input, permissions: [] },
+		"owner",
+	);
+	await agents.update(WS, agent.token.id, input, "owner");
 	for (const secret of [agent.secret, rolled.secret])
 		expect((await agents.authenticate(secret))?.permissions).toEqual([]);
 	expect(
-		(await agents.settings(true)).actions.some((action) =>
+		(await agents.settings(WS, true)).actions.some((action) =>
 			action.detail.includes("from MCP: Read, MCP: Call to None"),
 		),
 	).toBe(true);
@@ -128,7 +142,7 @@ it("provides an isolated member-managed lifecycle and never lists secrets or has
 		"/v1/api-tokens",
 		"/v1/routing",
 		"/v1/telemetry/events",
-		"/%761/agent-tokens",
+		`/%761/${server.workspaceId}/agent-tokens`,
 	]) {
 		expect(
 			(
@@ -301,11 +315,13 @@ it("records the signed-in member and never accepts agent credentials for the API
 it("fails closed when the agent token database is unavailable", async () => {
 	const store = new AgentTokenStore("mongodb://127.0.0.1:1/unavailable");
 	cleanups.push(() => store.close());
-	await expect(store.settings(true)).rejects.toMatchObject({ statusCode: 503 });
+	await expect(store.settings(WS, true)).rejects.toMatchObject({
+		statusCode: 503,
+	});
 	await expect(
 		store.authenticate(`agt_${randomUUID()}_${"x".repeat(43)}`),
 	).rejects.toMatchObject({ statusCode: 503 });
-	await expect(store.create(input, "owner")).rejects.toMatchObject({
+	await expect(store.create(WS, input, "owner")).rejects.toMatchObject({
 		statusCode: 503,
 	});
 }, 10000);

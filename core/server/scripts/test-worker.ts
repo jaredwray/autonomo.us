@@ -162,6 +162,19 @@ async function setUp(request: RequestWorker, headers: HeadersInit = {}) {
 	return { authorization: `Bearer ${owner.token}` };
 }
 
+/** The default workspace's id: every workspace route lives under `/v1/<id>/`. */
+async function defaultWorkspace(
+	request: RequestWorker,
+	auth: Record<string, string>,
+) {
+	const { workspaces } = (await request("/v1/workspaces", 200, {
+		headers: auth,
+	})) as { workspaces: Array<{ id: string; isDefault: boolean }> };
+	const workspace = workspaces.find((item) => item.isDefault);
+	assert(workspace, "No default workspace");
+	return `/v1/${workspace.id}`;
+}
+
 async function expectLog(logs: () => string, event: string) {
 	const deadline = Date.now() + 5000;
 	while (!logs().includes(event)) {
@@ -197,8 +210,11 @@ await withWorker("", async (request, logs, base) => {
 	await request("/mcp", 401, { method: "POST", headers: json, body: "{}" });
 	await request("/mcp", 405);
 	const auth = await setUp(request);
-	await request("/v1/models", 200, { headers: auth });
-	await request("/v1/routing", 400, {
+	const workspace = await defaultWorkspace(request, auth);
+	await request(`${workspace}/models`, 200, { headers: auth });
+	// Pre-workspace routes are gone.
+	await request("/v1/models", 404, { headers: auth });
+	await request(`${workspace}/routing`, 400, {
 		method: "PUT",
 		headers: { ...json, ...auth },
 		body: "{}",
@@ -242,12 +258,13 @@ try {
 		// First-run setup, scrypt passwords, sessions, and invite links in workerd.
 		await request("/v1/api-tokens", 401);
 		const ownerAuth = await setUp(request);
+		const workspace = await defaultWorkspace(request, ownerAuth);
 		await Promise.all(
 			Array.from({ length: 6 }, () =>
-				request("/v1/api-tokens", 200, { headers: ownerAuth }),
+				request(`${workspace}/api-tokens`, 200, { headers: ownerAuth }),
 			),
 		);
-		const created = (await request("/v1/api-tokens", 201, {
+		const created = (await request(`${workspace}/api-tokens`, 201, {
 			method: "POST",
 			headers: { ...json, ...ownerAuth },
 			body: JSON.stringify({
@@ -256,7 +273,7 @@ try {
 				ttlDays: "never",
 			}),
 		})) as { token: { id: string }; secret: string };
-		await request(`/v1/api-tokens/${created.token.id}`, 200, {
+		await request(`${workspace}/api-tokens/${created.token.id}`, 200, {
 			method: "DELETE",
 			headers: ownerAuth,
 		});
@@ -274,7 +291,18 @@ try {
 			body: JSON.stringify({ email: "owner@example.com", password }),
 		})) as { token: string };
 		const auth = { authorization: `Bearer ${signedIn.token}` };
-		await request("/v1/models", 200, { headers: auth });
+		await request(`${workspace}/models`, 200, { headers: auth });
+		// A second workspace starts empty and resolves in the same isolate.
+		const second = (await request("/v1/workspaces", 201, {
+			method: "POST",
+			headers: { ...json, ...auth },
+			body: JSON.stringify({ name: "Second" }),
+		})) as { id: string };
+		const empty = (await request(`/v1/${second.id}/models`, 200, {
+			headers: auth,
+		})) as { models: unknown[] };
+		assert.deepEqual(empty.models, []);
+		await request(`/v1/${second.id}/routing`, 200, { headers: auth });
 		const invite = (await request("/v1/team/invites", 201, {
 			method: "POST",
 			headers: { ...json, ...auth },
@@ -317,7 +345,9 @@ try {
 			connected: true,
 			initialized: false,
 		});
-		await request("/v1/routing", 503, { headers: await setUp(request) });
+		const owner = await setUp(request);
+		const workspace = await defaultWorkspace(request, owner);
+		await request(`${workspace}/routing`, 503, { headers: owner });
 		await expectLog(logs, "gateway.persistence_failed");
 		await expectLog(logs, "code: 121");
 		await client.db().command({ collMod: "gateway_routing", validator: {} });

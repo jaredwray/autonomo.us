@@ -1,3 +1,5 @@
+import type { WorkspaceAccess, WorkspaceMembership } from "./workspaces.js";
+
 export const TEAM_ROLES = {
 	owner: "Owner",
 	admin: "Admin",
@@ -25,6 +27,11 @@ export type TeamMember = {
 	/** Who invited or added this member; null for the first owner. */
 	addedBy: string | null;
 	lastSignInAt: string | null;
+	/**
+	 * Workspace memberships. Org owners and admins are admins of every
+	 * workspace; their stored memberships stay dormant until a demotion.
+	 */
+	workspaces: WorkspaceMembership[];
 };
 
 /** Invite links carry a one-time secret; only its digest is stored. */
@@ -41,6 +48,8 @@ export type TeamInvite = {
 	/** Email of the account created from this invite. */
 	acceptedBy: string | null;
 	revokedAt: string | null;
+	/** Workspace access granted when the invite is redeemed. */
+	workspace: WorkspaceMembership | null;
 };
 
 export type TeamSettings = {
@@ -60,6 +69,8 @@ export type AddTeamMemberRequest = {
 	role: TeamRole;
 	/** Initial password the admin shares with the new member. */
 	password: string;
+	/** Members only: workspace access to grant. Owners and admins see every workspace. */
+	workspace?: WorkspaceMembership;
 };
 export type UpdateTeamMemberRequest = { name: string; role: TeamRole };
 export type ResetPasswordRequest = { password: string };
@@ -71,6 +82,8 @@ export type ChangePasswordRequest = {
 export type CreateTeamInviteRequest = {
 	role: TeamRole;
 	ttlDays: TeamInviteTtl;
+	/** Members only: workspace access granted on redemption. */
+	workspace?: WorkspaceMembership;
 };
 export type TeamInviteSecret = {
 	invite: TeamInvite;
@@ -110,4 +123,6 @@ export type AuthSession = {
 export type CurrentSession = {
 	user: TeamMember;
 	expiresAt: string;
+	/** Workspaces this member can open, with their role in each. */
+	workspaces: WorkspaceAccess[];
 };

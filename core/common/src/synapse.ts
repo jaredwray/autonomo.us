@@ -11,13 +11,25 @@ export type SynapsePropertyValue = string | number | boolean | null | string[];
 export type SynapseProperties = Record<string, SynapsePropertyValue>;
 
 /**
- * `shared` is the team canon: every agent can read it, and agents change it
- * only through reviewed proposals. `agent-<agentTokenId>` is one agent's
- * private space, keyed by its agent token ID, which survives token rolls.
+ * `global` is the gateway-wide canon, above every workspace. Each workspace's
+ * `shared` space is its team canon and inherits `global`: it shows the global
+ * notes it does not override. Agents read `shared` and change it only through
+ * reviewed proposals. `agent-<agentTokenId>` is one agent's private space,
+ * keyed by its agent token ID, which survives token rolls.
+ *
+ * In storage, the default workspace's shared space is `shared` and another
+ * workspace's is `shared-<workspaceId>`; requests always say `shared`.
  */
-export type SynapseSpaceId = "shared" | `agent-${string}`;
+export type SynapseSpaceId =
+	| "global"
+	| "shared"
+	| `shared-${string}`
+	| `agent-${string}`;
 export const SYNAPSE_SHARED_SPACE = "shared" as const;
-export const SYNAPSE_SPACE_ID_PATTERN = "^(shared|agent-[A-Za-z0-9_-]{1,64})$";
+export const SYNAPSE_GLOBAL_SPACE = "global" as const;
+/** Space IDs in requests; workspace-qualified storage keys never appear in a path. */
+export const SYNAPSE_SPACE_ID_PATTERN =
+	"^(shared|global|agent-[A-Za-z0-9_-]{1,64})$";
 
 /**
  * A [[link]] whose target ends in one of these extensions points at an
@@ -56,8 +68,8 @@ export type SynapseActor = {
 
 export type SynapseSpace = {
 	id: SynapseSpaceId;
-	kind: "shared" | "agent";
-	/** "Shared" or the agent token's name when the space was last written. */
+	kind: "global" | "shared" | "agent";
+	/** "Global", "Shared", or the agent token's name when the space was last written. */
 	name: string;
 	/** Agent spaces only. */
 	agentTokenId?: string;
@@ -254,10 +266,11 @@ export type SynapseImportResult = {
 export type SynapseProposalAction = "create" | "update" | "append" | "delete";
 export type SynapseProposalStatus = "pending" | "approved" | "rejected";
 
-/** An agent's request to change the shared space, decided by an owner or admin. */
+/** An agent's request to change its workspace's shared space, decided by a workspace admin. */
 export type SynapseProposal = {
 	id: string;
-	space: "shared";
+	/** Always `shared` in responses: the shared space of the workspace it was filed in. */
+	space: SynapseSpaceId;
 	action: SynapseProposalAction;
 	title: string;
 	/** update: rename to this title. */

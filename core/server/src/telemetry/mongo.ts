@@ -6,6 +6,7 @@ import type {
 } from "@autonomo.us/common";
 import { type Collection, MongoBulkWriteError, MongoClient } from "mongodb";
 import { mongoOperationDeadlines, requestMongoClient } from "../mongo.js";
+import { type WorkspaceRef, workspaceFilter } from "../workspaces/store.js";
 import { type AnalyticsFact, bucketMs } from "./analytics.js";
 
 const GATEWAY_TYPES = [
@@ -20,6 +21,8 @@ export const TELEMETRY_COLLECTION = "telemetry_events";
 type TelemetryDocument = {
 	_id: string;
 	type: string;
+	/** Missing on history recorded before workspaces: that history belongs to the default workspace. */
+	workspaceId?: string;
 	agentId: string;
 	model: string;
 	provider: string;
@@ -72,6 +75,7 @@ export function eventToDocument(event: TelemetryEvent): TelemetryDocument {
 	return {
 		_id: event.id,
 		type: event.type,
+		...(event.workspaceId ? { workspaceId: event.workspaceId } : {}),
 		agentId: event.agentId ?? "",
 		model: typeof data.model === "string" ? data.model : "",
 		provider: typeof data.provider === "string" ? data.provider : "",
@@ -145,6 +149,11 @@ export class MongoTelemetrySink {
 		try {
 			await this.collection().createIndex({ type: 1 });
 			await this.collection().createIndex({ timestamp: 1, type: 1 });
+			await this.collection().createIndex({
+				workspaceId: 1,
+				timestamp: 1,
+				type: 1,
+			});
 			this.schemaReady = true;
 			this.healthy = true;
 		} catch (error) {
@@ -169,7 +178,8 @@ export class MongoTelemetrySink {
 		}
 	}
 
-	async querySummary(): Promise<UsageSummary> {
+	/** Omitting `workspace` summarizes the whole collection (diagnostics and tests). */
+	async querySummary(workspace?: WorkspaceRef): Promise<UsageSummary> {
 		try {
 			await this.ensureSchema();
 			const rows = await this.collection()
@@ -183,7 +193,12 @@ export class MongoTelemetrySink {
 					latencySum: number;
 					successes: number;
 				}>([
-					{ $match: { type: { $in: [...GATEWAY_TYPES] } } },
+					{
+						$match: {
+							type: { $in: [...GATEWAY_TYPES] },
+							...(workspace ? { workspaceId: workspaceFilter(workspace) } : {}),
+						},
+					},
 					{
 						$group: {
 							_id: { model: "$model", provider: "$provider" },
@@ -255,7 +270,10 @@ export class MongoTelemetrySink {
 	}
 
 	/** Grouped facts for one window. Callers apply model, connection, and caller filters. */
-	async queryAnalytics(query: AnalyticsQuery): Promise<AnalyticsFact[]> {
+	async queryAnalytics(
+		query: AnalyticsQuery,
+		workspace?: WorkspaceRef,
+	): Promise<AnalyticsFact[]> {
 		const from = Date.parse(query.from);
 		const to = Date.parse(query.to);
 		if (!Number.isFinite(from) || !Number.isFinite(to))
@@ -270,6 +288,7 @@ export class MongoTelemetrySink {
 						$match: {
 							type: { $in: [...GATEWAY_TYPES] },
 							timestamp: { $gte: new Date(from), $lt: new Date(to) },
+							...(workspace ? { workspaceId: workspaceFilter(workspace) } : {}),
 						},
 					},
 					{

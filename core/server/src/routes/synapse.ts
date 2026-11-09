@@ -2,6 +2,8 @@ import {
 	type AppendSynapseNoteRequest,
 	type CreateSynapseNoteRequest,
 	type DecideSynapseProposalRequest,
+	SYNAPSE_GLOBAL_SPACE,
+	SYNAPSE_SHARED_SPACE,
 	SYNAPSE_SPACE_ID_PATTERN,
 	type SynapseActor,
 	type SynapseImportRequest,
@@ -11,14 +13,15 @@ import {
 	type UpdateSynapseNoteRequest,
 } from "@autonomo.us/common";
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { signedInMember } from "../auth/access.js";
-import { AccountStore } from "../auth/accounts.js";
+import { requestWorkspace, signedInMember } from "../auth/access.js";
+import type { AgentTokenStore } from "../auth/agent-tokens.js";
 import { mongoErrorDetails } from "../mongo.js";
 import { SynapseError } from "../synapse/errors.js";
 import {
 	MAX_QUERY_LIMIT,
 	MAX_REASON_LENGTH,
 	type SynapseService,
+	sharedSpaceId,
 } from "../synapse/synapse.js";
 import { zipStore } from "../synapse/zip.js";
 
@@ -82,12 +85,47 @@ function actorOf(request: FastifyRequest): SynapseActor {
 	throw new SynapseError("Sign in or provide an API token.", 403);
 }
 
+const spacePattern = new RegExp(SYNAPSE_SPACE_ID_PATTERN);
+
+/**
+ * Synapse inside one workspace, under `/v1/:workspace/synapse`. `shared` is
+ * the workspace's shared space (which inherits `global`), `global` is the
+ * gateway-wide space, and `agent-<id>` is open only for this workspace's agents.
+ */
 export async function synapseRoutes(
 	server: FastifyInstance,
-	{ synapse }: { synapse: SynapseService },
+	{
+		synapse,
+		agentTokens,
+	}: { synapse: SynapseService; agentTokens: AgentTokenStore },
 ) {
-	server.addHook("onRequest", async (_request, reply) => {
+	server.addHook("onRequest", async (request, reply) => {
 		reply.header("cache-control", "no-store");
+		// Decide access to the space before reading a body (an import is up to
+		// 5 MB). A malformed ID is left to schema validation (400).
+		const space = (request.params as { space?: string }).space;
+		if (space === undefined || !spacePattern.test(space)) return;
+		const workspace = requestWorkspace(request);
+		if (space === SYNAPSE_GLOBAL_SPACE) {
+			// The global space sits above every workspace: people who run the
+			// whole gateway change it, and everyone else reads it.
+			const write = request.method !== "GET" && request.method !== "HEAD";
+			if (write && !(request.auth?.kind === "user" && workspace.implicit))
+				throw new SynapseError(
+					"Only owners and admins can change the global Synapse.",
+					403,
+				);
+		} else if (space !== SYNAPSE_SHARED_SPACE) {
+			const agents = await agentTokens.ids(workspace);
+			if (!agents.has(space.slice("agent-".length)))
+				throw new SynapseError("No such space in this workspace.", 404);
+		}
+	});
+	// After validation: requests say `shared`; storage keys it by workspace.
+	server.addHook("preHandler", async (request) => {
+		const params = request.params as { space?: SynapseSpaceId };
+		if (params.space === SYNAPSE_SHARED_SPACE)
+			params.space = sharedSpaceId(requestWorkspace(request));
 	});
 	// Store errors carry a status; validation failures are 400s. Both answer
 	// in the gateway's `{ error: { message } }` shape.
@@ -115,13 +153,18 @@ export async function synapseRoutes(
 		});
 	});
 
-	server.get("/v1/synapse/spaces", () => synapse.listSpaces());
-	server.get("/v1/synapse/templates", () => ({
+	server.get("/synapse/spaces", async (request) =>
+		synapse.listSpaces({
+			shared: sharedSpaceId(requestWorkspace(request)),
+			agentTokenIds: await agentTokens.ids(requestWorkspace(request)),
+		}),
+	);
+	server.get("/synapse/templates", () => ({
 		templates: synapse.templates(),
 	}));
 
 	server.get<{ Params: SpaceParams; Querystring: NotesQuery }>(
-		"/v1/synapse/spaces/:space/notes",
+		"/synapse/spaces/:space/notes",
 		{
 			schema: {
 				params: spaceParams,
@@ -165,7 +208,7 @@ export async function synapseRoutes(
 		},
 	);
 	server.post<{ Params: SpaceParams; Body: CreateSynapseNoteRequest }>(
-		"/v1/synapse/spaces/:space/notes",
+		"/synapse/spaces/:space/notes",
 		{
 			schema: {
 				params: spaceParams,
@@ -193,12 +236,12 @@ export async function synapseRoutes(
 				),
 	);
 	server.get<{ Params: NoteParams }>(
-		"/v1/synapse/spaces/:space/notes/:title",
+		"/synapse/spaces/:space/notes/:title",
 		{ schema: { params: noteParams } },
 		(request) => synapse.viewNote(request.params.space, request.params.title),
 	);
 	server.patch<{ Params: NoteParams; Body: UpdateSynapseNoteRequest }>(
-		"/v1/synapse/spaces/:space/notes/:title",
+		"/synapse/spaces/:space/notes/:title",
 		{
 			schema: {
 				params: noteParams,
@@ -221,7 +264,7 @@ export async function synapseRoutes(
 			),
 	);
 	server.post<{ Params: NoteParams; Body: AppendSynapseNoteRequest }>(
-		"/v1/synapse/spaces/:space/notes/:title/append",
+		"/synapse/spaces/:space/notes/:title/append",
 		{
 			schema: {
 				params: noteParams,
@@ -240,7 +283,7 @@ export async function synapseRoutes(
 	);
 	// `?revision=` deletes only that revision, so a stale confirmation is a 409.
 	server.delete<{ Params: NoteParams; Querystring: { revision?: number } }>(
-		"/v1/synapse/spaces/:space/notes/:title",
+		"/synapse/spaces/:space/notes/:title",
 		{
 			schema: {
 				params: noteParams,
@@ -262,7 +305,7 @@ export async function synapseRoutes(
 		},
 	);
 	server.get<{ Params: SpaceParams; Querystring: { limit?: number } }>(
-		"/v1/synapse/spaces/:space/unresolved",
+		"/synapse/spaces/:space/unresolved",
 		{
 			schema: {
 				params: spaceParams,
@@ -280,19 +323,19 @@ export async function synapseRoutes(
 		}),
 	);
 	server.get<{ Params: SpaceParams }>(
-		"/v1/synapse/spaces/:space/categories",
+		"/synapse/spaces/:space/categories",
 		{ schema: { params: spaceParams } },
 		async (request) => ({
 			categories: await synapse.categories(request.params.space),
 		}),
 	);
 	server.get<{ Params: SpaceParams & { date: string } }>(
-		"/v1/synapse/spaces/:space/daily/:date",
+		"/synapse/spaces/:space/daily/:date",
 		{ schema: { params: dateParams } },
 		(request) => synapse.daily(request.params.space, request.params.date),
 	);
 	server.get<{ Params: SpaceParams; Querystring: { format?: "json" | "zip" } }>(
-		"/v1/synapse/spaces/:space/export",
+		"/synapse/spaces/:space/export",
 		{
 			schema: {
 				params: spaceParams,
@@ -309,13 +352,13 @@ export async function synapseRoutes(
 				.header("content-type", "application/zip")
 				.header(
 					"content-disposition",
-					`attachment; filename="${request.params.space}.zip"`,
+					`attachment; filename="${exported.space}.zip"`,
 				)
 				.send(Buffer.from(zipStore(exported.files)));
 		},
 	);
 	server.post<{ Params: SpaceParams; Body: SynapseImportRequest }>(
-		"/v1/synapse/spaces/:space/import",
+		"/synapse/spaces/:space/import",
 		{
 			bodyLimit: IMPORT_BODY_LIMIT,
 			schema: {
@@ -343,19 +386,22 @@ export async function synapseRoutes(
 			synapse.importSpace(request.params.space, request.body, actorOf(request)),
 	);
 	server.get<{ Querystring: { status?: SynapseProposalStatus } }>(
-		"/v1/synapse/proposals",
+		"/synapse/proposals",
 		{
 			schema: {
 				querystring: { type: "object", properties: { status } },
 			},
 		},
 		async (request) => ({
-			proposals: await synapse.listProposals({ status: request.query.status }),
+			proposals: await synapse.listProposals({
+				space: sharedSpaceId(requestWorkspace(request)),
+				status: request.query.status,
+			}),
 		}),
 	);
-	// Approvals need a person: API tokens are refused by signedInMember.
+	// Approvals need a workspace admin: API tokens never hold synapse:decide.
 	server.post<{ Params: { id: string }; Body: DecideSynapseProposalRequest }>(
-		"/v1/synapse/proposals/:id/decide",
+		"/synapse/proposals/:id/decide",
 		{
 			schema: {
 				params: idParams,
@@ -370,13 +416,12 @@ export async function synapseRoutes(
 		},
 		(request) => {
 			const member = signedInMember(request);
-			if (!AccountStore.canManage(member))
-				throw new SynapseError("Only owners and admins decide proposals.", 403);
-			return synapse.decideProposal(request.params.id, request.body, {
-				kind: "user",
-				id: member.id,
-				name: member.name || member.email,
-			});
+			return synapse.decideProposal(
+				request.params.id,
+				request.body,
+				{ kind: "user", id: member.id, name: member.name || member.email },
+				sharedSpaceId(requestWorkspace(request)),
+			);
 		},
 	);
 }

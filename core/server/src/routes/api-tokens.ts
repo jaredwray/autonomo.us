@@ -9,7 +9,7 @@ export async function apiTokenRoutes(
 ) {
 	await tokenManagementRoutes(server, {
 		...options,
-		path: "/v1/api-tokens",
+		path: "/api-tokens",
 		permissions: API_TOKEN_PERMISSIONS,
 	});
 }

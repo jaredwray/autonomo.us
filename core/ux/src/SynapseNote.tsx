@@ -89,9 +89,12 @@ export function SynapseNote({
 	onNewNote,
 	onChanged,
 	onDeleted,
+	canEdit = true,
 }: {
 	space: string;
 	title: string;
+	/** False where the viewer may only read, such as Global for members. */
+	canEdit?: boolean;
 	/** Bumped by the parent when the space changed elsewhere (import, proposal). */
 	version: number;
 	onNavigate(title: string): void;
@@ -267,13 +270,15 @@ export function SynapseNote({
 				<p className="card-note">
 					Links to it are breadcrumbs: create the note and they resolve.
 				</p>
-				<button
-					className="button primary"
-					type="button"
-					onClick={() => onNewNote(title)}
-				>
-					Create “{title}”
-				</button>
+				{canEdit && (
+					<button
+						className="button primary"
+						type="button"
+						onClick={() => onNewNote(title)}
+					>
+						Create “{title}”
+					</button>
+				)}
 			</div>
 		) : (
 			<div className="banner-error" role="alert">
@@ -291,6 +296,9 @@ export function SynapseNote({
 			</p>
 		);
 	const { note } = view;
+	// A note from Global seen in a workspace's Shared space is read-only there.
+	const inherited = note.space !== space;
+	const writable = canEdit && !inherited;
 	const unresolved = view.outgoing.filter((link) => !link.exists);
 	const properties = Object.entries(note.properties);
 	return (
@@ -308,7 +316,7 @@ export function SynapseNote({
 						{`Updated ${shortDate(note.updatedAt)} by ${note.updatedBy.name} · created ${shortDate(note.createdAt)} by ${note.createdBy.name} · revision ${note.revision}`}
 					</p>
 				</div>
-				{mode === "read" && (
+				{mode === "read" && writable && (
 					<div className="token-actions">
 						<button
 							className="button"
@@ -334,6 +342,25 @@ export function SynapseNote({
 					</div>
 				)}
 			</header>
+			{inherited && (
+				<p className="banner-warning synapse-inherited-note" role="status">
+					Inherited from the global Synapse, so it is read-only here.{" "}
+					{canEdit && (
+						<button
+							className="button"
+							type="button"
+							onClick={() => onNewNote(note.title)}
+						>
+							Override in this workspace
+						</button>
+					)}
+				</p>
+			)}
+			{!canEdit && !inherited && (
+				<p className="card-note">
+					Only owners and admins change the global Synapse.
+				</p>
+			)}
 			{formError && (
 				<div className="banner-error" role="alert">
 					{formError}
@@ -533,15 +560,19 @@ export function SynapseNote({
 								<ul>
 									{unresolved.map((link) => (
 										<li key={link.title}>
-											<button
-												className="synapse-breadcrumb"
-												type="button"
-												aria-label={`Create note ${link.title}`}
-												title="Create this note"
-												onClick={() => onNewNote(link.title)}
-											>
-												{link.title}
-											</button>
+											{canEdit ? (
+												<button
+													className="synapse-breadcrumb"
+													type="button"
+													aria-label={`Create note ${link.title}`}
+													title="Create this note"
+													onClick={() => onNewNote(link.title)}
+												>
+													{link.title}
+												</button>
+											) : (
+												link.title
+											)}
 										</li>
 									))}
 								</ul>

@@ -3,7 +3,6 @@ import Fastify from "fastify";
 import { MongoClient } from "mongodb";
 import { afterAll, describe, expect, it } from "vitest";
 import { configFromEnv } from "../src/config.js";
-import { ModelCatalogService } from "../src/model-catalog-service.js";
 import { registryFromConfig } from "../src/providers/registry.js";
 import { ProviderSettingsStore } from "../src/providers/settings.js";
 import { modelsRoutes } from "../src/routes/models.js";
@@ -204,22 +203,34 @@ it("does not advertise an unsaved model when MongoDB is unavailable", async () =
 	// routes directly with a settings store whose database is unreachable.
 	const config = configFromEnv({ MONGODB_URI: "mongodb://127.0.0.1:9/test" });
 	const registry = registryFromConfig(config);
-	const settings = new ProviderSettingsStore(config, registry);
-	const server = Fastify({ logger: false });
-	await server.register(modelsRoutes, {
+	const settings = new ProviderSettingsStore(
+		config,
 		registry,
-		catalog: new ModelCatalogService(),
-		settings,
+		config.mongodbUrl,
+	);
+	const workspace = "11111111-1111-4111-8111-111111111111";
+	const server = Fastify({ logger: false });
+	// Stand in for the access hook: these routes run inside a resolved workspace.
+	server.addHook("onRequest", async (request) => {
+		request.workspace = {
+			id: workspace,
+			isDefault: true,
+			name: "Default",
+			archivedAt: null,
+			role: "admin",
+			implicit: true,
+		};
 	});
+	await server.register(modelsRoutes, { providers: settings });
 	try {
 		const added = await server.inject({
 			method: "POST",
-			url: "/v1/models",
+			url: "/models",
 			payload: { provider: "xai", model: "grok-test", apiKey: "test-key" },
 		});
 		expect(added.statusCode).toBe(503);
 		expect(added.body).not.toContain("test-key");
-		expect((await server.inject("/v1/models")).json().models).toEqual([]);
+		expect((await server.inject("/models")).statusCode).toBe(503);
 	} finally {
 		await server.close();
 		await settings.close();

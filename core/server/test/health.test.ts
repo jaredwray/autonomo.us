@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { configFromEnv } from "../src/config.js";
-import { createServer } from "../src/server.js";
+import { createServer as createGatewayServer } from "../src/server.js";
 import { scheduleTicksAsMicrotasks } from "../src/worker-requests.js";
+import { routeToDefaultWorkspace } from "./auth-helpers.js";
+
+/** Servers here exercise the default workspace through pre-workspace paths. */
+const createServer = (options?: Parameters<typeof createGatewayServer>[0]) =>
+	routeToDefaultWorkspace(createGatewayServer(options));
 
 const mocks = vi.hoisted(() => ({
 	mongoPing: vi.fn(),
@@ -15,6 +20,8 @@ vi.mock("mongodb", () => ({
 				collection: () => ({
 					find: () => ({ toArray: async () => [] }),
 					findOne: async () => null,
+					updateOne: async () => ({ matchedCount: 0 }),
+					createIndex: async () => "index",
 					findOneAndUpdate: async (
 						_filter: unknown,
 						update: { $setOnInsert: { config: unknown } },
@@ -86,9 +93,9 @@ describe("health route", () => {
 		});
 		expect(mocks.mongoPing).toHaveBeenCalledWith({ ping: 1 });
 		await servers[0].close();
-		// The probe closes its own client. Model settings and routing each
-		// close the client they opened while loading.
-		expect(mocks.mongoClose).toHaveBeenCalledTimes(3);
+		// The probe closes its own client. The stores share one control-plane
+		// client, which closes once.
+		expect(mocks.mongoClose).toHaveBeenCalledTimes(2);
 	});
 
 	it("reports a failed probe and recovers on the next request", async () => {

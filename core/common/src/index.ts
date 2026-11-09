@@ -40,6 +40,7 @@ export {
 	type CreateSynapseProposalRequest,
 	type DecideSynapseProposalRequest,
 	SYNAPSE_ATTACHMENT_EXTENSIONS,
+	SYNAPSE_GLOBAL_SPACE,
 	SYNAPSE_SHARED_SPACE,
 	SYNAPSE_SPACE_ID_PATTERN,
 	type SynapseActor,
@@ -117,3 +118,19 @@ export type {
 	UsageSummary,
 } from "./types.js";
 export { PROVIDER_NAMES } from "./types.js";
+export {
+	type CreateWorkspaceRequest,
+	type MembershipAction,
+	type SetWorkspaceMemberRequest,
+	type UpdateWorkspaceRequest,
+	WORKSPACE_ROLES,
+	type Workspace,
+	type WorkspaceAccess,
+	type WorkspaceAction,
+	type WorkspaceDetails,
+	type WorkspaceList,
+	type WorkspaceMember,
+	type WorkspaceMembers,
+	type WorkspaceMembership,
+	type WorkspaceRole,
+} from "./workspaces.js";

@@ -1,5 +1,6 @@
 import type { AnalyticsQuery } from "@autonomo.us/common";
 import type { FastifyInstance } from "fastify";
+import { requestWorkspace } from "../auth/access.js";
 import { DAY_MS } from "../telemetry/analytics.js";
 import type { TelemetryService } from "../telemetry/telemetry.js";
 
@@ -7,6 +8,7 @@ export type TelemetryRouteOptions = {
 	telemetry: TelemetryService;
 };
 
+/** Registered under `/v1/:workspace`: every view is limited to that workspace. */
 export async function telemetryRoutes(
 	server: FastifyInstance,
 	options: TelemetryRouteOptions,
@@ -14,7 +16,7 @@ export async function telemetryRoutes(
 	const { telemetry } = options;
 
 	server.get<{ Querystring: AnalyticsQuery }>(
-		"/v1/telemetry/analytics",
+		"/telemetry/analytics",
 		{
 			schema: {
 				querystring: {
@@ -44,16 +46,19 @@ export async function telemetryRoutes(
 					error: { message: "Choose a valid time range of up to 90 days." },
 				});
 			reply.header("cache-control", "no-store");
-			return telemetry.analytics({
-				...request.query,
-				from: new Date(from).toISOString(),
-				to: new Date(to).toISOString(),
-			});
+			return telemetry.analytics(
+				{
+					...request.query,
+					from: new Date(from).toISOString(),
+					to: new Date(to).toISOString(),
+				},
+				requestWorkspace(request),
+			);
 		},
 	);
 
 	server.get(
-		"/v1/telemetry/summary",
+		"/telemetry/summary",
 		{
 			schema: {
 				querystring: {
@@ -66,12 +71,13 @@ export async function telemetryRoutes(
 			},
 		},
 		async (request, reply) => {
+			const workspace = requestWorkspace(request);
 			const { source = "auto" } = request.query as {
 				source?: "auto" | "memory" | "mongodb";
 			};
 
 			if (source === "mongodb") {
-				const summary = await telemetry.summaryFromSink();
+				const summary = await telemetry.summaryFromSink(workspace);
 				if (!summary) {
 					return reply.status(503).send({
 						error: {
@@ -85,16 +91,16 @@ export async function telemetryRoutes(
 			}
 
 			if (source === "auto") {
-				const summary = await telemetry.summaryFromSink();
+				const summary = await telemetry.summaryFromSink(workspace);
 				if (summary) return summary;
 			}
 
-			return telemetry.summary();
+			return telemetry.summary(workspace);
 		},
 	);
 
 	server.get(
-		"/v1/telemetry/events",
+		"/telemetry/events",
 		{
 			schema: {
 				querystring: {
@@ -109,7 +115,7 @@ export async function telemetryRoutes(
 		async (request) => {
 			const { limit = 50 } = request.query as { limit?: number };
 			return {
-				events: telemetry.recentEvents(limit),
+				events: telemetry.recentEvents(limit, requestWorkspace(request)),
 				sink: {
 					configured: telemetry.sinkConfigured,
 					healthy: telemetry.sinkHealthy,

@@ -301,7 +301,7 @@ export function SynapseProposals({
 			</div>
 			{!canDecide && (
 				<p className="card-note">
-					Owners and admins decide proposals. You can read them here.
+					Workspace admins decide proposals. You can read them here.
 				</p>
 			)}
 			{error && (
