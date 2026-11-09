@@ -632,6 +632,8 @@ describe("log", () => {
 	it("appends timestamped lines under ## Log, creating the heading at the end when missing", async () => {
 		expect(appendLogLine("", "- 09:00 a")).toBe("## Log\n- 09:00 a");
 		// A heading inside a code block is not the log section.
+		const nested = "````md\n```ts\n## Log\n```\n````\n\n## Log\n- 08:00 x";
+		expect(appendLogLine(nested, "- 09:00 a")).toBe(`${nested}\n- 09:00 a`);
 		expect(appendLogLine("```\n## Log\n```", "- 09:00 a")).toBe(
 			"```\n## Log\n```\n\n## Log\n- 09:00 a",
 		);

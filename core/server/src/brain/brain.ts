@@ -157,13 +157,22 @@ function appendText(body: string, text: string) {
 export function appendLogLine(body: string, line: string): string {
 	const lines = body.split("\n");
 	// Headings inside fenced code are text, not sections.
+	// A block closes only on a bare fence of the same character, at least as
+	// long as the opener (CommonMark), so ```ts inside a block stays content.
 	const outside: boolean[] = [];
-	let fence: string | null = null;
+	let fence: { char: string; length: number } | null = null;
 	for (const item of lines) {
-		const marker = /^\s{0,3}(`{3,}|~{3,})/.exec(item)?.[1][0];
-		outside.push(fence === null && !marker);
-		if (marker && (fence === null || marker === fence))
-			fence = fence === null ? marker : null;
+		const match = /^\s{0,3}(`{3,}|~{3,})(.*)$/.exec(item);
+		outside.push(fence === null && !match);
+		if (!match) continue;
+		const [, marker, rest] = match;
+		if (fence === null) fence = { char: marker[0], length: marker.length };
+		else if (
+			marker[0] === fence.char &&
+			marker.length >= fence.length &&
+			rest.trim() === ""
+		)
+			fence = null;
 	}
 	const heading = lines.findIndex(
 		(item, index) => outside[index] && /^## Log\s*$/.test(item),
