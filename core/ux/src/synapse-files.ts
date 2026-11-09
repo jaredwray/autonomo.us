@@ -1,9 +1,9 @@
-import type { BrainFile } from "@autonomo.us/common";
+import type { SynapseFile } from "@autonomo.us/common";
 
 /**
- * Vault-relative path for a picked file. A folder picker (webkitdirectory)
+ * Space-relative path for a picked file. A folder picker (webkitdirectory)
  * reports paths starting with the chosen folder's name, which is not part of
- * the vault, so it is dropped; single files keep their names.
+ * the space, so it is dropped; single files keep their names.
  */
 export function vaultRelativePath(file: File): string {
 	const relative = (file as File & { webkitRelativePath?: string })
@@ -24,10 +24,10 @@ export function readFileText(file: File): Promise<string> {
 }
 
 /** Reads picked files into import entries, keeping only Markdown. */
-export async function filesToBrainFiles(
+export async function filesToSynapseFiles(
 	files: Iterable<File>,
-): Promise<BrainFile[]> {
-	const entries: BrainFile[] = [];
+): Promise<SynapseFile[]> {
+	const entries: SynapseFile[] = [];
 	for (const file of files) {
 		const path = vaultRelativePath(file);
 		if (!path.toLowerCase().endsWith(".md")) continue;
@@ -59,13 +59,13 @@ export const IMPORT_BATCH_BYTES = 4_000_000;
  * alone and the server reports it.
  */
 export function importBatches(
-	files: BrainFile[],
+	files: SynapseFile[],
 	maxFiles = IMPORT_BATCH_FILES,
 	maxBytes = IMPORT_BATCH_BYTES,
-): BrainFile[][] {
+): SynapseFile[][] {
 	const encoder = new TextEncoder();
-	const batches: BrainFile[][] = [];
-	let current: BrainFile[] = [];
+	const batches: SynapseFile[][] = [];
+	let current: SynapseFile[] = [];
 	let bytes = 0;
 	for (const file of files) {
 		const size = encoder.encode(JSON.stringify(file)).length + 1;

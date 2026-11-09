@@ -1,5 +1,5 @@
 /**
- * A store-only (uncompressed) .zip writer. Obsidian opens it as a vault. The
+ * A store-only (uncompressed) .zip writer. Obsidian opens it as a space. The
  * CRC table is hand-written because `node:zlib.crc32` is not guaranteed in
  * the Workers runtime, and compression would need a dependency.
  */

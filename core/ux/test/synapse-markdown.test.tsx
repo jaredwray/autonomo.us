@@ -1,11 +1,11 @@
 import { render, screen } from "@testing-library/react";
 import { expect, it } from "vitest";
-import { importBatches } from "../src/brain-files.js";
+import { importBatches } from "../src/synapse-files.js";
 import {
 	MAX_NESTING,
 	parseWikilink,
 	renderMarkdown,
-} from "../src/brain-markdown.js";
+} from "../src/synapse-markdown.js";
 
 const options = { hrefFor: (title: string) => `#${title}`, onNavigate() {} };
 

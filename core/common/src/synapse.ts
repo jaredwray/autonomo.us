@@ -1,29 +1,29 @@
 /**
- * The Brain: a built-in knowledge graph of linked Markdown notes for agents
+ * Synapse: a built-in knowledge graph of linked Markdown notes for agents
  * and the team, modelled on Steph Ango's (kepano) Obsidian vault. Notes are
  * plain Markdown with properties (frontmatter), connected by [[wikilinks]],
  * classified with a `categories` property, and exportable as an Obsidian
- * vault. See docs/BRAIN.md.
+ * space. See docs/SYNAPSE.md.
  */
 
 /** Values a property may hold. Lists default over text when several values fit. */
-export type BrainPropertyValue = string | number | boolean | null | string[];
-export type BrainProperties = Record<string, BrainPropertyValue>;
+export type SynapsePropertyValue = string | number | boolean | null | string[];
+export type SynapseProperties = Record<string, SynapsePropertyValue>;
 
 /**
  * `shared` is the team canon: every agent can read it, and agents change it
  * only through reviewed proposals. `agent-<agentTokenId>` is one agent's
- * private vault, keyed by its agent token ID, which survives token rolls.
+ * private space, keyed by its agent token ID, which survives token rolls.
  */
-export type BrainVaultId = "shared" | `agent-${string}`;
-export const BRAIN_SHARED_VAULT = "shared" as const;
-export const BRAIN_VAULT_ID_PATTERN = "^(shared|agent-[A-Za-z0-9_-]{1,64})$";
+export type SynapseSpaceId = "shared" | `agent-${string}`;
+export const SYNAPSE_SHARED_SPACE = "shared" as const;
+export const SYNAPSE_SPACE_ID_PATTERN = "^(shared|agent-[A-Za-z0-9_-]{1,64})$";
 
 /**
  * A [[link]] whose target ends in one of these extensions points at an
  * attachment, not a note. Only known formats count, so "Node.js" can be a note.
  */
-export const BRAIN_ATTACHMENT_EXTENSIONS: readonly string[] = [
+export const SYNAPSE_ATTACHMENT_EXTENSIONS: readonly string[] = [
 	"png",
 	"jpg",
 	"jpeg",
@@ -48,37 +48,37 @@ export const BRAIN_ATTACHMENT_EXTENSIONS: readonly string[] = [
 	"base",
 ];
 
-export type BrainActor = {
+export type SynapseActor = {
 	kind: "user" | "api-token" | "agent" | "system";
 	id: string;
 	name: string;
 };
 
-export type BrainVault = {
-	id: BrainVaultId;
+export type SynapseSpace = {
+	id: SynapseSpaceId;
 	kind: "shared" | "agent";
-	/** "Shared" or the agent token's name when the vault was last written. */
+	/** "Shared" or the agent token's name when the space was last written. */
 	name: string;
-	/** Agent vaults only. */
+	/** Agent spaces only. */
 	agentTokenId?: string;
 	noteCount: number;
 	createdAt: string | null;
 	updatedAt: string | null;
 };
 
-export type BrainVaultList = {
-	vaults: BrainVault[];
+export type SynapseSpaceList = {
+	spaces: SynapseSpace[];
 	persistence: "mongodb" | "memory";
 	/** IANA time zone used for `{{date}}`, daily notes, and the log. */
 	timeZone: string;
 };
 
-export type BrainNote = {
+export type SynapseNote = {
 	id: string;
-	vault: BrainVaultId;
-	/** Unique per vault, case-insensitively. Doubles as the file name. */
+	space: SynapseSpaceId;
+	/** Unique per space, case-insensitively. Doubles as the file name. */
 	title: string;
-	properties: BrainProperties;
+	properties: SynapseProperties;
 	/** Markdown without frontmatter. */
 	body: string;
 	/** Outgoing [[link]] targets from the body and properties, deduped case-insensitively, in first-seen order. */
@@ -89,16 +89,16 @@ export type BrainNote = {
 	categories: string[];
 	createdAt: string;
 	updatedAt: string;
-	createdBy: BrainActor;
-	updatedBy: BrainActor;
+	createdBy: SynapseActor;
+	updatedBy: SynapseActor;
 	/** Starts at 1 and increments on every change, including link rewrites from renames. */
 	revision: number;
 };
 
-export type BrainNoteSummary = Pick<
-	BrainNote,
+export type SynapseNoteSummary = Pick<
+	SynapseNote,
 	| "id"
-	| "vault"
+	| "space"
 	| "title"
 	| "categories"
 	| "tags"
@@ -110,9 +110,9 @@ export type BrainNoteSummary = Pick<
 	snippet: string;
 };
 
-export type BrainOutgoingLink = { title: string; exists: boolean };
+export type SynapseOutgoingLink = { title: string; exists: boolean };
 
-export type BrainRelatedNote = BrainNoteSummary & {
+export type SynapseRelatedNote = SynapseNoteSummary & {
 	/** Outgoing links this note shares with the viewed note. */
 	sharedLinks: string[];
 	sharedTags: string[];
@@ -120,24 +120,24 @@ export type BrainRelatedNote = BrainNoteSummary & {
 	direct: boolean;
 };
 
-/** Everything the dashboard and `brain_read` show for one note. */
-export type BrainNoteView = {
-	note: BrainNote;
+/** Everything the dashboard and `synapse_read` show for one note. */
+export type SynapseNoteView = {
+	note: SynapseNote;
 	/** Notes that link to this one, newest first. */
-	backlinks: BrainNoteSummary[];
+	backlinks: SynapseNoteSummary[];
 	/** Outgoing links with whether each target note exists yet. */
-	outgoing: BrainOutgoingLink[];
+	outgoing: SynapseOutgoingLink[];
 	/** Notes related by link overlap (kepano's Related base), best first. */
-	related: BrainRelatedNote[];
+	related: SynapseRelatedNote[];
 	/** Notes whose `categories` include this note, when any do (category notes). */
-	categoryMembers: BrainNoteSummary[];
+	categoryMembers: SynapseNoteSummary[];
 	/** The note as an Obsidian file: YAML frontmatter plus body. */
 	markdown: string;
 };
 
-export type BrainNoteSort = "updated" | "created" | "title" | "relevance";
+export type SynapseNoteSort = "updated" | "created" | "title" | "relevance";
 
-export type BrainQuery = {
+export type SynapseQuery = {
 	/** Every whitespace-separated term must appear in the title, body, or a property value (case-insensitive). */
 	text?: string;
 	/** Notes whose `categories` include this category title. */
@@ -149,32 +149,32 @@ export type BrainQuery = {
 	/** Property equality. List properties match when any item matches. Strings compare case-insensitively with [[ ]] stripped. */
 	where?: Record<string, string | number | boolean>;
 	/** Defaults to `relevance` with `text`, otherwise `updated`. */
-	sort?: BrainNoteSort;
+	sort?: SynapseNoteSort;
 	direction?: "asc" | "desc";
 	/** Default 50, maximum 200. */
 	limit?: number;
 	offset?: number;
 };
 
-export type BrainNoteList = { notes: BrainNoteSummary[]; total: number };
+export type SynapseNoteList = { notes: SynapseNoteSummary[]; total: number };
 
-export type CreateBrainNoteRequest = {
+export type CreateSynapseNoteRequest = {
 	title: string;
-	/** Template name from GET /v1/brain/templates; its properties are filled first. */
+	/** Template name from GET /v1/synapse/templates; its properties are filled first. */
 	template?: string;
 	body?: string;
 	/** Merged over the template's properties. */
-	properties?: BrainProperties;
+	properties?: SynapseProperties;
 	/** A whole Obsidian file (frontmatter plus body). Replaces `body` and `properties` when present. */
 	markdown?: string;
 };
 
-export type UpdateBrainNoteRequest = {
-	/** Renaming rewrites [[Old title]] links across the vault, like Obsidian. */
+export type UpdateSynapseNoteRequest = {
+	/** Renaming rewrites [[Old title]] links across the space, like Obsidian. */
 	title?: string;
 	body?: string;
 	/** Merged into existing properties; a `null` value is stored as an empty property. Use `replaceProperties` to drop keys. */
-	properties?: BrainProperties;
+	properties?: SynapseProperties;
 	/** When true, `properties` replaces the whole property set. */
 	replaceProperties?: boolean;
 	/** A whole Obsidian file. Replaces `body` and all properties when present. */
@@ -183,13 +183,13 @@ export type UpdateBrainNoteRequest = {
 	revision?: number;
 };
 
-export type AppendBrainNoteRequest = {
+export type AppendSynapseNoteRequest = {
 	text: string;
 	/** Template for the note when it does not exist yet. */
 	template?: string;
 };
 
-export type BrainUnresolvedLink = {
+export type SynapseUnresolvedLink = {
 	/** A link target with no note yet: a breadcrumb for a future note. */
 	title: string;
 	/** How many notes link to it. */
@@ -198,7 +198,7 @@ export type BrainUnresolvedLink = {
 	sources: string[];
 };
 
-export type BrainCategory = {
+export type SynapseCategory = {
 	title: string;
 	count: number;
 	/** From the built-in template, when there is one. */
@@ -208,16 +208,16 @@ export type BrainCategory = {
 };
 
 /** What happened on one day, like kepano's Daily base. */
-export type BrainDaily = {
+export type SynapseDaily = {
 	/** YYYY-MM-DD. */
 	date: string;
 	/** The note titled with the date, when it exists. */
-	note: BrainNote | null;
+	note: SynapseNote | null;
 	/** Other notes created that day, titled with the date, with a date property for that day, or linking to it. */
-	entries: BrainNoteSummary[];
+	entries: SynapseNoteSummary[];
 };
 
-export type BrainTemplate = {
+export type SynapseTemplate = {
 	/** Pluralized, like the category it creates: "People", "Projects". */
 	name: string;
 	/** Category title the template adds to `categories`; `null` for Daily. */
@@ -226,69 +226,69 @@ export type BrainTemplate = {
 	/** Export folder: "References", "Clippings", "Daily", or "" for the vault root. */
 	folder: string;
 	/** Default properties. The string "{{date}}" becomes today's YYYY-MM-DD. */
-	properties: BrainProperties;
+	properties: SynapseProperties;
 	/** Default body. */
 	body: string;
 };
 
-export type BrainFile = {
-	/** Vault-relative path with forward slashes, e.g. "References/Ada Lovelace.md". */
+export type SynapseFile = {
+	/** Space-relative path with forward slashes, e.g. "References/Ada Lovelace.md". */
 	path: string;
 	content: string;
 };
 
-export type BrainExport = { vault: BrainVaultId; files: BrainFile[] };
+export type SynapseExport = { space: SynapseSpaceId; files: SynapseFile[] };
 
-export type BrainImportRequest = {
-	files: BrainFile[];
+export type SynapseImportRequest = {
+	files: SynapseFile[];
 	/** Replace notes whose titles already exist. Otherwise they are skipped. */
 	overwrite?: boolean;
 };
 
-export type BrainImportResult = {
+export type SynapseImportResult = {
 	created: string[];
 	updated: string[];
 	skipped: Array<{ path: string; reason: string }>;
 };
 
-export type BrainProposalAction = "create" | "update" | "append" | "delete";
-export type BrainProposalStatus = "pending" | "approved" | "rejected";
+export type SynapseProposalAction = "create" | "update" | "append" | "delete";
+export type SynapseProposalStatus = "pending" | "approved" | "rejected";
 
-/** An agent's request to change the shared vault, decided by an owner or admin. */
-export type BrainProposal = {
+/** An agent's request to change the shared space, decided by an owner or admin. */
+export type SynapseProposal = {
 	id: string;
-	vault: "shared";
-	action: BrainProposalAction;
+	space: "shared";
+	action: SynapseProposalAction;
 	title: string;
 	/** update: rename to this title. */
 	newTitle?: string;
 	/** create and update: the proposed body. */
 	body?: string;
 	/** create and update: properties merged into the note. */
-	properties?: BrainProperties;
+	properties?: SynapseProperties;
 	/** append: text added to the end of the note. */
 	text?: string;
 	/** Why the agent wants this change. */
 	reason: string;
-	status: BrainProposalStatus;
-	author: BrainActor;
+	status: SynapseProposalStatus;
+	author: SynapseActor;
 	createdAt: string;
 	/** Revision of the shared note when proposed; approval fails with 409 if the note changed since. */
 	baseRevision: number | null;
 	decidedAt?: string;
-	decidedBy?: BrainActor;
+	decidedBy?: SynapseActor;
 	decisionReason?: string;
 };
 
-export type CreateBrainProposalRequest = Pick<
-	BrainProposal,
+export type CreateSynapseProposalRequest = Pick<
+	SynapseProposal,
 	"action" | "title" | "newTitle" | "body" | "properties" | "text" | "reason"
 >;
 
-export type DecideBrainProposalRequest = {
+export type DecideSynapseProposalRequest = {
 	decision: "approve" | "reject";
 	/** Required to reject; written into the author agent's daily note. */
 	reason?: string;
 };
 
-export type BrainProposalList = { proposals: BrainProposal[] };
+export type SynapseProposalList = { proposals: SynapseProposal[] };

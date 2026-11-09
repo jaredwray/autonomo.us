@@ -54,22 +54,22 @@ const routePermissions = new Map<string, ApiTokenPermission>([
 	["GET /v1/telemetry/summary", "telemetry:read"],
 	["GET /v1/telemetry/events", "telemetry:read"],
 	["GET /v1/telemetry/analytics", "telemetry:read"],
-	["GET /v1/brain/vaults", "brain:read"],
-	["GET /v1/brain/templates", "brain:read"],
-	["GET /v1/brain/vaults/:vault/notes", "brain:read"],
-	["POST /v1/brain/vaults/:vault/notes", "brain:edit"],
-	["GET /v1/brain/vaults/:vault/notes/:title", "brain:read"],
-	["PATCH /v1/brain/vaults/:vault/notes/:title", "brain:edit"],
-	["POST /v1/brain/vaults/:vault/notes/:title/append", "brain:edit"],
-	["DELETE /v1/brain/vaults/:vault/notes/:title", "brain:edit"],
-	["GET /v1/brain/vaults/:vault/unresolved", "brain:read"],
-	["GET /v1/brain/vaults/:vault/categories", "brain:read"],
-	["GET /v1/brain/vaults/:vault/daily/:date", "brain:read"],
-	// A whole vault in one response, so it needs the write-level grant.
-	["GET /v1/brain/vaults/:vault/export", "brain:edit"],
-	["POST /v1/brain/vaults/:vault/import", "brain:edit"],
-	["GET /v1/brain/proposals", "brain:read"],
-	// POST /v1/brain/proposals/:id/decide is absent on purpose: approvals need a person.
+	["GET /v1/synapse/spaces", "synapse:read"],
+	["GET /v1/synapse/templates", "synapse:read"],
+	["GET /v1/synapse/spaces/:space/notes", "synapse:read"],
+	["POST /v1/synapse/spaces/:space/notes", "synapse:edit"],
+	["GET /v1/synapse/spaces/:space/notes/:title", "synapse:read"],
+	["PATCH /v1/synapse/spaces/:space/notes/:title", "synapse:edit"],
+	["POST /v1/synapse/spaces/:space/notes/:title/append", "synapse:edit"],
+	["DELETE /v1/synapse/spaces/:space/notes/:title", "synapse:edit"],
+	["GET /v1/synapse/spaces/:space/unresolved", "synapse:read"],
+	["GET /v1/synapse/spaces/:space/categories", "synapse:read"],
+	["GET /v1/synapse/spaces/:space/daily/:date", "synapse:read"],
+	// A whole space in one response, so it needs the write-level grant.
+	["GET /v1/synapse/spaces/:space/export", "synapse:edit"],
+	["POST /v1/synapse/spaces/:space/import", "synapse:edit"],
+	["GET /v1/synapse/proposals", "synapse:read"],
+	// POST /v1/synapse/proposals/:id/decide is absent on purpose: approvals need a person.
 ]);
 
 /**

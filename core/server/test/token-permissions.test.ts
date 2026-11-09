@@ -151,60 +151,60 @@ it.each(
 		},
 		{
 			method: "GET",
-			url: "/v1/brain/vaults",
-			required: "brain:read",
+			url: "/v1/synapse/spaces",
+			required: "synapse:read",
 			status: 200,
 		},
 		{
 			method: "GET",
-			url: "/v1/brain/templates",
-			required: "brain:read",
+			url: "/v1/synapse/templates",
+			required: "synapse:read",
 			status: 200,
 		},
 		{
 			method: "GET",
-			url: "/v1/brain/vaults/shared/notes?text=x",
-			required: "brain:read",
+			url: "/v1/synapse/spaces/shared/notes?text=x",
+			required: "synapse:read",
 			status: 200,
 		},
 		{
 			method: "POST",
-			url: "/v1/brain/vaults/shared/notes",
-			required: "brain:edit",
+			url: "/v1/synapse/spaces/shared/notes",
+			required: "synapse:edit",
 			status: 201,
 			payload: { title: "Permission note" },
 		},
 		// Read grants reach the note lookup; the 404 proves the gate let them through.
 		{
 			method: "GET",
-			url: "/v1/brain/vaults/shared/notes/Missing%20note",
-			required: "brain:read",
+			url: "/v1/synapse/spaces/shared/notes/Missing%20note",
+			required: "synapse:read",
 			status: 404,
 		},
 		{
 			method: "GET",
-			url: "/v1/brain/vaults/shared/daily/2026-11-08",
-			required: "brain:read",
+			url: "/v1/synapse/spaces/shared/daily/2026-11-08",
+			required: "synapse:read",
 			status: 200,
 		},
-		// Export hands out a whole vault, so it needs the edit grant.
+		// Export hands out a whole space, so it needs the edit grant.
 		{
 			method: "GET",
-			url: "/v1/brain/vaults/shared/export",
-			required: "brain:edit",
+			url: "/v1/synapse/spaces/shared/export",
+			required: "synapse:edit",
 			status: 200,
 		},
 		{
 			method: "POST",
-			url: "/v1/brain/vaults/shared/import",
-			required: "brain:edit",
+			url: "/v1/synapse/spaces/shared/import",
+			required: "synapse:edit",
 			status: 200,
 			payload: { files: [] },
 		},
 		{
 			method: "GET",
-			url: "/v1/brain/proposals",
-			required: "brain:read",
+			url: "/v1/synapse/proposals",
+			required: "synapse:read",
 			status: 200,
 		},
 	] as const;
@@ -247,7 +247,7 @@ it.each(
 		// Approvals need a person, whatever the token's grants.
 		[
 			"POST",
-			"/v1/brain/proposals/00000000-0000-0000-0000-000000000000/decide",
+			"/v1/synapse/proposals/00000000-0000-0000-0000-000000000000/decide",
 			{ decision: "approve" },
 		],
 	] as const) {

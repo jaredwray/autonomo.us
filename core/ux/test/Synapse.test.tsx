@@ -13,7 +13,7 @@ import { App } from "../src/App.js";
 import { clearCredential, setSessionToken } from "../src/api.js";
 import { PASSWORD, setUpOwner } from "./session.js";
 
-// The Brain dashboard runs against a real gateway API server (no fetch
+// Synapse dashboard runs against a real gateway API server (no fetch
 // mocks): each test boots @autonomo.us/server on an ephemeral port, completes
 // setup as the owner, and drives the React app with Testing Library.
 
@@ -53,7 +53,7 @@ function renderAt(hash: string) {
 		</StrictMode>,
 	);
 }
-async function start(hash = "#/brain") {
+async function start(hash = "#/synapse") {
 	const running = await boot();
 	renderAt(hash);
 	return running;
@@ -67,12 +67,12 @@ const today = () => new Date().toISOString().slice(0, 10);
 
 async function createNote(
 	{ server, owner }: Running,
-	vault: string,
+	space: string,
 	payload: Record<string, unknown>,
 ) {
 	const response = await server.inject({
 		method: "POST",
-		url: `/v1/brain/vaults/${vault}/notes`,
+		url: `/v1/synapse/spaces/${space}/notes`,
 		headers: owner,
 		payload,
 	});
@@ -81,11 +81,11 @@ async function createNote(
 }
 async function readNote(
 	{ server, owner }: Running,
-	vault: string,
+	space: string,
 	title: string,
 ) {
 	return server.inject({
-		url: `/v1/brain/vaults/${vault}/notes/${encodeURIComponent(title)}`,
+		url: `/v1/synapse/spaces/${space}/notes/${encodeURIComponent(title)}`,
 		headers: owner,
 	});
 }
@@ -104,7 +104,7 @@ async function createAgent({ server, owner }: Running) {
 	expect(response.statusCode, response.body).toBe(201);
 	return response.json() as { token: { id: string }; secret: string };
 }
-/** Calls a Brain tool the way an agent does: JSON-RPC over the MCP endpoint. */
+/** Calls a Synapse tool the way an agent does: JSON-RPC over the MCP endpoint. */
 async function mcpCall(
 	url: string,
 	secret: string,
@@ -131,16 +131,16 @@ async function mcpCall(
 	return body.result;
 }
 
-it("navigates to Brain and creates a note from a template with its properties", async () => {
+it("navigates to Synapse and creates a note from a template with its properties", async () => {
 	await start();
 	await screen.findByText(/No notes yet/);
 	expect(
-		screen.getByRole("link", { name: "Brain" }).getAttribute("aria-current"),
+		screen.getByRole("link", { name: "Synapse" }).getAttribute("aria-current"),
 	).toBe("page");
-	// The vault list is a separate request from the notes list.
+	// The space list is a separate request from the notes list.
 	await screen.findByText(/Notes are temporary until MongoDB/);
 	expect(
-		within(screen.getByLabelText("Vault"))
+		within(screen.getByLabelText("Space"))
 			.getAllByRole("option")
 			.map((option) => option.textContent),
 	).toEqual(["Shared (0 notes)"]);
@@ -151,7 +151,7 @@ it("navigates to Brain and creates a note from a template with its properties", 
 	expect(screen.getByText(/Properties: .*role.*created/)).toBeDefined();
 	fireEvent.click(screen.getByRole("button", { name: "Create note" }));
 	await screen.findByRole("heading", { name: "Ada Lovelace" });
-	expect(window.location.hash).toBe("#/brain/shared/Ada%20Lovelace");
+	expect(window.location.hash).toBe("#/synapse/shared/Ada%20Lovelace");
 	const table = within(properties());
 	const keys = table.getAllByRole("rowheader").map((cell) => cell.textContent);
 	expect(keys).toHaveLength(6);
@@ -173,7 +173,7 @@ it("navigates to Brain and creates a note from a template with its properties", 
 	expect(within(await notesList()).getByText("2 notes")).toBeDefined();
 	fireEvent.click(table.getByRole("link", { name: "People" }));
 	await screen.findByRole("heading", { name: "People" });
-	expect(window.location.hash).toBe("#/brain/shared/People");
+	expect(window.location.hash).toBe("#/synapse/shared/People");
 	const members = within(
 		await screen.findByRole("region", { name: /^Notes in People/ }),
 	);
@@ -268,7 +268,7 @@ it("edits Markdown, shows unresolved links as breadcrumbs, and resolves them whe
 	// Following a wikilink in the body navigates.
 	fireEvent.click(screen.getByRole("link", { name: "Babbage" }));
 	await screen.findByRole("heading", { name: "Charles Babbage" });
-	expect(window.location.hash).toBe("#/brain/shared/Charles%20Babbage");
+	expect(window.location.hash).toBe("#/synapse/shared/Charles%20Babbage");
 	const stored = (await readNote(running, "shared", "Ada Lovelace")).json();
 	expect([...stored.note.links].sort()).toEqual(["Charles Babbage", "People"]);
 	expect(stored.note.categories).toEqual(["People"]);
@@ -285,7 +285,7 @@ it("reports a save conflict and lets the editor reload", async () => {
 	// Someone else saves first.
 	const patched = await running.server.inject({
 		method: "PATCH",
-		url: "/v1/brain/vaults/shared/notes/Roadmap",
+		url: "/v1/synapse/spaces/shared/notes/Roadmap",
 		headers: running.owner,
 		payload: { body: "v1 shipped" },
 	});
@@ -313,7 +313,7 @@ it("reports a save conflict and lets the editor reload", async () => {
 	);
 });
 
-it("keeps an open draft when the vault refreshes, and still detects conflicts", async () => {
+it("keeps an open draft when the space refreshes, and still detects conflicts", async () => {
 	const running = await start();
 	await createNote(running, "shared", { title: "Roadmap", body: "v1" });
 	fireEvent.click(
@@ -322,7 +322,7 @@ it("keeps an open draft when the vault refreshes, and still detects conflicts", 
 	await screen.findByRole("heading", { name: "Roadmap" });
 	fireEvent.click(screen.getByRole("button", { name: "Edit" }));
 	change("Markdown source", "v2 draft");
-	// An import elsewhere refreshes the vault while the editor is open.
+	// An import elsewhere refreshes the space while the editor is open.
 	fireEvent.click(screen.getByRole("button", { name: "Import" }));
 	fireEvent.change(screen.getByLabelText("Markdown files"), {
 		target: { files: [new File(["Other body."], "Other.md")] },
@@ -330,7 +330,7 @@ it("keeps an open draft when the vault refreshes, and still detects conflicts", 
 	await screen.findByText(/1 Markdown file/);
 	fireEvent.click(
 		within(
-			screen.getByRole("region", { name: "Import into the shared vault" }),
+			screen.getByRole("region", { name: "Import into the shared space" }),
 		).getByRole("button", { name: "Import" }),
 	);
 	await screen.findByText("Imported: 1 created, 0 updated, 0 skipped.");
@@ -339,11 +339,11 @@ it("keeps an open draft when the vault refreshes, and still detects conflicts", 
 		"Markdown source",
 	) as HTMLTextAreaElement;
 	expect(source.value).toBe("v2 draft");
-	expect(document.activeElement?.id).not.toBe("brain-note-title");
+	expect(document.activeElement?.id).not.toBe("synapse-note-title");
 	// A change made meanwhile is still a conflict, not an overwrite.
 	const patched = await running.server.inject({
 		method: "PATCH",
-		url: "/v1/brain/vaults/shared/notes/Roadmap",
+		url: "/v1/synapse/spaces/shared/notes/Roadmap",
 		headers: running.owner,
 		payload: { body: "v1 shipped" },
 	});
@@ -355,7 +355,7 @@ it("keeps an open draft when the vault refreshes, and still detects conflicts", 
 	await screen.findByText(/1 Markdown file/);
 	fireEvent.click(
 		within(
-			screen.getByRole("region", { name: "Import into the shared vault" }),
+			screen.getByRole("region", { name: "Import into the shared space" }),
 		).getByRole("button", { name: "Import" }),
 	);
 	await within(await notesList()).findByText("3 notes");
@@ -379,7 +379,7 @@ it("refuses a stale delete confirmation instead of deleting a newer revision", a
 	// Someone edits the note while the confirmation is open.
 	const patched = await running.server.inject({
 		method: "PATCH",
-		url: "/v1/brain/vaults/shared/notes/Roadmap",
+		url: "/v1/synapse/spaces/shared/notes/Roadmap",
 		headers: running.owner,
 		payload: { body: "v2 from a teammate" },
 	});
@@ -410,7 +410,7 @@ it("imports a vault past one request's limit and says when the list is capped", 
 	await screen.findByText(/501 Markdown files/);
 	fireEvent.click(
 		within(
-			screen.getByRole("region", { name: "Import into the shared vault" }),
+			screen.getByRole("region", { name: "Import into the shared space" }),
 		).getByRole("button", { name: "Import" }),
 	);
 	await screen.findByText(
@@ -425,13 +425,13 @@ it("imports a vault past one request's limit and says when the list is capped", 
 	);
 });
 
-it("moves between Brain tabs with the arrow keys and keeps field ids unique", async () => {
+it("moves between Synapse tabs with the arrow keys and keeps field ids unique", async () => {
 	const running = await start();
 	await createNote(running, "shared", { title: "Roadmap", body: "v1" });
 	const notesTab = await screen.findByRole("tab", { name: "Notes" });
-	expect(notesTab.getAttribute("aria-controls")).toBe("brain-panel");
+	expect(notesTab.getAttribute("aria-controls")).toBe("synapse-panel");
 	expect(screen.getByRole("tabpanel").getAttribute("aria-labelledby")).toBe(
-		"brain-tab-notes",
+		"synapse-tab-notes",
 	);
 	notesTab.focus();
 	fireEvent.keyDown(notesTab, { key: "ArrowRight" });
@@ -455,7 +455,7 @@ it("moves between Brain tabs with the arrow keys and keeps field ids unique", as
 	await screen.findByRole("heading", { name: "Roadmap" });
 	fireEvent.click(screen.getByRole("button", { name: "Rename" }));
 	fireEvent.click(screen.getByRole("button", { name: "New note" }));
-	expect(document.querySelectorAll("#brain-new-title")).toHaveLength(1);
+	expect(document.querySelectorAll("#synapse-new-title")).toHaveLength(1);
 	expect((screen.getByLabelText("New title") as HTMLInputElement).value).toBe(
 		"Roadmap",
 	);
@@ -478,7 +478,7 @@ it("searches, filters by category, renames with link rewriting, and deletes", as
 		template: "Projects",
 		body: "Designed with [[Ada Lovelace]].",
 	});
-	renderAt("#/brain");
+	renderAt("#/synapse");
 	const list = within(await notesList());
 	await list.findByText("5 notes");
 	change("Search notes", "cobol");
@@ -513,7 +513,7 @@ it("searches, filters by category, renames with link rewriting, and deletes", as
 	change("New title", "Ada King");
 	fireEvent.click(screen.getByRole("button", { name: "Rename note" }));
 	await screen.findByRole("heading", { name: "Ada King" });
-	expect(window.location.hash).toBe("#/brain/shared/Ada%20King");
+	expect(window.location.hash).toBe("#/synapse/shared/Ada%20King");
 	await list.findByRole("link", { name: /^Ada King/ });
 	expect(
 		(await readNote(running, "shared", "Analytical Engine")).json().note.body,
@@ -524,7 +524,7 @@ it("searches, filters by category, renames with link rewriting, and deletes", as
 	await list.findByText("1 note match");
 	expect(list.queryByRole("link", { name: /^Ada King/ })).toBeNull();
 	expect(within(noteRegion()).getByText("Pick a note")).toBeDefined();
-	expect(window.location.hash).toBe("#/brain/shared");
+	expect(window.location.hash).toBe("#/synapse/shared");
 	expect((await readNote(running, "shared", "Ada King")).statusCode).toBe(404);
 	// The deleted note's title is now a breadcrumb from the project note.
 	change("Category", "");
@@ -545,18 +545,18 @@ it("lets owners approve and reject agent proposals, surfacing conflicts", async 
 		title: "Brand voice",
 		body: "Warm and precise.",
 	});
-	// The agent's first write names its vault after the token.
-	await mcpCall(url, agent.secret, "brain_log", {
+	// The agent's first write names its space after the token.
+	await mcpCall(url, agent.secret, "synapse_log", {
 		text: "Reviewed the release notes.",
 	});
-	await mcpCall(url, agent.secret, "brain_propose", {
+	await mcpCall(url, agent.secret, "synapse_propose", {
 		action: "create",
 		title: "Release checklist",
 		body: "- Tag the build",
 		properties: { categories: ["[[Projects]]"] },
 		reason: "We repeat this every release.",
 	});
-	await mcpCall(url, agent.secret, "brain_propose", {
+	await mcpCall(url, agent.secret, "synapse_propose", {
 		action: "append",
 		title: "Brand voice",
 		text: "No exclamation marks.",
@@ -564,7 +564,7 @@ it("lets owners approve and reject agent proposals, surfacing conflicts", async 
 	});
 	await within(await notesList()).findByText("1 note");
 	fireEvent.click(screen.getByRole("tab", { name: "Proposals" }));
-	expect(window.location.hash).toBe("#/brain/proposals");
+	expect(window.location.hash).toBe("#/synapse/proposals");
 	const create = within(
 		await screen.findByRole("article", { name: "Create Release checklist" }),
 	);
@@ -592,7 +592,7 @@ it("lets owners approve and reject agent proposals, surfacing conflicts", async 
 	// The shared note moves on before the append is reviewed: approval conflicts.
 	const patched = await server.inject({
 		method: "PATCH",
-		url: "/v1/brain/vaults/shared/notes/Brand%20voice",
+		url: "/v1/synapse/spaces/shared/notes/Brand%20voice",
 		headers: owner,
 		payload: { body: "Warm, precise, and short." },
 	});
@@ -619,7 +619,7 @@ it("lets owners approve and reject agent proposals, surfacing conflicts", async 
 	await screen.findByText(/Rejected: append to “Brand voice”/);
 	await screen.findByText(/No pending proposals/);
 	const proposals = (
-		await server.inject({ url: "/v1/brain/proposals", headers: owner })
+		await server.inject({ url: "/v1/synapse/proposals", headers: owner })
 	).json();
 	expect(
 		proposals.proposals.map((item: { title: string; status: string }) => [
@@ -636,17 +636,17 @@ it("lets owners approve and reject agent proposals, surfacing conflicts", async 
 	expect(daily.json().note.body).toContain(
 		"rejected by Founder: The note was rewritten",
 	);
-	// The agent's vault now shows up in the picker.
+	// The agent's space now shows up in the picker.
 	fireEvent.click(screen.getByRole("tab", { name: "Notes" }));
 	await waitFor(() =>
 		expect(
-			within(screen.getByLabelText("Vault"))
+			within(screen.getByLabelText("Space"))
 				.getAllByRole("option")
 				.map((option) => option.textContent),
 		).toEqual(["Shared (3 notes)", "Research agent (1 note)"]),
 	);
-	change("Vault", `agent-${agent.token.id}`);
-	expect(window.location.hash).toBe(`#/brain/agent-${agent.token.id}`);
+	change("Space", `agent-${agent.token.id}`);
+	expect(window.location.hash).toBe(`#/synapse/agent-${agent.token.id}`);
 	fireEvent.click(
 		await within(await notesList()).findByRole("link", {
 			name: new RegExp(`^${today()}`),
@@ -683,7 +683,7 @@ it("shows members the proposals read-only", async () => {
 	});
 	expect(added.statusCode, added.body).toBe(201);
 	const agent = await createAgent(running);
-	await mcpCall(url, agent.secret, "brain_propose", {
+	await mcpCall(url, agent.secret, "synapse_propose", {
 		action: "create",
 		title: "Style guide",
 		body: "Short sentences.",
@@ -696,7 +696,7 @@ it("shows members the proposals read-only", async () => {
 	});
 	expect(session.statusCode, session.body).toBeLessThan(300);
 	setSessionToken(session.json().token);
-	renderAt("#/brain/proposals");
+	renderAt("#/synapse/proposals");
 	await screen.findByRole("article", { name: "Create Style guide" });
 	expect(
 		screen.getByText(
@@ -705,20 +705,20 @@ it("shows members the proposals read-only", async () => {
 	).toBeDefined();
 	expect(screen.queryByRole("button", { name: /^Approve/ })).toBeNull();
 	expect(screen.queryByRole("button", { name: /^Reject/ })).toBeNull();
-	// Members still read and write vaults from the dashboard.
+	// Members still read and write spaces from the dashboard.
 	fireEvent.click(screen.getByRole("tab", { name: "Notes" }));
 	expect(screen.getByRole("button", { name: "New note" })).toBeDefined();
-	expect(screen.getByRole("link", { name: "Brain" })).toBeDefined();
+	expect(screen.getByRole("link", { name: "Synapse" })).toBeDefined();
 	expect(screen.queryByRole("link", { name: "Agent Tokens" })).toBeNull();
 });
 
-it("imports Markdown files and a vault folder, then exports the vault as a zip", async () => {
+it("imports Markdown files and a vault folder, then exports the space as a zip", async () => {
 	const running = await start();
 	await screen.findByText(/No notes yet/);
 	fireEvent.click(screen.getByRole("button", { name: "Import" }));
 	const form = () =>
 		within(
-			screen.getByRole("region", { name: "Import into the shared vault" }),
+			screen.getByRole("region", { name: "Import into the shared space" }),
 		);
 	const ada = new File(
 		[
@@ -739,7 +739,7 @@ it("imports Markdown files and a vault folder, then exports the vault as a zip",
 	await screen.findByText(
 		"2 Markdown files selected (1 other files will be skipped).",
 	);
-	// A folder picker reports paths from the chosen folder down; that folder is not part of the vault.
+	// A folder picker reports paths from the chosen folder down; that folder is not part of the space.
 	const folderFile = (path: string, content: string) => {
 		const file = new File([content], path.split("/").at(-1) ?? path);
 		Object.defineProperty(file, "webkitRelativePath", { value: path });
@@ -782,7 +782,7 @@ it("imports Markdown files and a vault folder, then exports the vault as a zip",
 	).toBe("Updated body.");
 	fireEvent.click(form().getByRole("button", { name: "Done" }));
 
-	// Export downloads <vault>.zip through an object URL with the session credential.
+	// Export downloads <space>.zip through an object URL with the session credential.
 	const blobs: Blob[] = [];
 	const downloads: Array<{ href: string; download: string }> = [];
 	const urlApi = URL as unknown as Record<string, unknown>;

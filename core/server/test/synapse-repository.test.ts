@@ -1,33 +1,36 @@
 import { randomUUID } from "node:crypto";
-import type { BrainActor, BrainProposal } from "@autonomo.us/common";
+import type { SynapseActor, SynapseProposal } from "@autonomo.us/common";
 import { MongoClient } from "mongodb";
 import { afterAll, describe, expect, it } from "vitest";
-import { MemoryBrainRepository } from "../src/brain/memory-repository.js";
-import { MongoBrainRepository } from "../src/brain/mongo-repository.js";
-import type { BrainRepository, StoredNote } from "../src/brain/repository.js";
+import { MemorySynapseRepository } from "../src/synapse/memory-repository.js";
+import { MongoSynapseRepository } from "../src/synapse/mongo-repository.js";
+import type {
+	StoredNote,
+	SynapseRepository,
+} from "../src/synapse/repository.js";
 import { mongoAvailable, uniqueMongoUrl } from "./mongo-env.js";
 
 const available = await mongoAvailable();
 if (!available)
-	console.warn("[brain-repository] no MongoDB — skipping the MongoDB half.");
-const mongoUrl = uniqueMongoUrl("brain");
+	console.warn("[synapse-repository] no MongoDB — skipping the MongoDB half.");
+const mongoUrl = uniqueMongoUrl("synapse");
 const cleanup = new MongoClient(mongoUrl, { serverSelectionTimeoutMS: 1500 });
 afterAll(async () => {
 	if (available) await cleanup.db().dropDatabase();
 	await cleanup.close();
 });
 
-const actor: BrainActor = { kind: "user", id: "u", name: "U" };
+const actor: SynapseActor = { kind: "user", id: "u", name: "U" };
 
 function note(
-	vault: "shared" | `agent-${string}`,
+	space: "shared" | `agent-${string}`,
 	title: string,
 	extra: Partial<StoredNote> = {},
 ): StoredNote {
 	const at = extra.createdAt ?? "2026-11-08T10:00:00.000Z";
 	return {
 		id: randomUUID(),
-		vault,
+		space,
 		title,
 		titleKey: title.toLowerCase(),
 		properties: {},
@@ -50,9 +53,9 @@ function note(
 }
 
 /** Every implementation must pass the same expectations. */
-function contract(name: string, open: () => BrainRepository) {
+function contract(name: string, open: () => SynapseRepository) {
 	describe(name, () => {
-		it("claims titles uniquely per vault and compares revisions on replace and delete", async () => {
+		it("claims titles uniquely per space and compares revisions on replace and delete", async () => {
 			const repo = open();
 			try {
 				const a = note("shared", "Ada");
@@ -93,10 +96,10 @@ function contract(name: string, open: () => BrainRepository) {
 
 		it("filters, sorts, pages, counts, and scans", async () => {
 			const repo = open();
-			const vault = `agent-${randomUUID()}` as const;
+			const space = `agent-${randomUUID()}` as const;
 			try {
 				await repo.insertNote(
-					note(vault, "Alpha", {
+					note(space, "Alpha", {
 						links: ["People", "Beta"],
 						linkKeys: ["people", "beta"],
 						categories: ["People"],
@@ -113,7 +116,7 @@ function contract(name: string, open: () => BrainRepository) {
 					}),
 				);
 				await repo.insertNote(
-					note(vault, "beta", {
+					note(space, "beta", {
 						links: ["Gamma"],
 						linkKeys: ["gamma"],
 						tags: ["projects"],
@@ -125,7 +128,7 @@ function contract(name: string, open: () => BrainRepository) {
 					}),
 				);
 				await repo.insertNote(
-					note(vault, "Gamma", {
+					note(space, "Gamma", {
 						links: ["Beta"],
 						linkKeys: ["beta"],
 						tags: ["projectsx"],
@@ -139,8 +142,8 @@ function contract(name: string, open: () => BrainRepository) {
 					note("shared", "Alpha", { searchText: "alpha quick" }),
 				);
 				const titles = async (
-					filter: Parameters<BrainRepository["findNotes"]>[0],
-					options: Partial<Parameters<BrainRepository["findNotes"]>[1]> = {},
+					filter: Parameters<SynapseRepository["findNotes"]>[0],
+					options: Partial<Parameters<SynapseRepository["findNotes"]>[1]> = {},
 				) =>
 					(
 						await repo.findNotes(filter, {
@@ -149,56 +152,56 @@ function contract(name: string, open: () => BrainRepository) {
 							...options,
 						})
 					).map((item) => item.title);
-				expect(await titles({ vault })).toEqual(["Alpha", "beta", "Gamma"]);
+				expect(await titles({ space })).toEqual(["Alpha", "beta", "Gamma"]);
 				expect(
 					await titles(
-						{ vault },
+						{ space },
 						{ sort: { by: "updatedAt", direction: "desc" } },
 					),
 				).toEqual(["Alpha", "beta", "Gamma"]);
 				expect(
 					await titles(
-						{ vault },
+						{ space },
 						{ sort: { by: "createdAt", direction: "desc" } },
 					),
 				).toEqual(["Gamma", "beta", "Alpha"]);
-				expect(await titles({ vault }, { limit: 1, offset: 1 })).toEqual([
+				expect(await titles({ space }, { limit: 1, offset: 1 })).toEqual([
 					"beta",
 				]);
-				expect(await titles({ vault, titleKey: "beta" })).toEqual(["beta"]);
+				expect(await titles({ space, titleKey: "beta" })).toEqual(["beta"]);
 				expect(
-					await titles({ vault, titleKeys: ["beta", "gamma", "nope"] }),
+					await titles({ space, titleKeys: ["beta", "gamma", "nope"] }),
 				).toEqual(["beta", "Gamma"]);
-				expect(await titles({ vault, linkKey: "beta" })).toEqual([
+				expect(await titles({ space, linkKey: "beta" })).toEqual([
 					"Alpha",
 					"Gamma",
 				]);
-				expect(await titles({ vault, linkKeys: ["people", "gamma"] })).toEqual([
+				expect(await titles({ space, linkKeys: ["people", "gamma"] })).toEqual([
 					"Alpha",
 					"beta",
 				]);
-				expect(await titles({ vault, categoryKey: "people" })).toEqual([
+				expect(await titles({ space, categoryKey: "people" })).toEqual([
 					"Alpha",
 				]);
-				expect(await titles({ vault, tagPrefix: "projects" })).toEqual([
-					"Alpha",
-					"beta",
-				]);
-				expect(await titles({ vault, tagPrefix: "projects/active" })).toEqual([
-					"Alpha",
-				]);
-				expect(await titles({ vault, terms: ["quick", "fox"] })).toEqual([
+				expect(await titles({ space, tagPrefix: "projects" })).toEqual([
 					"Alpha",
 					"beta",
 				]);
-				expect(await titles({ vault, terms: ["(brown)"] })).toEqual(["beta"]);
-				expect(await titles({ vault, terms: ["quick", "slow"] })).toEqual([]);
+				expect(await titles({ space, tagPrefix: "projects/active" })).toEqual([
+					"Alpha",
+				]);
+				expect(await titles({ space, terms: ["quick", "fox"] })).toEqual([
+					"Alpha",
+					"beta",
+				]);
+				expect(await titles({ space, terms: ["(brown)"] })).toEqual(["beta"]);
+				expect(await titles({ space, terms: ["quick", "slow"] })).toEqual([]);
 				expect(
-					await titles({ vault, where: [{ k: "status", v: "active" }] }),
+					await titles({ space, where: [{ k: "status", v: "active" }] }),
 				).toEqual(["Alpha"]);
 				expect(
 					await titles({
-						vault,
+						space,
 						where: [
 							{ k: "status", v: "active" },
 							{ k: "n", v: "6" },
@@ -207,16 +210,16 @@ function contract(name: string, open: () => BrainRepository) {
 				).toEqual(["Alpha"]);
 				expect(
 					await titles({
-						vault,
+						space,
 						where: [
 							{ k: "status", v: "active" },
 							{ k: "n", v: "7" },
 						],
 					}),
 				).toEqual([]);
-				expect(await repo.countNotes({ vault })).toBe(3);
-				expect(await repo.countNotes({ vault, terms: ["fox"] })).toBe(3);
-				const scanned = await repo.scanNotes(vault);
+				expect(await repo.countNotes({ space })).toBe(3);
+				expect(await repo.countNotes({ space, terms: ["fox"] })).toBe(3);
+				const scanned = await repo.scanNotes(space);
 				expect(scanned.map((entry) => entry.title).sort()).toEqual([
 					"Alpha",
 					"Gamma",
@@ -227,9 +230,9 @@ function contract(name: string, open: () => BrainRepository) {
 				expect(
 					scanned.find((entry) => entry.title === "Alpha")?.linkKeys,
 				).toEqual(["people", "beta"]);
-				const stats = await repo.vaultStats();
-				expect(stats.find((item) => item.vault === vault)).toEqual({
-					vault,
+				const stats = await repo.spaceStats();
+				expect(stats.find((item) => item.space === space)).toEqual({
+					space,
 					noteCount: 3,
 					createdAt: "2026-11-01T00:00:00.000Z",
 					updatedAt: "2026-11-03T00:00:00.000Z",
@@ -241,7 +244,7 @@ function contract(name: string, open: () => BrainRepository) {
 
 		it("orders titles by code point like MongoDB, punctuation, accents, and emoji included", async () => {
 			const repo = open();
-			const vault = `agent-${randomUUID()}` as const;
+			const space = `agent-${randomUUID()}` as const;
 			try {
 				for (const title of [
 					"zeta",
@@ -255,10 +258,10 @@ function contract(name: string, open: () => BrainRepository) {
 					"\uFFFD mark",
 					"\u{1F600} smile",
 				])
-					await repo.insertNote(note(vault, title));
+					await repo.insertNote(note(space, title));
 				const titles = (
 					await repo.findNotes(
-						{ vault },
+						{ space },
 						{ sort: { by: "titleKey", direction: "asc" }, limit: 20 },
 					)
 				).map((item) => item.title);
@@ -281,46 +284,46 @@ function contract(name: string, open: () => BrainRepository) {
 
 		it("finds a day's notes", async () => {
 			const repo = open();
-			const vault = `agent-${randomUUID()}` as const;
+			const space = `agent-${randomUUID()}` as const;
 			const range = {
 				from: "2026-11-08T00:00:00.000Z",
 				to: "2026-11-09T00:00:00.000Z",
 			};
 			try {
 				await repo.insertNote(
-					note(vault, "2026-11-08", { createdAt: "2026-11-09T01:00:00.000Z" }),
+					note(space, "2026-11-08", { createdAt: "2026-11-09T01:00:00.000Z" }),
 				);
 				await repo.insertNote(
-					note(vault, "2026-11-08 standup", {
+					note(space, "2026-11-08 standup", {
 						createdAt: "2026-11-09T01:00:00.000Z",
 					}),
 				);
 				await repo.insertNote(
-					note(vault, "Created", { createdAt: "2026-11-08T23:59:59.000Z" }),
+					note(space, "Created", { createdAt: "2026-11-08T23:59:59.000Z" }),
 				);
 				await repo.insertNote(
-					note(vault, "Edge", { createdAt: "2026-11-09T00:00:00.000Z" }),
+					note(space, "Edge", { createdAt: "2026-11-09T00:00:00.000Z" }),
 				);
 				await repo.insertNote(
-					note(vault, "Dated", {
+					note(space, "Dated", {
 						createdAt: "2026-11-09T01:00:01.000Z",
 						propertyKeys: [{ k: "published", v: "2026-11-08t09:00" }],
 					}),
 				);
 				await repo.insertNote(
-					note(vault, "Other property", {
+					note(space, "Other property", {
 						createdAt: "2026-11-09T01:00:00.000Z",
 						propertyKeys: [{ k: "deadline", v: "2026-11-08" }],
 					}),
 				);
 				await repo.insertNote(
-					note(vault, "Linker", {
+					note(space, "Linker", {
 						createdAt: "2026-11-09T01:00:02.000Z",
 						links: ["2026-11-08"],
 						linkKeys: ["2026-11-08"],
 					}),
 				);
-				const found = await repo.findDailyNotes(vault, "2026-11-08", range, 10);
+				const found = await repo.findDailyNotes(space, "2026-11-08", range, 10);
 				expect(found.map((item) => item.title)).toEqual([
 					"Linker",
 					"Dated",
@@ -328,47 +331,47 @@ function contract(name: string, open: () => BrainRepository) {
 					"Created",
 				]);
 				expect(
-					await repo.findDailyNotes(vault, "2026-11-08", range, 2),
+					await repo.findDailyNotes(space, "2026-11-08", range, 2),
 				).toHaveLength(2);
 			} finally {
 				await repo.close();
 			}
 		});
 
-		it("keeps vault records and proposals", async () => {
+		it("keeps space records and proposals", async () => {
 			const repo = open();
-			const vault = `agent-${randomUUID()}` as const;
+			const space = `agent-${randomUUID()}` as const;
 			try {
-				await repo.upsertVaultRecord(
-					vault,
+				await repo.upsertSpaceRecord(
+					space,
 					"2026-11-08T00:00:00.000Z",
 					undefined,
-					vault,
+					space,
 				);
-				await repo.upsertVaultRecord(
-					vault,
+				await repo.upsertSpaceRecord(
+					space,
 					"2026-11-08T01:00:00.000Z",
 					"Agent A",
-					vault,
+					space,
 				);
-				await repo.upsertVaultRecord(
-					vault,
+				await repo.upsertSpaceRecord(
+					space,
 					"2026-11-08T02:00:00.000Z",
 					undefined,
 					"ignored",
 				);
 				expect(
-					(await repo.listVaultRecords()).find((record) => record.id === vault),
+					(await repo.listSpaceRecords()).find((record) => record.id === space),
 				).toEqual({
-					id: vault,
+					id: space,
 					name: "Agent A",
 					createdAt: "2026-11-08T00:00:00.000Z",
 					updatedAt: "2026-11-08T02:00:00.000Z",
 				});
 				const author = randomUUID();
-				const make = (title: string, createdAt: string): BrainProposal => ({
+				const make = (title: string, createdAt: string): SynapseProposal => ({
 					id: randomUUID(),
-					vault: "shared",
+					space: "shared",
 					action: "create",
 					title,
 					body: "b",
@@ -482,31 +485,33 @@ function contract(name: string, open: () => BrainRepository) {
 	});
 }
 
-contract("memory repository", () => new MemoryBrainRepository());
+contract("memory repository", () => new MemorySynapseRepository());
 describe.skipIf(!available)("mongodb", () => {
-	contract("mongodb repository", () => new MongoBrainRepository(mongoUrl));
+	contract("mongodb repository", () => new MongoSynapseRepository(mongoUrl));
 	it("creates the documented indexes once and fails with 503 when MongoDB is down", async () => {
-		const repo = new MongoBrainRepository(mongoUrl);
+		const repo = new MongoSynapseRepository(mongoUrl);
 		try {
-			await repo.countNotes({ vault: "shared" });
-			const indexes = await cleanup.db().collection("brain_notes").indexes();
+			await repo.countNotes({ space: "shared" });
+			const indexes = await cleanup.db().collection("synapse_notes").indexes();
 			expect(indexes.map((index) => index.name).sort()).toEqual([
 				"_id_",
-				"vault_categories",
-				"vault_links",
-				"vault_tags",
-				"vault_title",
-				"vault_updated",
+				"space_categories",
+				"space_links",
+				"space_tags",
+				"space_title",
+				"space_updated",
 			]);
 			expect(
-				indexes.find((index) => index.name === "vault_title")?.unique,
+				indexes.find((index) => index.name === "space_title")?.unique,
 			).toBe(true);
 		} finally {
 			await repo.close();
 		}
-		const down = new MongoBrainRepository("mongodb://127.0.0.1:1/unavailable");
+		const down = new MongoSynapseRepository(
+			"mongodb://127.0.0.1:1/unavailable",
+		);
 		try {
-			await expect(down.countNotes({ vault: "shared" })).rejects.toMatchObject({
+			await expect(down.countNotes({ space: "shared" })).rejects.toMatchObject({
 				statusCode: 503,
 			});
 		} finally {

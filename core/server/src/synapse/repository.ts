@@ -1,12 +1,12 @@
 import type {
-	BrainNote,
-	BrainProposal,
-	BrainProposalStatus,
-	BrainVaultId,
+	SynapseNote,
+	SynapseProposal,
+	SynapseProposalStatus,
+	SynapseSpaceId,
 } from "@autonomo.us/common";
 
 /** A note plus the lowercased keys queries run on. */
-export type StoredNote = BrainNote & {
+export type StoredNote = SynapseNote & {
 	titleKey: string;
 	linkKeys: string[];
 	categoryKeys: string[];
@@ -23,7 +23,7 @@ export type PropertyIndexEntry = { k: string; v: string };
 export type NoteIndexEntry = Pick<
 	StoredNote,
 	| "id"
-	| "vault"
+	| "space"
 	| "title"
 	| "titleKey"
 	| "links"
@@ -39,7 +39,7 @@ export type NoteIndexEntry = Pick<
 
 /** All given filters must match. Keys are lowercased by the caller. */
 export type NoteFilter = {
-	vault: BrainVaultId;
+	space: SynapseSpaceId;
 	titleKey?: string;
 	titleKeys?: string[];
 	/** Notes linking to this title. */
@@ -64,15 +64,15 @@ export type FindOptions = { sort: NoteSort; limit: number; offset?: number };
 /** A UTC instant range, start inclusive, end exclusive. */
 export type InstantRange = { from: string; to: string };
 
-export type VaultRecord = {
-	id: BrainVaultId;
+export type SpaceRecord = {
+	id: SynapseSpaceId;
 	name: string;
 	createdAt: string;
 	updatedAt: string;
 };
 
-export type VaultStats = {
-	vault: BrainVaultId;
+export type SpaceStats = {
+	space: SynapseSpaceId;
 	noteCount: number;
 	createdAt: string;
 	updatedAt: string;
@@ -80,55 +80,55 @@ export type VaultStats = {
 
 export type ProposalFilter = {
 	authorId?: string;
-	status?: BrainProposalStatus;
+	status?: SynapseProposalStatus;
 };
 /** A time-limited reservation of a pending proposal while its approval applies. */
 export type ProposalClaim = { id: string; until: string };
 export type ProposalDecision = Required<
-	Pick<BrainProposal, "status" | "decidedAt" | "decidedBy">
+	Pick<SynapseProposal, "status" | "decidedAt" | "decidedBy">
 > &
-	Pick<BrainProposal, "decisionReason">;
+	Pick<SynapseProposal, "decisionReason">;
 
 /**
- * Storage for notes, vault records, and proposals. The memory and MongoDB
- * implementations satisfy the same contract (test/brain-repository.test.ts).
+ * Storage for notes, space records, and proposals. The memory and MongoDB
+ * implementations satisfy the same contract (test/synapse-repository.test.ts).
  */
-export interface BrainRepository {
+export interface SynapseRepository {
 	readonly persistence: "mongodb" | "memory";
-	getNote(vault: BrainVaultId, titleKey: string): Promise<StoredNote | null>;
+	getNote(space: SynapseSpaceId, titleKey: string): Promise<StoredNote | null>;
 	findNotes(filter: NoteFilter, options: FindOptions): Promise<StoredNote[]>;
 	countNotes(filter: NoteFilter): Promise<number>;
-	/** Every note of the vault without bodies, for link and category graphs. */
-	scanNotes(vault: BrainVaultId): Promise<NoteIndexEntry[]>;
+	/** Every note of the space without bodies, for link and category graphs. */
+	scanNotes(space: SynapseSpaceId): Promise<NoteIndexEntry[]>;
 	/**
 	 * Notes for a daily view: titled with a `date` prefix (other than exactly
 	 * `date`), created within `range`, with a `created`, `date`, `start`, `end`,
 	 * or `published` property starting with `date`, or linking to `date`.
 	 */
 	findDailyNotes(
-		vault: BrainVaultId,
+		space: SynapseSpaceId,
 		date: string,
 		range: InstantRange,
 		limit: number,
 	): Promise<StoredNote[]>;
-	/** False when the vault already has a note with that title key. */
+	/** False when the space already has a note with that title key. */
 	insertNote(note: StoredNote): Promise<boolean>;
 	/** Compare-and-set on the stored revision. */
 	replaceNote(note: StoredNote, expectedRevision: number): Promise<boolean>;
 	deleteNote(id: string, expectedRevision?: number): Promise<boolean>;
-	vaultStats(): Promise<VaultStats[]>;
-	listVaultRecords(): Promise<VaultRecord[]>;
-	/** Creates or touches a vault record; `name` is set only when given. */
-	upsertVaultRecord(
-		id: BrainVaultId,
+	spaceStats(): Promise<SpaceStats[]>;
+	listSpaceRecords(): Promise<SpaceRecord[]>;
+	/** Creates or touches a space record; `name` is set only when given. */
+	upsertSpaceRecord(
+		id: SynapseSpaceId,
 		at: string,
 		name: string | undefined,
 		fallbackName: string,
 	): Promise<void>;
-	insertProposal(proposal: BrainProposal): Promise<void>;
-	getProposal(id: string): Promise<BrainProposal | null>;
+	insertProposal(proposal: SynapseProposal): Promise<void>;
+	getProposal(id: string): Promise<SynapseProposal | null>;
 	/** Newest first. */
-	listProposals(filter: ProposalFilter): Promise<BrainProposal[]>;
+	listProposals(filter: ProposalFilter): Promise<SynapseProposal[]>;
 	countProposals(filter: ProposalFilter): Promise<number>;
 	/** Records a decision only while the proposal is still pending. */
 	/** Reserves a pending proposal for approval; fails while another unexpired claim holds it. */

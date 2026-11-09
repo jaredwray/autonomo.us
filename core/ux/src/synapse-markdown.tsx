@@ -1,8 +1,8 @@
-import { BRAIN_ATTACHMENT_EXTENSIONS } from "@autonomo.us/common";
+import { SYNAPSE_ATTACHMENT_EXTENSIONS } from "@autonomo.us/common";
 import type { ReactNode } from "react";
 
 /**
- * A small, safe Markdown renderer for Brain notes. It builds React elements
+ * A small, safe Markdown renderer for Synapse notes. It builds React elements
  * only (never HTML strings), so note content can't inject markup. It covers
  * what agents and Obsidian write: headings, paragraphs, lists (nested, with
  * task boxes), blockquotes, fenced code, pipe tables, inline code, emphasis,
@@ -20,7 +20,7 @@ export type WikilinkTarget = {
 	embed: boolean;
 };
 
-const ATTACHMENTS = new Set(BRAIN_ATTACHMENT_EXTENSIONS);
+const ATTACHMENTS = new Set(SYNAPSE_ATTACHMENT_EXTENSIONS);
 /** Parses the inside of `[[…]]` as the server does; `null` for attachments such as `photo.jpg`. */
 export function parseWikilink(
 	inner: string,
@@ -455,6 +455,6 @@ export function Markdown({
 	...options
 }: { source: string } & InlineOptions) {
 	return (
-		<div className="brain-markdown">{renderMarkdown(source, options)}</div>
+		<div className="synapse-markdown">{renderMarkdown(source, options)}</div>
 	);
 }

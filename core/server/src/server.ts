@@ -5,10 +5,6 @@ import { registerApiAccess } from "./auth/access.js";
 import { AccountStore } from "./auth/accounts.js";
 import { AgentTokenStore } from "./auth/agent-tokens.js";
 import { ApiTokenStore } from "./auth/tokens.js";
-import { BrainService } from "./brain/brain.js";
-import { mcpRoutes } from "./brain/mcp.js";
-import { MemoryBrainRepository } from "./brain/memory-repository.js";
-import { MongoBrainRepository } from "./brain/mongo-repository.js";
 import { type ApiConfig, configFromEnv } from "./config.js";
 import { registerDashboard } from "./dashboard.js";
 import { FailoverPolicyStore } from "./failover.js";
@@ -22,17 +18,21 @@ import { ProviderSettingsStore } from "./providers/settings.js";
 import { agentTokenRoutes } from "./routes/agent-tokens.js";
 import { apiTokenRoutes } from "./routes/api-tokens.js";
 import { authRoutes } from "./routes/auth.js";
-import { brainRoutes } from "./routes/brain.js";
 import { chatRoutes } from "./routes/chat.js";
 import { decisionsRoutes } from "./routes/decisions.js";
 import { failoverRoutes } from "./routes/failover.js";
 import { healthRoutes } from "./routes/health.js";
 import { modelsRoutes } from "./routes/models.js";
 import { routingRoutes } from "./routes/routing.js";
+import { synapseRoutes } from "./routes/synapse.js";
 import { teamRoutes } from "./routes/team.js";
 import { telemetryRoutes } from "./routes/telemetry.js";
 import { ModelRouter } from "./routing/router.js";
 import { RoutingSettingsStore } from "./routing/settings.js";
+import { mcpRoutes } from "./synapse/mcp.js";
+import { MemorySynapseRepository } from "./synapse/memory-repository.js";
+import { MongoSynapseRepository } from "./synapse/mongo-repository.js";
+import { SynapseService } from "./synapse/synapse.js";
 import { MongoTelemetrySink } from "./telemetry/mongo.js";
 import { TelemetryService } from "./telemetry/telemetry.js";
 
@@ -113,11 +113,11 @@ export function createServer(options: CreateServerOptions = {}) {
 	const tokens = new ApiTokenStore(config.mongodbUrl);
 	const agentTokens = new AgentTokenStore(config.mongodbUrl);
 	const accounts = new AccountStore({ mongodbUrl: config.mongodbUrl });
-	const brainRepository = config.mongodbUrl
-		? new MongoBrainRepository(config.mongodbUrl)
-		: new MemoryBrainRepository();
-	const brain = new BrainService(brainRepository, {
-		timeZone: config.brainTimeZone ?? "UTC",
+	const synapseRepository = config.mongodbUrl
+		? new MongoSynapseRepository(config.mongodbUrl)
+		: new MemorySynapseRepository();
+	const synapse = new SynapseService(synapseRepository, {
+		timeZone: config.synapseTimeZone ?? "UTC",
 	});
 	let persistenceInitialized = false;
 	const server = Fastify({
@@ -159,9 +159,9 @@ export function createServer(options: CreateServerOptions = {}) {
 	});
 	server.register(telemetryRoutes, { telemetry });
 	server.register(decisionsRoutes, { registry, telemetry });
-	server.register(brainRoutes, { brain });
+	server.register(synapseRoutes, { synapse });
 	server.register(mcpRoutes, {
-		brain,
+		synapse,
 		agentTokens,
 		corsOrigins: config.corsOrigins,
 		version: packageJson.version,
@@ -206,7 +206,7 @@ export function createServer(options: CreateServerOptions = {}) {
 		await agentTokens.close();
 		await accounts.close();
 		await routing.close();
-		await brainRepository.close();
+		await synapseRepository.close();
 		await telemetry.close();
 	});
 
@@ -221,7 +221,7 @@ export function createServer(options: CreateServerOptions = {}) {
 				agentTokens.close(),
 				accounts.close(),
 				routing.close(),
-				brainRepository.close(),
+				synapseRepository.close(),
 			]);
 			const failed = results.find(
 				(result): result is PromiseRejectedResult =>

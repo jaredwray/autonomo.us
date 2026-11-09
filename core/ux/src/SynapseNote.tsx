@@ -1,21 +1,21 @@
 import type {
-	BrainNoteSummary,
-	BrainNoteView,
-	BrainPropertyValue,
+	SynapseNoteSummary,
+	SynapseNoteView,
+	SynapsePropertyValue,
 } from "@autonomo.us/common";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
 	ApiError,
-	deleteBrainNote,
-	fetchBrainNote,
-	updateBrainNote,
+	deleteSynapseNote,
+	fetchSynapseNote,
+	updateSynapseNote,
 } from "./api.js";
 import {
 	type InlineOptions,
 	Markdown,
 	renderInline,
-} from "./brain-markdown.js";
-import { noteHash } from "./brain-route.js";
+} from "./synapse-markdown.js";
+import { noteHash } from "./synapse-route.js";
 
 export const shortDate = (value: string) => value.slice(0, 10);
 
@@ -25,36 +25,36 @@ function PropertyValue({
 	value,
 	options,
 }: {
-	value: BrainPropertyValue;
+	value: SynapsePropertyValue;
 	options: InlineOptions;
 }) {
 	if (value === null || value === "")
-		return <span className="brain-empty-value">—</span>;
+		return <span className="synapse-empty-value">—</span>;
 	if (Array.isArray(value))
 		return value.length ? (
-			<span className="brain-chips">
+			<span className="synapse-chips">
 				{value.map((item, index) => (
 					// biome-ignore lint/suspicious/noArrayIndexKey: list items may repeat and never reorder in place
-					<span className="brain-chip" key={`${index}-${item}`}>
+					<span className="synapse-chip" key={`${index}-${item}`}>
 						{renderInline(item, options)}
 					</span>
 				))}
 			</span>
 		) : (
-			<span className="brain-empty-value">—</span>
+			<span className="synapse-empty-value">—</span>
 		);
 	if (typeof value === "string") return <>{renderInline(value, options)}</>;
 	return <>{String(value)}</>;
 }
 
-function NoteLinks<Note extends BrainNoteSummary>({
+function NoteLinks<Note extends SynapseNoteSummary>({
 	notes,
-	vault,
+	space,
 	onNavigate,
 	detail,
 }: {
 	notes: Note[];
-	vault: string;
+	space: string;
 	onNavigate(title: string): void;
 	detail?(note: Note): string;
 }) {
@@ -64,7 +64,7 @@ function NoteLinks<Note extends BrainNoteSummary>({
 				<li key={note.id}>
 					<a
 						className="wikilink"
-						href={noteHash(vault, note.title)}
+						href={noteHash(space, note.title)}
 						onClick={(event) => {
 							event.preventDefault();
 							onNavigate(note.title);
@@ -73,7 +73,7 @@ function NoteLinks<Note extends BrainNoteSummary>({
 						{note.title}
 					</a>
 					{detail && (
-						<small className="brain-link-detail">{detail(note)}</small>
+						<small className="synapse-link-detail">{detail(note)}</small>
 					)}
 				</li>
 			))}
@@ -81,8 +81,8 @@ function NoteLinks<Note extends BrainNoteSummary>({
 	);
 }
 
-export function BrainNote({
-	vault,
+export function SynapseNote({
+	space,
 	title,
 	version,
 	onNavigate,
@@ -90,9 +90,9 @@ export function BrainNote({
 	onChanged,
 	onDeleted,
 }: {
-	vault: string;
+	space: string;
 	title: string;
-	/** Bumped by the parent when the vault changed elsewhere (import, proposal). */
+	/** Bumped by the parent when the space changed elsewhere (import, proposal). */
 	version: number;
 	onNavigate(title: string): void;
 	/** Opens the New note form prefilled with a breadcrumb title. */
@@ -101,7 +101,7 @@ export function BrainNote({
 	onChanged(newTitle: string): void;
 	onDeleted(): void;
 }) {
-	const [view, setView] = useState<BrainNoteView | null>(null);
+	const [view, setView] = useState<SynapseNoteView | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<{
 		status: number;
@@ -118,11 +118,11 @@ export function BrainNote({
 	const sequence = useRef(0);
 	const heading = useRef<HTMLHeadingElement>(null);
 
-	const load = useCallback(async (): Promise<BrainNoteView | null> => {
+	const load = useCallback(async (): Promise<SynapseNoteView | null> => {
 		const request = ++sequence.current;
 		setLoading(true);
 		try {
-			const result = await fetchBrainNote(vault, title);
+			const result = await fetchSynapseNote(space, title);
 			if (request === sequence.current) {
 				setView(result);
 				setError(null);
@@ -141,8 +141,8 @@ export function BrainNote({
 			if (request === sequence.current) setLoading(false);
 		}
 		return null;
-	}, [vault, title]);
-	// A `version` bump re-reads the note after the vault changed elsewhere. It
+	}, [space, title]);
+	// A `version` bump re-reads the note after the space changed elsewhere. It
 	// leaves an open editor and its draft alone; saving still sends `base`.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: `version` triggers the re-read
 	useEffect(() => {
@@ -169,7 +169,7 @@ export function BrainNote({
 			view?.outgoing.map((link) => [link.title.toLowerCase(), link.exists]) ??
 				[],
 		),
-		hrefFor: (target) => noteHash(vault, target),
+		hrefFor: (target) => noteHash(space, target),
 		onNavigate,
 	};
 
@@ -199,7 +199,7 @@ export function BrainNote({
 		setBusy(true);
 		setFormError("");
 		try {
-			await updateBrainNote(vault, title, {
+			await updateSynapseNote(space, title, {
 				markdown: draft,
 				revision: base,
 			});
@@ -222,7 +222,7 @@ export function BrainNote({
 		setBusy(true);
 		setFormError("");
 		try {
-			const note = await updateBrainNote(vault, title, {
+			const note = await updateSynapseNote(space, title, {
 				title: next,
 				revision: view.note.revision,
 			});
@@ -239,7 +239,7 @@ export function BrainNote({
 		setBusy(true);
 		setFormError("");
 		try {
-			await deleteBrainNote(vault, title, base);
+			await deleteSynapseNote(space, title, base);
 			onDeleted();
 		} catch (cause) {
 			fail(cause, "Could not delete the note.");
@@ -262,7 +262,7 @@ export function BrainNote({
 
 	if (error && !view) {
 		return error.status === 404 ? (
-			<div className="brain-missing">
+			<div className="synapse-missing">
 				<h2>No note titled “{title}”</h2>
 				<p className="card-note">
 					Links to it are breadcrumbs: create the note and they resolve.
@@ -295,13 +295,13 @@ export function BrainNote({
 	const properties = Object.entries(note.properties);
 	return (
 		<article
-			className="brain-note"
-			aria-labelledby="brain-note-title"
+			className="synapse-note"
+			aria-labelledby="synapse-note-title"
 			aria-busy={loading}
 		>
-			<header className="brain-note-header">
+			<header className="synapse-note-header">
 				<div>
-					<h2 id="brain-note-title" ref={heading} tabIndex={-1}>
+					<h2 id="synapse-note-title" ref={heading} tabIndex={-1}>
 						{note.title}
 					</h2>
 					<p className="card-note">
@@ -353,16 +353,16 @@ export function BrainNote({
 			)}
 			{mode === "edit" && (
 				<form
-					className="brain-editor"
+					className="synapse-editor"
 					onSubmit={(event) => {
 						event.preventDefault();
 						void save();
 					}}
 				>
 					<div className="form-field">
-						<label htmlFor="brain-markdown">Markdown source</label>
+						<label htmlFor="synapse-markdown">Markdown source</label>
 						<textarea
-							id="brain-markdown"
+							id="synapse-markdown"
 							value={draft}
 							spellCheck={false}
 							rows={18}
@@ -392,16 +392,16 @@ export function BrainNote({
 			)}
 			{mode === "rename" && (
 				<form
-					className="brain-inline-form"
+					className="synapse-inline-form"
 					onSubmit={(event) => {
 						event.preventDefault();
 						void rename();
 					}}
 				>
 					<div className="form-field">
-						<label htmlFor="brain-rename-title">New title</label>
+						<label htmlFor="synapse-rename-title">New title</label>
 						<input
-							id="brain-rename-title"
+							id="synapse-rename-title"
 							required
 							maxLength={200}
 							value={newTitle}
@@ -409,7 +409,7 @@ export function BrainNote({
 							onChange={(event) => setNewTitle(event.target.value)}
 						/>
 						<span className="field-hint">
-							Links to this note across the vault are rewritten, like Obsidian.
+							Links to this note across the space are rewritten, like Obsidian.
 						</span>
 					</div>
 					<div className="form-actions">
@@ -429,7 +429,7 @@ export function BrainNote({
 			)}
 			{mode === "delete" && (
 				<form
-					className="brain-inline-form"
+					className="synapse-inline-form"
 					aria-label="Confirm delete"
 					onSubmit={(event) => {
 						event.preventDefault();
@@ -458,7 +458,7 @@ export function BrainNote({
 			{mode !== "edit" && (
 				<>
 					{properties.length > 0 && (
-						<table className="brain-properties">
+						<table className="synapse-properties">
 							<caption className="visually-hidden">Properties</caption>
 							<tbody>
 								{properties.map(([key, value]) => (
@@ -475,26 +475,28 @@ export function BrainNote({
 					{note.body.trim() ? (
 						<Markdown source={note.body} {...options} />
 					) : (
-						<p className="card-note brain-empty-body">
+						<p className="card-note synapse-empty-body">
 							This note has no body yet. Edit it to add one.
 						</p>
 					)}
 					{note.tags.length > 0 && (
-						<p className="brain-tags">
+						<p className="synapse-tags">
 							{note.tags.map((tag) => (
-								<span className="brain-chip" key={tag}>
+								<span className="synapse-chip" key={tag}>
 									#{tag}
 								</span>
 							))}
 						</p>
 					)}
-					<div className="brain-sections">
-						<section aria-labelledby="brain-backlinks">
-							<h3 id="brain-backlinks">Backlinks ({view.backlinks.length})</h3>
+					<div className="synapse-sections">
+						<section aria-labelledby="synapse-backlinks">
+							<h3 id="synapse-backlinks">
+								Backlinks ({view.backlinks.length})
+							</h3>
 							{view.backlinks.length ? (
 								<NoteLinks
 									notes={view.backlinks}
-									vault={vault}
+									space={space}
 									onNavigate={onNavigate}
 								/>
 							) : (
@@ -504,12 +506,12 @@ export function BrainNote({
 								</p>
 							)}
 						</section>
-						<section aria-labelledby="brain-related">
-							<h3 id="brain-related">Related ({view.related.length})</h3>
+						<section aria-labelledby="synapse-related">
+							<h3 id="synapse-related">Related ({view.related.length})</h3>
 							{view.related.length ? (
 								<NoteLinks
 									notes={view.related}
-									vault={vault}
+									space={space}
 									onNavigate={onNavigate}
 									detail={(related) =>
 										related.sharedLinks.length
@@ -523,8 +525,8 @@ export function BrainNote({
 								</p>
 							)}
 						</section>
-						<section aria-labelledby="brain-unresolved">
-							<h3 id="brain-unresolved">
+						<section aria-labelledby="synapse-unresolved">
+							<h3 id="synapse-unresolved">
 								Unresolved links ({unresolved.length})
 							</h3>
 							{unresolved.length ? (
@@ -532,7 +534,7 @@ export function BrainNote({
 									{unresolved.map((link) => (
 										<li key={link.title}>
 											<button
-												className="brain-breadcrumb"
+												className="synapse-breadcrumb"
 												type="button"
 												aria-label={`Create note ${link.title}`}
 												title="Create this note"
@@ -551,15 +553,15 @@ export function BrainNote({
 						</section>
 						{view.categoryMembers.length > 0 && (
 							<section
-								aria-labelledby="brain-members"
-								className="brain-members"
+								aria-labelledby="synapse-members"
+								className="synapse-members"
 							>
-								<h3 id="brain-members">
+								<h3 id="synapse-members">
 									Notes in {note.title} ({view.categoryMembers.length})
 								</h3>
 								<NoteLinks
 									notes={view.categoryMembers}
-									vault={vault}
+									space={space}
 									onNavigate={onNavigate}
 									detail={(member) => `Updated ${shortDate(member.updatedAt)}`}
 								/>

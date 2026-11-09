@@ -1,6 +1,5 @@
-import type { BrainProposal, BrainVaultId } from "@autonomo.us/common";
+import type { SynapseProposal, SynapseSpaceId } from "@autonomo.us/common";
 import type {
-	BrainRepository,
 	FindOptions,
 	InstantRange,
 	NoteFilter,
@@ -8,14 +7,15 @@ import type {
 	ProposalClaim,
 	ProposalDecision,
 	ProposalFilter,
+	SpaceRecord,
+	SpaceStats,
 	StoredNote,
-	VaultRecord,
-	VaultStats,
+	SynapseRepository,
 } from "./repository.js";
 import { DAILY_DATE_PROPERTIES } from "./repository.js";
 
 function matches(note: StoredNote, filter: NoteFilter): boolean {
-	if (note.vault !== filter.vault) return false;
+	if (note.space !== filter.space) return false;
 	if (filter.titleKey !== undefined && note.titleKey !== filter.titleKey)
 		return false;
 	if (
@@ -86,7 +86,7 @@ export function compareNotes(
 export function indexEntry(note: StoredNote): NoteIndexEntry {
 	return {
 		id: note.id,
-		vault: note.vault,
+		space: note.space,
 		title: note.title,
 		titleKey: note.titleKey,
 		links: note.links,
@@ -102,19 +102,19 @@ export function indexEntry(note: StoredNote): NoteIndexEntry {
 }
 
 /** Lasts until the process restarts. Used when MONGODB_URI is unset. */
-export class MemoryBrainRepository implements BrainRepository {
+export class MemorySynapseRepository implements SynapseRepository {
 	readonly persistence = "memory" as const;
 	private readonly notes = new Map<string, StoredNote>();
-	private readonly vaults = new Map<string, VaultRecord>();
-	private readonly proposals = new Map<string, BrainProposal>();
+	private readonly spaces = new Map<string, SpaceRecord>();
+	private readonly proposals = new Map<string, SynapseProposal>();
 	/** Kept apart from proposals so claims never reach callers. */
 	private readonly claims = new Map<string, ProposalClaim>();
 
 	private select(filter: NoteFilter) {
 		return [...this.notes.values()].filter((note) => matches(note, filter));
 	}
-	async getNote(vault: BrainVaultId, titleKey: string) {
-		const note = this.select({ vault, titleKey })[0];
+	async getNote(space: SynapseSpaceId, titleKey: string) {
+		const note = this.select({ space, titleKey })[0];
 		return note ? structuredClone(note) : null;
 	}
 	async findNotes(filter: NoteFilter, options: FindOptions) {
@@ -126,19 +126,19 @@ export class MemoryBrainRepository implements BrainRepository {
 	async countNotes(filter: NoteFilter) {
 		return this.select(filter).length;
 	}
-	async scanNotes(vault: BrainVaultId) {
-		return this.select({ vault }).map((note) =>
+	async scanNotes(space: SynapseSpaceId) {
+		return this.select({ space }).map((note) =>
 			structuredClone(indexEntry(note)),
 		);
 	}
 	async findDailyNotes(
-		vault: BrainVaultId,
+		space: SynapseSpaceId,
 		date: string,
 		range: InstantRange,
 		limit: number,
 	) {
 		const dateKey = date.toLowerCase();
-		return this.select({ vault })
+		return this.select({ space })
 			.filter(
 				(note) =>
 					note.titleKey !== dateKey &&
@@ -160,7 +160,7 @@ export class MemoryBrainRepository implements BrainRepository {
 	async insertNote(note: StoredNote) {
 		if (
 			this.notes.has(note.id) ||
-			this.select({ vault: note.vault, titleKey: note.titleKey }).length
+			this.select({ space: note.space, titleKey: note.titleKey }).length
 		)
 			return false;
 		this.notes.set(note.id, structuredClone(note));
@@ -171,7 +171,7 @@ export class MemoryBrainRepository implements BrainRepository {
 		if (!current || current.revision !== expectedRevision) return false;
 		if (
 			current.titleKey !== note.titleKey &&
-			this.select({ vault: note.vault, titleKey: note.titleKey }).length
+			this.select({ space: note.space, titleKey: note.titleKey }).length
 		)
 			return false;
 		this.notes.set(note.id, structuredClone(note));
@@ -186,13 +186,13 @@ export class MemoryBrainRepository implements BrainRepository {
 			return false;
 		return this.notes.delete(id);
 	}
-	async vaultStats() {
-		const stats = new Map<BrainVaultId, VaultStats>();
+	async spaceStats() {
+		const stats = new Map<SynapseSpaceId, SpaceStats>();
 		for (const note of this.notes.values()) {
-			const current = stats.get(note.vault);
+			const current = stats.get(note.space);
 			if (!current)
-				stats.set(note.vault, {
-					vault: note.vault,
+				stats.set(note.space, {
+					space: note.space,
 					noteCount: 1,
 					createdAt: note.createdAt,
 					updatedAt: note.updatedAt,
@@ -207,24 +207,24 @@ export class MemoryBrainRepository implements BrainRepository {
 		}
 		return [...stats.values()];
 	}
-	async listVaultRecords() {
-		return [...this.vaults.values()].map((record) => structuredClone(record));
+	async listSpaceRecords() {
+		return [...this.spaces.values()].map((record) => structuredClone(record));
 	}
-	async upsertVaultRecord(
-		id: BrainVaultId,
+	async upsertSpaceRecord(
+		id: SynapseSpaceId,
 		at: string,
 		name: string | undefined,
 		fallbackName: string,
 	) {
-		const current = this.vaults.get(id);
-		this.vaults.set(id, {
+		const current = this.spaces.get(id);
+		this.spaces.set(id, {
 			id,
 			name: name ?? current?.name ?? fallbackName,
 			createdAt: current?.createdAt ?? at,
 			updatedAt: at,
 		});
 	}
-	async insertProposal(proposal: BrainProposal) {
+	async insertProposal(proposal: SynapseProposal) {
 		this.proposals.set(proposal.id, structuredClone(proposal));
 	}
 	async getProposal(id: string) {

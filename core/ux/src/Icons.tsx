@@ -5,7 +5,7 @@ export function Icon({
 		| "dashboard"
 		| "models"
 		| "routing"
-		| "brain"
+		| "synapse"
 		| "api-tokens"
 		| "agent-tokens"
 		| "team"
@@ -20,7 +20,7 @@ export function Icon({
 		dashboard: "M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z",
 		models: "m12 3 9 5-9 5-9-5 9-5z M3 12l9 5 9-5 M3 16l9 5 9-5",
 		routing: "M4 12h6 M10 12V5h10 M10 12v7h10 M17 2l3 3-3 3 M17 16l3 3-3 3",
-		brain:
+		synapse:
 			"M12 5v15 M12 5a3 3 0 0 0-5.6-1.5A3 3 0 0 0 4 7.5a3 3 0 0 0 .6 4.5A3 3 0 0 0 5 17a3 3 0 0 0 4 2.6A3 3 0 0 0 12 20 M12 5a3 3 0 0 1 5.6-1.5A3 3 0 0 1 20 7.5a3 3 0 0 1-.6 4.5A3 3 0 0 1 19 17a3 3 0 0 1-4 2.6A3 3 0 0 1 12 20 M7 9.5h5 M12 13.5h5",
 		"api-tokens": "M14 7a5 5 0 1 1-3 9L4 23H1v-3l7-7a5 5 0 0 1 6-6z M16 10h.01",
 		"agent-tokens":

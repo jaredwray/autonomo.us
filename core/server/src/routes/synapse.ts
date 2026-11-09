@@ -1,47 +1,47 @@
 import {
-	type AppendBrainNoteRequest,
-	BRAIN_VAULT_ID_PATTERN,
-	type BrainActor,
-	type BrainImportRequest,
-	type BrainNoteSort,
-	type BrainProposalStatus,
-	type BrainVaultId,
-	type CreateBrainNoteRequest,
-	type DecideBrainProposalRequest,
-	type UpdateBrainNoteRequest,
+	type AppendSynapseNoteRequest,
+	type CreateSynapseNoteRequest,
+	type DecideSynapseProposalRequest,
+	SYNAPSE_SPACE_ID_PATTERN,
+	type SynapseActor,
+	type SynapseImportRequest,
+	type SynapseNoteSort,
+	type SynapseProposalStatus,
+	type SynapseSpaceId,
+	type UpdateSynapseNoteRequest,
 } from "@autonomo.us/common";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { signedInMember } from "../auth/access.js";
 import { AccountStore } from "../auth/accounts.js";
+import { mongoErrorDetails } from "../mongo.js";
+import { SynapseError } from "../synapse/errors.js";
 import {
-	type BrainService,
 	MAX_QUERY_LIMIT,
 	MAX_REASON_LENGTH,
-} from "../brain/brain.js";
-import { BrainError } from "../brain/errors.js";
-import { zipStore } from "../brain/zip.js";
-import { mongoErrorDetails } from "../mongo.js";
+	type SynapseService,
+} from "../synapse/synapse.js";
+import { zipStore } from "../synapse/zip.js";
 
 const IMPORT_BODY_LIMIT = 5 * 1024 * 1024;
 const IMPORT_MAX_FILES = 500;
 const string = { type: "string" };
-const vault = { type: "string", pattern: BRAIN_VAULT_ID_PATTERN };
+const space = { type: "string", pattern: SYNAPSE_SPACE_ID_PATTERN };
 const titleParam = { type: "string", minLength: 1, maxLength: 200 };
-const vaultParams = {
+const spaceParams = {
 	type: "object",
-	required: ["vault"],
-	properties: { vault },
+	required: ["space"],
+	properties: { space },
 };
 const noteParams = {
 	type: "object",
-	required: ["vault", "title"],
-	properties: { vault, title: titleParam },
+	required: ["space", "title"],
+	properties: { space, title: titleParam },
 };
 const dateParams = {
 	type: "object",
-	required: ["vault", "date"],
+	required: ["space", "date"],
 	properties: {
-		vault,
+		space,
 		date: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" },
 	},
 };
@@ -60,16 +60,16 @@ const body = (properties: Record<string, object>, required: string[] = []) => ({
 /** Values are checked by the service: a JSON schema here would let Ajv coerce them. */
 const properties = { type: "object" };
 
-type VaultParams = { vault: BrainVaultId };
-type NoteParams = VaultParams & { title: string };
+type SpaceParams = { space: SynapseSpaceId };
+type NoteParams = SpaceParams & { title: string };
 type NotesQuery = Record<string, string | undefined> & {
-	sort?: BrainNoteSort;
+	sort?: SynapseNoteSort;
 	direction?: "asc" | "desc";
 	limit?: number;
 	offset?: number;
 };
 
-function actorOf(request: FastifyRequest): BrainActor {
+function actorOf(request: FastifyRequest): SynapseActor {
 	const auth = request.auth;
 	if (auth?.kind === "user")
 		return {
@@ -79,12 +79,12 @@ function actorOf(request: FastifyRequest): BrainActor {
 		};
 	if (auth?.kind === "api-token")
 		return { kind: "api-token", id: auth.token.id, name: auth.token.name };
-	throw new BrainError("Sign in or provide an API token.", 403);
+	throw new SynapseError("Sign in or provide an API token.", 403);
 }
 
-export async function brainRoutes(
+export async function synapseRoutes(
 	server: FastifyInstance,
-	{ brain }: { brain: BrainService },
+	{ synapse }: { synapse: SynapseService },
 ) {
 	server.addHook("onRequest", async (_request, reply) => {
 		reply.header("cache-control", "no-store");
@@ -97,32 +97,34 @@ export async function brainRoutes(
 			typeof failure.statusCode === "number" && failure.statusCode >= 400
 				? failure.statusCode
 				: 500;
-		// A BrainError's cause may be a driver error whose message holds the URI.
+		// A SynapseError's cause may be a driver error whose message holds the URI.
 		if (status >= 500)
 			request.log.error(
-				error instanceof BrainError
+				error instanceof SynapseError
 					? { ...mongoErrorDetails(error), message: error.message }
 					: error,
-				"Brain request failed",
+				"Synapse request failed",
 			);
 		return reply.code(status).send({
 			error: {
 				message:
-					status < 500 || error instanceof BrainError
+					status < 500 || error instanceof SynapseError
 						? String(failure.message)
-						: "The Brain hit an unexpected error.",
+						: "Synapse hit an unexpected error.",
 			},
 		});
 	});
 
-	server.get("/v1/brain/vaults", () => brain.listVaults());
-	server.get("/v1/brain/templates", () => ({ templates: brain.templates() }));
+	server.get("/v1/synapse/spaces", () => synapse.listSpaces());
+	server.get("/v1/synapse/templates", () => ({
+		templates: synapse.templates(),
+	}));
 
-	server.get<{ Params: VaultParams; Querystring: NotesQuery }>(
-		"/v1/brain/vaults/:vault/notes",
+	server.get<{ Params: SpaceParams; Querystring: NotesQuery }>(
+		"/v1/synapse/spaces/:space/notes",
 		{
 			schema: {
-				params: vaultParams,
+				params: spaceParams,
 				querystring: {
 					type: "object",
 					properties: {
@@ -149,7 +151,7 @@ export async function brainRoutes(
 					typeof value === "string"
 				)
 					where[key.slice(6)] = value;
-			return brain.query(request.params.vault, {
+			return synapse.query(request.params.space, {
 				text,
 				category,
 				tag,
@@ -162,11 +164,11 @@ export async function brainRoutes(
 			});
 		},
 	);
-	server.post<{ Params: VaultParams; Body: CreateBrainNoteRequest }>(
-		"/v1/brain/vaults/:vault/notes",
+	server.post<{ Params: SpaceParams; Body: CreateSynapseNoteRequest }>(
+		"/v1/synapse/spaces/:space/notes",
 		{
 			schema: {
-				params: vaultParams,
+				params: spaceParams,
 				body: body(
 					{
 						title: string,
@@ -183,20 +185,20 @@ export async function brainRoutes(
 			reply
 				.code(201)
 				.send(
-					await brain.createNote(
-						request.params.vault,
+					await synapse.createNote(
+						request.params.space,
 						request.body,
 						actorOf(request),
 					),
 				),
 	);
 	server.get<{ Params: NoteParams }>(
-		"/v1/brain/vaults/:vault/notes/:title",
+		"/v1/synapse/spaces/:space/notes/:title",
 		{ schema: { params: noteParams } },
-		(request) => brain.viewNote(request.params.vault, request.params.title),
+		(request) => synapse.viewNote(request.params.space, request.params.title),
 	);
-	server.patch<{ Params: NoteParams; Body: UpdateBrainNoteRequest }>(
-		"/v1/brain/vaults/:vault/notes/:title",
+	server.patch<{ Params: NoteParams; Body: UpdateSynapseNoteRequest }>(
+		"/v1/synapse/spaces/:space/notes/:title",
 		{
 			schema: {
 				params: noteParams,
@@ -211,15 +213,15 @@ export async function brainRoutes(
 			},
 		},
 		(request) =>
-			brain.updateNote(
-				request.params.vault,
+			synapse.updateNote(
+				request.params.space,
 				request.params.title,
 				request.body,
 				actorOf(request),
 			),
 	);
-	server.post<{ Params: NoteParams; Body: AppendBrainNoteRequest }>(
-		"/v1/brain/vaults/:vault/notes/:title/append",
+	server.post<{ Params: NoteParams; Body: AppendSynapseNoteRequest }>(
+		"/v1/synapse/spaces/:space/notes/:title/append",
 		{
 			schema: {
 				params: noteParams,
@@ -227,8 +229,8 @@ export async function brainRoutes(
 			},
 		},
 		async (request, reply) => {
-			const { note, created } = await brain.appendNote(
-				request.params.vault,
+			const { note, created } = await synapse.appendNote(
+				request.params.space,
 				request.params.title,
 				request.body,
 				actorOf(request),
@@ -238,7 +240,7 @@ export async function brainRoutes(
 	);
 	// `?revision=` deletes only that revision, so a stale confirmation is a 409.
 	server.delete<{ Params: NoteParams; Querystring: { revision?: number } }>(
-		"/v1/brain/vaults/:vault/notes/:title",
+		"/v1/synapse/spaces/:space/notes/:title",
 		{
 			schema: {
 				params: noteParams,
@@ -250,8 +252,8 @@ export async function brainRoutes(
 			},
 		},
 		async (request, reply) => {
-			await brain.deleteNote(
-				request.params.vault,
+			await synapse.deleteNote(
+				request.params.space,
 				request.params.title,
 				actorOf(request),
 				request.query.revision,
@@ -259,11 +261,11 @@ export async function brainRoutes(
 			return reply.code(204).send();
 		},
 	);
-	server.get<{ Params: VaultParams; Querystring: { limit?: number } }>(
-		"/v1/brain/vaults/:vault/unresolved",
+	server.get<{ Params: SpaceParams; Querystring: { limit?: number } }>(
+		"/v1/synapse/spaces/:space/unresolved",
 		{
 			schema: {
-				params: vaultParams,
+				params: spaceParams,
 				querystring: {
 					type: "object",
 					properties: { limit: { type: "integer", minimum: 1, maximum: 1000 } },
@@ -271,29 +273,29 @@ export async function brainRoutes(
 			},
 		},
 		async (request) => ({
-			links: await brain.unresolved(
-				request.params.vault,
+			links: await synapse.unresolved(
+				request.params.space,
 				request.query.limit ?? 200,
 			),
 		}),
 	);
-	server.get<{ Params: VaultParams }>(
-		"/v1/brain/vaults/:vault/categories",
-		{ schema: { params: vaultParams } },
+	server.get<{ Params: SpaceParams }>(
+		"/v1/synapse/spaces/:space/categories",
+		{ schema: { params: spaceParams } },
 		async (request) => ({
-			categories: await brain.categories(request.params.vault),
+			categories: await synapse.categories(request.params.space),
 		}),
 	);
-	server.get<{ Params: VaultParams & { date: string } }>(
-		"/v1/brain/vaults/:vault/daily/:date",
+	server.get<{ Params: SpaceParams & { date: string } }>(
+		"/v1/synapse/spaces/:space/daily/:date",
 		{ schema: { params: dateParams } },
-		(request) => brain.daily(request.params.vault, request.params.date),
+		(request) => synapse.daily(request.params.space, request.params.date),
 	);
-	server.get<{ Params: VaultParams; Querystring: { format?: "json" | "zip" } }>(
-		"/v1/brain/vaults/:vault/export",
+	server.get<{ Params: SpaceParams; Querystring: { format?: "json" | "zip" } }>(
+		"/v1/synapse/spaces/:space/export",
 		{
 			schema: {
-				params: vaultParams,
+				params: spaceParams,
 				querystring: {
 					type: "object",
 					properties: { format: { enum: ["json", "zip"] } },
@@ -301,23 +303,23 @@ export async function brainRoutes(
 			},
 		},
 		async (request, reply) => {
-			const exported = await brain.exportVault(request.params.vault);
+			const exported = await synapse.exportSpace(request.params.space);
 			if (request.query.format !== "zip") return exported;
 			return reply
 				.header("content-type", "application/zip")
 				.header(
 					"content-disposition",
-					`attachment; filename="${request.params.vault}.zip"`,
+					`attachment; filename="${request.params.space}.zip"`,
 				)
 				.send(Buffer.from(zipStore(exported.files)));
 		},
 	);
-	server.post<{ Params: VaultParams; Body: BrainImportRequest }>(
-		"/v1/brain/vaults/:vault/import",
+	server.post<{ Params: SpaceParams; Body: SynapseImportRequest }>(
+		"/v1/synapse/spaces/:space/import",
 		{
 			bodyLimit: IMPORT_BODY_LIMIT,
 			schema: {
-				params: vaultParams,
+				params: spaceParams,
 				body: body(
 					{
 						files: {
@@ -338,22 +340,22 @@ export async function brainRoutes(
 			},
 		},
 		(request) =>
-			brain.importVault(request.params.vault, request.body, actorOf(request)),
+			synapse.importSpace(request.params.space, request.body, actorOf(request)),
 	);
-	server.get<{ Querystring: { status?: BrainProposalStatus } }>(
-		"/v1/brain/proposals",
+	server.get<{ Querystring: { status?: SynapseProposalStatus } }>(
+		"/v1/synapse/proposals",
 		{
 			schema: {
 				querystring: { type: "object", properties: { status } },
 			},
 		},
 		async (request) => ({
-			proposals: await brain.listProposals({ status: request.query.status }),
+			proposals: await synapse.listProposals({ status: request.query.status }),
 		}),
 	);
 	// Approvals need a person: API tokens are refused by signedInMember.
-	server.post<{ Params: { id: string }; Body: DecideBrainProposalRequest }>(
-		"/v1/brain/proposals/:id/decide",
+	server.post<{ Params: { id: string }; Body: DecideSynapseProposalRequest }>(
+		"/v1/synapse/proposals/:id/decide",
 		{
 			schema: {
 				params: idParams,
@@ -369,8 +371,8 @@ export async function brainRoutes(
 		(request) => {
 			const member = signedInMember(request);
 			if (!AccountStore.canManage(member))
-				throw new BrainError("Only owners and admins decide proposals.", 403);
-			return brain.decideProposal(request.params.id, request.body, {
+				throw new SynapseError("Only owners and admins decide proposals.", 403);
+			return synapse.decideProposal(request.params.id, request.body, {
 				kind: "user",
 				id: member.id,
 				name: member.name || member.email,

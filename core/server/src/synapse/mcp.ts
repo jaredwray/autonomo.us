@@ -2,20 +2,20 @@ import {
 	AGENT_TOKEN_PERMISSIONS,
 	type AgentToken,
 	type AgentTokenPermission,
-	BRAIN_SHARED_VAULT,
-	type BrainActor,
-	type BrainNoteView,
-	type BrainProperties,
-	type BrainProposalStatus,
-	type BrainVaultId,
-	type CreateBrainProposalRequest,
+	type CreateSynapseProposalRequest,
+	SYNAPSE_SHARED_SPACE,
+	type SynapseActor,
+	type SynapseNoteView,
+	type SynapseProperties,
+	type SynapseProposalStatus,
+	type SynapseSpaceId,
 } from "@autonomo.us/common";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { AgentTokenStore } from "../auth/agent-tokens.js";
 import { ApiTokenError } from "../auth/token-store.js";
 import { resolveCorsOrigin } from "../routes/chat.js";
-import { agentVaultId, type BrainService } from "./brain.js";
-import { BrainError } from "./errors.js";
+import { SynapseError } from "./errors.js";
+import { agentSpaceId, type SynapseService } from "./synapse.js";
 
 export const MCP_PROTOCOL_VERSIONS = [
 	"2025-11-25",
@@ -36,13 +36,13 @@ export const RPC = {
 } as const;
 
 export const MCP_INSTRUCTIONS = [
-	"The Brain is your long-term memory: a vault of linked Markdown notes that outlives this session.",
-	"Search before you write (brain_search); update or append to an existing note instead of creating a duplicate.",
+	"Synapse is your long-term memory: a space of linked Markdown notes that outlives this session.",
+	"Search before you write (synapse_search); update or append to an existing note instead of creating a duplicate.",
 	"Keep one note per thing: a person, company, project, or idea, titled with its name. Write evergreen ideas as one note per idea, titled as a statement.",
-	"Always link the first mention of a person, project, company, or idea with [[Title]], even when no note exists yet; unresolved links are breadcrumbs for future notes (brain_unresolved).",
-	"Classify notes with the categories property by creating them from a template (brain_templates); category and template names are plural, like People or Projects.",
-	"Write dates as YYYY-MM-DD. Record what you did and decided with brain_log; it goes into today's daily note, so link the notes involved.",
-	'Your vault is private to you. The shared vault is the team canon: read it with vault "shared", and change it only through brain_propose, which a person reviews.',
+	"Always link the first mention of a person, project, company, or idea with [[Title]], even when no note exists yet; unresolved links are breadcrumbs for future notes (synapse_unresolved).",
+	"Classify notes with the categories property by creating them from a template (synapse_templates); category and template names are plural, like People or Projects.",
+	"Write dates as YYYY-MM-DD. Record what you did and decided with synapse_log; it goes into today's daily note, so link the notes involved.",
+	'Your space is private to you. The shared space is the team canon: read it with space "shared", and change it only through synapse_propose, which a person reviews.',
 ].join("\n");
 
 type JsonSchema = {
@@ -68,10 +68,10 @@ const title = (description: string): PropertySchema => ({
 	minLength: 1,
 	maxLength: 200,
 });
-const vault: PropertySchema = {
+const space: PropertySchema = {
 	type: "string",
 	description:
-		'"agent" (default) is your own private vault; "shared" is the team canon.',
+		'"agent" (default) is your own private space; "shared" is the team canon.',
 	enum: ["agent", "shared"],
 };
 const body: PropertySchema = {
@@ -86,7 +86,7 @@ const properties: PropertySchema = {
 };
 const template: PropertySchema = {
 	type: "string",
-	description: "Built-in template name from brain_templates, e.g. People.",
+	description: "Built-in template name from synapse_templates, e.g. People.",
 };
 
 const schema = (
@@ -105,7 +105,7 @@ export const MCP_TOOLS: Array<{
 	inputSchema: JsonSchema;
 }> = [
 	{
-		name: "brain_search",
+		name: "synapse_search",
 		description:
 			"Finds notes by words, category, tag, or backlinks. Every filter must match; results carry a snippet.",
 		inputSchema: schema({
@@ -122,7 +122,7 @@ export const MCP_TOOLS: Array<{
 				maxLength: 200,
 			},
 			linksTo: title("Only notes that link to this title (its backlinks)."),
-			vault,
+			space,
 			limit: {
 				type: "integer",
 				description: `Maximum results, default 10, at most ${SEARCH_LIMIT}.`,
@@ -132,17 +132,17 @@ export const MCP_TOOLS: Array<{
 		}),
 	},
 	{
-		name: "brain_read",
+		name: "synapse_read",
 		description:
 			"Reads a note with its backlinks, outgoing links, related notes, and category members.",
-		inputSchema: schema({ title: title("Exact note title."), vault }, [
+		inputSchema: schema({ title: title("Exact note title."), space }, [
 			"title",
 		]),
 	},
 	{
-		name: "brain_create",
+		name: "synapse_create",
 		description:
-			"Creates a note in your vault, optionally from a template whose properties come first.",
+			"Creates a note in your space, optionally from a template whose properties come first.",
 		inputSchema: schema(
 			{
 				title: title("Unique title; also the file name."),
@@ -154,9 +154,9 @@ export const MCP_TOOLS: Array<{
 		),
 	},
 	{
-		name: "brain_update",
+		name: "synapse_update",
 		description:
-			"Changes a note in your vault: rename (rewriting links to it), replace the body, or merge properties. Pass the revision you read to avoid overwriting a concurrent change.",
+			"Changes a note in your space: rename (rewriting links to it), replace the body, or merge properties. Pass the revision you read to avoid overwriting a concurrent change.",
 		inputSchema: schema(
 			{
 				title: title("Current title."),
@@ -173,9 +173,9 @@ export const MCP_TOOLS: Array<{
 		),
 	},
 	{
-		name: "brain_append",
+		name: "synapse_append",
 		description:
-			"Adds text to the end of a note in your vault, creating it (from a template if given) when it is missing.",
+			"Adds text to the end of a note in your space, creating it (from a template if given) when it is missing.",
 		inputSchema: schema(
 			{
 				title: title("Note title."),
@@ -190,9 +190,9 @@ export const MCP_TOOLS: Array<{
 		),
 	},
 	{
-		name: "brain_delete",
+		name: "synapse_delete",
 		description:
-			"Deletes a note from your vault. Links to it become unresolved. Pass the revision you read to avoid deleting a newer change.",
+			"Deletes a note from your space. Links to it become unresolved. Pass the revision you read to avoid deleting a newer change.",
 		inputSchema: schema(
 			{
 				title: title("Note title."),
@@ -206,7 +206,7 @@ export const MCP_TOOLS: Array<{
 		),
 	},
 	{
-		name: "brain_log",
+		name: "synapse_log",
 		description:
 			"Records what you did or decided as a timestamped line in today's daily note. Link the notes involved.",
 		inputSchema: schema(
@@ -215,7 +215,7 @@ export const MCP_TOOLS: Array<{
 		),
 	},
 	{
-		name: "brain_daily",
+		name: "synapse_daily",
 		description:
 			"Shows a day: its daily note and the notes created on, dated, or linking to that day.",
 		inputSchema: schema({
@@ -224,15 +224,15 @@ export const MCP_TOOLS: Array<{
 				description: "YYYY-MM-DD; default today.",
 				pattern: "^\\d{4}-\\d{2}-\\d{2}$",
 			},
-			vault,
+			space,
 		}),
 	},
 	{
-		name: "brain_unresolved",
+		name: "synapse_unresolved",
 		description:
 			"Lists link targets with no note yet, most linked first: candidates for new notes.",
 		inputSchema: schema({
-			vault,
+			space,
 			limit: {
 				type: "integer",
 				description: "Maximum results, default 50.",
@@ -242,15 +242,15 @@ export const MCP_TOOLS: Array<{
 		}),
 	},
 	{
-		name: "brain_templates",
+		name: "synapse_templates",
 		description:
 			"Lists the built-in templates with their category, description, and default properties.",
 		inputSchema: schema({}),
 	},
 	{
-		name: "brain_propose",
+		name: "synapse_propose",
 		description:
-			"Proposes a change to the shared vault for a person to approve: create, update, append, or delete a note, with a reason.",
+			"Proposes a change to the shared space for a person to approve: create, update, append, or delete a note, with a reason.",
 		inputSchema: schema(
 			{
 				action: {
@@ -281,7 +281,7 @@ export const MCP_TOOLS: Array<{
 		),
 	},
 	{
-		name: "brain_proposals",
+		name: "synapse_proposals",
 		description: "Lists your proposals, newest first, optionally by status.",
 		inputSchema: schema({
 			status: {
@@ -338,8 +338,8 @@ export function argumentProblem(
 	return null;
 }
 
-/** The text form of brain_read: the file plus its graph neighbourhood. */
-export function noteViewText(view: BrainNoteView): string {
+/** The text form of synapse_read: the file plus its graph neighbourhood. */
+export function noteViewText(view: SynapseNoteView): string {
 	const list = (titles: string[]) =>
 		titles.length ? titles.map((item) => `- [[${item}]]`).join("\n") : "(none)";
 	return [
@@ -363,11 +363,11 @@ class RpcError extends Error {
 
 type Args = Record<string, unknown>;
 /** Shapes checked by the service's validateProperties, not here. */
-const asProperties = (value: unknown) => value as BrainProperties | undefined;
-type Agent = { token: AgentToken; actor: BrainActor };
+const asProperties = (value: unknown) => value as SynapseProperties | undefined;
+type Agent = { token: AgentToken; actor: SynapseActor };
 
 export type McpRouteOptions = {
-	brain: BrainService;
+	synapse: SynapseService;
 	agentTokens: AgentTokenStore;
 	/** Browser origins allowed by CORS_ORIGIN; `["*"]` allows any. */
 	corsOrigins: string[];
@@ -376,13 +376,13 @@ export type McpRouteOptions = {
 
 /**
  * Streamable HTTP MCP in stateless mode on POST /mcp: one JSON-RPC message
- * per request, one JSON response. See docs/BRAIN.md §9.
+ * per request, one JSON response. See docs/SYNAPSE.md §9.
  */
 export async function mcpRoutes(
 	server: FastifyInstance,
 	options: McpRouteOptions,
 ) {
-	const { brain } = options;
+	const { synapse } = options;
 	// Malformed JSON must become a JSON-RPC parse error, not Fastify's 400.
 	server.addContentTypeParser(
 		"application/json",
@@ -395,13 +395,15 @@ export async function mcpRoutes(
 		(_request, payload, done) => done(null, payload),
 	);
 
-	const vaultOf = (agent: Agent, args: Args): BrainVaultId =>
-		args.vault === "shared" ? BRAIN_SHARED_VAULT : agentVaultId(agent.token.id);
+	const spaceOf = (agent: Agent, args: Args): SynapseSpaceId =>
+		args.space === "shared"
+			? SYNAPSE_SHARED_SPACE
+			: agentSpaceId(agent.token.id);
 
 	const tools: Record<string, (agent: Agent, args: Args) => Promise<unknown>> =
 		{
-			brain_search: (agent, args) =>
-				brain.query(vaultOf(agent, args), {
+			synapse_search: (agent, args) =>
+				synapse.query(spaceOf(agent, args), {
 					text: args.query as string | undefined,
 					category: args.category as string | undefined,
 					tag: args.tag as string | undefined,
@@ -411,11 +413,11 @@ export async function mcpRoutes(
 						(args.limit as number | undefined) ?? 10,
 					),
 				}),
-			brain_read: (agent, args) =>
-				brain.viewNote(vaultOf(agent, args), args.title as string),
-			brain_create: (agent, args) =>
-				brain.createNote(
-					agentVaultId(agent.token.id),
+			synapse_read: (agent, args) =>
+				synapse.viewNote(spaceOf(agent, args), args.title as string),
+			synapse_create: (agent, args) =>
+				synapse.createNote(
+					agentSpaceId(agent.token.id),
 					{
 						title: args.title as string,
 						template: args.template as string | undefined,
@@ -424,9 +426,9 @@ export async function mcpRoutes(
 					},
 					agent.actor,
 				),
-			brain_update: (agent, args) =>
-				brain.updateNote(
-					agentVaultId(agent.token.id),
+			synapse_update: (agent, args) =>
+				synapse.updateNote(
+					agentSpaceId(agent.token.id),
 					args.title as string,
 					{
 						title: args.newTitle as string | undefined,
@@ -436,10 +438,10 @@ export async function mcpRoutes(
 					},
 					agent.actor,
 				),
-			brain_append: async (agent, args) =>
+			synapse_append: async (agent, args) =>
 				(
-					await brain.appendNote(
-						agentVaultId(agent.token.id),
+					await synapse.appendNote(
+						agentSpaceId(agent.token.id),
 						args.title as string,
 						{
 							text: args.text as string,
@@ -448,42 +450,42 @@ export async function mcpRoutes(
 						agent.actor,
 					)
 				).note,
-			brain_delete: async (agent, args) => {
-				await brain.deleteNote(
-					agentVaultId(agent.token.id),
+			synapse_delete: async (agent, args) => {
+				await synapse.deleteNote(
+					agentSpaceId(agent.token.id),
 					args.title as string,
 					agent.actor,
 					args.revision as number | undefined,
 				);
 				return { deleted: args.title };
 			},
-			brain_log: (agent, args) =>
-				brain.log(
-					agentVaultId(agent.token.id),
+			synapse_log: (agent, args) =>
+				synapse.log(
+					agentSpaceId(agent.token.id),
 					args.text as string,
 					agent.actor,
 				),
-			brain_daily: (agent, args) =>
-				brain.daily(
-					vaultOf(agent, args),
-					(args.date as string) ?? brain.today(),
+			synapse_daily: (agent, args) =>
+				synapse.daily(
+					spaceOf(agent, args),
+					(args.date as string) ?? synapse.today(),
 				),
-			brain_unresolved: async (agent, args) => ({
-				links: await brain.unresolved(
-					vaultOf(agent, args),
+			synapse_unresolved: async (agent, args) => ({
+				links: await synapse.unresolved(
+					spaceOf(agent, args),
 					(args.limit as number | undefined) ?? 50,
 				),
 			}),
-			brain_templates: async () => ({ templates: brain.templates() }),
-			brain_propose: (agent, args) =>
-				brain.propose(
+			synapse_templates: async () => ({ templates: synapse.templates() }),
+			synapse_propose: (agent, args) =>
+				synapse.propose(
 					agent.actor,
-					args as unknown as CreateBrainProposalRequest,
+					args as unknown as CreateSynapseProposalRequest,
 				),
-			brain_proposals: async (agent, args) => ({
-				proposals: await brain.listProposals({
+			synapse_proposals: async (agent, args) => ({
+				proposals: await synapse.listProposals({
 					authorId: agent.token.id,
-					status: args.status as BrainProposalStatus | undefined,
+					status: args.status as SynapseProposalStatus | undefined,
 				}),
 			}),
 		};
@@ -514,15 +516,15 @@ export async function mcpRoutes(
 		try {
 			const result = await run(agent, (args ?? {}) as Args);
 			const text =
-				name === "brain_read"
-					? noteViewText(result as BrainNoteView)
+				name === "synapse_read"
+					? noteViewText(result as SynapseNoteView)
 					: JSON.stringify(result);
 			return {
 				content: [{ type: "text", text }],
 				structuredContent: result,
 			};
 		} catch (error) {
-			if (error instanceof BrainError)
+			if (error instanceof SynapseError)
 				return {
 					content: [{ type: "text", text: error.message }],
 					isError: true,
@@ -685,7 +687,7 @@ export async function mcpRoutes(
 		} catch (error) {
 			if (error instanceof RpcError)
 				return rpcError(reply, 200, id, error.code, error.message);
-			if (error instanceof BrainError)
+			if (error instanceof SynapseError)
 				return rpcError(reply, 200, id, RPC.internal, error.message);
 			request.log.error(error);
 			return rpcError(reply, 200, id, RPC.internal, "Internal error.");

@@ -21,7 +21,7 @@ afterEach(async () => {
 /** A listening server with an owner, an admin, a member, and two API tokens. */
 async function start() {
 	const server = createServer({
-		config: { providers: [], corsOrigins: ["*"], brainTimeZone: "UTC" },
+		config: { providers: [], corsOrigins: ["*"], synapseTimeZone: "UTC" },
 		logger: false,
 	});
 	cleanups.push(() => server.close());
@@ -67,23 +67,23 @@ async function start() {
 	return { server, origin, owner, admin, member, call, apiToken };
 }
 
-describe("Brain REST routes", () => {
+describe("Synapse REST routes", () => {
 	it("manages notes with encoded titles and answers errors in the gateway shape", async () => {
 		const { call } = await start();
-		const vaults = await call("GET", "/v1/brain/vaults");
-		expect(vaults.status).toBe(200);
-		expect(vaults.headers.get("cache-control")).toBe("no-store");
-		expect(await vaults.json()).toEqual({
-			vaults: [expect.objectContaining({ id: "shared", noteCount: 0 })],
+		const spaces = await call("GET", "/v1/synapse/spaces");
+		expect(spaces.status).toBe(200);
+		expect(spaces.headers.get("cache-control")).toBe("no-store");
+		expect(await spaces.json()).toEqual({
+			spaces: [expect.objectContaining({ id: "shared", noteCount: 0 })],
 			persistence: "memory",
 			timeZone: "UTC",
 		});
-		const templates = await call("GET", "/v1/brain/templates");
+		const templates = await call("GET", "/v1/synapse/templates");
 		expect(
 			((await templates.json()) as { templates: unknown[] }).templates,
 		).toHaveLength(13);
 
-		const created = await call("POST", "/v1/brain/vaults/shared/notes", {
+		const created = await call("POST", "/v1/synapse/spaces/shared/notes", {
 			body: {
 				title: "Ada & Charles / notes".replace(" / ", " — "),
 				template: "People",
@@ -105,7 +105,10 @@ describe("Brain REST routes", () => {
 			tags: ["pioneers"],
 		});
 		const encoded = encodeURIComponent(note.title);
-		const view = await call("GET", `/v1/brain/vaults/shared/notes/${encoded}`);
+		const view = await call(
+			"GET",
+			`/v1/synapse/spaces/shared/notes/${encoded}`,
+		);
 		expect(view.status).toBe(200);
 		const body = (await view.json()) as {
 			note: { title: string };
@@ -120,33 +123,33 @@ describe("Brain REST routes", () => {
 		]);
 		expect(body.markdown).toContain("role: Mathematician");
 
-		const duplicate = await call("POST", "/v1/brain/vaults/shared/notes", {
+		const duplicate = await call("POST", "/v1/synapse/spaces/shared/notes", {
 			body: { title: "ADA & charles — NOTES" },
 		});
 		expect(duplicate.status).toBe(409);
 		expect(await duplicate.json()).toEqual({
 			error: { message: expect.stringMatching(/already exists/) },
 		});
-		const invalidVault = await call("GET", "/v1/brain/vaults/Shared/notes");
-		expect(invalidVault.status).toBe(400);
-		expect(await invalidVault.json()).toEqual({
+		const invalidSpace = await call("GET", "/v1/synapse/spaces/Shared/notes");
+		expect(invalidSpace.status).toBe(400);
+		expect(await invalidSpace.json()).toEqual({
 			error: { message: expect.any(String) },
 		});
-		const invalidBody = await call("POST", "/v1/brain/vaults/shared/notes", {
+		const invalidBody = await call("POST", "/v1/synapse/spaces/shared/notes", {
 			body: { body: "no title" },
 		});
 		expect(invalidBody.status).toBe(400);
 		expect(await invalidBody.json()).toEqual({
 			error: { message: expect.stringMatching(/title/) },
 		});
-		const badTitle = await call("POST", "/v1/brain/vaults/shared/notes", {
+		const badTitle = await call("POST", "/v1/synapse/spaces/shared/notes", {
 			body: { title: "a|b" },
 		});
 		expect(badTitle.status).toBe(400);
 
 		const patched = await call(
 			"PATCH",
-			`/v1/brain/vaults/shared/notes/${encoded}`,
+			`/v1/synapse/spaces/shared/notes/${encoded}`,
 			{
 				body: { title: "Ada Lovelace", properties: { rating: 6 }, revision: 1 },
 			},
@@ -159,7 +162,7 @@ describe("Brain REST routes", () => {
 		});
 		const stale = await call(
 			"PATCH",
-			"/v1/brain/vaults/shared/notes/Ada%20Lovelace",
+			"/v1/synapse/spaces/shared/notes/Ada%20Lovelace",
 			{
 				body: { body: "x", revision: 1 },
 			},
@@ -168,13 +171,13 @@ describe("Brain REST routes", () => {
 
 		const appendedNew = await call(
 			"POST",
-			"/v1/brain/vaults/shared/notes/Charles%20Babbage/append",
+			"/v1/synapse/spaces/shared/notes/Charles%20Babbage/append",
 			{ body: { text: "Inventor.", template: "People" } },
 		);
 		expect(appendedNew.status).toBe(201);
 		const appended = await call(
 			"POST",
-			"/v1/brain/vaults/shared/notes/Charles%20Babbage/append",
+			"/v1/synapse/spaces/shared/notes/Charles%20Babbage/append",
 			{ body: { text: "Friend of [[Ada Lovelace]]." } },
 		);
 		expect(appended.status).toBe(200);
@@ -184,7 +187,7 @@ describe("Brain REST routes", () => {
 
 		const query = await call(
 			"GET",
-			"/v1/brain/vaults/shared/notes?text=engine&where.role=mathematician&limit=1",
+			"/v1/synapse/spaces/shared/notes?text=engine&where.role=mathematician&limit=1",
 		);
 		expect(await query.json()).toEqual({
 			total: 1,
@@ -197,7 +200,7 @@ describe("Brain REST routes", () => {
 		});
 		const filtered = await call(
 			"GET",
-			"/v1/brain/vaults/shared/notes?category=People&sort=title",
+			"/v1/synapse/spaces/shared/notes?category=People&sort=title",
 		);
 		expect(
 			(
@@ -205,26 +208,32 @@ describe("Brain REST routes", () => {
 			).notes.map((n) => n.title),
 		).toEqual(["Ada Lovelace", "Charles Babbage"]);
 		expect(
-			(await call("GET", "/v1/brain/vaults/shared/notes?limit=0")).status,
+			(await call("GET", "/v1/synapse/spaces/shared/notes?limit=0")).status,
 		).toBe(400);
 		expect(
-			(await call("GET", "/v1/brain/vaults/shared/notes?sort=random")).status,
+			(await call("GET", "/v1/synapse/spaces/shared/notes?sort=random")).status,
 		).toBe(400);
 
-		const unresolved = await call("GET", "/v1/brain/vaults/shared/unresolved");
+		const unresolved = await call(
+			"GET",
+			"/v1/synapse/spaces/shared/unresolved",
+		);
 		expect(await unresolved.json()).toEqual({
 			links: [
 				{ title: "Analytical Engine", count: 1, sources: ["Ada Lovelace"] },
 			],
 		});
-		const categories = await call("GET", "/v1/brain/vaults/shared/categories");
+		const categories = await call(
+			"GET",
+			"/v1/synapse/spaces/shared/categories",
+		);
 		expect(await categories.json()).toEqual({
 			categories: [
 				expect.objectContaining({ title: "People", count: 2, exists: true }),
 			],
 		});
 		const today = new Date().toISOString().slice(0, 10);
-		const daily = await call("GET", `/v1/brain/vaults/shared/daily/${today}`);
+		const daily = await call("GET", `/v1/synapse/spaces/shared/daily/${today}`);
 		expect(await daily.json()).toMatchObject({
 			date: today,
 			note: null,
@@ -233,52 +242,52 @@ describe("Brain REST routes", () => {
 			]),
 		});
 		expect(
-			(await call("GET", "/v1/brain/vaults/shared/daily/today")).status,
+			(await call("GET", "/v1/synapse/spaces/shared/daily/today")).status,
 		).toBe(400);
 		expect(
-			(await call("GET", "/v1/brain/vaults/shared/daily/2026-02-30")).status,
+			(await call("GET", "/v1/synapse/spaces/shared/daily/2026-02-30")).status,
 		).toBe(400);
 
-		// Unknown agent vault IDs are empty vaults; bad IDs are 400.
+		// Unknown agent space IDs are empty spaces; bad IDs are 400.
 		expect(
-			await (await call("GET", "/v1/brain/vaults/agent-nobody/notes")).json(),
+			await (await call("GET", "/v1/synapse/spaces/agent-nobody/notes")).json(),
 		).toEqual({
 			notes: [],
 			total: 0,
 		});
 		expect(
-			(await call("GET", "/v1/brain/vaults/agent-no%20body/notes")).status,
+			(await call("GET", "/v1/synapse/spaces/agent-no%20body/notes")).status,
 		).toBe(400);
 
 		const current = (await (
-			await call("GET", "/v1/brain/vaults/shared/notes/Charles%20Babbage")
+			await call("GET", "/v1/synapse/spaces/shared/notes/Charles%20Babbage")
 		).json()) as { note: { revision: number } };
 		const staleDelete = await call(
 			"DELETE",
-			`/v1/brain/vaults/shared/notes/Charles%20Babbage?revision=${current.note.revision + 1}`,
+			`/v1/synapse/spaces/shared/notes/Charles%20Babbage?revision=${current.note.revision + 1}`,
 		);
 		expect(staleDelete.status).toBe(409);
 		expect(
 			(
 				await call(
 					"DELETE",
-					"/v1/brain/vaults/shared/notes/Charles%20Babbage?revision=0",
+					"/v1/synapse/spaces/shared/notes/Charles%20Babbage?revision=0",
 				)
 			).status,
 		).toBe(400);
 		const removed = await call(
 			"DELETE",
-			`/v1/brain/vaults/shared/notes/Charles%20Babbage?revision=${current.note.revision}`,
+			`/v1/synapse/spaces/shared/notes/Charles%20Babbage?revision=${current.note.revision}`,
 		);
 		expect(removed.status).toBe(204);
 		expect(
-			(await call("GET", "/v1/brain/vaults/shared/notes/Charles%20Babbage"))
+			(await call("GET", "/v1/synapse/spaces/shared/notes/Charles%20Babbage"))
 				.status,
 		).toBe(404);
 		expect(
 			(
 				(await (
-					await call("GET", "/v1/brain/vaults/shared/unresolved")
+					await call("GET", "/v1/synapse/spaces/shared/unresolved")
 				).json()) as { links: Array<{ title: string }> }
 			).links.map((l) => l.title),
 		).toEqual(["Analytical Engine", "Charles Babbage"]);
@@ -286,16 +295,16 @@ describe("Brain REST routes", () => {
 
 	it("exports JSON and a zip, imports files, and caps the import body", async () => {
 		const { call } = await start();
-		await call("POST", "/v1/brain/vaults/shared/notes", {
+		await call("POST", "/v1/synapse/spaces/shared/notes", {
 			body: { title: "Zürich office", template: "Places", body: "Office." },
 		});
-		const exported = await call("GET", "/v1/brain/vaults/shared/export");
+		const exported = await call("GET", "/v1/synapse/spaces/shared/export");
 		expect(exported.status).toBe(200);
 		const files = (await exported.json()) as {
-			vault: string;
+			space: string;
 			files: Array<{ path: string; content: string }>;
 		};
-		expect(files.vault).toBe("shared");
+		expect(files.space).toBe("shared");
 		expect(files.files.map((f) => f.path)).toEqual(
 			expect.arrayContaining([
 				"References/Zürich office.md",
@@ -303,7 +312,10 @@ describe("Brain REST routes", () => {
 				"Templates/Places Template.md",
 			]),
 		);
-		const zip = await call("GET", "/v1/brain/vaults/shared/export?format=zip");
+		const zip = await call(
+			"GET",
+			"/v1/synapse/spaces/shared/export?format=zip",
+		);
 		expect(zip.status).toBe(200);
 		expect(zip.headers.get("content-type")).toBe("application/zip");
 		expect(zip.headers.get("content-disposition")).toBe(
@@ -319,10 +331,10 @@ describe("Brain REST routes", () => {
 		])
 			expect(text).toContain(name);
 		expect(
-			(await call("GET", "/v1/brain/vaults/shared/export?format=tar")).status,
+			(await call("GET", "/v1/synapse/spaces/shared/export?format=tar")).status,
 		).toBe(400);
 
-		const imported = await call("POST", "/v1/brain/vaults/agent-abc/import", {
+		const imported = await call("POST", "/v1/synapse/spaces/agent-abc/import", {
 			body: {
 				files: [
 					...files.files,
@@ -346,10 +358,10 @@ describe("Brain REST routes", () => {
 		]);
 		expect(
 			(
-				(await (await call("GET", "/v1/brain/vaults")).json()) as {
-					vaults: Array<{ id: string; noteCount: number }>;
+				(await (await call("GET", "/v1/synapse/spaces")).json()) as {
+					spaces: Array<{ id: string; noteCount: number }>;
 				}
-			).vaults,
+			).spaces,
 		).toEqual([
 			expect.objectContaining({ id: "shared", noteCount: 2 }),
 			expect.objectContaining({
@@ -359,7 +371,7 @@ describe("Brain REST routes", () => {
 				noteCount: 3,
 			}),
 		]);
-		const tooMany = await call("POST", "/v1/brain/vaults/shared/import", {
+		const tooMany = await call("POST", "/v1/synapse/spaces/shared/import", {
 			body: {
 				files: Array.from({ length: 501 }, (_, i) => ({
 					path: `${i}.md`,
@@ -368,7 +380,7 @@ describe("Brain REST routes", () => {
 			},
 		});
 		expect(tooMany.status).toBe(400);
-		const huge = await call("POST", "/v1/brain/vaults/shared/import", {
+		const huge = await call("POST", "/v1/synapse/spaces/shared/import", {
 			body: {
 				files: [
 					{ path: "Huge.md", content: "x".repeat(5 * 1024 * 1024 + 1024) },
@@ -385,7 +397,7 @@ describe("Brain REST routes", () => {
 		const { call, member, admin, apiToken } = await start();
 		const id = "00000000-0000-0000-0000-000000000000";
 		const decide = (token: string) =>
-			call("POST", `/v1/brain/proposals/${id}/decide`, {
+			call("POST", `/v1/synapse/proposals/${id}/decide`, {
 				token,
 				body: { decision: "approve" },
 			});
@@ -394,39 +406,39 @@ describe("Brain REST routes", () => {
 		expect(await asMember.json()).toEqual({
 			error: { message: expect.stringMatching(/owners and admins/) },
 		});
-		expect((await decide(await apiToken(["brain:edit"]))).status).toBe(403);
+		expect((await decide(await apiToken(["synapse:edit"]))).status).toBe(403);
 		expect((await decide(admin.token)).status).toBe(404);
-		const asOwner = await call("POST", `/v1/brain/proposals/${id}/decide`, {
+		const asOwner = await call("POST", `/v1/synapse/proposals/${id}/decide`, {
 			body: { decision: "approve" },
 		});
 		expect(asOwner.status).toBe(404);
 		expect(
 			(
-				await call("POST", `/v1/brain/proposals/${id}/decide`, {
+				await call("POST", `/v1/synapse/proposals/${id}/decide`, {
 					body: { decision: "maybe" },
 				})
 			).status,
 		).toBe(400);
 		expect(
 			(
-				await call("POST", "/v1/brain/proposals/not-a-uuid/decide", {
+				await call("POST", "/v1/synapse/proposals/not-a-uuid/decide", {
 					body: { decision: "approve" },
 				})
 			).status,
 		).toBe(400);
-		const list = await call("GET", "/v1/brain/proposals?status=pending", {
+		const list = await call("GET", "/v1/synapse/proposals?status=pending", {
 			token: member.token,
 		});
 		expect(await list.json()).toEqual({ proposals: [] });
-		expect((await call("GET", "/v1/brain/proposals?status=maybe")).status).toBe(
-			400,
-		);
+		expect(
+			(await call("GET", "/v1/synapse/proposals?status=maybe")).status,
+		).toBe(400);
 	});
 
 	it("applies API token permissions: read for GETs, edit for writes and export, never decide", async () => {
 		const { call, apiToken } = await start();
-		const reader = await apiToken(["brain:read"]);
-		const editor = await apiToken(["brain:edit"]);
+		const reader = await apiToken(["synapse:read"]);
+		const editor = await apiToken(["synapse:edit"]);
 		const other = await apiToken([
 			"models:edit",
 			"routing:edit",
@@ -437,97 +449,97 @@ describe("Brain REST routes", () => {
 		const forbidden = async (response: Response) => {
 			expect(response.status).toBe(403);
 			expect(await response.json()).toEqual({
-				error: { message: expect.stringMatching(/Brain/) },
+				error: { message: expect.stringMatching(/Synapse/) },
 			});
 		};
 		for (const token of [other, none]) {
-			await forbidden(await call("GET", "/v1/brain/vaults", { token }));
-			await forbidden(await call("GET", "/v1/brain/proposals", { token }));
+			await forbidden(await call("GET", "/v1/synapse/spaces", { token }));
+			await forbidden(await call("GET", "/v1/synapse/proposals", { token }));
 			await forbidden(
-				await call("POST", "/v1/brain/vaults/shared/notes", {
+				await call("POST", "/v1/synapse/spaces/shared/notes", {
 					token,
 					body: { title: "x" },
 				}),
 			);
 		}
 		expect(
-			(await call("GET", "/v1/brain/vaults", { token: reader })).status,
+			(await call("GET", "/v1/synapse/spaces", { token: reader })).status,
 		).toBe(200);
 		expect(
-			(await call("GET", "/v1/brain/templates", { token: reader })).status,
+			(await call("GET", "/v1/synapse/templates", { token: reader })).status,
 		).toBe(200);
 		expect(
-			(await call("GET", "/v1/brain/vaults/shared/notes", { token: reader }))
+			(await call("GET", "/v1/synapse/spaces/shared/notes", { token: reader }))
 				.status,
 		).toBe(200);
 		expect(
 			(
-				await call("GET", "/v1/brain/vaults/shared/categories", {
+				await call("GET", "/v1/synapse/spaces/shared/categories", {
 					token: reader,
 				})
 			).status,
 		).toBe(200);
 		expect(
-			(await call("GET", "/v1/brain/proposals", { token: reader })).status,
+			(await call("GET", "/v1/synapse/proposals", { token: reader })).status,
 		).toBe(200);
 		await forbidden(
-			await call("GET", "/v1/brain/vaults/shared/export", { token: reader }),
+			await call("GET", "/v1/synapse/spaces/shared/export", { token: reader }),
 		);
 		await forbidden(
-			await call("POST", "/v1/brain/vaults/shared/notes", {
+			await call("POST", "/v1/synapse/spaces/shared/notes", {
 				token: reader,
 				body: { title: "x" },
 			}),
 		);
 		await forbidden(
-			await call("PATCH", "/v1/brain/vaults/shared/notes/x", {
+			await call("PATCH", "/v1/synapse/spaces/shared/notes/x", {
 				token: reader,
 				body: { body: "y" },
 			}),
 		);
 		await forbidden(
-			await call("DELETE", "/v1/brain/vaults/shared/notes/x", {
+			await call("DELETE", "/v1/synapse/spaces/shared/notes/x", {
 				token: reader,
 			}),
 		);
 		await forbidden(
-			await call("POST", "/v1/brain/vaults/shared/notes/x/append", {
+			await call("POST", "/v1/synapse/spaces/shared/notes/x/append", {
 				token: reader,
 				body: { text: "y" },
 			}),
 		);
 		await forbidden(
-			await call("POST", "/v1/brain/vaults/shared/import", {
+			await call("POST", "/v1/synapse/spaces/shared/import", {
 				token: reader,
 				body: { files: [] },
 			}),
 		);
 
-		const created = await call("POST", "/v1/brain/vaults/shared/notes", {
+		const created = await call("POST", "/v1/synapse/spaces/shared/notes", {
 			token: editor,
 			body: { title: "By token" },
 		});
 		expect(created.status).toBe(201);
 		expect(await created.json()).toMatchObject({
-			createdBy: { kind: "api-token", name: "brain:edit" },
+			createdBy: { kind: "api-token", name: "synapse:edit" },
 		});
 		expect(
 			(
-				await call("GET", "/v1/brain/vaults/shared/notes/By%20token", {
+				await call("GET", "/v1/synapse/spaces/shared/notes/By%20token", {
 					token: editor,
 				})
 			).status,
 		).toBe(200);
 		expect(
 			(
-				await call("GET", "/v1/brain/vaults/shared/export?format=zip", {
+				await call("GET", "/v1/synapse/spaces/shared/export?format=zip", {
 					token: editor,
 				})
 			).status,
 		).toBe(200);
 		expect(
 			(
-				await call("POST", "/v1/brain/vaults/shared/import", {
+				await call("POST", "/v1/synapse/spaces/shared/import", {
 					token: editor,
 					body: { files: [] },
 				})
@@ -535,14 +547,14 @@ describe("Brain REST routes", () => {
 		).toBe(200);
 		expect(
 			(
-				await call("DELETE", "/v1/brain/vaults/shared/notes/By%20token", {
+				await call("DELETE", "/v1/synapse/spaces/shared/notes/By%20token", {
 					token: editor,
 				})
 			).status,
 		).toBe(204);
 		const decide = await call(
 			"POST",
-			"/v1/brain/proposals/00000000-0000-0000-0000-000000000000/decide",
+			"/v1/synapse/proposals/00000000-0000-0000-0000-000000000000/decide",
 			{ token: editor, body: { decision: "approve" } },
 		);
 		expect(decide.status).toBe(403);
@@ -557,10 +569,10 @@ describe("Brain REST routes", () => {
 		});
 		const secret = ((await agent.json()) as ApiTokenSecret).secret;
 		expect(
-			(await call("GET", "/v1/brain/vaults", { token: secret })).status,
+			(await call("GET", "/v1/synapse/spaces", { token: secret })).status,
 		).toBe(401);
-		expect((await call("GET", "/v1/brain/vaults", { token: "" })).status).toBe(
-			401,
-		);
+		expect(
+			(await call("GET", "/v1/synapse/spaces", { token: "" })).status,
+		).toBe(401);
 	});
 });

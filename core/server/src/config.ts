@@ -1,9 +1,9 @@
 import type { FailoverPolicy, ManagedProvider } from "@autonomo.us/common";
-import { validTimeZone } from "./brain/time.js";
 import {
 	DEFAULT_FAILOVER_POLICY,
 	MAX_FAILOVER_TIMEOUT_MS,
 } from "./failover.js";
+import { validTimeZone } from "./synapse/time.js";
 
 export type AnthropicProviderConfig = {
 	kind: "anthropic";
@@ -51,8 +51,8 @@ export type ApiConfig = {
 	 * arbitrary web pages must not be able to call it.
 	 */
 	corsOrigins: string[];
-	/** IANA time zone for the Brain's "today" (templates, daily notes, log). Default UTC. */
-	brainTimeZone?: string;
+	/** IANA time zone for Synapse's "today" (templates, daily notes, log). Default UTC. */
+	synapseTimeZone?: string;
 };
 
 export const DEFAULT_CORS_ORIGINS = [
@@ -87,7 +87,7 @@ function parseModels(value: string | undefined, fallback: string[]): string[] {
  * - `FAILOVER_ENABLED`, `FAILOVER_TARGETS` (comma-separated `provider/model`
  *   ids), and `FAILOVER_TIMEOUT_MS` seed the failover policy, which stays
  *   runtime-configurable via PUT /v1/failover and the dashboard.
- * - `BRAIN_TIME_ZONE` (IANA name, default `UTC`) decides "today" in the Brain.
+ * - `SYNAPSE_TIME_ZONE` (IANA name, default `UTC`) decides "today" in Synapse.
  */
 export function configFromEnv(
 	env: Record<string, string | undefined> = process.env,
@@ -195,10 +195,10 @@ export function configFromEnv(
 				: DEFAULT_FAILOVER_POLICY.timeoutMs,
 	};
 
-	const brainTimeZone = env.BRAIN_TIME_ZONE?.trim() || "UTC";
-	if (!validTimeZone(brainTimeZone))
+	const synapseTimeZone = env.SYNAPSE_TIME_ZONE?.trim() || "UTC";
+	if (!validTimeZone(synapseTimeZone))
 		throw new Error(
-			`BRAIN_TIME_ZONE must be an IANA time zone such as "Europe/Berlin", not "${brainTimeZone}".`,
+			`SYNAPSE_TIME_ZONE must be an IANA time zone such as "Europe/Berlin", not "${synapseTimeZone}".`,
 		);
 
 	return {
@@ -207,6 +207,6 @@ export function configFromEnv(
 		mongodbUrl: env.MONGODB_URI,
 		setupToken: env.SETUP_TOKEN || undefined,
 		corsOrigins,
-		brainTimeZone,
+		synapseTimeZone,
 	};
 }

@@ -1,26 +1,26 @@
 import type {
-	BrainProperties,
-	BrainProposal,
-	BrainProposalAction,
+	SynapseProperties,
+	SynapseProposal,
+	SynapseProposalAction,
 } from "@autonomo.us/common";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
 	ApiError,
-	decideBrainProposal,
-	fetchBrainNote,
-	fetchBrainProposals,
+	decideSynapseProposal,
+	fetchSynapseNote,
+	fetchSynapseProposals,
 } from "./api.js";
-import { shortDate } from "./BrainNote.js";
-import { noteHash } from "./brain-route.js";
+import { shortDate } from "./SynapseNote.js";
+import { noteHash } from "./synapse-route.js";
 
-const ACTION_LABEL: Record<BrainProposalAction, string> = {
+const ACTION_LABEL: Record<SynapseProposalAction, string> = {
 	create: "Create",
 	update: "Update",
 	append: "Append to",
 	delete: "Delete",
 };
 
-function propertyLines(properties: BrainProperties | undefined): string {
+function propertyLines(properties: SynapseProperties | undefined): string {
 	if (!properties) return "";
 	const lines = Object.entries(properties).map(([key, value]) =>
 		Array.isArray(value)
@@ -33,7 +33,7 @@ function propertyLines(properties: BrainProperties | undefined): string {
 }
 
 /** The proposal as the text it would leave behind, for a side-by-side read. */
-function proposedText(proposal: BrainProposal): string {
+function proposedText(proposal: SynapseProposal): string {
 	switch (proposal.action) {
 		case "create":
 			return `${propertyLines(proposal.properties)}${proposal.body ?? ""}`;
@@ -58,7 +58,7 @@ function ProposalCard({
 	canDecide,
 	onDecided,
 }: {
-	proposal: BrainProposal;
+	proposal: SynapseProposal;
 	canDecide: boolean;
 	onDecided(message: string): void;
 }) {
@@ -74,7 +74,7 @@ function ProposalCard({
 	useEffect(() => {
 		if (proposal.action === "create") return;
 		let cancelled = false;
-		fetchBrainNote("shared", proposal.title)
+		fetchSynapseNote("shared", proposal.title)
 			.then((view) => {
 				if (!cancelled) setCurrent(view.markdown);
 			})
@@ -98,7 +98,7 @@ function ProposalCard({
 		setBusy(true);
 		setError("");
 		try {
-			await decideBrainProposal(proposal.id, {
+			await decideSynapseProposal(proposal.id, {
 				decision,
 				reason: decision === "reject" ? reason.trim() : undefined,
 			});
@@ -119,7 +119,7 @@ function ProposalCard({
 	};
 	const headingId = `proposal-${proposal.id}`;
 	return (
-		<article className="card brain-proposal" aria-labelledby={headingId}>
+		<article className="card synapse-proposal" aria-labelledby={headingId}>
 			<div className="section-heading">
 				<div>
 					<h2 id={headingId}>
@@ -136,12 +136,12 @@ function ProposalCard({
 							` · against revision ${proposal.baseRevision}`}
 					</p>
 				</div>
-				<span className="brain-chip">{proposal.status}</span>
+				<span className="synapse-chip">{proposal.status}</span>
 			</div>
-			<p className="brain-proposal-reason">
+			<p className="synapse-proposal-reason">
 				<strong>Reason:</strong> {proposal.reason}
 			</p>
-			<div className="brain-diff">
+			<div className="synapse-diff">
 				<div>
 					<h3>Current shared note</h3>
 					{current === null ? (
@@ -174,7 +174,7 @@ function ProposalCard({
 			{canDecide ? (
 				rejecting ? (
 					<form
-						className="brain-inline-form"
+						className="synapse-inline-form"
 						onSubmit={(event) => {
 							event.preventDefault();
 							void decide("reject");
@@ -242,17 +242,17 @@ function ProposalCard({
 	);
 }
 
-export function BrainProposals({
+export function SynapseProposals({
 	canDecide,
 	version,
 	onDecided,
 }: {
 	canDecide: boolean;
 	version: number;
-	/** A decision changed the shared vault. */
+	/** A decision changed the shared space. */
 	onDecided(): void;
 }) {
-	const [proposals, setProposals] = useState<BrainProposal[] | null>(null);
+	const [proposals, setProposals] = useState<SynapseProposal[] | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState("");
 	const [notice, setNotice] = useState("");
@@ -261,7 +261,7 @@ export function BrainProposals({
 		const request = ++sequence.current;
 		setLoading(true);
 		try {
-			const result = await fetchBrainProposals("pending");
+			const result = await fetchSynapseProposals("pending");
 			if (request === sequence.current) {
 				setProposals(result.proposals);
 				setError("");
@@ -275,7 +275,7 @@ export function BrainProposals({
 			if (request === sequence.current) setLoading(false);
 		}
 	}, []);
-	// biome-ignore lint/correctness/useExhaustiveDependencies: `version` reloads after a decision changed the shared vault
+	// biome-ignore lint/correctness/useExhaustiveDependencies: `version` reloads after a decision changed the shared space
 	useEffect(() => {
 		void refresh();
 		return () => {
@@ -283,10 +283,10 @@ export function BrainProposals({
 		};
 	}, [refresh, version]);
 	return (
-		<div className="brain-proposals">
+		<div className="synapse-proposals">
 			<div className="section-heading">
 				<p className="page-description">
-					Agents never write the shared vault directly: they propose, and an
+					Agents never write the shared space directly: they propose, and an
 					owner or admin decides. Approving applies the change; rejecting sends
 					the reason back to the agent's daily note.
 				</p>
@@ -331,7 +331,7 @@ export function BrainProposals({
 				<div className="card empty-state">
 					{loading && !proposals
 						? "Loading proposals…"
-						: "No pending proposals. Agents file them with the brain_propose tool when they want to change the shared vault."}
+						: "No pending proposals. Agents file them with the synapse_propose tool when they want to change the shared space."}
 				</div>
 			)}
 		</div>

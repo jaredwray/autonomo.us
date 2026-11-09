@@ -1,31 +1,31 @@
-import type { BrainActor, BrainVaultId } from "@autonomo.us/common";
+import type { SynapseActor, SynapseSpaceId } from "@autonomo.us/common";
 import { describe, expect, it } from "vitest";
+import { MemorySynapseRepository } from "../src/synapse/memory-repository.js";
 import {
 	appendLogLine,
-	BrainService,
 	MAX_BODY_LENGTH,
 	MAX_PENDING_PROPOSALS,
 	PROPOSAL_CLAIM_MS,
-} from "../src/brain/brain.js";
-import { MemoryBrainRepository } from "../src/brain/memory-repository.js";
-import { BUILTIN_TEMPLATES } from "../src/brain/templates.js";
-import { dayRange, localDate, localTime } from "../src/brain/time.js";
+	SynapseService,
+} from "../src/synapse/synapse.js";
+import { BUILTIN_TEMPLATES } from "../src/synapse/templates.js";
+import { dayRange, localDate, localTime } from "../src/synapse/time.js";
 
-const user: BrainActor = { kind: "user", id: "u1", name: "Founder" };
-const agent: BrainActor = {
+const user: SynapseActor = { kind: "user", id: "u1", name: "Founder" };
+const agent: SynapseActor = {
 	kind: "agent",
 	id: "tok-1",
 	name: "Research agent",
 };
-const agentVault = "agent-tok-1" as const;
+const agentSpace = "agent-tok-1" as const;
 
-/** A Brain on the memory repository with a controllable clock in Berlin time. */
-function brain(
+/** A Synapse on the memory repository with a controllable clock in Berlin time. */
+function synapse(
 	start = Date.parse("2026-11-08T22:30:00Z"),
 	timeZone = "Europe/Berlin",
 ) {
 	let now = start;
-	const service = new BrainService(new MemoryBrainRepository(), {
+	const service = new SynapseService(new MemorySynapseRepository(), {
 		timeZone,
 		now: () => now,
 	});
@@ -78,7 +78,7 @@ describe("time", () => {
 
 describe("templates and categories", () => {
 	it("ships 13 templates with plural names, descriptions, and {{date}} filling", async () => {
-		const { service } = brain();
+		const { service } = synapse();
 		const templates = service.templates();
 		expect(templates.map((item) => item.name)).toEqual([
 			"People",
@@ -133,7 +133,7 @@ describe("templates and categories", () => {
 	});
 
 	it("creates missing category notes once, tagged categories, with the template description", async () => {
-		const { service } = brain();
+		const { service } = synapse();
 		await service.createNote(
 			"shared",
 			{ title: "Ada Lovelace", template: "People" },
@@ -179,7 +179,7 @@ describe("templates and categories", () => {
 
 describe("notes", () => {
 	it("enforces titles, duplicates, limits, and revisions", async () => {
-		const { service } = brain();
+		const { service } = synapse();
 		await expect(
 			service.createNote("shared", { title: "a/b" }, user),
 		).rejects.toMatchObject({ statusCode: 400 });
@@ -256,9 +256,9 @@ describe("notes", () => {
 	});
 
 	it("appends to existing notes or creates them from a template", async () => {
-		const { service } = brain();
+		const { service } = synapse();
 		const created = await service.appendNote(
-			agentVault,
+			agentSpace,
 			"Scratch",
 			{ text: "first line", template: "Journal" },
 			agent,
@@ -270,7 +270,7 @@ describe("notes", () => {
 			categories: ["Journal"],
 		});
 		const appended = await service.appendNote(
-			agentVault,
+			agentSpace,
 			"Scratch",
 			{ text: "second line" },
 			agent,
@@ -278,8 +278,8 @@ describe("notes", () => {
 		expect(appended.created).toBe(false);
 		expect(appended.note.body).toBe("first line\nsecond line");
 		expect(appended.note.revision).toBe(2);
-		const vaults = await service.listVaults();
-		expect(vaults.vaults).toEqual([
+		const spaces = await service.listSpaces();
+		expect(spaces.spaces).toEqual([
 			expect.objectContaining({
 				id: "shared",
 				kind: "shared",
@@ -287,21 +287,21 @@ describe("notes", () => {
 				createdAt: null,
 			}),
 			expect.objectContaining({
-				id: agentVault,
+				id: agentSpace,
 				kind: "agent",
 				name: "Research agent",
 				agentTokenId: "tok-1",
 				noteCount: 2,
 			}),
 		]);
-		expect(vaults).toMatchObject({
+		expect(spaces).toMatchObject({
 			persistence: "memory",
 			timeZone: "Europe/Berlin",
 		});
 	});
 
-	it("renames notes and rewrites links across the vault, keeping aliases and headings", async () => {
-		const { service } = brain();
+	it("renames notes and rewrites links across the space, keeping aliases and headings", async () => {
+		const { service } = synapse();
 		await service.createNote(
 			"shared",
 			{ title: "Old Name", body: "I link [[Old Name#Top]] to myself." },
@@ -363,7 +363,7 @@ describe("notes", () => {
 
 describe("finding things", () => {
 	it("queries by text, category, tag, backlinks, and property equality with ranking", async () => {
-		const { service, tick } = brain();
+		const { service, tick } = synapse();
 		await service.createNote(
 			"shared",
 			{
@@ -465,7 +465,7 @@ describe("finding things", () => {
 	});
 
 	it("computes backlinks, outgoing, related, and unresolved links", async () => {
-		const { service, tick } = brain();
+		const { service, tick } = synapse();
 		const make = (title: string, body: string, properties = {}) => {
 			tick();
 			return service.createNote("shared", { title, body, properties }, user);
@@ -519,30 +519,30 @@ describe("finding things", () => {
 	});
 
 	it("lists a day's notes from titles, creation, date properties, and links", async () => {
-		const { service, set } = brain();
+		const { service, set } = synapse();
 		set("2026-11-08T10:00:00Z");
 		await service.createNote(
-			agentVault,
+			agentSpace,
 			{ title: "Created today", body: "" },
 			agent,
 		);
 		await service.createNote(
-			agentVault,
+			agentSpace,
 			{ title: "2026-11-08 standup", body: "" },
 			agent,
 		);
 		await service.createNote(
-			agentVault,
+			agentSpace,
 			{ title: "Links the day", body: "See [[2026-11-08]]." },
 			agent,
 		);
 		await service.createNote(
-			agentVault,
+			agentSpace,
 			{ title: "Planned meeting", properties: { date: "2026-11-08" } },
 			agent,
 		);
 		await service.createNote(
-			agentVault,
+			agentSpace,
 			{
 				title: "Published then",
 				properties: { published: "2026-11-08T09:00" },
@@ -551,28 +551,28 @@ describe("finding things", () => {
 		);
 		set("2026-11-09T10:00:00Z");
 		await service.createNote(
-			agentVault,
+			agentSpace,
 			{ title: "Tomorrow", body: "" },
 			agent,
 		);
 		await service.createNote(
-			agentVault,
+			agentSpace,
 			{ title: "Old event", properties: { start: "2026-11-01" } },
 			agent,
 		);
 		set("2026-11-08T23:30:00Z"); // 00:30 on the 9th in Berlin
 		await service.createNote(
-			agentVault,
+			agentSpace,
 			{ title: "Late night", body: "" },
 			agent,
 		);
-		expect(await service.daily(agentVault, "2026-11-08")).toMatchObject({
+		expect(await service.daily(agentSpace, "2026-11-08")).toMatchObject({
 			date: "2026-11-08",
 			note: null,
 		});
 		set("2026-11-08T12:00:00Z");
 		const daily = await service.log(
-			agentVault,
+			agentSpace,
 			"Wrote the [[Planned meeting]] agenda",
 			agent,
 		);
@@ -580,7 +580,7 @@ describe("finding things", () => {
 		expect(daily.body).toBe(
 			"## Log\n- 13:00 Wrote the [[Planned meeting]] agenda",
 		);
-		const day = await service.daily(agentVault, "2026-11-08");
+		const day = await service.daily(agentSpace, "2026-11-08");
 		expect(day.note?.title).toBe("2026-11-08");
 		expect(day.entries.map((n) => n.title).sort()).toEqual([
 			"2026-11-08 standup",
@@ -590,11 +590,11 @@ describe("finding things", () => {
 			"Published then",
 		]);
 		expect(
-			(await service.daily(agentVault, "2026-11-09")).entries
+			(await service.daily(agentSpace, "2026-11-09")).entries
 				.map((n) => n.title)
 				.sort(),
 		).toEqual(["Late night", "Old event", "Tomorrow"]);
-		await expect(service.daily(agentVault, "2026-13-01")).rejects.toMatchObject(
+		await expect(service.daily(agentSpace, "2026-13-01")).rejects.toMatchObject(
 			{
 				statusCode: 400,
 			},
@@ -604,27 +604,27 @@ describe("finding things", () => {
 
 describe("log", () => {
 	it("lands concurrent first writes of the day instead of failing one with 409", async () => {
-		const { service } = brain();
+		const { service } = synapse();
 		const logs = await Promise.allSettled([
-			service.log(agentVault, "first", agent),
-			service.log(agentVault, "second", agent),
+			service.log(agentSpace, "first", agent),
+			service.log(agentSpace, "second", agent),
 		]);
 		expect(logs.map((result) => result.status)).toEqual([
 			"fulfilled",
 			"fulfilled",
 		]);
-		const daily = await service.getNote(agentVault, "2026-11-08");
+		const daily = await service.getNote(agentSpace, "2026-11-08");
 		expect(daily.body).toContain("first");
 		expect(daily.body).toContain("second");
 		const appends = await Promise.allSettled([
-			service.appendNote(agentVault, "Ideas", { text: "one" }, agent),
-			service.appendNote(agentVault, "Ideas", { text: "two" }, agent),
+			service.appendNote(agentSpace, "Ideas", { text: "one" }, agent),
+			service.appendNote(agentSpace, "Ideas", { text: "two" }, agent),
 		]);
 		expect(appends.map((result) => result.status)).toEqual([
 			"fulfilled",
 			"fulfilled",
 		]);
-		const ideas = await service.getNote(agentVault, "Ideas");
+		const ideas = await service.getNote(agentSpace, "Ideas");
 		expect(ideas.body).toContain("one");
 		expect(ideas.body).toContain("two");
 	});
@@ -644,19 +644,19 @@ describe("log", () => {
 			appendLogLine("## Log\n- 08:00 x\n\n## Notes\nText", "- 09:00 a"),
 		).toBe("## Log\n- 08:00 x\n- 09:00 a\n\n## Notes\nText");
 		expect(appendLogLine("## Log\n", "- 09:00 a")).toBe("## Log\n- 09:00 a");
-		const { service, tick } = brain(Date.parse("2026-11-08T08:05:00Z"));
-		const first = await service.log(agentVault, "Started [[Project X]]", agent);
+		const { service, tick } = synapse(Date.parse("2026-11-08T08:05:00Z"));
+		const first = await service.log(agentSpace, "Started [[Project X]]", agent);
 		expect(first.body).toBe("## Log\n- 09:05 Started [[Project X]]");
 		tick(60_000);
-		const second = await service.log(agentVault, "  Finished  ", agent);
+		const second = await service.log(agentSpace, "  Finished  ", agent);
 		expect(second.body).toBe(
 			"## Log\n- 09:05 Started [[Project X]]\n- 09:06 Finished",
 		);
 		expect(second.revision).toBe(2);
-		expect((await service.unresolved(agentVault)).map((l) => l.title)).toEqual([
+		expect((await service.unresolved(agentSpace)).map((l) => l.title)).toEqual([
 			"Project X",
 		]);
-		await expect(service.log(agentVault, "   ", agent)).rejects.toMatchObject({
+		await expect(service.log(agentSpace, "   ", agent)).rejects.toMatchObject({
 			statusCode: 400,
 		});
 	});
@@ -664,7 +664,7 @@ describe("log", () => {
 
 describe("export and import", () => {
 	it("exports notes into folders with templates and imports them back", async () => {
-		const { service } = brain();
+		const { service } = synapse();
 		await service.createNote(
 			"shared",
 			{ title: "Ada Lovelace", template: "People", body: "Body" },
@@ -694,7 +694,7 @@ describe("export and import", () => {
 			},
 			user,
 		);
-		const exported = await service.exportVault("shared");
+		const exported = await service.exportSpace("shared");
 		const paths = exported.files.map((file) => file.path);
 		expect(paths).toEqual(
 			expect.arrayContaining([
@@ -728,9 +728,9 @@ describe("export and import", () => {
 				?.content,
 		).toContain("created: 2026-11-08\n---\nBody");
 
-		const fresh = brain();
-		const result = await fresh.service.importVault(
-			agentVault,
+		const fresh = synapse();
+		const result = await fresh.service.importSpace(
+			agentSpace,
 			{
 				files: [
 					...exported.files,
@@ -783,14 +783,14 @@ describe("export and import", () => {
 			{ path: "Dup/Loose.md", reason: expect.stringMatching(/same title/) },
 			{ path: "Huge.md", reason: expect.stringMatching(/100,000/) },
 		]);
-		const imported = await fresh.service.getNote(agentVault, "Ada Lovelace");
+		const imported = await fresh.service.getNote(agentSpace, "Ada Lovelace");
 		expect(imported).toMatchObject({
 			body: "Body",
 			categories: ["People"],
 			properties: { created: "2026-11-08", role: null },
 		});
-		const again = await fresh.service.importVault(
-			agentVault,
+		const again = await fresh.service.importSpace(
+			agentSpace,
 			{
 				files: [{ path: "Loose.md", content: "---\nnew: true\n---\nChanged" }],
 			},
@@ -799,8 +799,8 @@ describe("export and import", () => {
 		expect(again.skipped).toEqual([
 			{ path: "Loose.md", reason: expect.stringMatching(/already exists/) },
 		]);
-		const overwritten = await fresh.service.importVault(
-			agentVault,
+		const overwritten = await fresh.service.importSpace(
+			agentSpace,
 			{
 				files: [
 					{
@@ -813,12 +813,12 @@ describe("export and import", () => {
 			agent,
 		);
 		expect(overwritten.updated).toEqual(["Loose"]);
-		expect(await fresh.service.getNote(agentVault, "Loose")).toMatchObject({
+		expect(await fresh.service.getNote(agentSpace, "Loose")).toMatchObject({
 			body: "Changed",
 			properties: { new: true, categories: ["[[Fresh]]"] },
 			revision: 2,
 		});
-		expect(await fresh.service.getNote(agentVault, "Fresh")).toMatchObject({
+		expect(await fresh.service.getNote(agentSpace, "Fresh")).toMatchObject({
 			tags: ["categories"],
 		});
 	});
@@ -826,9 +826,9 @@ describe("export and import", () => {
 
 describe("import across batches", () => {
 	it("lets a category's real file replace the placeholder an earlier batch generated", async () => {
-		const { service } = brain();
-		await service.importVault(
-			agentVault,
+		const { service } = synapse();
+		await service.importSpace(
+			agentSpace,
 			{
 				files: [
 					{
@@ -840,11 +840,11 @@ describe("import across batches", () => {
 			},
 			user,
 		);
-		expect((await service.getNote(agentVault, "People")).createdBy.kind).toBe(
+		expect((await service.getNote(agentSpace, "People")).createdBy.kind).toBe(
 			"system",
 		);
-		const second = await service.importVault(
-			agentVault,
+		const second = await service.importSpace(
+			agentSpace,
 			{
 				files: [
 					{ path: "Categories/People.md", content: "Everyone we work with." },
@@ -853,13 +853,13 @@ describe("import across batches", () => {
 			user,
 		);
 		expect(second).toMatchObject({ created: ["People"], skipped: [] });
-		expect((await service.getNote(agentVault, "People")).body).toBe(
+		expect((await service.getNote(agentSpace, "People")).body).toBe(
 			"Everyone we work with.",
 		);
 		// A note someone wrote or edited is still protected without overwrite.
-		await service.createNote(agentVault, { title: "Mine", body: "kept" }, user);
-		const third = await service.importVault(
-			agentVault,
+		await service.createNote(agentSpace, { title: "Mine", body: "kept" }, user);
+		const third = await service.importSpace(
+			agentSpace,
 			{
 				files: [
 					{ path: "Mine.md", content: "replaced?" },
@@ -873,17 +873,17 @@ describe("import across batches", () => {
 			"Mine.md",
 			"People.md",
 		]);
-		expect((await service.getNote(agentVault, "Mine")).body).toBe("kept");
+		expect((await service.getNote(agentSpace, "Mine")).body).toBe("kept");
 	});
 });
 
 /** Runs queued hooks inside repository calls, to land a concurrent change in a precise gap. */
-class InterleavedRepository extends MemoryBrainRepository {
+class InterleavedRepository extends MemorySynapseRepository {
 	beforeGetNote: Array<(() => Promise<unknown>) | undefined> = [];
 	beforeDelete?: () => Promise<unknown>;
-	override async getNote(vault: BrainVaultId, key: string) {
+	override async getNote(space: SynapseSpaceId, key: string) {
 		await this.beforeGetNote.shift()?.();
-		return super.getNote(vault, key);
+		return super.getNote(space, key);
 	}
 	override async deleteNote(id: string, expectedRevision?: number) {
 		const hook = this.beforeDelete;
@@ -895,7 +895,7 @@ class InterleavedRepository extends MemoryBrainRepository {
 
 describe("proposals", () => {
 	it("validates each action and bounds pending proposals", async () => {
-		const { service } = brain();
+		const { service } = synapse();
 		await service.createNote("shared", { title: "Canon", body: "v1" }, user);
 		await expect(
 			service.propose(agent, {
@@ -943,7 +943,7 @@ describe("proposals", () => {
 			reason: "Because",
 		});
 		expect(proposal).toMatchObject({
-			vault: "shared",
+			space: "shared",
 			status: "pending",
 			author: agent,
 			baseRevision: 1,
@@ -965,7 +965,7 @@ describe("proposals", () => {
 				reason: "r",
 			}),
 		).rejects.toMatchObject({ statusCode: 400 });
-		const other: BrainActor = { kind: "agent", id: "tok-2", name: "Other" };
+		const other: SynapseActor = { kind: "agent", id: "tok-2", name: "Other" };
 		await service.propose(other, {
 			action: "create",
 			title: "Fine",
@@ -979,7 +979,7 @@ describe("proposals", () => {
 	});
 
 	it("approves as the reviewer, rejects with a logged reason, and detects stale proposals", async () => {
-		const { service, tick } = brain();
+		const { service, tick } = synapse();
 		await service.createNote("shared", { title: "Canon", body: "v1" }, user);
 		const create = await service.propose(agent, {
 			action: "create",
@@ -1009,7 +1009,11 @@ describe("proposals", () => {
 			title: "Canon",
 			reason: "Obsolete",
 		});
-		const reviewer: BrainActor = { kind: "user", id: "u2", name: "Admin Ann" };
+		const reviewer: SynapseActor = {
+			kind: "user",
+			id: "u2",
+			name: "Admin Ann",
+		};
 
 		tick();
 		const approved = await service.decideProposal(
@@ -1050,13 +1054,13 @@ describe("proposals", () => {
 			decisionReason: "Too vague",
 			decidedBy: reviewer,
 		});
-		const daily = await service.getNote(agentVault, "2026-11-08");
+		const daily = await service.getNote(agentSpace, "2026-11-08");
 		expect(daily.body).toBe(
-			"## Log\n- 23:30 Proposal to append [[Canon]] in the shared brain was rejected by Admin Ann: Too vague",
+			"## Log\n- 23:30 Proposal to append [[Canon]] in the shared space was rejected by Admin Ann: Too vague",
 		);
-		// The vault was created by the rejection, yet it carries the agent's name.
+		// The space was created by the rejection, yet it carries the agent's name.
 		expect(
-			(await service.listVaults()).vaults.find((v) => v.id === agentVault),
+			(await service.listSpaces()).spaces.find((v) => v.id === agentSpace),
 		).toMatchObject({
 			name: "Research agent",
 			noteCount: 1,
@@ -1121,12 +1125,16 @@ describe("proposals", () => {
 
 	it("claims a proposal before applying it and never overwrites a newer shared revision", async () => {
 		const repository = new InterleavedRepository();
-		const service = new BrainService(repository, {
+		const service = new SynapseService(repository, {
 			timeZone: "UTC",
 			now: () => Date.parse("2026-11-08T12:00:00Z"),
 		});
-		const reviewer: BrainActor = { kind: "user", id: "u2", name: "Admin Ann" };
-		const other: BrainActor = { kind: "user", id: "u3", name: "Owner Olu" };
+		const reviewer: SynapseActor = {
+			kind: "user",
+			id: "u2",
+			name: "Admin Ann",
+		};
+		const other: SynapseActor = { kind: "user", id: "u3", name: "Owner Olu" };
 		await service.createNote("shared", { title: "Canon", body: "v1" }, user);
 		const status = async (id: string) =>
 			(await service.listProposals({})).find((p) => p.id === id)?.status;
@@ -1193,13 +1201,17 @@ describe("proposals", () => {
 	});
 
 	it("keeps a proposal pending when an approval dies mid-way, until its claim expires", async () => {
-		const repository = new MemoryBrainRepository();
+		const repository = new MemorySynapseRepository();
 		let now = Date.parse("2026-11-08T12:00:00Z");
-		const service = new BrainService(repository, {
+		const service = new SynapseService(repository, {
 			timeZone: "UTC",
 			now: () => now,
 		});
-		const reviewer: BrainActor = { kind: "user", id: "u2", name: "Admin Ann" };
+		const reviewer: SynapseActor = {
+			kind: "user",
+			id: "u2",
+			name: "Admin Ann",
+		};
 		await service.createNote("shared", { title: "Canon", body: "v1" }, user);
 		const proposal = await service.propose(agent, {
 			action: "append",

@@ -1,9 +1,8 @@
-import type { BrainProposal, BrainVaultId } from "@autonomo.us/common";
+import type { SynapseProposal, SynapseSpaceId } from "@autonomo.us/common";
 import { type Document, MongoClient } from "mongodb";
 import { mongoOperationDeadlines, requestMongoClient } from "../mongo.js";
-import { BrainError, brainUnavailable } from "./errors.js";
+import { SynapseError, synapseUnavailable } from "./errors.js";
 import type {
-	BrainRepository,
 	FindOptions,
 	InstantRange,
 	NoteFilter,
@@ -11,25 +10,26 @@ import type {
 	ProposalClaim,
 	ProposalDecision,
 	ProposalFilter,
+	SpaceRecord,
+	SpaceStats,
 	StoredNote,
-	VaultRecord,
-	VaultStats,
+	SynapseRepository,
 } from "./repository.js";
 import { DAILY_DATE_PROPERTIES, escapeRegex } from "./repository.js";
 
-export const BRAIN_NOTES_COLLECTION = "brain_notes";
-export const BRAIN_VAULTS_COLLECTION = "brain_vaults";
-export const BRAIN_PROPOSALS_COLLECTION = "brain_proposals";
+export const SYNAPSE_NOTES_COLLECTION = "synapse_notes";
+export const SYNAPSE_SPACES_COLLECTION = "synapse_spaces";
+export const SYNAPSE_PROPOSALS_COLLECTION = "synapse_proposals";
 
 type NoteDocument = Omit<StoredNote, "id"> & { _id: string };
-type VaultDocument = Omit<VaultRecord, "id"> & { _id: string };
-type ProposalDocument = Omit<BrainProposal, "id"> & {
+type SpaceDocument = Omit<SpaceRecord, "id"> & { _id: string };
+type ProposalDocument = Omit<SynapseProposal, "id"> & {
 	_id: string;
 	/** Internal: an approval in progress. Never returned to callers. */
 	claim?: ProposalClaim;
 };
 const proposalOf = ({ _id, claim, ...rest }: ProposalDocument) =>
-	({ id: _id, ...rest }) as BrainProposal;
+	({ id: _id, ...rest }) as SynapseProposal;
 /** No unexpired claim holds the proposal. ISO timestamps compare as strings. */
 const unclaimed = (now: string): Document => ({
 	$or: [{ claim: { $exists: false } }, { "claim.until": { $lte: now } }],
@@ -42,7 +42,7 @@ const indexed = new Map<string, Promise<void>>();
 const INDEX_PROJECTION = {
 	title: 1,
 	titleKey: 1,
-	vault: 1,
+	space: 1,
 	links: 1,
 	linkKeys: 1,
 	categories: 1,
@@ -66,7 +66,7 @@ function toDocument<T extends { id: string }>(
 }
 
 function noteQuery(filter: NoteFilter): Document {
-	const query: Document = { vault: filter.vault };
+	const query: Document = { space: filter.space };
 	const and: Document[] = [];
 	if (filter.titleKey !== undefined) query.titleKey = filter.titleKey;
 	if (filter.titleKeys !== undefined)
@@ -92,8 +92,8 @@ function sortSpec(sort: FindOptions["sort"]): Document {
 	return { [sort.by]: direction, _id: direction };
 }
 
-/** Notes, vault records, and proposals in MongoDB; see docs/BRAIN.md §11. */
-export class MongoBrainRepository implements BrainRepository {
+/** Notes, space records, and proposals in MongoDB; see docs/SYNAPSE.md §11. */
+export class MongoSynapseRepository implements SynapseRepository {
 	readonly persistence = "mongodb" as const;
 	private client?: MongoClient;
 	constructor(private readonly mongodbUrl: string) {}
@@ -113,24 +113,24 @@ export class MongoBrainRepository implements BrainRepository {
 		return client.db();
 	}
 	private notes() {
-		return this.database().collection<NoteDocument>(BRAIN_NOTES_COLLECTION);
+		return this.database().collection<NoteDocument>(SYNAPSE_NOTES_COLLECTION);
 	}
-	private vaults() {
-		return this.database().collection<VaultDocument>(BRAIN_VAULTS_COLLECTION);
+	private spaces() {
+		return this.database().collection<SpaceDocument>(SYNAPSE_SPACES_COLLECTION);
 	}
 	private proposals() {
 		return this.database().collection<ProposalDocument>(
-			BRAIN_PROPOSALS_COLLECTION,
+			SYNAPSE_PROPOSALS_COLLECTION,
 		);
 	}
 	private async createIndexes() {
 		const notes = this.notes();
 		await notes.createIndexes([
-			{ key: { vault: 1, titleKey: 1 }, unique: true, name: "vault_title" },
-			{ key: { vault: 1, linkKeys: 1 }, name: "vault_links" },
-			{ key: { vault: 1, categoryKeys: 1 }, name: "vault_categories" },
-			{ key: { vault: 1, tagKeys: 1 }, name: "vault_tags" },
-			{ key: { vault: 1, updatedAt: -1 }, name: "vault_updated" },
+			{ key: { space: 1, titleKey: 1 }, unique: true, name: "space_title" },
+			{ key: { space: 1, linkKeys: 1 }, name: "space_links" },
+			{ key: { space: 1, categoryKeys: 1 }, name: "space_categories" },
+			{ key: { space: 1, tagKeys: 1 }, name: "space_tags" },
+			{ key: { space: 1, updatedAt: -1 }, name: "space_updated" },
 		]);
 		await this.proposals().createIndexes([
 			{
@@ -151,14 +151,14 @@ export class MongoBrainRepository implements BrainRepository {
 			await ready;
 			return await operation();
 		} catch (error) {
-			if (error instanceof BrainError) throw error;
-			throw brainUnavailable(error);
+			if (error instanceof SynapseError) throw error;
+			throw synapseUnavailable(error);
 		}
 	}
 
-	async getNote(vault: BrainVaultId, titleKey: string) {
+	async getNote(space: SynapseSpaceId, titleKey: string) {
 		const found = await this.storage(() =>
-			this.notes().findOne({ vault, titleKey }),
+			this.notes().findOne({ space, titleKey }),
 		);
 		return found ? toNote(found) : null;
 	}
@@ -176,14 +176,14 @@ export class MongoBrainRepository implements BrainRepository {
 	async countNotes(filter: NoteFilter) {
 		return this.storage(() => this.notes().countDocuments(noteQuery(filter)));
 	}
-	async scanNotes(vault: BrainVaultId) {
+	async scanNotes(space: SynapseSpaceId) {
 		const found = await this.storage(() =>
-			this.notes().find({ vault }, { projection: INDEX_PROJECTION }).toArray(),
+			this.notes().find({ space }, { projection: INDEX_PROJECTION }).toArray(),
 		);
 		return found.map((document) => toNote(document) as NoteIndexEntry);
 	}
 	async findDailyNotes(
-		vault: BrainVaultId,
+		space: SynapseSpaceId,
 		date: string,
 		range: InstantRange,
 		limit: number,
@@ -193,7 +193,7 @@ export class MongoBrainRepository implements BrainRepository {
 		const found = await this.storage(() =>
 			this.notes()
 				.find({
-					vault,
+					space,
 					titleKey: { $ne: dateKey },
 					$or: [
 						{ titleKey: prefix },
@@ -249,18 +249,18 @@ export class MongoBrainRepository implements BrainRepository {
 		);
 		return result.deletedCount > 0;
 	}
-	async vaultStats() {
+	async spaceStats() {
 		const groups = await this.storage(() =>
 			this.notes()
 				.aggregate<{
-					_id: BrainVaultId;
+					_id: SynapseSpaceId;
 					noteCount: number;
 					createdAt: string;
 					updatedAt: string;
 				}>([
 					{
 						$group: {
-							_id: "$vault",
+							_id: "$space",
 							noteCount: { $sum: 1 },
 							createdAt: { $min: "$createdAt" },
 							updatedAt: { $max: "$updatedAt" },
@@ -270,23 +270,26 @@ export class MongoBrainRepository implements BrainRepository {
 				.toArray(),
 		);
 		return groups.map(
-			({ _id, ...rest }): VaultStats => ({ vault: _id, ...rest }),
+			({ _id, ...rest }): SpaceStats => ({ space: _id, ...rest }),
 		);
 	}
-	async listVaultRecords() {
-		const found = await this.storage(() => this.vaults().find().toArray());
+	async listSpaceRecords() {
+		const found = await this.storage(() => this.spaces().find().toArray());
 		return found.map(
-			({ _id, ...rest }): VaultRecord => ({ id: _id as BrainVaultId, ...rest }),
+			({ _id, ...rest }): SpaceRecord => ({
+				id: _id as SynapseSpaceId,
+				...rest,
+			}),
 		);
 	}
-	async upsertVaultRecord(
-		id: BrainVaultId,
+	async upsertSpaceRecord(
+		id: SynapseSpaceId,
 		at: string,
 		name: string | undefined,
 		fallbackName: string,
 	) {
 		await this.storage(() =>
-			this.vaults().updateOne(
+			this.spaces().updateOne(
 				{ _id: id },
 				{
 					$set: { updatedAt: at, ...(name === undefined ? {} : { name }) },
@@ -299,7 +302,7 @@ export class MongoBrainRepository implements BrainRepository {
 			),
 		);
 	}
-	async insertProposal(proposal: BrainProposal) {
+	async insertProposal(proposal: SynapseProposal) {
 		await this.storage(() => this.proposals().insertOne(toDocument(proposal)));
 	}
 	async getProposal(id: string) {

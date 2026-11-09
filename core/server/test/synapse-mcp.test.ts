@@ -1,7 +1,7 @@
-import type { ApiTokenSecret, BrainNoteView } from "@autonomo.us/common";
+import type { ApiTokenSecret, SynapseNoteView } from "@autonomo.us/common";
 import { afterEach, describe, expect, it } from "vitest";
-import type { MCP_TOOLS } from "../src/brain/mcp.js";
 import { createServer } from "../src/server.js";
+import type { MCP_TOOLS } from "../src/synapse/mcp.js";
 import { completeSetup, joinWithInvite } from "./auth-helpers.js";
 
 const ALLOWED_ORIGIN = "http://localhost:5173";
@@ -26,7 +26,7 @@ async function start() {
 		config: {
 			providers: [],
 			corsOrigins: [ALLOWED_ORIGIN],
-			brainTimeZone: "UTC",
+			synapseTimeZone: "UTC",
 		},
 		logger: false,
 	});
@@ -123,7 +123,7 @@ describe("MCP endpoint", () => {
 			name: "API",
 			description: "",
 			ttlDays: 7,
-			permissions: ["brain:edit"],
+			permissions: ["synapse:edit"],
 		});
 		expect(
 			(
@@ -183,7 +183,7 @@ describe("MCP endpoint", () => {
 				protocolVersion: "2025-06-18",
 				capabilities: { tools: { listChanged: false } },
 				serverInfo: { name: "autonomo.us", version: expect.any(String) },
-				instructions: expect.stringContaining("brain_log"),
+				instructions: expect.stringContaining("synapse_log"),
 			},
 		});
 		const instructions = (initialized.body?.result as { instructions: string })
@@ -191,7 +191,7 @@ describe("MCP endpoint", () => {
 		for (const rule of [
 			"[[Title]]",
 			"YYYY-MM-DD",
-			"brain_propose",
+			"synapse_propose",
 			"Search before you write",
 			"private",
 		])
@@ -223,7 +223,7 @@ describe("MCP endpoint", () => {
 				jsonrpc: "2.0",
 				method: "tools/call",
 				params: {
-					name: "brain_create",
+					name: "synapse_create",
 					arguments: { title: "Lost without an id" },
 				},
 			}),
@@ -237,7 +237,7 @@ describe("MCP endpoint", () => {
 		expect(
 			(
 				await rpc(agent.secret, "tools/call", {
-					name: "brain_search",
+					name: "synapse_search",
 					arguments: { query: "Lost without an id" },
 				})
 			).body,
@@ -273,18 +273,18 @@ describe("MCP endpoint", () => {
 		expect(listed.status).toBe(200);
 		const tools = (listed.body?.result as { tools: typeof MCP_TOOLS }).tools;
 		expect(tools.map((tool) => tool.name)).toEqual([
-			"brain_search",
-			"brain_read",
-			"brain_create",
-			"brain_update",
-			"brain_append",
-			"brain_delete",
-			"brain_log",
-			"brain_daily",
-			"brain_unresolved",
-			"brain_templates",
-			"brain_propose",
-			"brain_proposals",
+			"synapse_search",
+			"synapse_read",
+			"synapse_create",
+			"synapse_update",
+			"synapse_append",
+			"synapse_delete",
+			"synapse_log",
+			"synapse_daily",
+			"synapse_unresolved",
+			"synapse_templates",
+			"synapse_propose",
+			"synapse_proposals",
 		]);
 		for (const tool of tools) {
 			expect(tool.description.length).toBeGreaterThan(20);
@@ -294,7 +294,7 @@ describe("MCP endpoint", () => {
 			});
 		}
 		expect(
-			tools.find((t) => t.name === "brain_propose")?.inputSchema.required,
+			tools.find((t) => t.name === "synapse_propose")?.inputSchema.required,
 		).toEqual(["action", "title", "reason"]);
 		const denied = await rpc(caller.secret, "tools/list");
 		expect(denied.status).toBe(200);
@@ -307,7 +307,7 @@ describe("MCP endpoint", () => {
 		expect(
 			(
 				await rpc(reader.secret, "tools/call", {
-					name: "brain_templates",
+					name: "synapse_templates",
 					arguments: {},
 				})
 			).body,
@@ -323,7 +323,7 @@ describe("MCP endpoint", () => {
 		expect(
 			(
 				await rpc(caller.secret, "tools/call", {
-					name: "brain_nope",
+					name: "synapse_nope",
 					arguments: {},
 				})
 			).body,
@@ -333,7 +333,7 @@ describe("MCP endpoint", () => {
 		expect(
 			(
 				await rpc(caller.secret, "tools/call", {
-					name: "brain_read",
+					name: "synapse_read",
 					arguments: {},
 				})
 			).body,
@@ -346,7 +346,7 @@ describe("MCP endpoint", () => {
 		expect(
 			(
 				await rpc(caller.secret, "tools/call", {
-					name: "brain_read",
+					name: "synapse_read",
 					arguments: { title: 1 },
 				})
 			).body,
@@ -354,7 +354,7 @@ describe("MCP endpoint", () => {
 		expect(
 			(
 				await rpc(caller.secret, "tools/call", {
-					name: "brain_search",
+					name: "synapse_search",
 					arguments: { limit: 51 },
 				})
 			).body,
@@ -362,8 +362,8 @@ describe("MCP endpoint", () => {
 		expect(
 			(
 				await rpc(caller.secret, "tools/call", {
-					name: "brain_create",
-					arguments: { title: "x", vault: "shared" },
+					name: "synapse_create",
+					arguments: { title: "x", space: "shared" },
 				})
 			).body,
 		).toMatchObject({
@@ -376,7 +376,7 @@ describe("MCP endpoint", () => {
 			expect(
 				(
 					await post(
-						`{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"brain_read","arguments":{"title":"x","${inherited}":{}}}}`,
+						`{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"synapse_read","arguments":{"title":"x","${inherited}":{}}}}`,
 						{ authorization: `Bearer ${caller.secret}` },
 					)
 				).body,
@@ -391,11 +391,11 @@ describe("MCP endpoint", () => {
 		});
 	});
 
-	it("keeps each agent's vault private and returns structured plus text content", async () => {
+	it("keeps each agent's space private and returns structured plus text content", async () => {
 		const { agentToken, callTool, rest } = await start();
 		const alice = await agentToken("Alice", ["mcp:read", "mcp:call"]);
 		const bob = await agentToken("Bob", ["mcp:read", "mcp:call"]);
-		const templates = await callTool(alice.secret, "brain_templates");
+		const templates = await callTool(alice.secret, "synapse_templates");
 		expect(
 			(templates.structuredContent as { templates: unknown[] }).templates,
 		).toHaveLength(13);
@@ -403,7 +403,7 @@ describe("MCP endpoint", () => {
 			templates.structuredContent,
 		);
 
-		const created = await callTool(alice.secret, "brain_create", {
+		const created = await callTool(alice.secret, "synapse_create", {
 			title: "Secret plan",
 			template: "Projects",
 			body: "Talk to [[Grace Hopper]] about #compilers.",
@@ -411,15 +411,15 @@ describe("MCP endpoint", () => {
 		});
 		expect(created.isError).toBeUndefined();
 		expect(created.structuredContent).toMatchObject({
-			vault: `agent-${alice.token.id}`,
+			space: `agent-${alice.token.id}`,
 			title: "Secret plan",
 			categories: ["Projects"],
 			createdBy: { kind: "agent", id: alice.token.id, name: "Alice" },
 		});
-		const read = await callTool(alice.secret, "brain_read", {
+		const read = await callTool(alice.secret, "synapse_read", {
 			title: "secret plan",
 		});
-		const view = read.structuredContent as BrainNoteView;
+		const view = read.structuredContent as SynapseNoteView;
 		expect(view.note.title).toBe("Secret plan");
 		expect(view.outgoing).toEqual([
 			{ title: "Projects", exists: true },
@@ -432,7 +432,7 @@ describe("MCP endpoint", () => {
 			"## Unresolved links\n- [[Active]]\n- [[Grace Hopper]]",
 		);
 
-		const hidden = await callTool(bob.secret, "brain_read", {
+		const hidden = await callTool(bob.secret, "synapse_read", {
 			title: "Secret plan",
 		});
 		expect(hidden).toEqual({
@@ -442,13 +442,13 @@ describe("MCP endpoint", () => {
 			isError: true,
 		});
 		expect(
-			(await callTool(bob.secret, "brain_search", { query: "secret" }))
+			(await callTool(bob.secret, "synapse_search", { query: "secret" }))
 				.structuredContent,
 		).toEqual({
 			notes: [],
 			total: 0,
 		});
-		const found = await callTool(alice.secret, "brain_search", {
+		const found = await callTool(alice.secret, "synapse_search", {
 			query: "grace",
 			limit: 5,
 		});
@@ -462,17 +462,17 @@ describe("MCP endpoint", () => {
 			],
 		});
 		expect(
-			(await callTool(alice.secret, "brain_search", { tag: "compilers" }))
+			(await callTool(alice.secret, "synapse_search", { tag: "compilers" }))
 				.structuredContent,
 		).toMatchObject({ total: 1 });
 
-		const conflict = await callTool(alice.secret, "brain_update", {
+		const conflict = await callTool(alice.secret, "synapse_update", {
 			title: "Secret plan",
 			body: "changed",
 			revision: 9,
 		});
 		expect(conflict.isError).toBe(true);
-		const updated = await callTool(alice.secret, "brain_update", {
+		const updated = await callTool(alice.secret, "synapse_update", {
 			title: "Secret plan",
 			newTitle: "Compiler plan",
 			revision: 1,
@@ -481,7 +481,7 @@ describe("MCP endpoint", () => {
 			title: "Compiler plan",
 			revision: 2,
 		});
-		const appended = await callTool(alice.secret, "brain_append", {
+		const appended = await callTool(alice.secret, "synapse_append", {
 			title: "Grace Hopper",
 			text: "COBOL pioneer.",
 			template: "People",
@@ -491,7 +491,7 @@ describe("MCP endpoint", () => {
 			body: "COBOL pioneer.",
 			categories: ["People"],
 		});
-		const logged = await callTool(alice.secret, "brain_log", {
+		const logged = await callTool(alice.secret, "synapse_log", {
 			text: "Drafted [[Compiler plan]]",
 		});
 		const today = new Date().toISOString().slice(0, 10);
@@ -502,7 +502,7 @@ describe("MCP endpoint", () => {
 				/^## Log\n- \d\d:\d\d Drafted \[\[Compiler plan\]\]$/,
 			),
 		});
-		const daily = await callTool(alice.secret, "brain_daily", {});
+		const daily = await callTool(alice.secret, "synapse_daily", {});
 		expect(daily.structuredContent).toMatchObject({
 			date: today,
 			note: { title: today },
@@ -512,34 +512,38 @@ describe("MCP endpoint", () => {
 			]),
 		});
 		expect(
-			(await callTool(alice.secret, "brain_daily", { date: "2026-13-40" }))
+			(await callTool(alice.secret, "synapse_daily", { date: "2026-13-40" }))
 				.isError,
 		).toBe(true);
 		expect(
-			(await callTool(alice.secret, "brain_unresolved", {})).structuredContent,
+			(await callTool(alice.secret, "synapse_unresolved", {}))
+				.structuredContent,
 		).toEqual({
 			links: [{ title: "Active", count: 1, sources: ["Compiler plan"] }],
 		});
 		expect(
 			(
-				await callTool(alice.secret, "brain_delete", {
+				await callTool(alice.secret, "synapse_delete", {
 					title: "Grace Hopper",
 					revision: 999,
 				})
 			).isError,
 		).toBe(true);
 		expect(
-			(await callTool(alice.secret, "brain_delete", { title: "Grace Hopper" }))
-				.structuredContent,
+			(
+				await callTool(alice.secret, "synapse_delete", {
+					title: "Grace Hopper",
+				})
+			).structuredContent,
 		).toEqual({
 			deleted: "Grace Hopper",
 		});
 		expect(
-			(await callTool(bob.secret, "brain_delete", { title: "Compiler plan" }))
+			(await callTool(bob.secret, "synapse_delete", { title: "Compiler plan" }))
 				.isError,
 		).toBe(true);
-		const vaults = await rest("GET", "/v1/brain/vaults");
-		expect((vaults.json as { vaults: unknown[] }).vaults).toEqual([
+		const spaces = await rest("GET", "/v1/synapse/spaces");
+		expect((spaces.json as { spaces: unknown[] }).spaces).toEqual([
 			expect.objectContaining({ id: "shared" }),
 			expect.objectContaining({
 				id: `agent-${alice.token.id}`,
@@ -565,32 +569,32 @@ describe("MCP endpoint", () => {
 			owner.token,
 			"member@example.com",
 		);
-		await rest("POST", "/v1/brain/vaults/shared/notes", {
+		await rest("POST", "/v1/synapse/spaces/shared/notes", {
 			title: "Brand voice",
 			body: "Warm and direct.",
 			template: "Decisions",
 		});
-		const shared = await callTool(alice.secret, "brain_read", {
+		const shared = await callTool(alice.secret, "synapse_read", {
 			title: "Brand voice",
-			vault: "shared",
+			space: "shared",
 		});
-		expect((shared.structuredContent as BrainNoteView).note.vault).toBe(
+		expect((shared.structuredContent as SynapseNoteView).note.space).toBe(
 			"shared",
 		);
 		expect(
-			(await callTool(alice.secret, "brain_read", { title: "Brand voice" }))
+			(await callTool(alice.secret, "synapse_read", { title: "Brand voice" }))
 				.isError,
 		).toBe(true);
 		expect(
 			(
-				await callTool(alice.secret, "brain_search", {
-					vault: "shared",
+				await callTool(alice.secret, "synapse_search", {
+					space: "shared",
 					category: "Decisions",
 				})
 			).structuredContent,
 		).toMatchObject({ total: 1 });
 
-		const create = await callTool(alice.secret, "brain_propose", {
+		const create = await callTool(alice.secret, "synapse_propose", {
 			action: "create",
 			title: "Tone checklist",
 			body: "Short sentences. Link [[Brand voice]].",
@@ -602,7 +606,7 @@ describe("MCP endpoint", () => {
 			baseRevision: null,
 			author: { kind: "agent", name: "Alice" },
 		});
-		const append = await callTool(alice.secret, "brain_propose", {
+		const append = await callTool(alice.secret, "synapse_propose", {
 			action: "append",
 			title: "Brand voice",
 			text: "Avoid exclamation marks.",
@@ -611,7 +615,7 @@ describe("MCP endpoint", () => {
 		expect(append.structuredContent).toMatchObject({ baseRevision: 1 });
 		expect(
 			(
-				await callTool(alice.secret, "brain_propose", {
+				await callTool(alice.secret, "synapse_propose", {
 					action: "delete",
 					title: "Nope",
 					reason: "r",
@@ -622,16 +626,16 @@ describe("MCP endpoint", () => {
 		const appendId = (append.structuredContent as { id: string }).id;
 		expect(
 			(
-				(await callTool(alice.secret, "brain_proposals", {}))
+				(await callTool(alice.secret, "synapse_proposals", {}))
 					.structuredContent as { proposals: Array<{ id: string }> }
 			).proposals.map((p) => p.id),
 		).toEqual([appendId, createId]);
 		expect(
-			(await callTool(bob.secret, "brain_proposals", {})).structuredContent,
+			(await callTool(bob.secret, "synapse_proposals", {})).structuredContent,
 		).toEqual({ proposals: [] });
 		expect(
 			(
-				(await rest("GET", "/v1/brain/proposals?status=pending")).json as {
+				(await rest("GET", "/v1/synapse/proposals?status=pending")).json as {
 					proposals: unknown[];
 				}
 			).proposals,
@@ -641,7 +645,7 @@ describe("MCP endpoint", () => {
 			(
 				await rest(
 					"POST",
-					`/v1/brain/proposals/${createId}/decide`,
+					`/v1/synapse/proposals/${createId}/decide`,
 					{ decision: "approve" },
 					member.token,
 				)
@@ -649,7 +653,7 @@ describe("MCP endpoint", () => {
 		).toBe(403);
 		const approved = await rest(
 			"POST",
-			`/v1/brain/proposals/${createId}/decide`,
+			`/v1/synapse/proposals/${createId}/decide`,
 			{ decision: "approve" },
 			admin.token,
 		);
@@ -658,32 +662,32 @@ describe("MCP endpoint", () => {
 			status: "approved",
 			decidedBy: { kind: "user", name: "admin" },
 		});
-		const visible = await callTool(bob.secret, "brain_read", {
+		const visible = await callTool(bob.secret, "synapse_read", {
 			title: "Tone checklist",
-			vault: "shared",
+			space: "shared",
 		});
-		expect((visible.structuredContent as BrainNoteView).note).toMatchObject({
+		expect((visible.structuredContent as SynapseNoteView).note).toMatchObject({
 			body: "Short sentences. Link [[Brand voice]].",
 			categories: ["Decisions"],
 			createdBy: { kind: "user", name: "admin" },
 		});
 		expect(
 			(
-				await rest("POST", `/v1/brain/proposals/${createId}/decide`, {
+				await rest("POST", `/v1/synapse/proposals/${createId}/decide`, {
 					decision: "approve",
 				})
 			).status,
 		).toBe(409);
 		expect(
 			(
-				await rest("POST", `/v1/brain/proposals/${appendId}/decide`, {
+				await rest("POST", `/v1/synapse/proposals/${appendId}/decide`, {
 					decision: "reject",
 				})
 			).status,
 		).toBe(400);
 		const rejected = await rest(
 			"POST",
-			`/v1/brain/proposals/${appendId}/decide`,
+			`/v1/synapse/proposals/${appendId}/decide`,
 			{
 				decision: "reject",
 				reason: "We do use them sparingly.",
@@ -695,24 +699,26 @@ describe("MCP endpoint", () => {
 			decisionReason: "We do use them sparingly.",
 		});
 		const today = new Date().toISOString().slice(0, 10);
-		const daily = await callTool(alice.secret, "brain_daily", { date: today });
+		const daily = await callTool(alice.secret, "synapse_daily", {
+			date: today,
+		});
 		expect(
 			(daily.structuredContent as { note: { body: string } }).note.body,
 		).toMatch(
-			/^## Log\n- \d\d:\d\d Proposal to append \[\[Brand voice\]\] in the shared brain was rejected by Founder: We do use them sparingly\.$/,
+			/^## Log\n- \d\d:\d\d Proposal to append \[\[Brand voice\]\] in the shared space was rejected by Founder: We do use them sparingly\.$/,
 		);
 		expect(
 			(
 				(
-					await callTool(alice.secret, "brain_proposals", {
+					await callTool(alice.secret, "synapse_proposals", {
 						status: "rejected",
 					})
 				).structuredContent as { proposals: unknown[] }
 			).proposals,
 		).toHaveLength(1);
-		// Bob's log stays empty: the breadcrumb lands only in the author's vault.
+		// Bob's log stays empty: the breadcrumb lands only in the author's space.
 		expect(
-			(await callTool(bob.secret, "brain_daily", {})).structuredContent,
+			(await callTool(bob.secret, "synapse_daily", {})).structuredContent,
 		).toMatchObject({ note: null });
 	});
 });

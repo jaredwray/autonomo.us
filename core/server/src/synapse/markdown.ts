@@ -1,9 +1,9 @@
 import {
-	BRAIN_ATTACHMENT_EXTENSIONS,
-	type BrainProperties,
-	type BrainPropertyValue,
+	SYNAPSE_ATTACHMENT_EXTENSIONS,
+	type SynapseProperties,
+	type SynapsePropertyValue,
 } from "@autonomo.us/common";
-import { BrainError } from "./errors.js";
+import { SynapseError } from "./errors.js";
 
 export const TITLE_MAX_LENGTH = 200;
 /** `__proto__` would replace a plain object's prototype instead of becoming a key. */
@@ -23,7 +23,7 @@ const CONTROL_CHARS = /\p{Cc}/u;
  * Link targets with these extensions are attachments, not notes. Only known
  * attachment formats count so titles like "Node.js" still link.
  */
-const ATTACHMENT_EXTENSIONS = new Set(BRAIN_ATTACHMENT_EXTENSIONS);
+const ATTACHMENT_EXTENSIONS = new Set(SYNAPSE_ATTACHMENT_EXTENSIONS);
 
 /** Returns why `title` is not a valid note title, or null when it is. */
 export function titleProblem(title: unknown): string | null {
@@ -43,7 +43,7 @@ export function titleProblem(title: unknown): string | null {
 
 export function assertTitle(title: unknown): string {
 	const problem = titleProblem(title);
-	if (problem) throw new BrainError(problem);
+	if (problem) throw new SynapseError(problem);
 	return title as string;
 }
 
@@ -176,7 +176,7 @@ const INLINE_TAG = new RegExp(`(?<=^|\\s)#(${TAG_CHARS}+)`, "gmu");
 /** Tags from the `tags` property and inline #tags, lowercased and deduplicated. */
 export function extractTags(
 	body: string,
-	properties: BrainProperties,
+	properties: SynapseProperties,
 ): string[] {
 	const tags = new Set<string>();
 	const declared = properties.tags;
@@ -199,7 +199,7 @@ export function extractTags(
 }
 
 /** Link targets of the `categories` property, in order. */
-export function extractCategories(properties: BrainProperties): string[] {
+export function extractCategories(properties: SynapseProperties): string[] {
 	const value = properties.categories;
 	const texts =
 		typeof value === "string" ? [value] : Array.isArray(value) ? value : [];
@@ -207,7 +207,7 @@ export function extractCategories(properties: BrainProperties): string[] {
 }
 
 /** Every string a property holds, for link extraction and search. */
-export function propertyStrings(properties: BrainProperties): string[] {
+export function propertyStrings(properties: SynapseProperties): string[] {
 	const out: string[] = [];
 	for (const value of Object.values(properties)) {
 		if (typeof value === "string") out.push(value);
@@ -238,11 +238,11 @@ export function rewriteLinks(text: string, from: string, to: string): string {
 }
 
 export function rewritePropertyLinks(
-	properties: BrainProperties,
+	properties: SynapseProperties,
 	from: string,
 	to: string,
-): BrainProperties {
-	const out: BrainProperties = {};
+): SynapseProperties {
+	const out: SynapseProperties = {};
 	for (const [key, value] of Object.entries(properties)) {
 		if (typeof value === "string") out[key] = rewriteLinks(value, from, to);
 		else if (Array.isArray(value))
@@ -253,16 +253,16 @@ export function rewritePropertyLinks(
 }
 
 /** Validates property keys and values; returns a copy with the stored shape. */
-export function validateProperties(input: unknown): BrainProperties {
+export function validateProperties(input: unknown): SynapseProperties {
 	if (input === null || typeof input !== "object" || Array.isArray(input))
-		throw new BrainError("Properties must be an object.");
+		throw new SynapseError("Properties must be an object.");
 	const entries = Object.entries(input as Record<string, unknown>);
 	if (entries.length > MAX_PROPERTIES)
-		throw new BrainError(`Notes have at most ${MAX_PROPERTIES} properties.`);
-	const out: BrainProperties = {};
+		throw new SynapseError(`Notes have at most ${MAX_PROPERTIES} properties.`);
+	const out: SynapseProperties = {};
 	for (const [key, value] of entries) {
 		if (key.length > PROPERTY_KEY_MAX_LENGTH || !PROPERTY_KEY_PATTERN.test(key))
-			throw new BrainError(
+			throw new SynapseError(
 				`Property key "${key.slice(0, 40)}" must be 1–${PROPERTY_KEY_MAX_LENGTH} characters of letters, digits, spaces, "_", ".", or "-", and start with a letter, digit, or "_".`,
 			);
 		out[key] = validatePropertyValue(key, value);
@@ -273,37 +273,37 @@ export function validateProperties(input: unknown): BrainProperties {
 function validatePropertyValue(
 	key: string,
 	value: unknown,
-): BrainPropertyValue {
+): SynapsePropertyValue {
 	if (value === null || value === undefined) return null;
 	if (typeof value === "boolean") return value;
 	if (typeof value === "number") {
 		if (!Number.isFinite(value))
-			throw new BrainError(`Property "${key}" must be a finite number.`);
+			throw new SynapseError(`Property "${key}" must be a finite number.`);
 		return value;
 	}
 	if (typeof value === "string") {
 		if (value.length > PROPERTY_STRING_MAX_LENGTH)
-			throw new BrainError(
+			throw new SynapseError(
 				`Property "${key}" is longer than ${PROPERTY_STRING_MAX_LENGTH} characters.`,
 			);
 		return value;
 	}
 	if (Array.isArray(value)) {
 		if (value.length > PROPERTY_LIST_MAX_ITEMS)
-			throw new BrainError(
+			throw new SynapseError(
 				`Property "${key}" has more than ${PROPERTY_LIST_MAX_ITEMS} items.`,
 			);
 		return value.map((item) => {
 			if (typeof item !== "string")
-				throw new BrainError(`Property "${key}" must be a list of strings.`);
+				throw new SynapseError(`Property "${key}" must be a list of strings.`);
 			if (item.length > PROPERTY_STRING_MAX_LENGTH)
-				throw new BrainError(
+				throw new SynapseError(
 					`An item of property "${key}" is longer than ${PROPERTY_STRING_MAX_LENGTH} characters.`,
 				);
 			return item;
 		});
 	}
-	throw new BrainError(
+	throw new SynapseError(
 		`Property "${key}" must be a string, number, boolean, null, or list of strings.`,
 	);
 }
@@ -338,7 +338,7 @@ function renderScalar(
  * none. Strings in `raw` are written bare (templates keep `{{date}}` as is).
  */
 export function renderFrontmatter(
-	properties: BrainProperties,
+	properties: SynapseProperties,
 	raw?: Set<string>,
 ): string {
 	const keys = Object.keys(properties);
@@ -362,7 +362,7 @@ export function renderFrontmatter(
 }
 
 export function renderMarkdown(
-	properties: BrainProperties,
+	properties: SynapseProperties,
 	body: string,
 	raw?: Set<string>,
 ): string {
@@ -373,7 +373,7 @@ export function renderMarkdown(
 	return frontmatter + body;
 }
 
-export class FrontmatterError extends BrainError {
+export class FrontmatterError extends SynapseError {
 	constructor(message: string, line: number) {
 		super(`${message} (frontmatter line ${line})`, 400);
 	}
@@ -468,10 +468,10 @@ function splitFlow(text: string, line: number): string[] {
 /**
  * Splits an Obsidian file into properties and body. The frontmatter block
  * starts with `---` on the first line and ends at the next line that is
- * exactly `---`; see docs/BRAIN.md §8 for the supported YAML subset.
+ * exactly `---`; see docs/SYNAPSE.md §8 for the supported YAML subset.
  */
 export function parseMarkdown(markdown: string): {
-	properties: BrainProperties;
+	properties: SynapseProperties;
 	body: string;
 } {
 	const text = markdown.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n");
@@ -481,7 +481,7 @@ export function parseMarkdown(markdown: string): {
 	const end = lines.findIndex((line, index) => index > 0 && fence(line));
 	if (end === -1)
 		throw new FrontmatterError("Frontmatter block is never closed", 1);
-	const properties: BrainProperties = {};
+	const properties: SynapseProperties = {};
 	let pending: { key: string; line: number } | null = null;
 	for (let index = 1; index < end; index++) {
 		const line = lines[index];
@@ -524,7 +524,7 @@ export function parseMarkdown(markdown: string): {
 			properties[key] = null;
 			pending = { key, line: number };
 		} else if (/^\[\[[^[\]]+\]\]$/.test(rest)) {
-			// Older vaults write `categories: [[People]]`, which means a link.
+			// Older spaces write `categories: [[People]]`, which means a link.
 			properties[key] = [rest];
 		} else if (rest.startsWith("[")) {
 			if (!rest.endsWith("]"))

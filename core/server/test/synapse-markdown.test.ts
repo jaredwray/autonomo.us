@@ -12,8 +12,8 @@ import {
 	snippet,
 	titleProblem,
 	validateProperties,
-} from "../src/brain/markdown.js";
-import { crc32, zipStore } from "../src/brain/zip.js";
+} from "../src/synapse/markdown.js";
+import { crc32, zipStore } from "../src/synapse/zip.js";
 
 describe("wikilinks", () => {
 	it("reads every link form, dedupes case-insensitively, and keeps first spelling", () => {
@@ -336,7 +336,7 @@ describe("frontmatter", () => {
 		}
 	});
 
-	it("reads what Obsidian and older vaults write", () => {
+	it("reads what Obsidian and older spaces write", () => {
 		expect(parseMarkdown("\uFEFF---\nrole: Lead\n---\nBody")).toEqual({
 			properties: { role: "Lead" },
 			body: "Body",

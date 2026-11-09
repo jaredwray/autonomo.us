@@ -1,7 +1,7 @@
 import type {
-	BrainProperties,
-	BrainPropertyValue,
-	BrainTemplate,
+	SynapseProperties,
+	SynapsePropertyValue,
+	SynapseTemplate,
 } from "@autonomo.us/common";
 import { renderMarkdown, titleKey } from "./markdown.js";
 
@@ -16,9 +16,9 @@ function template(
 	name: string,
 	folder: string,
 	description: string,
-	properties: BrainProperties,
+	properties: SynapseProperties,
 	body = "",
-): BrainTemplate {
+): SynapseTemplate {
 	return {
 		name,
 		category: name,
@@ -29,8 +29,8 @@ function template(
 	};
 }
 
-/** Adapted from kepano's templates for an agent team; see docs/BRAIN.md §4. */
-export const BUILTIN_TEMPLATES: readonly BrainTemplate[] = [
+/** Adapted from kepano's templates for an agent team; see docs/SYNAPSE.md §4. */
+export const BUILTIN_TEMPLATES: readonly SynapseTemplate[] = [
 	template(
 		"People",
 		"References",
@@ -143,14 +143,14 @@ export const BUILTIN_TEMPLATES: readonly BrainTemplate[] = [
 	},
 ];
 
-export function findTemplate(name: string): BrainTemplate | undefined {
+export function findTemplate(name: string): SynapseTemplate | undefined {
 	const key = titleKey(name.trim());
 	return BUILTIN_TEMPLATES.find((item) => titleKey(item.name) === key);
 }
 
 export function templateForCategory(
 	category: string,
-): BrainTemplate | undefined {
+): SynapseTemplate | undefined {
 	const key = titleKey(category);
 	return BUILTIN_TEMPLATES.find(
 		(item) => item.category !== null && titleKey(item.category) === key,
@@ -159,10 +159,10 @@ export function templateForCategory(
 
 /** Template properties with `{{date}}` replaced by `date` (YYYY-MM-DD). */
 export function fillTemplate(
-	template: BrainTemplate,
+	template: SynapseTemplate,
 	date: string,
-): BrainProperties {
-	const fill = (value: BrainPropertyValue): BrainPropertyValue =>
+): SynapseProperties {
+	const fill = (value: SynapsePropertyValue): SynapsePropertyValue =>
 		value === DATE_TOKEN
 			? date
 			: Array.isArray(value)
@@ -177,7 +177,7 @@ export function fillTemplate(
 }
 
 /** The template as an Obsidian file, with `{{date}}` left in place. */
-export function templateMarkdown(template: BrainTemplate): string {
+export function templateMarkdown(template: SynapseTemplate): string {
 	return renderMarkdown(
 		template.properties,
 		template.body,
@@ -185,7 +185,7 @@ export function templateMarkdown(template: BrainTemplate): string {
 	);
 }
 
-export const templateFileName = (template: BrainTemplate) =>
+export const templateFileName = (template: SynapseTemplate) =>
 	`Templates/${template.name} Template.md`;
 
 /**

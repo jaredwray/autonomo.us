@@ -12,27 +12,12 @@ import type {
 	ApiTokenSettings,
 	AuthSession,
 	AuthStatus,
-	BrainCategory,
-	BrainDaily,
-	BrainExport,
-	BrainImportRequest,
-	BrainImportResult,
-	BrainNote,
-	BrainNoteList,
-	BrainNoteView,
-	BrainProposal,
-	BrainProposalList,
-	BrainProposalStatus,
-	BrainQuery,
-	BrainTemplate,
-	BrainUnresolvedLink,
-	BrainVaultList,
 	CreateAgentTokenRequest,
 	CreateApiTokenRequest,
-	CreateBrainNoteRequest,
+	CreateSynapseNoteRequest,
 	CreateTeamInviteRequest,
 	CurrentSession,
-	DecideBrainProposalRequest,
+	DecideSynapseProposalRequest,
 	FailoverPolicy,
 	GatewayResponse,
 	InvitePreview,
@@ -43,13 +28,28 @@ import type {
 	RoutingConfig,
 	RoutingSettings,
 	SetupRequest,
+	SynapseCategory,
+	SynapseDaily,
+	SynapseExport,
+	SynapseImportRequest,
+	SynapseImportResult,
+	SynapseNote,
+	SynapseNoteList,
+	SynapseNoteView,
+	SynapseProposal,
+	SynapseProposalList,
+	SynapseProposalStatus,
+	SynapseQuery,
+	SynapseSpaceList,
+	SynapseTemplate,
+	SynapseUnresolvedLink,
 	TeamInvite,
 	TeamInviteSecret,
 	TeamMember,
 	TeamSettings,
 	UpdateAgentTokenRequest,
 	UpdateApiTokenRequest,
-	UpdateBrainNoteRequest,
+	UpdateSynapseNoteRequest,
 	UpdateTeamMemberRequest,
 	UsageAnalytics,
 } from "@autonomo.us/common";
@@ -456,7 +456,7 @@ export class ApiError extends Error {
 		this.status = status;
 	}
 }
-async function brainRequest<T>(
+async function synapseRequest<T>(
 	path: string,
 	{ method = "GET", body }: { method?: string; body?: unknown } = {},
 ): Promise<T> {
@@ -474,21 +474,23 @@ async function brainRequest<T>(
 		);
 	return (response.status === 204 ? undefined : await response.json()) as T;
 }
-const vaultPath = (vault: string) =>
-	`/v1/brain/vaults/${encodeURIComponent(vault)}`;
-const notePath = (vault: string, title: string) =>
-	`${vaultPath(vault)}/notes/${encodeURIComponent(title)}`;
+const spacePath = (space: string) =>
+	`/v1/synapse/spaces/${encodeURIComponent(space)}`;
+const notePath = (space: string, title: string) =>
+	`${spacePath(space)}/notes/${encodeURIComponent(title)}`;
 
-export function fetchBrainVaults(): Promise<BrainVaultList> {
-	return brainRequest("/v1/brain/vaults");
+export function fetchSynapseSpaces(): Promise<SynapseSpaceList> {
+	return synapseRequest("/v1/synapse/spaces");
 }
-export function fetchBrainTemplates(): Promise<{ templates: BrainTemplate[] }> {
-	return brainRequest("/v1/brain/templates");
+export function fetchSynapseTemplates(): Promise<{
+	templates: SynapseTemplate[];
+}> {
+	return synapseRequest("/v1/synapse/templates");
 }
-export function fetchBrainNotes(
-	vault: string,
-	query: BrainQuery = {},
-): Promise<BrainNoteList> {
+export function fetchSynapseNotes(
+	space: string,
+	query: SynapseQuery = {},
+): Promise<SynapseNoteList> {
 	const params = new URLSearchParams();
 	const { where, ...rest } = query;
 	for (const [key, value] of Object.entries(rest))
@@ -496,75 +498,82 @@ export function fetchBrainNotes(
 	for (const [key, value] of Object.entries(where ?? {}))
 		params.set(`where.${key}`, String(value));
 	const search = params.toString();
-	return brainRequest(`${vaultPath(vault)}/notes${search ? `?${search}` : ""}`);
+	return synapseRequest(
+		`${spacePath(space)}/notes${search ? `?${search}` : ""}`,
+	);
 }
-export function createBrainNote(
-	vault: string,
-	input: CreateBrainNoteRequest,
-): Promise<BrainNote> {
-	return brainRequest(`${vaultPath(vault)}/notes`, {
+export function createSynapseNote(
+	space: string,
+	input: CreateSynapseNoteRequest,
+): Promise<SynapseNote> {
+	return synapseRequest(`${spacePath(space)}/notes`, {
 		method: "POST",
 		body: input,
 	});
 }
-export function fetchBrainNote(
-	vault: string,
+export function fetchSynapseNote(
+	space: string,
 	title: string,
-): Promise<BrainNoteView> {
-	return brainRequest(notePath(vault, title));
+): Promise<SynapseNoteView> {
+	return synapseRequest(notePath(space, title));
 }
-export function updateBrainNote(
-	vault: string,
+export function updateSynapseNote(
+	space: string,
 	title: string,
-	input: UpdateBrainNoteRequest,
-): Promise<BrainNote> {
-	return brainRequest(notePath(vault, title), { method: "PATCH", body: input });
+	input: UpdateSynapseNoteRequest,
+): Promise<SynapseNote> {
+	return synapseRequest(notePath(space, title), {
+		method: "PATCH",
+		body: input,
+	});
 }
-export function appendBrainNote(
-	vault: string,
+export function appendSynapseNote(
+	space: string,
 	title: string,
 	text: string,
 	template?: string,
-): Promise<BrainNote> {
-	return brainRequest(`${notePath(vault, title)}/append`, {
+): Promise<SynapseNote> {
+	return synapseRequest(`${notePath(space, title)}/append`, {
 		method: "POST",
 		body: { text, template },
 	});
 }
 /** With `revision`, only that revision is deleted; a newer one answers 409. */
-export function deleteBrainNote(
-	vault: string,
+export function deleteSynapseNote(
+	space: string,
 	title: string,
 	revision?: number,
 ): Promise<void> {
 	const query = revision === undefined ? "" : `?revision=${revision}`;
-	return brainRequest(`${notePath(vault, title)}${query}`, {
+	return synapseRequest(`${notePath(space, title)}${query}`, {
 		method: "DELETE",
 	});
 }
-export function fetchBrainUnresolved(
-	vault: string,
-): Promise<{ links: BrainUnresolvedLink[] }> {
-	return brainRequest(`${vaultPath(vault)}/unresolved`);
+export function fetchSynapseUnresolved(
+	space: string,
+): Promise<{ links: SynapseUnresolvedLink[] }> {
+	return synapseRequest(`${spacePath(space)}/unresolved`);
 }
-export function fetchBrainCategories(
-	vault: string,
-): Promise<{ categories: BrainCategory[] }> {
-	return brainRequest(`${vaultPath(vault)}/categories`);
+export function fetchSynapseCategories(
+	space: string,
+): Promise<{ categories: SynapseCategory[] }> {
+	return synapseRequest(`${spacePath(space)}/categories`);
 }
-export function fetchBrainDaily(
-	vault: string,
+export function fetchSynapseDaily(
+	space: string,
 	date: string,
-): Promise<BrainDaily> {
-	return brainRequest(`${vaultPath(vault)}/daily/${encodeURIComponent(date)}`);
+): Promise<SynapseDaily> {
+	return synapseRequest(
+		`${spacePath(space)}/daily/${encodeURIComponent(date)}`,
+	);
 }
-export function fetchBrainExport(vault: string): Promise<BrainExport> {
-	return brainRequest(`${vaultPath(vault)}/export`);
+export function fetchSynapseExport(space: string): Promise<SynapseExport> {
+	return synapseRequest(`${spacePath(space)}/export`);
 }
-/** The vault as an Obsidian-compatible zip, fetched with the session credential. */
-export async function fetchBrainExportZip(vault: string): Promise<Blob> {
+/** The space as an Obsidian-compatible zip, fetched with the session credential. */
+export async function fetchSynapseExportZip(space: string): Promise<Blob> {
 	const response = await apiFetch(
-		`${apiBase()}${vaultPath(vault)}/export?format=zip`,
+		`${apiBase()}${spacePath(space)}/export?format=zip`,
 		{
 			headers: { accept: "application/zip" },
 		},
@@ -576,28 +585,31 @@ export async function fetchBrainExportZip(vault: string): Promise<Blob> {
 		);
 	return response.blob();
 }
-export function importBrainNotes(
-	vault: string,
-	input: BrainImportRequest,
-): Promise<BrainImportResult> {
-	return brainRequest(`${vaultPath(vault)}/import`, {
+export function importSynapseNotes(
+	space: string,
+	input: SynapseImportRequest,
+): Promise<SynapseImportResult> {
+	return synapseRequest(`${spacePath(space)}/import`, {
 		method: "POST",
 		body: input,
 	});
 }
-export function fetchBrainProposals(
-	status?: BrainProposalStatus,
-): Promise<BrainProposalList> {
-	return brainRequest(
-		`/v1/brain/proposals${status ? `?status=${encodeURIComponent(status)}` : ""}`,
+export function fetchSynapseProposals(
+	status?: SynapseProposalStatus,
+): Promise<SynapseProposalList> {
+	return synapseRequest(
+		`/v1/synapse/proposals${status ? `?status=${encodeURIComponent(status)}` : ""}`,
 	);
 }
-export function decideBrainProposal(
+export function decideSynapseProposal(
 	id: string,
-	input: DecideBrainProposalRequest,
-): Promise<BrainProposal> {
-	return brainRequest(`/v1/brain/proposals/${encodeURIComponent(id)}/decide`, {
-		method: "POST",
-		body: input,
-	});
+	input: DecideSynapseProposalRequest,
+): Promise<SynapseProposal> {
+	return synapseRequest(
+		`/v1/synapse/proposals/${encodeURIComponent(id)}/decide`,
+		{
+			method: "POST",
+			body: input,
+		},
+	);
 }
