@@ -575,9 +575,12 @@ would then hide.
 ### 9.3 Rollback
 
 - The W1 path change ships the dashboard and the API in one deployable (one
-  Worker, or one compose service), so a rollback reverts both together and
-  the dashboard never calls paths its server lacks. API clients outside the
-  dashboard must switch paths with W1 and back on a rollback to pre-W1 code;
+  Worker, or one compose service), so a rollback reverts both together for
+  new page loads. A tab that already loaded the W1 dashboard keeps calling
+  `/v1/default/…` after a rollback to pre-W1 code and gets 404s until it
+  reloads. No compatibility aliases are kept (D2), so that tab needs a reload.
+  This is accepted because the gateway has no external users yet. API clients
+  outside the dashboard must switch paths with W1, and back on a rollback;
   there are none today.
 - Rolling back within W1–W4 is safe for data in both directions. Only `default` exists.
   Pre-workspace code reads provider documents at their unchanged `_id` by
