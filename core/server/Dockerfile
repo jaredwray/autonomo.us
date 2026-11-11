@@ -2,7 +2,7 @@
 #   docker build -f core/server/Dockerfile .
 # One image runs the whole product: the Node process serves the API and the
 # dashboard build (core/ux/dist).
-FROM node:22.23.4-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS build
+FROM node:22.23.5-alpine@sha256:d6e6d1cae4ed0cda2dc336db1bbea6457c2b5d2a8bcd9ac1d80b909fe1c4f638 AS build
 RUN corepack enable
 WORKDIR /repo
 
@@ -22,7 +22,7 @@ RUN pnpm --filter @autonomo.us/common build \
 	&& pnpm --filter @autonomo.us/ux build
 
 # Runtime: production dependencies only, plus the built output.
-FROM node:22.23.4-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914
+FROM node:22.23.5-alpine@sha256:d6e6d1cae4ed0cda2dc336db1bbea6457c2b5d2a8bcd9ac1d80b909fe1c4f638
 RUN corepack enable
 WORKDIR /repo
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
