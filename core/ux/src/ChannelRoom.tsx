@@ -482,10 +482,13 @@ export function ChannelRoom({
 					if (signal.aborted) return;
 					quiet++;
 				}
-				if (!hasBot && quiet) return;
+				if (!hasBot && quiet) break;
 				await sleep(channelTimings.activityIntervalMs, signal);
 				if (signal.aborted) return;
 			}
+			// Nobody is asking any more, so the line must not go on claiming
+			// that a bot is replying: the last answer may have been a failure.
+			setReplying([]);
 		})();
 		return () => controller.abort();
 	}, [id, hasBot, stirred]);

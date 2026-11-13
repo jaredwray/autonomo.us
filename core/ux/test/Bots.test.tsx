@@ -473,6 +473,38 @@ it("adds a bot to a channel, shows it replying to a mention, and records the run
 	);
 });
 
+it("stops saying a bot is replying when it can no longer ask", async () => {
+	const running = await boot();
+	// Two empty or failed answers end the asking.
+	setChannelTimings({ activityIntervalMs: 20, activityQuietPolls: 2 });
+	const slow = await running.bot({ name: "Slow", model: "stub/slow-model" });
+	const general = await running.channel("general");
+	await running.addAgent(general.id, slow.id);
+	renderAt("#/channels/general");
+	const view = await screen.findByRole("region", { name: "#general" });
+	await within(view).findByText("Founder added Slow");
+	const status = () => view.querySelector(".channel-replying");
+	await running.post(general.id, `<@agent:${slow.id}> are you there?`);
+	await waitFor(
+		() => expect(status()?.textContent).toBe("Slow is replying…"),
+		SOON,
+	);
+	// From here on the gateway cannot be asked who is replying.
+	const real = globalThis.fetch;
+	vi.spyOn(globalThis, "fetch").mockImplementation((input, init) =>
+		String(input instanceof Request ? input.url : input).includes(
+			"/bots/activity",
+		)
+			? Promise.reject(new TypeError("offline"))
+			: real(input, init),
+	);
+	// The line clears well before the model answers 1.5 s later.
+	await waitFor(() => expect(status()?.textContent).toBe(""), {
+		timeout: 1000,
+	});
+	expect(within(view).queryByText("Slow reply")).toBeNull();
+});
+
 it("shows why a run failed or was skipped, after a refresh", async () => {
 	const running = await boot();
 	const broken = await running.bot({
