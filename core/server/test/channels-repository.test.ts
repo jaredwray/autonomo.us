@@ -270,6 +270,10 @@ describe.each(implementations)("channel repository (%s)", (_name, create) => {
 		expect(
 			seqs(await repository.threadReplies(target.id, root.id, 10)),
 		).toEqual([3]);
+		// Paging on from the last reply seen finds nothing more.
+		expect(await repository.threadReplies(target.id, root.id, 10, 3)).toEqual(
+			[],
+		);
 
 		expect(
 			(await repository.getEntry(target.workspaceId, target.id, reply.id))?.seq,

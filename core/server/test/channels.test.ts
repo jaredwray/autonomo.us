@@ -275,6 +275,17 @@ describe("channels over REST", () => {
 			thread.entries.map((entry) => (entry as ChannelMessage).body),
 		).toEqual(["Who has the trailer cut?", "I do.", "Sending it."]);
 		expect((thread.entries[0] as ChannelMessage).replyCount).toBe(2);
+		// A long thread is read in pages: the next one starts after the last reply seen.
+		const firstPage = await read(channel.id, `?thread=${root.id}&limit=1`);
+		expect(firstPage.entries.map((entry) => entry.id)).toEqual([
+			root.id,
+			reply.id,
+		]);
+		expect(
+			(
+				await read(channel.id, `?thread=${root.id}&after=${reply.seq}`)
+			).entries.map((entry) => entry.id),
+		).toEqual([second.id]);
 		// Any message of the thread names it.
 		expect(
 			(await read(channel.id, `?thread=${second.id}`)).entries.map(

@@ -303,10 +303,15 @@ export class MongoChannelRepository implements ChannelRepository {
 		);
 		return found.map(toEntry);
 	}
-	async threadReplies(channelId: string, threadId: string, limit: number) {
+	async threadReplies(
+		channelId: string,
+		threadId: string,
+		limit: number,
+		after = 0,
+	) {
 		const found = await this.storage(() =>
 			this.entries()
-				.find({ channelId, threadId, type: "message" })
+				.find({ channelId, threadId, type: "message", seq: { $gt: after } })
 				.sort({ seq: 1 })
 				.limit(limit)
 				.toArray(),

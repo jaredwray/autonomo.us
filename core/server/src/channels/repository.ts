@@ -139,11 +139,12 @@ export interface ChannelRepository {
 		before: number | undefined,
 		limit: number,
 	): Promise<StoredEntry[]>;
-	/** A thread's replies, oldest first. */
+	/** A thread's replies above `after`, oldest first. */
 	threadReplies(
 		channelId: string,
 		threadId: string,
 		limit: number,
+		after?: number,
 	): Promise<StoredMessage[]>;
 	/** Compare-and-swap on the message's `revision`. */
 	replaceMessage(

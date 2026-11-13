@@ -497,7 +497,8 @@ workspace's bots, for the picker); `GET|PATCH /:channel`,
 `POST /:channel/archive` and `/unarchive`; `GET /:channel/members`;
 `PUT|DELETE /:channel/agents/:agentTokenId` (`{ access: "read" | "post" }`);
 `GET /:channel/messages` (the latest page, `?before=<seq>` for older ones,
-`?after=<seq>&wait=` to follow, `?thread=<message id>` for a thread);
+`?after=<seq>&wait=` to follow, `?thread=<message id>` for a thread and
+`?thread=<message id>&after=<seq>` for its further replies);
 `POST /:channel/messages` (`{ body, threadId?, nonce? }`);
 `PATCH|DELETE /:channel/messages/:message`; `PUT /:channel/read`
 (`{ seq }`). API tokens use `channels:read` and `channels:edit`; creating and

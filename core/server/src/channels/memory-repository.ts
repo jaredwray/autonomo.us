@@ -203,11 +203,18 @@ export class MemoryChannelRepository implements ChannelRepository {
 			.slice(0, limit)
 			.map((item) => structuredClone(item));
 	}
-	async threadReplies(channelId: string, threadId: string, limit: number) {
+	async threadReplies(
+		channelId: string,
+		threadId: string,
+		limit: number,
+		after = 0,
+	) {
 		return this.log(channelId)
 			.filter(
 				(item): item is StoredMessage =>
-					item.type === "message" && item.threadId === threadId,
+					item.type === "message" &&
+					item.threadId === threadId &&
+					item.seq > after,
 			)
 			.slice(0, limit)
 			.map((item) => structuredClone(item));

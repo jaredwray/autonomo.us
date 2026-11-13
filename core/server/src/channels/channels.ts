@@ -999,9 +999,15 @@ export class ChannelService {
 				channel.id,
 				root.id,
 				limit,
+				options.after,
 			);
+			// The first page starts with the root; `after` pages on through the
+			// replies, for a thread longer than one page.
 			return {
-				entries: await this.hydrate(channel.id, [root, ...replies]),
+				entries: await this.hydrate(
+					channel.id,
+					options.after === undefined ? [root, ...replies] : replies,
+				),
 				cursor: top,
 			};
 		}
