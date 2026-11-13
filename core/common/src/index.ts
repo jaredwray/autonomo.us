@@ -12,6 +12,22 @@ export {
 	type RollAgentTokenRequest,
 	type UpdateAgentTokenRequest,
 } from "./agent-tokens.js";
+export {
+	AGENT_KINDS,
+	type AgentConnection,
+	type AgentConnectionList,
+	type AgentKind,
+	type AgentList,
+	type AgentSummary,
+	type ApproveOAuthSignInRequest,
+	type CreateOAuthAgentRequest,
+	isLoopbackUrl,
+	OAUTH_LIMITS,
+	type OAuthSignIn,
+	type OAuthSignInDecision,
+	redirectHost,
+	redirectUriProblem,
+} from "./agents.js";
 export type {
 	AnalyticsBreakdown,
 	AnalyticsQuery,

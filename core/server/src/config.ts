@@ -53,6 +53,13 @@ export type ApiConfig = {
 	corsOrigins: string[];
 	/** IANA time zone for Synapse's "today" (templates, daily notes, log). Default UTC. */
 	synapseTimeZone?: string;
+	/**
+	 * The address apps reach the gateway at, e.g. `https://gateway.example.com`.
+	 * OAuth sign-in names it; unset, it is taken from each request.
+	 */
+	publicUrl?: string;
+	/** Where the dashboard is served when that is not the gateway's own address. */
+	dashboardUrl?: string;
 };
 
 export const DEFAULT_CORS_ORIGINS = [
@@ -74,6 +81,26 @@ function parseModels(value: string | undefined, fallback: string[]): string[] {
 		.filter((model) => model.length > 0);
 }
 
+/** An `http(s)` address without a trailing slash, or undefined when unset. */
+function webAddress(name: string, value: string | undefined) {
+	const trimmed = value?.trim();
+	if (!trimmed) return undefined;
+	let url: URL | undefined;
+	try {
+		url = new URL(trimmed);
+	} catch {}
+	if (
+		!url ||
+		!["http:", "https:"].includes(url.protocol) ||
+		url.search ||
+		url.hash
+	)
+		throw new Error(
+			`${name} must be an address such as "https://gateway.example.com", not "${trimmed}".`,
+		);
+	return url.href.replace(/\/+$/, "");
+}
+
 /**
  * Builds the gateway configuration from environment variables.
  *
@@ -89,6 +116,10 @@ function parseModels(value: string | undefined, fallback: string[]): string[] {
  *   ids), and `FAILOVER_TIMEOUT_MS` seed the failover policy, which stays
  *   runtime-configurable via PUT /v1/failover and the dashboard.
  * - `SYNAPSE_TIME_ZONE` (IANA name, default `UTC`) decides "today" in Synapse.
+ * - `PUBLIC_URL` is the address apps reach the gateway at, for OAuth sign-in
+ *   to the MCP endpoint; unset, each request's own address is used.
+ *   `DASHBOARD_URL` is where people approve a sign-in when the dashboard is
+ *   served somewhere else.
  */
 export function configFromEnv(
 	env: Record<string, string | undefined> = process.env,
@@ -209,5 +240,7 @@ export function configFromEnv(
 		setupToken: env.SETUP_TOKEN || undefined,
 		corsOrigins,
 		synapseTimeZone,
+		publicUrl: webAddress("PUBLIC_URL", env.PUBLIC_URL),
+		dashboardUrl: webAddress("DASHBOARD_URL", env.DASHBOARD_URL),
 	};
 }

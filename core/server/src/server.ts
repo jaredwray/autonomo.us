@@ -19,12 +19,19 @@ import { GatewayData } from "./gateway-data.js";
 import { mcpRoutes } from "./mcp/server.js";
 import { ModelCatalogService } from "./model-catalog-service.js";
 import { controlPlaneConnection, mongoErrorDetails } from "./mongo.js";
+import { type OAuthAgents, OAuthService } from "./oauth/oauth.js";
+import { publicOrigin } from "./oauth/origin.js";
+import {
+	MemoryOAuthRepository,
+	MongoOAuthRepository,
+} from "./oauth/repository.js";
 import {
 	type ProviderRegistry,
 	registryFromConfig,
 } from "./providers/registry.js";
 import { ProviderSettingsStore } from "./providers/settings.js";
 import { agentTokenRoutes } from "./routes/agent-tokens.js";
+import { agentRoutes, oauthSignInRoutes } from "./routes/agents.js";
 import { apiTokenRoutes } from "./routes/api-tokens.js";
 import { authRoutes } from "./routes/auth.js";
 import { botRoutes } from "./routes/bots.js";
@@ -34,6 +41,7 @@ import { decisionsRoutes } from "./routes/decisions.js";
 import { failoverRoutes } from "./routes/failover.js";
 import { healthRoutes } from "./routes/health.js";
 import { catalogRoutes, modelsRoutes } from "./routes/models.js";
+import { oauthRoutes } from "./routes/oauth.js";
 import { routingRoutes } from "./routes/routing.js";
 import { synapseRoutes } from "./routes/synapse.js";
 import { teamRoutes } from "./routes/team.js";
@@ -88,6 +96,11 @@ export type CreateServerOptions = {
 	pluginTimeout?: number;
 	/** Workers compile routes at module startup, before database I/O is allowed. */
 	deferPersistence?: boolean;
+	/**
+	 * The runtime ends TLS before the server sees a request, as Workers do, so
+	 * an address taken from a request is HTTPS unless it is on localhost.
+	 */
+	assumeHttps?: boolean;
 	/**
 	 * Built dashboard directory (`core/ux/dist`). When set, this instance serves
 	 * it beside the API so one process runs both. The Worker leaves it unset and
@@ -191,6 +204,30 @@ export function createServer(options: CreateServerOptions = {}) {
 			},
 		},
 	});
+	// An app that signs in to an agent with OAuth is recorded in that agent's
+	// history; the agent's own record decides what the app may do.
+	const oauthAgents: OAuthAgents = {
+		permissions: async (workspaceId, agentId) => {
+			const agent = await agentTokens.find(agentId);
+			if (!agent || agent.auth !== "oauth") return null;
+			const own = agent.workspaceId ?? (await workspaces.defaultWorkspaceId());
+			return own === workspaceId ? agent.permissions : null;
+		},
+		record: async (workspaceId, agentId, action, detail, actorName) => {
+			const workspace = await workspaces.get(workspaceId);
+			if (workspace)
+				await agentTokens.note(workspace, agentId, action, detail, actorName);
+		},
+	};
+	const oauthRepository = mongo
+		? new MongoOAuthRepository(mongo)
+		: new MemoryOAuthRepository();
+	const oauth = new OAuthService(oauthRepository, oauthAgents);
+	const origin = (request: Parameters<typeof publicOrigin>[0]) =>
+		publicOrigin(request, {
+			publicUrl: config.publicUrl,
+			assumeHttps: options.assumeHttps,
+		});
 	const toolSets = [synapseToolSet(synapse), channelToolSet(channels)];
 	const botRunner: BotRunner = new BotRunner({
 		bots: botRepository,
@@ -252,6 +289,7 @@ export function createServer(options: CreateServerOptions = {}) {
 	});
 	server.register(teamRoutes, { accounts, workspaces });
 	server.register(workspaceRoutes, { workspaces });
+	server.register(oauthSignInRoutes, { oauth });
 	server.register(catalogRoutes, { catalog: modelCatalog });
 	// Everything a workspace owns lives under its id. The access hook resolves
 	// and authorizes `:workspace` before any of these handlers run.
@@ -270,7 +308,8 @@ export function createServer(options: CreateServerOptions = {}) {
 			scoped.register(decisionsRoutes, { providers, telemetry });
 			scoped.register(telemetryRoutes, { telemetry });
 			scoped.register(apiTokenRoutes, { tokens });
-			scoped.register(agentTokenRoutes, { tokens: agentTokens });
+			scoped.register(agentTokenRoutes, { tokens: agentTokens, oauth });
+			scoped.register(agentRoutes, { agentTokens, bots, oauth });
 			scoped.register(memberRoutes, { accounts });
 			scoped.register(synapseRoutes, { synapse, agentTokens: agentIds });
 			scoped.register(channelRoutes, { channels });
@@ -278,10 +317,18 @@ export function createServer(options: CreateServerOptions = {}) {
 		},
 		{ prefix: "/v1/:workspace" },
 	);
+	// How an MCP app signs in to an agent without a token to copy.
+	server.register(oauthRoutes, {
+		oauth,
+		origin,
+		dashboardUrl: config.dashboardUrl,
+	});
 	// Agents reach their workspace through their token: one tool set per feature.
 	server.register(mcpRoutes, {
 		toolSets,
 		agentTokens,
+		oauth,
+		origin,
 		workspaces,
 		corsOrigins: config.corsOrigins,
 		version: packageJson.version,
@@ -344,6 +391,7 @@ export function createServer(options: CreateServerOptions = {}) {
 			synapseRepository.close(),
 			channelRepository.close(),
 			botRepository.close(),
+			oauthRepository.close(),
 		]);
 		const failed = results.find(
 			(result): result is PromiseRejectedResult => result.status === "rejected",

@@ -35,6 +35,7 @@ async function prepareServer() {
 			// credential-free structured console events at the Worker boundary.
 			logger: false,
 			releaseMongoPerRequest: true,
+			assumeHttps: true,
 			deferPersistence: true,
 			pluginTimeout: 0,
 		});

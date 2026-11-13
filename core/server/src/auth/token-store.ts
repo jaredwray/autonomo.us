@@ -24,8 +24,10 @@ import {
 type Credential = { hash: string; prefix: string; expiresAt: string | null };
 type TokenRecord<Permission extends string> = Omit<
 	ApiToken<Permission>,
-	"id" | "status" | "previousTokens" | "permissions" | "workspaceId"
+	"id" | "status" | "previousTokens" | "permissions" | "workspaceId" | "auth"
 > & {
+	/** Set on an agent that signs in with OAuth: it never has credentials. */
+	auth?: "oauth";
 	/** Missing on tokens created before workspaces: those belong to the default workspace. */
 	workspaceId?: string;
 	/** Legacy records receive the defaults for their token audience. */
@@ -145,9 +147,11 @@ function publicToken<Permission extends string>(
 		revokedAt: record.revokedAt,
 		status: record.revokedAt
 			? "revoked"
-			: record.credentials.some((item) => live(item, now))
+			: record.auth === "oauth" ||
+					record.credentials.some((item) => live(item, now))
 				? "active"
 				: "expired",
+		auth: record.auth ?? "token",
 		previousTokens: record.credentials
 			.slice(1)
 			.filter((item) => live(item, now))
@@ -302,6 +306,57 @@ export class TokenStore<Permission extends string> {
 		actor: ApiTokenAction["actor"],
 		actorName?: string,
 	): Promise<ApiTokenSecret<Permission>> {
+		const { record, secret } = this.draft(workspace, input);
+		this.action(
+			record,
+			"created",
+			actor,
+			`${record.expiresAt ? `Expires ${record.expiresAt}.` : "Never expires."} Permissions: ${permissionSummary(effectivePermissions(record, this.profile), this.profile)}.`,
+			actorName,
+		);
+		await this.insert(record);
+		return {
+			token: publicToken(record, this.now(), this.profile, workspace),
+			secret,
+		};
+	}
+	/**
+	 * An agent with no token: apps sign in to it with OAuth, and each sign-in
+	 * holds its own short-lived credentials (oauth/oauth.ts).
+	 */
+	async createOAuth(
+		workspace: WorkspaceRef,
+		input: Pick<
+			CreateApiTokenRequest<Permission>,
+			"name" | "description" | "permissions"
+		>,
+		actor: ApiTokenAction["actor"],
+		actorName?: string,
+	): Promise<ApiToken<Permission>> {
+		const { record } = this.draft(workspace, { ...input, ttlDays: "never" });
+		record.auth = "oauth";
+		record.credentials = [];
+		record.prefix = "";
+		this.action(
+			record,
+			"created",
+			actor,
+			`Signs in with OAuth. Permissions: ${permissionSummary(effectivePermissions(record, this.profile), this.profile)}.`,
+			actorName,
+		);
+		await this.insert(record);
+		return publicToken(record, this.now(), this.profile, workspace);
+	}
+	private async insert(record: TokenRecord<Permission>) {
+		if (this.mongodbUrl) {
+			await this.ensureIndexes().catch(() => {});
+			await this.storage(() => this.collection().insertOne(record));
+		} else this.records.set(record._id, record);
+	}
+	private draft(
+		workspace: WorkspaceRef,
+		input: CreateApiTokenRequest<Permission>,
+	) {
 		const now = this.now();
 		const id = randomUUID();
 		const expiry = expiresAt(input.ttlDays, now);
@@ -327,21 +382,7 @@ export class TokenStore<Permission extends string> {
 			credentials: [credential],
 			actions: [],
 		};
-		this.action(
-			record,
-			"created",
-			actor,
-			`${expiry ? `Expires ${expiry}.` : "Never expires."} Permissions: ${permissionSummary(effectivePermissions(record, this.profile), this.profile)}.`,
-			actorName,
-		);
-		if (this.mongodbUrl) {
-			await this.ensureIndexes().catch(() => {});
-			await this.storage(() => this.collection().insertOne(record));
-		} else this.records.set(id, record);
-		return {
-			token: publicToken(record, now, this.profile, workspace),
-			secret,
-		};
+		return { record, secret };
 	}
 	private async mutate<T>(
 		workspace: WorkspaceRef,
@@ -413,6 +454,11 @@ export class TokenStore<Permission extends string> {
 		return this.mutate(workspace, id, (record, now) => {
 			if (record.revokedAt)
 				throw new ApiTokenError("Revoked tokens cannot be rolled.", 409);
+			if (record.auth === "oauth")
+				throw new ApiTokenError(
+					"This agent signs in with OAuth and has no token to roll.",
+					409,
+				);
 			record.permissions = effectivePermissions(record, this.profile);
 			const deadline = new Date(
 				now + input.previousTokenTtlSeconds * 1000,
@@ -472,6 +518,38 @@ export class TokenStore<Permission extends string> {
 			}
 			return publicToken(record, now, this.profile, workspace);
 		});
+	}
+	/** Adds an entry to a token's history without changing anything else. */
+	note(
+		workspace: WorkspaceRef,
+		id: string,
+		action: ApiTokenAction["action"],
+		detail: string,
+		actorName?: string,
+	) {
+		return this.mutate(workspace, id, (record) => {
+			this.action(record, action, "user", detail, actorName);
+		});
+	}
+	/**
+	 * A token by id alone, unless it is revoked or the id is unknown. For a
+	 * caller that has already proven who it is some other way, such as an
+	 * OAuth access token issued for this agent.
+	 */
+	async find(id: string): Promise<AuthenticatedToken<Permission> | null> {
+		const stored = this.mongodbUrl
+			? await this.storage(() =>
+					this.collection().findOne({ _id: { $eq: id } }),
+				)
+			: this.records.get(id);
+		if (!stored || stored.revokedAt) return null;
+		return {
+			...publicToken(stored, this.now(), this.profile, {
+				id: "",
+				isDefault: false,
+			}),
+			workspaceId: stored.workspaceId ?? null,
+		};
 	}
 	async authenticate(
 		secret: string,
