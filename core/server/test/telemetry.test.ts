@@ -87,7 +87,7 @@ describe("TelemetryService", () => {
 		expect(other).toMatchObject({ requests: 2, provider: "other" });
 	});
 
-	it("discards queued events so a later flush can't write them back", async () => {
+	it("holds queued events aside: dropped after a clear, requeued if it fails", async () => {
 		const inserted: unknown[] = [];
 		let failing = true;
 		const sink = {
@@ -103,14 +103,27 @@ describe("TelemetryService", () => {
 		const chat = { model: "stub/a", provider: "stub", usage, latencyMs: 100 };
 		telemetry.recordChat(chat);
 		expect(await telemetry.drain()).toBe(false);
-		telemetry.discardPending();
+
+		// A clear that fails puts the held events back, so nothing is lost.
+		const held = telemetry.takePending();
+		expect(held).toHaveLength(1);
+		telemetry.restorePending(held);
 		failing = false;
 		expect(await telemetry.flush()).toBe(true);
-		expect(inserted).toEqual([]);
+		expect(inserted).toHaveLength(1);
+
+		// A clear that succeeds drops them: a later flush writes nothing old.
+		failing = true;
+		telemetry.recordChat(chat);
+		expect(await telemetry.drain()).toBe(false);
+		expect(telemetry.takePending()).toHaveLength(1);
+		failing = false;
+		expect(await telemetry.flush()).toBe(true);
+		expect(inserted).toHaveLength(1);
 		// Later events still reach the sink.
 		telemetry.recordChat(chat);
 		expect(await telemetry.drain()).toBe(true);
-		expect(inserted).toHaveLength(1);
+		expect(inserted).toHaveLength(2);
 		await telemetry.stop();
 	});
 

@@ -455,12 +455,23 @@ export class TelemetryService {
 	}
 
 	/**
-	 * Drops events not yet written, so a later flush can't bring back usage
-	 * whose data setup just deleted. Call after `drain()`, when no flush is
-	 * in flight to requeue its batch.
+	 * Takes the events not yet written out of the queue, for setup to hold
+	 * while it deletes the gateway's data, so a flush meanwhile can't write
+	 * them after the deletion. Call after `drain()`, when no flush is in
+	 * flight to requeue its batch, and hand them to `restorePending` if the
+	 * deletion fails.
 	 */
-	discardPending(): void {
+	takePending(): TelemetryEvent[] {
+		const taken = this.pending;
 		this.pending = [];
+		return taken;
+	}
+
+	/** Puts events from `takePending` back at the front of the queue. */
+	restorePending(events: TelemetryEvent[]): void {
+		const requeued = [...events, ...this.pending];
+		if (requeued.length > this.maxPending) this.durableIncomplete = true;
+		this.pending = requeued.slice(-this.maxPending);
 	}
 
 	/** Waits until queued flushes have finished. False when events remain. */

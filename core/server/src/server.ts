@@ -158,11 +158,17 @@ export function createServer(options: CreateServerOptions = {}) {
 		workspaces,
 		data: gatewayData,
 		clearData: async (fence) => {
-			// Usage queued before the clear is deleted with the rest: written now
-			// if possible, and dropped otherwise so a later flush can't restore it.
+			// Usage queued before the clear is written now if possible. The rest
+			// is held aside: dropped once the data is deleted, so a later flush
+			// can't restore it, and requeued if the clear fails.
 			await telemetry.drain().catch(() => false);
-			telemetry.discardPending();
-			await gatewayData.clear(fence);
+			const held = telemetry.takePending();
+			try {
+				await gatewayData.clear(fence);
+			} catch (error) {
+				telemetry.restorePending(held);
+				throw error;
+			}
 			workspaces.forgetDefault();
 		},
 	});
