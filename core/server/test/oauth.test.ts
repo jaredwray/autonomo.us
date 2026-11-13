@@ -468,7 +468,7 @@ describe("OAuth sign-in to the MCP endpoint", () => {
 		const tokens = issued.body as unknown as Tokens;
 		expect(tokens).toMatchObject({
 			access_token: expect.stringMatching(/^oat_/),
-			refresh_token: expect.stringMatching(/^ort_/),
+			refresh_token: expect.stringMatching(/^ort_[0-9a-f-]{36}_[\w-]{65}$/),
 			token_type: "Bearer",
 			expires_in: 3600,
 			scope: "mcp:read mcp:call",
@@ -771,7 +771,9 @@ describe("OAuth sign-in to the MCP endpoint", () => {
 			refresh,
 		);
 		expect(unreadable.status).toBe(401);
-		expect((await unreadable.json()).error).toBe("invalid_client");
+		expect(((await unreadable.json()) as { error: string }).error).toBe(
+			"invalid_client",
+		);
 		for (const [type, body] of [
 			["application/json", "[1]"],
 			["application/json", "{not json"],
@@ -780,14 +782,18 @@ describe("OAuth sign-in to the MCP endpoint", () => {
 			const response = await token({ "content-type": type }, body);
 			expect(response.status).toBeGreaterThanOrEqual(400);
 			expect(response.status).toBeLessThan(500);
-			expect((await response.json()).error).toBe("invalid_request");
+			expect(((await response.json()) as { error: string }).error).toBe(
+				"invalid_request",
+			);
 		}
 		const revoke = await fetch(`${origin}/oauth/revoke`, {
 			method: "POST",
 			headers: { "content-type": "application/json" },
 			body: "7",
 		});
-		expect((await revoke.json()).error).toBe("invalid_request");
+		expect(((await revoke.json()) as { error: string }).error).toBe(
+			"invalid_request",
+		);
 	});
 
 	it("gives workspace admins every kind of agent and keeps API tokens with the org", async () => {
@@ -998,6 +1004,36 @@ describe("OAuth sign-in over time", () => {
 			"connected: MCP app signed in at 127.0.0.1:7777.",
 			"disconnected: MCP app disconnected. A replaced refresh token was used again.",
 		]);
+	});
+
+	it("recognizes any earlier refresh token of a connection, however old", async () => {
+		const { oauth, origin, connect, advance } = setup();
+		const { client, tokens } = await connect();
+		const other = await connect();
+		const refresh = (refresh_token: string, client_id = client) =>
+			oauth.token(
+				{ grant_type: "refresh_token", refresh_token, client_id },
+				origin,
+			);
+		// A thief copies the first token and renews it several times before the
+		// app next does: nothing the gateway kept names that first token.
+		let stolen = await refresh(tokens.refresh_token);
+		for (let index = 0; index < 5; index++)
+			stolen = await refresh(stolen.refresh_token);
+		advance(2 * MINUTE);
+		// A made-up token for this connection ends nothing: it is not of its family.
+		const [, id] = tokens.refresh_token.split("_");
+		await refused(refresh(`ort_${id}_${"A".repeat(65)}`), "invalid_grant");
+		expect(await oauth.authenticate(stolen.access_token)).not.toBeNull();
+		// Nor does a real token presented by another app.
+		await refused(refresh(tokens.refresh_token, other.client), "invalid_grant");
+		expect(await oauth.authenticate(stolen.access_token)).not.toBeNull();
+		// The app comes back with the token it was given: the connection ends.
+		await refused(refresh(tokens.refresh_token), "invalid_grant");
+		expect(await oauth.authenticate(stolen.access_token)).toBeNull();
+		await refused(refresh(stolen.refresh_token), "invalid_grant");
+		// Another connection of the same agent is untouched.
+		expect(await oauth.authenticate(other.tokens.access_token)).not.toBeNull();
 	});
 
 	it("refuses to renew for an agent that is gone", async () => {

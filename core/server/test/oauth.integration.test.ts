@@ -249,6 +249,7 @@ describe.skipIf(!available)("OAuth sign-in with MongoDB", () => {
 			access: [],
 			refresh: null,
 			previousRefresh: null,
+			refreshFamily: null,
 			lastUsedAt: null,
 			expiresAt: later,
 			revision: 0,

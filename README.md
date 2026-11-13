@@ -451,8 +451,11 @@ are refused. Authorization codes last 2 minutes and work once: a code that
 arrives twice ends the connection it started.
 
 Access tokens (`oat_…`) last an hour. Refresh tokens (`ort_…`) are replaced
-on every use; a replaced one that turns up again later ends the connection,
-and a connection whose app has not renewed for 30 days ends by itself. Only
+on every use. Every refresh token of a connection is recognized as such, so
+any earlier one that turns up again ends the connection, however many times
+it has been replaced since; only a retry within a minute of the replacement
+is merely refused. A connection whose app has not renewed for 30 days ends
+by itself. Only
 SHA-256 digests are stored, in `gateway_oauth_clients`,
 `gateway_oauth_requests`, and `gateway_oauth_grants`; without MongoDB they
 last until restart. An agent's page lists the apps signed in to it, with who

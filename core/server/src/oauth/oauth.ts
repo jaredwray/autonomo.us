@@ -60,7 +60,12 @@ export type TokenResponse = {
 	scope?: string;
 };
 
-const SECRET = /^(oac|oat|ort)_([0-9a-f-]{36})_[A-Za-z0-9_-]{43}$/;
+const SECRET = /^(oac|oat)_([0-9a-f-]{36})_[A-Za-z0-9_-]{43}$/;
+/**
+ * A refresh token: its grant, the 22 characters every refresh token of that
+ * connection shares (its family), and 43 of its own.
+ */
+const REFRESH = /^ort_([0-9a-f-]{36})_([A-Za-z0-9_-]{22})[A-Za-z0-9_-]{43}$/;
 const CHALLENGE = /^[A-Za-z0-9_-]{43}$/;
 const VERIFIER = /^[A-Za-z0-9._~-]{43,128}$/;
 /** A refresh token seen again this soon after it was replaced is a retry. */
@@ -71,7 +76,11 @@ const text = (value: unknown) => (typeof value === "string" ? value : "");
 function secret(kind: "oac" | "oat" | "ort", grantId: string) {
 	return `${kind}_${grantId}_${randomBytes(32).toString("base64url")}`;
 }
-function parseSecret(kind: "oac" | "oat" | "ort", value: string) {
+function parseRefresh(value: string) {
+	const match = REFRESH.exec(value);
+	return match ? { grantId: match[1], family: match[2] } : null;
+}
+function parseSecret(kind: "oac" | "oat", value: string) {
 	const match = SECRET.exec(value);
 	return match && match[1] === kind ? match[2] : null;
 }
@@ -371,6 +380,7 @@ export class OAuthService {
 			access: [],
 			refresh: null,
 			previousRefresh: null,
+			refreshFamily: null,
 			lastUsedAt: null,
 			expiresAt,
 			revision: 0,
@@ -424,9 +434,14 @@ export class OAuthService {
 	}
 
 	/** New tokens on `grant`; the caller saves it. */
-	private issue(grant: StoredGrant, scope: string): TokenResponse {
+	private issue(
+		grant: StoredGrant,
+		scope: string,
+		family: string,
+	): TokenResponse {
 		const access = secret("oat", grant.id);
-		const refresh = secret("ort", grant.id);
+		const refresh = `ort_${grant.id}_${family}${randomBytes(32).toString("base64url")}`;
+		grant.refreshFamily = tokenHash(family);
 		const refreshMs = OAUTH_LIMITS.refreshTokenDays * 86_400_000;
 		grant.access = [
 			{
@@ -480,7 +495,11 @@ export class OAuthService {
 		const revision = grant.revision;
 		grant.code.usedAt = this.iso();
 		grant.lastUsedAt = grant.code.usedAt;
-		const response = this.issue(grant, scope);
+		const response = this.issue(
+			grant,
+			scope,
+			randomBytes(16).toString("base64url"),
+		);
 		if (!(await this.repository.replaceGrant(grant, revision))) throw bad();
 		await this.agents.record(
 			grant.workspaceId,
@@ -499,16 +518,27 @@ export class OAuthService {
 				"The refresh token is invalid or expired. Sign in again.",
 			);
 		const token = text(form.refresh_token);
-		const grantId = parseSecret("ort", token);
-		const grant = grantId ? await this.repository.getGrant(grantId) : null;
-		if (!grant || text(form.client_id) !== grant.clientId) throw bad();
+		const parsed = parseRefresh(token);
+		const grant = parsed
+			? await this.repository.getGrant(parsed.grantId)
+			: null;
+		if (!parsed || !grant || text(form.client_id) !== grant.clientId)
+			throw bad();
 		if (!grant.refresh || !secretMatches(token, grant.refresh.hash)) {
+			// Every refresh token of a connection carries its family, and only
+			// the family's hash is kept. So any earlier token of this connection
+			// is recognized, however many times it has been replaced since: it
+			// was copied, by the app's side or by a thief, and the connection
+			// ends. A token replaced a moment ago is a retry and is only refused.
 			const previous = grant.previousRefresh;
-			// A replaced token that turns up later was copied: end the connection.
-			if (
+			const retry =
 				previous &&
 				secretMatches(token, previous.hash) &&
-				this.now() - Date.parse(previous.rotatedAt) > REUSE_GRACE_MS
+				this.now() - Date.parse(previous.rotatedAt) <= REUSE_GRACE_MS;
+			if (
+				!retry &&
+				grant.refreshFamily &&
+				secretMatches(parsed.family, grant.refreshFamily)
 			)
 				await this.remove(grant, "A replaced refresh token was used again.");
 			throw bad();
@@ -518,7 +548,7 @@ export class OAuthService {
 		const revision = grant.revision;
 		grant.previousRefresh = { hash: grant.refresh.hash, rotatedAt: this.iso() };
 		grant.lastUsedAt = this.iso();
-		const response = this.issue(grant, scope);
+		const response = this.issue(grant, scope, parsed.family);
 		// Two refreshes at once: one wins, the other signs in again.
 		if (!(await this.repository.replaceGrant(grant, revision))) throw bad();
 		return response;
@@ -526,7 +556,7 @@ export class OAuthService {
 
 	/** RFC 7009: an app hands a token back. Unknown tokens are not an error. */
 	async revoke(token: string) {
-		const grantId = parseSecret("ort", token) ?? parseSecret("oat", token);
+		const grantId = parseRefresh(token)?.grantId ?? parseSecret("oat", token);
 		const grant = grantId ? await this.repository.getGrant(grantId) : null;
 		if (!grant) return;
 		const held = [grant.refresh, ...grant.access].some(

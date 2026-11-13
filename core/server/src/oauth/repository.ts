@@ -47,8 +47,13 @@ export type StoredGrant = {
 	access: StoredSecret[];
 	/** The refresh token the app holds; null until the code is exchanged. */
 	refresh: StoredSecret | null;
-	/** The one it replaced, to tell a retry from a stolen token. */
+	/** The one it replaced, to tell a retry a moment later from a copied token. */
 	previousRefresh: { hash: string; rotatedAt: string } | null;
+	/**
+	 * The hash of what every refresh token of this connection starts with, so
+	 * an earlier one is recognized without keeping each of them.
+	 */
+	refreshFamily: string | null;
 	lastUsedAt: string | null;
 	/** When MongoDB may delete the grant: its code, then its refresh token. */
 	expiresAt: Date;
