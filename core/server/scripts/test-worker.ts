@@ -21,16 +21,33 @@ const config = JSON.parse(
 	),
 );
 
-async function unusedPort() {
-	const server = createServer();
-	server.listen(0, "127.0.0.1");
-	await once(server, "listening");
-	const address = server.address();
-	assert(address && typeof address === "object");
-	await new Promise<void>((resolve, reject) =>
-		server.close((error) => (error ? reject(error) : resolve())),
+/**
+ * Ports nothing listens on. They are held open together until all are known,
+ * so two of them are never the same port.
+ */
+async function unusedPorts(count: number) {
+	const servers = await Promise.all(
+		Array.from({ length: count }, async () => {
+			const server = createServer();
+			server.listen(0, "127.0.0.1");
+			await once(server, "listening");
+			return server;
+		}),
 	);
-	return address.port;
+	const ports = servers.map((server) => {
+		const address = server.address();
+		assert(address && typeof address === "object");
+		return address.port;
+	});
+	await Promise.all(
+		servers.map(
+			(server) =>
+				new Promise<void>((resolve, reject) =>
+					server.close((error) => (error ? reject(error) : resolve())),
+				),
+		),
+	);
+	return ports;
 }
 
 async function withWorker(
@@ -42,8 +59,7 @@ async function withWorker(
 	) => Promise<void>,
 ) {
 	const directory = await mkdtemp(join(tmpdir(), "autonomous-worker-"));
-	const port = await unusedPort();
-	const inspectorPort = await unusedPort();
+	const [port, inspectorPort] = await unusedPorts(2);
 	// A stub stands in for the dashboard build so this test needs no Vite
 	// build and still proves that run_worker_first sends the API paths to the
 	// Worker while everything else is a static asset.
@@ -111,10 +127,16 @@ async function withWorker(
 	try {
 		const deadline = Date.now() + 45_000;
 		while (!output.includes("Ready on")) {
-			assert(
-				child.exitCode === null && child.signalCode === null,
-				"Worker exited before startup",
-			);
+			if (child.exitCode !== null || child.signalCode !== null) {
+				// Why Wrangler gave up, without any MongoDB address it printed.
+				console.error(
+					`Wrangler exited with code ${child.exitCode}, signal ${child.signalCode}:`,
+					output
+						.slice(-4000)
+						.replace(/mongodb(\+srv)?:\/\/[^\s"']+/g, "<mongodb uri>"),
+				);
+				assert.fail("Worker exited before startup");
+			}
 			assert(Date.now() < deadline, "Worker startup timed out");
 			await delay(100);
 		}
@@ -579,7 +601,7 @@ try {
 }
 
 await withWorker(
-	`mongodb://127.0.0.1:${await unusedPort()}/unreachable`,
+	`mongodb://127.0.0.1:${(await unusedPorts(1))[0]}/unreachable`,
 	async (request, logs) => {
 		const health = (await request("/healthz")) as Health;
 		assert.deepEqual(health.mongodb, {
