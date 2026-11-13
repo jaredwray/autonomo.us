@@ -1,5 +1,7 @@
 import {
+	type BotActivity,
 	CHANNEL_LIMITS,
+	type ChannelAgentOption,
 	type ChannelDetails,
 	type ChannelMember,
 	type ChannelMessage,
@@ -17,7 +19,9 @@ import {
 import {
 	deleteChannelMessage,
 	editChannelMessage,
+	fetchBotActivity,
 	fetchChannel,
+	fetchChannelAgentOptions,
 	fetchChannelEntries,
 	fetchChannelMembers,
 	markChannelRead,
@@ -65,6 +69,15 @@ const whenVisible = (signal: AbortSignal) =>
 		check();
 	});
 const attentive = () => !document.hidden && document.hasFocus();
+/** "Captain is replying…", "Captain and Helper are replying…". */
+export function replyingLine(replying: BotActivity["replying"]): string {
+	const names = replying.map((bot) => bot.name);
+	if (!names.length) return "";
+	if (names.length === 1) return `${names[0]} is replying…`;
+	const last = names[names.length - 1];
+	const rest = names.slice(0, -1).join(", ");
+	return `${rest}${names.length > 2 ? "," : ""} and ${last} are replying…`;
+}
 const errorText = (cause: unknown, fallback: string) =>
 	cause instanceof Error ? cause.message : fallback;
 /** Close enough to the end that the newest entry counts as on screen. */
@@ -176,6 +189,23 @@ export function ChannelRoom({
 	const [state, dispatch] = useReducer(roomReducer, emptyRoom);
 	const [details, setDetails] = useState<ChannelDetails | null>(null);
 	const [members, setMembers] = useState<ChannelMember[]>([]);
+	/** The workspace's agents; `null` until they are read. */
+	const [options, setOptions] = useState<ChannelAgentOption[] | null>(null);
+	const [replying, setReplying] = useState<BotActivity["replying"]>([]);
+	/**
+	 * Changes when a message arrives or is posted, since a bot may have been
+	 * asked; `agent` says that message mentions one.
+	 */
+	const [stirred, setStirred] = useState({ count: 0, agent: false });
+	const stir = useCallback((messages: ChannelMessage[]) => {
+		if (messages.length)
+			setStirred((current) => ({
+				count: current.count + 1,
+				agent: messages.some((item) =>
+					item.mentions.some((mention) => mention.kind === "agent"),
+				),
+			}));
+	}, []);
 	const [panel, setPanel] = useState<"thread" | "details" | null>(null);
 	const [problem, setProblem] = useState("");
 	const [loadingEarlier, setLoadingEarlier] = useState(false);
@@ -186,20 +216,30 @@ export function ChannelRoom({
 		callbacks.current = { onChanged, onRead };
 	});
 
+	// A read that started before a change here can answer after it; the
+	// channel's revision says which is newer.
+	const revision = useRef(0);
+	const showDetails = useCallback((next: ChannelDetails) => {
+		if (next.revision < revision.current) return;
+		revision.current = next.revision;
+		setDetails(next);
+		callbacks.current.onChanged(next);
+	}, []);
 	const reload = useRef(() => {});
 	useEffect(() => {
 		const controller = new AbortController();
 		const { signal } = controller;
 		const loadChannel = async () => {
 			try {
-				const [next, people] = await Promise.all([
+				const [next, people, agents] = await Promise.all([
 					fetchChannel(id, signal),
 					fetchChannelMembers(id, signal),
+					fetchChannelAgentOptions().catch(() => ({ agents: [] })),
 				]);
 				if (signal.aborted) return;
-				setDetails(next);
+				showDetails(next);
 				setMembers(people.members);
-				callbacks.current.onChanged(next);
+				setOptions(agents.agents);
 			} catch {
 				// The header keeps what the list knows; the next system note retries.
 			}
@@ -226,6 +266,11 @@ export function ChannelRoom({
 						cursor = page.cursor;
 						if (page.entries.length) {
 							dispatch({ type: "entries", ...page });
+							stir(
+								page.entries.filter(
+									(entry): entry is ChannelMessage => entry.type === "message",
+								),
+							);
 							// A system note says the channel or its agents changed.
 							if (page.entries.some((entry) => entry.type === "system"))
 								void loadChannel();
@@ -246,7 +291,7 @@ export function ChannelRoom({
 		void loadChannel();
 		void follow();
 		return () => controller.abort();
-	}, [id]);
+	}, [id, stir, showDetails]);
 
 	// Scrolling: stay at the newest entry unless the reader has scrolled up, and
 	// keep their place when earlier entries are added above.
@@ -331,6 +376,7 @@ export function ChannelRoom({
 					...(post.threadId ? { threadId: post.threadId } : {}),
 				});
 				dispatch({ type: "posted", nonce: post.nonce, message: posted });
+				stir([posted]);
 			} catch (cause) {
 				dispatch({
 					type: "pending-status",
@@ -340,7 +386,7 @@ export function ChannelRoom({
 				});
 			}
 		},
-		[id],
+		[id, stir],
 	);
 	const send = useCallback(
 		(body: string, threadId: string | null) => {
@@ -380,6 +426,48 @@ export function ChannelRoom({
 		},
 		[id],
 	);
+	// "Is replying…": while the channel has a gateway bot, ask every couple of
+	// seconds who is working on a reply. A run starts only when a message
+	// arrives, so after a stretch of empty answers the asking stops until the
+	// next message, which also asks at once. A message that mentions an agent
+	// asks once even when no bot is known here, in case one was just added.
+	const hosted = useMemo(
+		() =>
+			new Set(
+				options
+					?.filter((option) => option.hosted)
+					.map((option) => option.agentTokenId),
+			),
+		[options],
+	);
+	const hasBot = channel.agents.some((agent) => hosted.has(agent.agentTokenId));
+	useEffect(() => {
+		if (!hasBot && !stirred.agent) {
+			setReplying([]);
+			return;
+		}
+		const controller = new AbortController();
+		const { signal } = controller;
+		void (async () => {
+			for (let quiet = 0; quiet < channelTimings.activityQuietPolls; ) {
+				await whenVisible(signal);
+				if (signal.aborted) return;
+				try {
+					const activity = await fetchBotActivity(id, signal);
+					if (signal.aborted) return;
+					setReplying(activity.replying);
+					quiet = activity.replying.length ? 0 : quiet + 1;
+				} catch {
+					if (signal.aborted) return;
+					quiet++;
+				}
+				if (!hasBot && quiet) return;
+				await sleep(channelTimings.activityIntervalMs, signal);
+				if (signal.aborted) return;
+			}
+		})();
+		return () => controller.abort();
+	}, [id, hasBot, stirred]);
 	const index = useMemo(() => memberIndex(members), [members]);
 	const tools = useMemo<MessageTools>(
 		() => ({
@@ -536,6 +624,10 @@ export function ChannelRoom({
 						Jump to latest
 					</button>
 				)}
+				{/* Always there, so the composer does not move when a bot starts. */}
+				<p className="channel-replying" role="status">
+					{replyingLine(replying)}
+				</p>
 				<Composer
 					label={`Message #${channel.name}`}
 					placeholder={`Message #${channel.name}`}
@@ -561,12 +653,10 @@ export function ChannelRoom({
 			{detailsOpen && (
 				<ChannelDetailsPanel
 					channel={details}
+					options={options}
 					onClose={() => setPanel(null)}
 					onReload={() => reload.current()}
-					onChanged={(next) => {
-						setDetails(next);
-						onChanged(next);
-					}}
+					onChanged={showDetails}
 				/>
 			)}
 		</>

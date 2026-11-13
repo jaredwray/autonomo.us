@@ -12,6 +12,9 @@ import type {
 	ApiTokenSettings,
 	AuthSession,
 	AuthStatus,
+	BotActivity,
+	BotDetails,
+	BotList,
 	ChannelAgentAccess,
 	ChannelAgentOption,
 	ChannelDetails,
@@ -21,6 +24,7 @@ import type {
 	ChannelMessage,
 	CreateAgentTokenRequest,
 	CreateApiTokenRequest,
+	CreateBotRequest,
 	CreateChannelRequest,
 	CreateSynapseNoteRequest,
 	CreateTeamInviteRequest,
@@ -59,6 +63,7 @@ import type {
 	TeamSettings,
 	UpdateAgentTokenRequest,
 	UpdateApiTokenRequest,
+	UpdateBotRequest,
 	UpdateChannelRequest,
 	UpdateSynapseNoteRequest,
 	UpdateTeamMemberRequest,
@@ -823,4 +828,37 @@ export function markChannelRead(
 		method: "PUT",
 		body: { seq },
 	});
+}
+
+const botPath = (id?: string) =>
+	ws(`/bots${id ? `/${encodeURIComponent(id)}` : ""}`);
+
+export function fetchBots(): Promise<BotList> {
+	return apiRequest(botPath());
+}
+/** A bot with its latest runs. */
+export function fetchBot(id: string): Promise<BotDetails> {
+	return apiRequest(botPath(id));
+}
+export function createBot(input: CreateBotRequest): Promise<BotDetails> {
+	return apiRequest(botPath(), { method: "POST", body: input });
+}
+export function updateBot(
+	id: string,
+	input: UpdateBotRequest,
+): Promise<BotDetails> {
+	return apiRequest(botPath(id), { method: "PATCH", body: input });
+}
+export function deleteBot(id: string): Promise<void> {
+	return apiRequest(botPath(id), { method: "DELETE" });
+}
+/** The bots working on a reply in a channel right now. */
+export function fetchBotActivity(
+	channelId: string,
+	signal?: AbortSignal,
+): Promise<BotActivity> {
+	return apiRequest(
+		ws(`/bots/activity?channel=${encodeURIComponent(channelId)}`),
+		{ signal },
+	);
 }

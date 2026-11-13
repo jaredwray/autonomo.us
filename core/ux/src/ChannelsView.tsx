@@ -22,6 +22,24 @@ const without = (channels: ChannelSummary[], id: string) =>
 	channels.filter((channel) => channel.id !== id);
 const withChannel = (channels: ChannelSummary[], channel: ChannelSummary) =>
 	[...without(channels, channel.id), channel].sort(byName);
+/**
+ * A channel read a moment ago can arrive after the read mark moved here; the
+ * list then keeps what it knows about what has been read.
+ */
+const keepRead = (
+	channels: ChannelSummary[],
+	next: ChannelSummary,
+): ChannelSummary => {
+	const known = channels.find((channel) => channel.id === next.id);
+	return known && known.readSeq > next.readSeq
+		? {
+				...next,
+				readSeq: known.readSeq,
+				unread: known.unread,
+				mentions: known.mentions,
+			}
+		: next;
+};
 const summaryOf = ({
 	actions: _actions,
 	...summary
@@ -259,7 +277,9 @@ export function ChannelsView({
 				change((channels) => without(channels, channel.id));
 				setArchived((current) => withChannel(current ?? [], summary));
 			} else {
-				change((channels) => withChannel(channels, summary));
+				change((channels) =>
+					withChannel(channels, keepRead(channels, summary)),
+				);
 				setArchived((current) => current && without(current, channel.id));
 			}
 			// A rename moves the open channel's link.

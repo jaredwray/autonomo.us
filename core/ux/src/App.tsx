@@ -3,7 +3,13 @@ import type {
 	CurrentSession,
 	WorkspaceAccess,
 } from "@autonomo.us/common";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+	useCallback,
+	useEffect,
+	useLayoutEffect,
+	useRef,
+	useState,
+} from "react";
 import { AgentTokensView } from "./AgentTokensView.js";
 import { ApiTokensView } from "./ApiTokensView.js";
 import {
@@ -20,6 +26,7 @@ import {
 	setCurrentWorkspace,
 	signOut,
 } from "./api.js";
+import { BotsView } from "./BotsView.js";
 import { ChannelsView } from "./ChannelsView.js";
 import { channelAttention, useChannelList } from "./channels-list.js";
 import { Dashboard } from "./Dashboard.js";
@@ -40,6 +47,7 @@ const workspaceViews = {
 	routing: "Routing",
 	synapse: "Synapse",
 	channels: "Channels",
+	bots: "Bots",
 	"api-tokens": "API Tokens",
 	"agent-tokens": "Agent Tokens",
 };
@@ -48,7 +56,7 @@ const instanceViews = { workspaces: "Workspaces", team: "Team" };
 const viewLabels = { ...workspaceViews, ...instanceViews };
 type WorkspaceView = keyof typeof workspaceViews;
 type View = keyof typeof viewLabels | "profile";
-/** `rest` is a view's own state after its name: Synapse's /<space>/<note>, a channel's /<name>. */
+/** `rest` is a view's own state after its name: Synapse's /<space>/<note>, a channel's /<name>, a bot's /<id>. */
 type Route = { view: View; workspaceId: string | null; rest: string };
 const isWorkspaceView = (view: View): view is WorkspaceView =>
 	Object.hasOwn(workspaceViews, view);
@@ -267,7 +275,8 @@ export function App() {
 		gate.state === "ready" && !invite ? (selected?.id ?? null) : null,
 	);
 	const attention = channelAttention(channelList.channels);
-	useEffect(() => {
+	// A layout effect, so the address is right by the time the view is seen.
+	useLayoutEffect(() => {
 		if (gate.state !== "ready" || !selected) return;
 		rememberWorkspace(selected.id);
 		// Canonical URL: a workspace view always names its workspace.
@@ -582,6 +591,8 @@ export function App() {
 							<ModelsView workspace={selected} />
 						) : shown === "synapse" ? (
 							<SynapseView user={user} workspace={selected} />
+						) : shown === "bots" ? (
+							<BotsView workspace={selected} channels={channelList.channels} />
 						) : shown === "channels" ? (
 							<ChannelsView
 								user={user}

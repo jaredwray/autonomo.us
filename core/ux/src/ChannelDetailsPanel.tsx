@@ -7,7 +7,6 @@ import {
 import { useEffect, useRef, useState } from "react";
 import {
 	ApiError,
-	fetchChannelAgentOptions,
 	setChannelAgent,
 	setChannelArchived,
 	updateChannel,
@@ -16,6 +15,11 @@ import { CHANNEL_NAME_INPUT_PATTERN } from "./channels-route.js";
 import { Icon } from "./Icons.js";
 
 const date = (value: string) => new Date(value).toLocaleString();
+/** A gateway bot is told from an agent token, and is paused, never revoked. */
+const optionLabel = (option: ChannelAgentOption) =>
+	option.hosted
+		? `${option.name} (Gateway bot${option.status === "active" ? "" : ", paused"})`
+		: `${option.name}${option.status === "active" ? "" : ` (${option.status})`}`;
 const ACCESS: Record<ChannelAgentAccess, string> = {
 	read: "Read",
 	post: "Post",
@@ -109,18 +113,20 @@ function SettingsForm({
  */
 export function ChannelDetailsPanel({
 	channel,
+	options,
 	onClose,
 	onChanged,
 	onReload,
 }: {
 	/** `null` while the details load. */
 	channel: ChannelDetails | null;
+	/** The workspace's agent tokens and gateway bots; `null` while they load. */
+	options: ChannelAgentOption[] | null;
 	onClose(): void;
 	onChanged(channel: ChannelDetails): void;
-	/** Reads the channel again, after a change that lost to someone else's. */
+	/** Reads the channel and the agents again. */
 	onReload(): void;
 }) {
-	const [options, setOptions] = useState<ChannelAgentOption[] | null>(null);
 	const [agentId, setAgentId] = useState("");
 	const [access, setAccess] = useState<ChannelAgentAccess>("post");
 	const [busy, setBusy] = useState(false);
@@ -130,19 +136,13 @@ export function ChannelDetailsPanel({
 	useEffect(() => {
 		heading.current?.focus({ preventScroll: true });
 	}, []);
+	// An agent or bot made since the channel was opened should be on offer.
+	const reload = useRef(onReload);
 	useEffect(() => {
-		let cancelled = false;
-		fetchChannelAgentOptions()
-			.then((result) => {
-				if (!cancelled) setOptions(result.agents);
-			})
-			.catch(() => {
-				if (!cancelled) setOptions([]);
-			});
-		return () => {
-			cancelled = true;
-		};
-	}, []);
+		reload.current = onReload;
+	});
+	useEffect(() => reload.current(), []);
+	const byId = new Map(options?.map((option) => [option.agentTokenId, option]));
 	const run = async (action: () => Promise<ChannelDetails>, done: string) => {
 		if (busy) return false;
 		setBusy(true);
@@ -230,7 +230,16 @@ export function ChannelDetailsPanel({
 							{channel.agents.map((agent) => (
 								<li key={agent.agentTokenId}>
 									<span className="channel-agent-name">
-										<strong>{agent.name}</strong>
+										<strong>
+											{agent.name}
+											{byId.get(agent.agentTokenId)?.hosted && (
+												<span className="channel-chip">Gateway bot</span>
+											)}
+											{byId.get(agent.agentTokenId)?.hosted &&
+												byId.get(agent.agentTokenId)?.status === "revoked" && (
+													<span className="channel-chip paused">Paused</span>
+												)}
+										</strong>
 										<small>Added by {agent.addedBy}</small>
 									</span>
 									<select
@@ -311,8 +320,7 @@ export function ChannelDetailsPanel({
 											key={option.agentTokenId}
 											value={option.agentTokenId}
 										>
-											{option.name}
-											{option.status === "active" ? "" : ` (${option.status})`}
+											{optionLabel(option)}
 										</option>
 									))}
 								</select>
@@ -342,12 +350,13 @@ export function ChannelDetailsPanel({
 					)}
 					<p className="card-note">
 						{options !== null && !options.length
-							? "This workspace has no agents yet. An owner or admin creates one under Agent Tokens. "
+							? "This workspace has no agents yet. An owner or admin creates an agent token under Agent Tokens; a workspace admin creates a gateway bot under Bots. "
 							: options !== null && !available.length
 								? "Every agent in this workspace is already in this channel. "
 								: ""}
-						Read lets an agent follow the channel; Post also lets it write. An
-						expired or revoked agent cannot connect.
+						Read lets an agent follow the channel; Post also lets it write, and
+						is what a gateway bot needs to answer. An expired or revoked agent
+						cannot connect, and a paused bot answers nothing.
 					</p>
 
 					<h3>{archived ? "Archived" : "Archive"}</h3>

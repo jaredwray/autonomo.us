@@ -18,6 +18,10 @@ const DEFAULT_TIMINGS = {
 	listIntervalMs: 30_000,
 	/** How long the newest entry is on screen before the read mark moves. */
 	readDelayMs: 400,
+	/** How often a channel with a gateway bot asks whether one is replying. */
+	activityIntervalMs: 2000,
+	/** Empty answers in a row after which that asking stops until a message. */
+	activityQuietPolls: 15,
 };
 export const channelTimings = { ...DEFAULT_TIMINGS };
 export function setChannelTimings(

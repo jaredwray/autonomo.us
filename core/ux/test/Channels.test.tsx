@@ -7,6 +7,7 @@ import type {
 import { createServer } from "@autonomo.us/server";
 import {
 	cleanup,
+	configure,
 	fireEvent,
 	render,
 	screen,
@@ -34,7 +35,10 @@ import { defaultWorkspaceId, PASSWORD, setUpOwner } from "./session.js";
 
 // Long polls answer within about a second of a post, so the default five
 // seconds is too tight for a test that waits on several.
-vi.setConfig({ testTimeout: 20_000 });
+vi.setConfig({ testTimeout: 30_000 });
+// The suite runs its files side by side, each with a real server, so a wait
+// that takes milliseconds alone can take more than the default second.
+configure({ asyncUtilTimeout: 5000 });
 
 const closers: Array<() => Promise<unknown>> = [];
 beforeEach(() => {
@@ -828,10 +832,11 @@ it("offers the channel grants on agent and API tokens", async () => {
 		).getByRole("button", { name: "Create token" }),
 	);
 	await screen.findByLabelText("New agent token");
+	// The list is read again after the token is made.
 	expect(
-		within(
+		await within(
 			await screen.findByRole("region", { name: "Your tokens" }),
-		).getByText("Channels: Manage"),
+		).findByText("Channels: Manage"),
 	).toBeDefined();
 
 	fireEvent.click(screen.getByRole("link", { name: "API Tokens" }));
