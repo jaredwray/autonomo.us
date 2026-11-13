@@ -46,8 +46,11 @@ export async function authRoutes(
 		workspaces: WorkspaceStore;
 		/** The gateway's saved data as a whole: counted, and cleared, by setup. */
 		data: GatewayData;
-		/** Deletes everything and resets what this server cached about it. */
-		clearData: () => Promise<void>;
+		/**
+		 * Deletes everything and resets what this server cached about it.
+		 * `fence` throws once the setup claim is too close to expiring.
+		 */
+		clearData: (fence: () => void) => Promise<void>;
 	},
 ) {
 	const { accounts, data } = options;

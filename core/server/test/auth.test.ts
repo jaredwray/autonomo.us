@@ -4,6 +4,7 @@ import {
 	OWNER_LOCK_MARGIN_MS,
 	OWNER_LOCK_MS,
 	SESSION_TTL_MS,
+	SETUP_CLAIM_MS,
 	SIGN_IN_MAX_FAILURES,
 	SIGN_IN_WINDOW_MS,
 } from "../src/auth/accounts.js";
@@ -493,6 +494,110 @@ describe("setup with a setup token on a gateway that is set up", () => {
 		});
 		// This fake clear deleted nothing, so the earlier owner is still here.
 		expect(await store.authenticate(ada.token)).not.toBeNull();
+	});
+
+	it("refuses any other setup while a clear holds the claim", async () => {
+		const store = new AccountStore();
+		const ada = await store.completeSetup({
+			email: "ada@example.com",
+			name: "Ada",
+			password: PASSWORD,
+		});
+		restartWithSetupToken(store, "start-fresh");
+		let release = () => {};
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		let entered = () => {};
+		const clearing = new Promise<void>((resolve) => {
+			entered = resolve;
+		});
+		const first = store.completeSetup(
+			{
+				email: "fresh@example.com",
+				name: "Fresh",
+				password: PASSWORD,
+				data: "clear",
+			},
+			async () => {
+				entered();
+				await gate;
+			},
+		);
+		await clearing;
+		// These read setup after the claim, so its revision can't stop them.
+		let laterClears = 0;
+		for (const input of [
+			{ email: "other@example.com", data: "clear" as const },
+			{ email: "ada@example.com", data: "keep" as const },
+			{ email: "new@example.com", data: "keep" as const },
+		])
+			await expect(
+				store.completeSetup(
+					{ ...input, name: "Later", password: NEW_PASSWORD },
+					async () => {
+						laterClears++;
+					},
+				),
+			).rejects.toMatchObject({
+				statusCode: 409,
+				message: "Another setup is in progress. Try again in a moment.",
+			});
+		expect(laterClears).toBe(0);
+		// The refused recovery never touched Ada's account.
+		await store.signIn({ email: "ada@example.com", password: PASSWORD });
+		expect(await store.authenticate(ada.token)).not.toBeNull();
+		release();
+		expect((await first).user.email).toBe("fresh@example.com");
+	});
+
+	it("lets a stalled claim expire, and the stalled setup then can't commit", async () => {
+		let clock = Date.parse("2026-01-01T00:00:00Z");
+		const store = new AccountStore({ now: () => clock });
+		await store.completeSetup({
+			email: "ada@example.com",
+			name: "Ada",
+			password: PASSWORD,
+		});
+		restartWithSetupToken(store, "recover");
+		let release = () => {};
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		let entered = () => {};
+		const clearing = new Promise<void>((resolve) => {
+			entered = resolve;
+		});
+		const stalled = store.completeSetup(
+			{
+				email: "fresh@example.com",
+				name: "Fresh",
+				password: PASSWORD,
+				data: "clear",
+			},
+			async () => {
+				entered();
+				await gate;
+			},
+		);
+		const outcome = stalled.then(
+			() => null,
+			(error) => error,
+		);
+		await clearing;
+		clock += SETUP_CLAIM_MS + 1;
+		const recovered = await store.completeSetup({
+			email: "ada@example.com",
+			name: "Ada",
+			password: NEW_PASSWORD,
+		});
+		expect(recovered.user.role).toBe("owner");
+		release();
+		const error = await outcome;
+		expect([409, 503]).toContain(error?.statusCode);
+		// The recovery stands.
+		await store.signIn({ email: "ada@example.com", password: NEW_PASSWORD });
+		expect(await store.authenticate(recovered.token)).not.toBeNull();
 	});
 
 	it("refuses to clear over HTTP without MongoDB", async () => {

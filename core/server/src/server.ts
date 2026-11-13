@@ -157,10 +157,12 @@ export function createServer(options: CreateServerOptions = {}) {
 		accounts,
 		workspaces,
 		data: gatewayData,
-		clearData: async () => {
-			// Queued usage lands first, so it is deleted with the rest.
+		clearData: async (fence) => {
+			// Usage queued before the clear is deleted with the rest: written now
+			// if possible, and dropped otherwise so a later flush can't restore it.
 			await telemetry.drain().catch(() => false);
-			await gatewayData.clear();
+			telemetry.discardPending();
+			await gatewayData.clear(fence);
 			workspaces.forgetDefault();
 		},
 	});

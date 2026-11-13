@@ -87,6 +87,33 @@ describe("TelemetryService", () => {
 		expect(other).toMatchObject({ requests: 2, provider: "other" });
 	});
 
+	it("discards queued events so a later flush can't write them back", async () => {
+		const inserted: unknown[] = [];
+		let failing = true;
+		const sink = {
+			healthy: true,
+			ensureSchema: async () => {},
+			insert: async (batch: unknown[]) => {
+				if (failing) throw new Error("MongoDB went away");
+				inserted.push(...batch);
+			},
+			close: async () => {},
+		} as unknown as MongoTelemetrySink;
+		const telemetry = new TelemetryService({ sink, flushIntervalMs: 0 });
+		const chat = { model: "stub/a", provider: "stub", usage, latencyMs: 100 };
+		telemetry.recordChat(chat);
+		expect(await telemetry.drain()).toBe(false);
+		telemetry.discardPending();
+		failing = false;
+		expect(await telemetry.flush()).toBe(true);
+		expect(inserted).toEqual([]);
+		// Later events still reach the sink.
+		telemetry.recordChat(chat);
+		expect(await telemetry.drain()).toBe(true);
+		expect(inserted).toHaveLength(1);
+		await telemetry.stop();
+	});
+
 	it("falls back to memory when the sink is unreachable", async () => {
 		// Real network failure: nothing listens on port 9.
 		const sink = new MongoTelemetrySink(

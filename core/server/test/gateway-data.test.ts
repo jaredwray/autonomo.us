@@ -1,7 +1,12 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { GATEWAY_COLLECTIONS, GatewayData } from "../src/gateway-data.js";
+import { SETUP_CLAIM_MARGIN_MS } from "../src/auth/accounts.js";
+import {
+	CLEAR_TIMEOUT_MS,
+	GATEWAY_COLLECTIONS,
+	GatewayData,
+} from "../src/gateway-data.js";
 
 const SOURCE = join(import.meta.dirname, "../src");
 
@@ -28,6 +33,11 @@ describe("gateway data", () => {
 		// Setup rewrites its own marker when it clears everything else.
 		expect(names.delete("gateway_setup")).toBe(true);
 		expect([...names].sort()).toEqual([...GATEWAY_COLLECTIONS].sort());
+	});
+
+	it("stops starting deletions while one more still fits inside the setup claim", () => {
+		// One deletion plus the 3 s write that closes setup.
+		expect(SETUP_CLAIM_MARGIN_MS).toBeGreaterThan(CLEAR_TIMEOUT_MS + 3000);
 	});
 
 	it("reports nothing and refuses to clear without MongoDB", async () => {

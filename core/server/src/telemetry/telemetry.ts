@@ -454,6 +454,15 @@ export class TelemetryService {
 		this.flushChain = this.flushChain.then(() => this.flush());
 	}
 
+	/**
+	 * Drops events not yet written, so a later flush can't bring back usage
+	 * whose data setup just deleted. Call after `drain()`, when no flush is
+	 * in flight to requeue its batch.
+	 */
+	discardPending(): void {
+		this.pending = [];
+	}
+
 	/** Waits until queued flushes have finished. False when events remain. */
 	async drain(): Promise<boolean> {
 		let ok = await this.flushChain;

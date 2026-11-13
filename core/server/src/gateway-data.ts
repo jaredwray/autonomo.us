@@ -29,7 +29,7 @@ export const GATEWAY_COLLECTIONS = [
 ] as const;
 
 /** Deleting a large telemetry collection outlasts the stores' 3 s deadline. */
-const CLEAR_TIMEOUT_MS = 120_000;
+export const CLEAR_TIMEOUT_MS = 120_000;
 
 /**
  * The gateway's saved data as a whole, for setup with a setup token: what is
@@ -96,13 +96,17 @@ export class GatewayData {
 	/**
 	 * Deletes every document in the gateway's collections. Indexes stay, so
 	 * stores that created theirs once keep the guarantees they rely on, such
-	 * as unique emails. Safe to repeat after a partial failure.
+	 * as unique emails. Safe to repeat after a partial failure. `fence` runs
+	 * before each deletion and throws once the caller's setup claim is too
+	 * close to expiring for another to finish inside it.
 	 */
-	async clear(): Promise<void> {
+	async clear(fence: () => void = () => {}): Promise<void> {
 		const mongo = this.mongo;
 		if (!mongo) throw new Error("Clearing needs MongoDB.");
-		for (const name of GATEWAY_COLLECTIONS)
+		for (const name of GATEWAY_COLLECTIONS) {
+			fence();
 			await mongo.collection(name).deleteMany({});
+		}
 	}
 
 	async close(): Promise<void> {

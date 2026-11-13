@@ -48,6 +48,18 @@ export const OWNER_LOCK_MS = 60_000;
  * expired holder can never commit after another request takes the lock.
  */
 export const OWNER_LOCK_MARGIN_MS = 15_000;
+/**
+ * How long setup with the setup token holds its claim while it deletes data
+ * or changes an existing account. A request that dies leaves setup open to
+ * retry once the claim expires.
+ */
+export const SETUP_CLAIM_MS = 5 * 60_000;
+/**
+ * A holder stops starting work this long before its claim ends: longer than
+ * one clearing deletion (120 s deadline) plus one write, so an expired holder
+ * can't change anything after another request takes the claim.
+ */
+export const SETUP_CLAIM_MARGIN_MS = 150_000;
 const MAX_SESSIONS = 10;
 const LISTED_INVITES = 50;
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
@@ -87,7 +99,19 @@ type SetupRecord = {
 	 * open setup again; a different one can, which is how a gateway is recovered.
 	 */
 	setupTokenHash?: string | null;
+	/**
+	 * Held by a setup that deletes data or changes an existing account, from
+	 * before its first change until setup closes, so two can't interleave.
+	 */
+	setupClaim?: { holder: string; expiresAt: string } | null;
 };
+type SetupClaim = { holder: string; fence(): void };
+const emptySetup = (): SetupRecord => ({
+	_id: "default",
+	revision: 0,
+	completedAt: null,
+	ownerId: null,
+});
 type InviteRecord = Omit<TeamInvite, "id" | "status" | "workspace"> & {
 	/** Missing on invites created before workspaces: redeem as a default-workspace member. */
 	workspace?: WorkspaceMembership | null;
@@ -581,10 +605,10 @@ export class AccountStore {
 	 */
 	async completeSetup(
 		input: SetupRequest,
-		clear?: () => Promise<void>,
+		clear?: (fence: () => void) => Promise<void>,
 	): Promise<AuthSession> {
 		assertPassword(input.password);
-		let seen = await this.storage(() => this.setup.get("default"));
+		const seen = await this.storage(() => this.setup.get("default"));
 		if (!(await this.setupOpen(seen))) {
 			this.completed = true;
 			throw this.setupDone();
@@ -604,23 +628,47 @@ export class AccountStore {
 		// Without the setup token nobody may take over an existing account.
 		if (!clearing && !this.setupHash) await this.assertEmailAvailable(email);
 		const passwordHash = await hashPassword(input.password);
-		if (clearing && clear) {
-			seen = await this.reopenSetup(seen);
-			try {
-				await clear();
-			} catch {
-				// Setup stays open and the token unspent, so a retry clears again.
-				throw new AccountError(
-					"The gateway's data could not be cleared. Check MongoDB and retry.",
-					503,
-				);
-			}
-		}
 		const existing = clearing
 			? null
 			: await this.storage(() => this.users.findBy("email", email));
-		if (existing)
-			return this.recoverAccount(existing._id, input, passwordHash, seen);
+		// Deleting data or changing an existing account holds the setup claim
+		// from before the first change until setup closes.
+		const claim =
+			clearing || existing ? await this.claimSetup(seen, clearing) : null;
+		try {
+			if (clearing && clear && claim)
+				try {
+					await clear(claim.fence);
+				} catch (error) {
+					if (error instanceof AccountError) throw error;
+					throw new AccountError(
+						"The gateway's data could not be cleared. Check MongoDB and retry.",
+						503,
+					);
+				}
+			if (existing && claim)
+				return await this.recoverAccount(
+					existing._id,
+					input,
+					passwordHash,
+					claim,
+				);
+			return await this.createOwner(input, passwordHash, seen, claim);
+		} catch (error) {
+			// Setup stays open and the token unspent; releasing the claim lets a
+			// retry start now instead of when the claim expires.
+			if (claim) await this.releaseClaim(claim.holder);
+			throw error;
+		}
+	}
+
+	/** Adds the owner and closes setup in one compare-and-swap. */
+	private async createOwner(
+		input: SetupRequest,
+		passwordHash: string,
+		seen: SetupRecord | null,
+		claim: SetupClaim | null,
+	): Promise<AuthSession> {
 		const now = this.now();
 		const record = this.newUser(
 			{ ...input, role: "owner" },
@@ -637,20 +685,14 @@ export class AccountStore {
 			this.setup,
 			"default",
 			(setup, at) => {
-				// Any write since we looked means another setup got there first.
-				if (setup.revision !== (seen?.revision ?? 0))
-					throw this.setupConflict(setup);
+				this.assertSetupHeld(setup, seen, claim, at);
 				setup.completedAt = iso(at);
 				setup.ownerId = record._id;
 				setup.owner = record;
 				setup.setupTokenHash = this.setupHash;
+				setup.setupClaim = null;
 			},
-			() => ({
-				_id: "default",
-				revision: 0,
-				completedAt: null,
-				ownerId: null,
-			}),
+			emptySetup,
 		);
 		try {
 			await this.insertUser(record, true);
@@ -667,48 +709,104 @@ export class AccountStore {
 	}
 
 	/**
-	 * Claims setup before clearing: a concurrent setup loses, and setup reads
-	 * as open until the new owner commits. Returns the claimed record.
+	 * Takes the setup claim if nothing changed since `seen` and nobody else
+	 * holds it. With `reopen`, setup also reads as open until the new owner
+	 * commits, as the data it guards is about to be deleted.
 	 */
-	private async reopenSetup(seen: SetupRecord | null): Promise<SetupRecord> {
-		return this.mutate(
+	private async claimSetup(
+		seen: SetupRecord | null,
+		reopen: boolean,
+	): Promise<SetupClaim> {
+		const holder = randomUUID();
+		let deadline = 0;
+		await this.mutate(
+			this.setup,
+			"default",
+			(setup, now) => {
+				if (setup.revision !== (seen?.revision ?? 0))
+					throw this.setupConflict(setup);
+				if (this.claimActive(setup, now)) throw this.setupBusy();
+				setup.setupClaim = { holder, expiresAt: iso(now + SETUP_CLAIM_MS) };
+				deadline = now + SETUP_CLAIM_MS - SETUP_CLAIM_MARGIN_MS;
+				if (reopen) {
+					setup.completedAt = null;
+					setup.ownerId = null;
+					setup.owner = null;
+					setup.ownerLock = null;
+				}
+			},
+			emptySetup,
+		);
+		return {
+			holder,
+			fence: () => {
+				if (this.now() >= deadline)
+					throw new AccountError(
+						"Setup took too long and was not saved. Try again.",
+						503,
+					);
+			},
+		};
+	}
+
+	private claimActive(setup: SetupRecord, now: number) {
+		return Boolean(
+			setup.setupClaim && Date.parse(setup.setupClaim.expiresAt) > now,
+		);
+	}
+
+	/**
+	 * Whether this request may close setup: as the claim holder, or without a
+	 * claim only if the record is unchanged since `seen` and nobody holds one.
+	 */
+	private assertSetupHeld(
+		setup: SetupRecord,
+		seen: SetupRecord | null,
+		claim: SetupClaim | null,
+		now: number,
+	) {
+		if (claim) {
+			if (setup.setupClaim?.holder !== claim.holder)
+				throw this.setupConflict(setup);
+			claim.fence();
+			return;
+		}
+		// Any write since we looked means another setup got there first.
+		if (setup.revision !== (seen?.revision ?? 0))
+			throw this.setupConflict(setup);
+		if (this.claimActive(setup, now)) throw this.setupBusy();
+	}
+
+	private async releaseClaim(holder: string) {
+		await this.mutate(
 			this.setup,
 			"default",
 			(setup) => {
-				if (setup.revision !== (seen?.revision ?? 0))
-					throw this.setupConflict(setup);
-				setup.completedAt = null;
-				setup.ownerId = null;
-				setup.owner = null;
-				setup.ownerLock = null;
-				return { ...structuredClone(setup), revision: setup.revision + 1 };
+				if (setup.setupClaim?.holder === holder) setup.setupClaim = null;
 			},
-			() => ({
-				_id: "default",
-				revision: 0,
-				completedAt: null,
-				ownerId: null,
-			}),
-		);
+			new AccountError("Not found.", 404),
+		).catch(() => {});
 	}
 
 	/**
 	 * Setup with the setup token onto an account that already exists: it gets
 	 * the new password and the owner role, and every other session signs out.
-	 * The account changes before the token is spent, so a request that dies in
-	 * between leaves setup open to retry.
+	 * The claim is held throughout, so a concurrent setup can't change the
+	 * account too; a request that dies after changing it leaves setup open to
+	 * retry once the claim expires.
 	 */
 	private async recoverAccount(
 		id: string,
 		input: SetupRequest,
 		passwordHash: string,
-		seen: SetupRecord | null,
+		claim: SetupClaim,
 	): Promise<AuthSession> {
 		const defaultId = await this.defaultId();
 		const recovered = await this.mutate(
 			this.users,
 			id,
 			(record, now) => {
+				claim.fence();
 				// Stored memberships stay dormant while the account is an owner.
 				record.workspaces = memberships(record, defaultId);
 				record.name = input.name.trim();
@@ -727,25 +825,26 @@ export class AccountStore {
 			this.setup,
 			"default",
 			(setup, at) => {
-				if (setup.revision !== (seen?.revision ?? 0))
-					throw this.setupConflict(setup);
+				this.assertSetupHeld(setup, null, claim, at);
 				setup.completedAt ??= iso(at);
 				setup.ownerId = id;
 				setup.owner = null;
 				setup.setupTokenHash = this.setupHash;
+				setup.setupClaim = null;
 			},
-			() => ({
-				_id: "default",
-				revision: 0,
-				completedAt: null,
-				ownerId: null,
-			}),
+			emptySetup,
 		);
 		this.completed = true;
 		return recovered;
 	}
 	private setupDone() {
 		return new AccountError("Setup is already complete. Sign in instead.", 409);
+	}
+	private setupBusy() {
+		return new AccountError(
+			"Another setup is in progress. Try again in a moment.",
+			409,
+		);
 	}
 	/** The setup record changed after this request read it. */
 	private setupConflict(setup: SetupRecord) {
