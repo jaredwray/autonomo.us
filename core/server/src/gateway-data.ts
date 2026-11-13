@@ -1,5 +1,10 @@
 import type { SetupInventory } from "@autonomo.us/common";
 import { MongoClient } from "mongodb";
+import {
+	CHANNEL_MESSAGES_COLLECTION,
+	CHANNEL_READS_COLLECTION,
+	CHANNELS_COLLECTION,
+} from "./channels/mongo-repository.js";
 import { MongoConnection, mongoOperationDeadlines } from "./mongo.js";
 import {
 	SYNAPSE_NOTES_COLLECTION,
@@ -25,6 +30,9 @@ export const GATEWAY_COLLECTIONS = [
 	SYNAPSE_NOTES_COLLECTION,
 	SYNAPSE_SPACES_COLLECTION,
 	SYNAPSE_PROPOSALS_COLLECTION,
+	CHANNELS_COLLECTION,
+	CHANNEL_MESSAGES_COLLECTION,
+	CHANNEL_READS_COLLECTION,
 	TELEMETRY_COLLECTION,
 ] as const;
 
@@ -65,6 +73,7 @@ export class GatewayData {
 				tokens: 0,
 				workspaces: 0,
 				notes: 0,
+				messages: 0,
 				usageEvents: 0,
 			};
 		const count = (name: string, filter = {}) =>
@@ -75,6 +84,7 @@ export class GatewayData {
 			agentTokens,
 			workspaces,
 			notes,
+			messages,
 			usageEvents,
 		] = await Promise.all([
 			count("gateway_providers"),
@@ -82,6 +92,7 @@ export class GatewayData {
 			count("gateway_agent_tokens"),
 			count("gateway_workspaces", { isDefault: { $ne: true } }),
 			mongo.collection(SYNAPSE_NOTES_COLLECTION).estimatedDocumentCount(),
+			mongo.collection(CHANNEL_MESSAGES_COLLECTION).estimatedDocumentCount(),
 			mongo.collection(TELEMETRY_COLLECTION).estimatedDocumentCount(),
 		]);
 		return {
@@ -89,6 +100,7 @@ export class GatewayData {
 			tokens: apiTokens + agentTokens,
 			workspaces,
 			notes,
+			messages,
 			usageEvents,
 		};
 	}

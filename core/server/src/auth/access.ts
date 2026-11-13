@@ -50,7 +50,9 @@ export type WorkspaceAction =
 	| "members:read"
 	| "members:manage"
 	| "tokens:manage"
-	| "synapse:decide";
+	| "synapse:decide"
+	| "channels:manage"
+	| "channels:moderate";
 
 type RouteRule =
 	| { scope: "public" }
@@ -84,6 +86,30 @@ const synapseRoutes = (base: string) =>
 		[`GET ${base}/proposals`, workspace("synapse:read")],
 		// Not a token permission: approvals need a person.
 		[`POST ${base}/proposals/:id/decide`, workspace("synapse:decide")],
+	] as const;
+const channelRoutes = (base: string) =>
+	[
+		[`GET ${base}`, workspace("channels:read")],
+		// Creating and managing channels is for people in the dashboard and for
+		// agents holding the manage grant over MCP, never for API tokens.
+		[`POST ${base}`, workspace("channels:manage")],
+		[`GET ${base}/agents`, workspace("channels:manage")],
+		[`GET ${base}/:channel`, workspace("channels:read")],
+		[`PATCH ${base}/:channel`, workspace("channels:manage")],
+		[`POST ${base}/:channel/archive`, workspace("channels:manage")],
+		[`POST ${base}/:channel/unarchive`, workspace("channels:manage")],
+		[`GET ${base}/:channel/members`, workspace("channels:read")],
+		[`PUT ${base}/:channel/agents/:agentTokenId`, workspace("channels:manage")],
+		[
+			`DELETE ${base}/:channel/agents/:agentTokenId`,
+			workspace("channels:manage"),
+		],
+		[`GET ${base}/:channel/messages`, workspace("channels:read")],
+		[`POST ${base}/:channel/messages`, workspace("channels:edit")],
+		[`PATCH ${base}/:channel/messages/:message`, workspace("channels:edit")],
+		// The author, or a workspace admin for anyone's (routes/channels.ts).
+		[`DELETE ${base}/:channel/messages/:message`, workspace("channels:edit")],
+		[`PUT ${base}/:channel/read`, workspace("channels:read")],
 	] as const;
 const tokenRoutes = (base: string) =>
 	[
@@ -148,6 +174,7 @@ export const ROUTE_RULES = new Map<string, RouteRule>([
 	// Synapse: each workspace's shared space inherits the global one. Writes
 	// to `global` also need an org owner or admin (routes/synapse.ts).
 	...synapseRoutes("/v1/:workspace/synapse"),
+	...channelRoutes("/v1/:workspace/channels"),
 ]);
 
 /** What each workspace role may do, as a signed-in member. */
@@ -160,6 +187,10 @@ const MEMBER_ACTIONS = new Set<WorkspaceAction>([
 	"telemetry:read",
 	"synapse:read",
 	"synapse:edit",
+	"channels:read",
+	"channels:edit",
+	// Any member creates and manages channels and their agents.
+	"channels:manage",
 ]);
 const ADMIN_ACTIONS = new Set<WorkspaceAction>([
 	...MEMBER_ACTIONS,
@@ -169,6 +200,8 @@ const ADMIN_ACTIONS = new Set<WorkspaceAction>([
 	"members:read",
 	"members:manage",
 	"synapse:decide",
+	// Deleting someone else's message.
+	"channels:moderate",
 ]);
 /** Org owners and admins only (D3: tokens outlive the member who made them). */
 const ORG_ACTIONS = new Set<WorkspaceAction>([
@@ -199,6 +232,8 @@ const ACTION_LABELS: Record<WorkspaceAction, string> = {
 	"members:manage": "Members: Manage",
 	"tokens:manage": "Tokens: Manage",
 	"synapse:decide": "Synapse: Decide proposals",
+	"channels:manage": "Channels: Manage",
+	"channels:moderate": "Channels: Moderate",
 };
 
 /** The signed-in member for team and account routes. */

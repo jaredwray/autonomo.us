@@ -170,6 +170,7 @@ describe("first-run setup", () => {
 				tokens: 0,
 				workspaces: 0,
 				notes: 0,
+				messages: 0,
 				usageEvents: 0,
 			},
 			canClear: false,

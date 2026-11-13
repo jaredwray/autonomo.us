@@ -93,6 +93,7 @@ describe.skipIf(!available)(
 						tokens: 1,
 						workspaces: 1,
 						notes: 1,
+						messages: 0,
 						usageEvents: 0,
 					},
 					canClear: true,

@@ -48,6 +48,7 @@ describe("gateway data", () => {
 			tokens: 0,
 			workspaces: 0,
 			notes: 0,
+			messages: 0,
 			usageEvents: 0,
 		});
 		await expect(data.clear()).rejects.toThrow();

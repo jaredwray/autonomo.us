@@ -5,6 +5,10 @@ import { registerApiAccess, requireRouteScopes } from "./auth/access.js";
 import { AccountStore } from "./auth/accounts.js";
 import { AgentTokenStore } from "./auth/agent-tokens.js";
 import { ApiTokenStore } from "./auth/tokens.js";
+import { ChannelService } from "./channels/channels.js";
+import { channelToolSet } from "./channels/mcp.js";
+import { MemoryChannelRepository } from "./channels/memory-repository.js";
+import { MongoChannelRepository } from "./channels/mongo-repository.js";
 import { type ApiConfig, configFromEnv } from "./config.js";
 import { registerDashboard } from "./dashboard.js";
 import { FailoverPolicyStore } from "./failover.js";
@@ -20,6 +24,7 @@ import { ProviderSettingsStore } from "./providers/settings.js";
 import { agentTokenRoutes } from "./routes/agent-tokens.js";
 import { apiTokenRoutes } from "./routes/api-tokens.js";
 import { authRoutes } from "./routes/auth.js";
+import { channelRoutes } from "./routes/channels.js";
 import { chatRoutes } from "./routes/chat.js";
 import { decisionsRoutes } from "./routes/decisions.js";
 import { failoverRoutes } from "./routes/failover.js";
@@ -131,6 +136,34 @@ export function createServer(options: CreateServerOptions = {}) {
 	const synapse = new SynapseService(synapseRepository, {
 		timeZone: config.synapseTimeZone ?? "UTC",
 	});
+	// Channels share the control-plane client, so a Worker request that
+	// authenticates and posts stays on one MongoDB connection.
+	const channelRepository = mongo
+		? new MongoChannelRepository(mongo)
+		: new MemoryChannelRepository();
+	const channels = new ChannelService(channelRepository, {
+		directory: {
+			agents: async (workspaceId) => {
+				const workspace = await workspaces.get(workspaceId);
+				if (!workspace) return [];
+				return (await agentTokens.settings(workspace, true)).tokens.map(
+					(token) => ({
+						agentTokenId: token.id,
+						name: token.name,
+						status: token.status,
+						hosted: false,
+					}),
+				);
+			},
+			people: async (workspaceId) => {
+				const workspace = await workspaces.get(workspaceId);
+				if (!workspace) return [];
+				return (await accounts.workspaceMembers(workspace)).members.map(
+					(member) => ({ id: member.id, name: member.name || member.email }),
+				);
+			},
+		},
+	});
 	let persistenceInitialized = false;
 	const server = Fastify({
 		pluginTimeout: options.pluginTimeout,
@@ -196,12 +229,13 @@ export function createServer(options: CreateServerOptions = {}) {
 			scoped.register(agentTokenRoutes, { tokens: agentTokens });
 			scoped.register(memberRoutes, { accounts });
 			scoped.register(synapseRoutes, { synapse, agentTokens });
+			scoped.register(channelRoutes, { channels });
 		},
 		{ prefix: "/v1/:workspace" },
 	);
 	// Agents reach their workspace through their token: one tool set per feature.
 	server.register(mcpRoutes, {
-		toolSets: [synapseToolSet(synapse)],
+		toolSets: [synapseToolSet(synapse), channelToolSet(channels)],
 		agentTokens,
 		workspaces,
 		corsOrigins: config.corsOrigins,
@@ -263,6 +297,7 @@ export function createServer(options: CreateServerOptions = {}) {
 			workspaces.close(),
 			gatewayData.close(),
 			synapseRepository.close(),
+			channelRepository.close(),
 		]);
 		const failed = results.find(
 			(result): result is PromiseRejectedResult => result.status === "rejected",
