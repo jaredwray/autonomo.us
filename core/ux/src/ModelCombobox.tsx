@@ -94,13 +94,16 @@ export function ModelCombobox(props: {
 	const shown = open && props.options.length > 0;
 	const current = props.value.trim();
 
+	// Opens the list above the field when there is no room for it below.
+	const place = () => {
+		const rect = input.current?.getBoundingClientRect();
+		if (!rect) return;
+		const below = window.innerHeight - rect.bottom;
+		setAbove(below < LIST_HEIGHT && rect.top > below);
+	};
 	const show = (startAt?: "first" | "last") => {
 		if (props.options.length === 0) return;
-		const rect = input.current?.getBoundingClientRect();
-		if (rect) {
-			const below = window.innerHeight - rect.bottom;
-			setAbove(below < LIST_HEIGHT && rect.top > below);
-		}
+		place();
 		const chosen = props.options.findIndex((item) => item.id === current);
 		setFiltering(false);
 		setCursor(
@@ -192,6 +195,7 @@ export function ModelCombobox(props: {
 					props.onChange(event.target.value);
 					setFiltering(true);
 					setCursor(-1);
+					if (!shown) place();
 					setOpen(true);
 				}}
 				onClick={() => {

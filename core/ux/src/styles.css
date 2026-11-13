@@ -683,6 +683,8 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 	.failover-field { max-width: 100%; }
 	.failover input[type="text"], .failover input[type="number"] { min-width: 0; max-width: 100%; }
 	.card { overflow-x: auto; }
+	/* The model list overlays the page; a scrolling card would clip it. */
+	.add-model-card { overflow: visible; }
 }
 @media (prefers-reduced-motion: reduce) {
 	.sidebar, .main-content { transition: none; }

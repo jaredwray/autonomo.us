@@ -195,6 +195,23 @@ describe("Model field", () => {
 		expect(screen.queryByRole("listbox")).toBeNull();
 	});
 
+	it("opens above the field when there is no room below, however it is opened", async () => {
+		const { field } = await openForm();
+		const popover = () => document.querySelector(".model-combobox-popover");
+		fireEvent.change(field, { target: { value: "gpt" } });
+		expect(popover()?.classList.contains("above")).toBe(false);
+		fireEvent.keyDown(field, { key: "Escape" });
+		// The field now sits at the bottom of the window.
+		const bottom = window.innerHeight - 20;
+		field.getBoundingClientRect = () =>
+			({ top: bottom - 40, bottom }) as DOMRect;
+		fireEvent.change(field, { target: { value: "gpt-" } });
+		expect(popover()?.classList.contains("above")).toBe(true);
+		fireEvent.keyDown(field, { key: "Escape" });
+		fireEvent.click(field);
+		expect(popover()?.classList.contains("above")).toBe(true);
+	});
+
 	it("takes a model id the catalog does not list", async () => {
 		const { field } = await openForm();
 		fireEvent.change(field, { target: { value: "my-fine-tune" } });
