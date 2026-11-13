@@ -11,7 +11,12 @@ import { StrictMode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { App } from "../src/App.js";
 import { clearCredential } from "../src/api.js";
-import { defaultWorkspaceId, PASSWORD, setUpOwner } from "./session.js";
+import {
+	defaultWorkspaceId,
+	PASSWORD,
+	setUpOwner,
+	stopServer,
+} from "./session.js";
 
 const closers: Array<() => Promise<unknown>> = [];
 afterEach(async () => {
@@ -39,7 +44,7 @@ async function start(hash: string) {
 		logger: false,
 	});
 	const url = await server.listen({ host: "127.0.0.1", port: 0 });
-	closers.push(() => server.close());
+	closers.push(() => stopServer(server));
 	vi.stubEnv("VITE_API_URL", url);
 	const token = await setUpOwner(url);
 	const defaultId = await defaultWorkspaceId(url, token);

@@ -3,6 +3,20 @@ import { setSessionToken } from "../src/api.js";
 export const PASSWORD = "correct horse battery";
 
 /**
+ * Stops a test gateway. A request the unmounted page left open, such as a
+ * long poll, would otherwise hold `close()` until it ends, which on a busy
+ * machine can outlast the hook timeout.
+ */
+export async function stopServer(server: {
+	close(): PromiseLike<unknown>;
+	server: { closeAllConnections(): void };
+}): Promise<void> {
+	const closing = server.close();
+	server.server.closeAllConnections();
+	await closing;
+}
+
+/**
  * Completes first-run setup against a real API and, unless `signIn` is false,
  * signs the dashboard in as that owner. Returns the owner's session token.
  */
