@@ -16,6 +16,7 @@ import {
 	PASSWORD,
 	routeToWorkspace,
 	setUpOwner,
+	stopServer,
 } from "./session.js";
 
 // Synapse dashboard runs against a real gateway API server (no fetch
@@ -45,7 +46,7 @@ async function boot(): Promise<Running> {
 		logger: false,
 	});
 	const url = await server.listen({ host: "127.0.0.1", port: 0 });
-	closers.push(() => server.close());
+	closers.push(() => stopServer(server));
 	vi.stubEnv("VITE_API_URL", url);
 	const token = await setUpOwner(url);
 	// Synapse lives in a workspace; these tests use the default one.
@@ -683,7 +684,7 @@ it("shows members the proposals read-only", async () => {
 		logger: false,
 	});
 	const url = await server.listen({ host: "127.0.0.1", port: 0 });
-	closers.push(() => server.close());
+	closers.push(() => stopServer(server));
 	vi.stubEnv("VITE_API_URL", url);
 	const ownerToken = await setUpOwner(url, { signIn: false });
 	const workspaceId = await defaultWorkspaceId(url, ownerToken);

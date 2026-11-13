@@ -26,7 +26,12 @@ import {
 	roomReducer,
 	setChannelTimings,
 } from "../src/channels-state.js";
-import { defaultWorkspaceId, PASSWORD, setUpOwner } from "./session.js";
+import {
+	defaultWorkspaceId,
+	PASSWORD,
+	setUpOwner,
+	stopServer,
+} from "./session.js";
 
 // The Channels view runs against a real gateway (no fetch mocks): each test
 // boots @autonomo.us/server on an ephemeral port, signs the dashboard in as
@@ -69,7 +74,7 @@ async function boot() {
 		logger: false,
 	});
 	const url = await server.listen({ host: "127.0.0.1", port: 0 });
-	closers.push(() => server.close());
+	closers.push(() => stopServer(server));
 	vi.stubEnv("VITE_API_URL", url);
 	const owner = await setUpOwner(url);
 	const workspaceId = await defaultWorkspaceId(url, owner);

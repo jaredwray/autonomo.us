@@ -14,7 +14,7 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "../src/App.js";
 import { clearCredential } from "../src/api.js";
-import { defaultWorkspaceId, setUpOwner } from "./session.js";
+import { defaultWorkspaceId, setUpOwner, stopServer } from "./session.js";
 
 // The dashboard renders against a real gateway API server (no fetch mocks):
 // each test boots @autonomo.us/server on an ephemeral port, completes first-run
@@ -55,7 +55,7 @@ async function startApp(config: ApiConfig = BASE_CONFIG): Promise<RunningApp> {
 		url,
 		headers: {},
 		workspaceId: "",
-		close: () => server.close(),
+		close: () => stopServer(server),
 	};
 	running.push(app);
 	const token = await setUpOwner(url);

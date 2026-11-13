@@ -12,7 +12,12 @@ import { afterEach, expect, it, vi } from "vitest";
 import { startOpenAIStub } from "../../server/test/openai-stub.js";
 import { App } from "../src/App.js";
 import { clearCredential } from "../src/api.js";
-import { defaultWorkspaceId, routeToWorkspace, setUpOwner } from "./session.js";
+import {
+	defaultWorkspaceId,
+	routeToWorkspace,
+	setUpOwner,
+	stopServer,
+} from "./session.js";
 
 const cleanupTasks: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -46,7 +51,7 @@ async function start() {
 	const server = createServer({ config, logger: false });
 	const url = await server.listen({ host: "127.0.0.1", port: 0 });
 	cleanupTasks.push(
-		() => server.close(),
+		() => stopServer(server),
 		() => provider.close(),
 	);
 	vi.stubEnv("VITE_API_URL", url);

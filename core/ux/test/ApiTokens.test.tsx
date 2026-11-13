@@ -16,6 +16,7 @@ import {
 	PASSWORD,
 	routeToWorkspace,
 	setUpOwner,
+	stopServer,
 } from "./session.js";
 
 const closers: Array<() => Promise<void>> = [];
@@ -34,7 +35,7 @@ async function start({ signIn = true } = {}) {
 		logger: false,
 	});
 	const url = await server.listen({ host: "127.0.0.1", port: 0 });
-	closers.push(() => server.close());
+	closers.push(() => stopServer(server));
 	vi.stubEnv("VITE_API_URL", url);
 	const owner = await setUpOwner(url, { signIn });
 	// Direct API calls below use pre-workspace paths for the default workspace.

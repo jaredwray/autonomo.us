@@ -33,7 +33,12 @@ import { clearCredential, setSessionToken } from "../src/api.js";
 import { replyingLine } from "../src/ChannelRoom.js";
 import { setChannelTimings } from "../src/channels-state.js";
 import { browser } from "../src/navigation.js";
-import { defaultWorkspaceId, PASSWORD, setUpOwner } from "./session.js";
+import {
+	defaultWorkspaceId,
+	PASSWORD,
+	setUpOwner,
+	stopServer,
+} from "./session.js";
 
 // The Agents view runs against a real gateway whose default workspace has a
 // real provider: an OpenAI-compatible stub server. `stub/chat-model` answers
@@ -90,7 +95,7 @@ async function boot() {
 	});
 	const url = await server.listen({ host: "127.0.0.1", port: 0 });
 	closers.push(
-		() => server.close(),
+		() => stopServer(server),
 		() => stub.close(),
 	);
 	vi.stubEnv("VITE_API_URL", url);
