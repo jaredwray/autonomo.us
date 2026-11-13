@@ -520,6 +520,22 @@ it("shows why a run failed or was skipped, after a refresh", async () => {
 	).toBeDefined();
 });
 
+it("opens the bot list when a link names a workspace that cannot be opened", async () => {
+	const running = await boot();
+	await running.bot({ name: "Helper" });
+	// A bookmark from a workspace this person is not in, to a bot there.
+	renderAt(
+		"#/w/9b0a6d3e-58a1-4d0b-9d5a-0c1e2f3a4b5c/bots/1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f",
+	);
+	const list = within(
+		await screen.findByRole("complementary", { name: "Bot list" }, SOON),
+	);
+	expect(await list.findByText("Helper", {}, SOON)).toBeDefined();
+	// The link lands in this workspace without the other workspace's bot.
+	expect(window.location.hash).toBe(`#/w/${running.workspaceId}/bots`);
+	expect(screen.queryByText("Bot not found")).toBeNull();
+});
+
 it("reads the bot from the URL and names who is replying", () => {
 	const id = "9b0a6d3e-58a1-4d0b-9d5a-0c1e2f3a4b5c";
 	expect(parseBotsRoute(`#/w/abc/bots/${id}`)).toEqual({ id });

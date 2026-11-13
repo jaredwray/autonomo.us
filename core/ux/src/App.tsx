@@ -211,6 +211,8 @@ export function App() {
 		};
 	}, []);
 	const [route, setRoute] = useState(currentRoute);
+	/** Counts landings in another workspace than a link named; see below. */
+	const [landed, setLanded] = useState(0);
 	const [switcherOpen, setSwitcherOpen] = useState(false);
 	const switcherRef = useRef<HTMLDivElement>(null);
 	useEffect(() => {
@@ -280,12 +282,23 @@ export function App() {
 		if (gate.state !== "ready" || !selected) return;
 		rememberWorkspace(selected.id);
 		// Canonical URL: a workspace view always names its workspace.
-		if (isWorkspaceView(route.view) && route.workspaceId !== selected.id)
+		if (isWorkspaceView(route.view) && route.workspaceId !== selected.id) {
+			// A link into a workspace that cannot be opened lands in this one.
+			// What followed the view (a note, a channel, a bot) named something
+			// there, so it is dropped. A link from before workspaces keeps it.
+			const rest = route.workspaceId === null ? route.rest : "";
 			window.history.replaceState(
 				null,
 				"",
-				href(route.view, selected.id, route.rest),
+				href(route.view, selected.id, rest),
 			);
+			// The view on screen was mounted from the old address. Mount it
+			// again, so it reads the one it has now.
+			if (rest !== route.rest) {
+				setRoute(currentRoute());
+				setLanded((count) => count + 1);
+			}
+		}
 	}, [gate.state, selected, route]);
 	const toggle = () => {
 		const next = !collapsed;
@@ -577,7 +590,10 @@ export function App() {
 				) : (
 					// Keyed by workspace: switching unmounts the old view, so a
 					// response for the previous workspace can never land here.
-					<div key={selected.id} className="workspace-scope-root">
+					<div
+						key={`${selected.id}:${landed}`}
+						className="workspace-scope-root"
+					>
 						{wrongWorkspace && (
 							<p className="banner-warning workspace-fallback" role="status">
 								That workspace isn't available. Showing {selected.name}.
