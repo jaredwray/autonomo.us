@@ -45,7 +45,7 @@ omitting permissions from a metadata update keeps existing grants. Rolling keeps
 the policy, and permission reductions apply to all overlapping values on their
 next request. Permission edits and their before/after grants are logged atomically.
 
-There is no unauthenticated mode; `SETUP_TOKEN` only gates first-run setup.
+There is no unauthenticated mode; `SETUP_TOKEN` only gates setup.
 `/health`, CORS preflight, sign-in, and invite redemption remain accessible
 without credentials.
 

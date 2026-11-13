@@ -454,6 +454,26 @@ export class TelemetryService {
 		this.flushChain = this.flushChain.then(() => this.flush());
 	}
 
+	/**
+	 * Takes the events not yet written out of the queue, for setup to hold
+	 * while it deletes the gateway's data, so a flush meanwhile can't write
+	 * them after the deletion. Call after `drain()`, when no flush is in
+	 * flight to requeue its batch, and hand them to `restorePending` if the
+	 * deletion fails.
+	 */
+	takePending(): TelemetryEvent[] {
+		const taken = this.pending;
+		this.pending = [];
+		return taken;
+	}
+
+	/** Puts events from `takePending` back at the front of the queue. */
+	restorePending(events: TelemetryEvent[]): void {
+		const requeued = [...events, ...this.pending];
+		if (requeued.length > this.maxPending) this.durableIncomplete = true;
+		this.pending = requeued.slice(-this.maxPending);
+	}
+
 	/** Waits until queued flushes have finished. False when events remain. */
 	async drain(): Promise<boolean> {
 		let ok = await this.flushChain;

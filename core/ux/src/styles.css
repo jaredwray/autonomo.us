@@ -802,6 +802,18 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .auth-intro { margin: 0 0 8px; color: var(--text-secondary); }
 .auth-note { margin-top: 16px !important; }
 .auth-switch { margin-top: 12px; }
+.setup-inventory { margin: 0 0 4px; padding-left: 18px; color: var(--text-secondary); }
+.setup-inventory li { margin: 2px 0; }
+.setup-choices { border: 0; padding: 0; margin: 16px 0 0; min-width: 0; }
+.setup-choices legend { padding: 0; margin-bottom: 4px; font-size: 12px; font-weight: 500; }
+.setup-choice { display: flex; align-items: flex-start; gap: 10px; margin-top: 8px; padding: 12px 14px; border: 1px solid var(--hairline); border-radius: 8px; cursor: pointer; }
+.setup-choice:has(input:checked) { border-color: var(--series-1); }
+.setup-choice.destructive:has(input:checked) { border-color: var(--status-critical); }
+.setup-choice:has(input:disabled) { cursor: default; opacity: .6; }
+.setup-choice input, .setup-confirm input { margin: 2px 0 0; accent-color: var(--series-1); }
+.setup-choice.destructive input { accent-color: var(--status-critical); }
+.setup-choice strong { display: block; margin-bottom: 3px; font-size: 12px; font-weight: 500; }
+.setup-confirm { display: flex; align-items: flex-start; gap: 8px; margin-top: 14px; font-size: 12px; cursor: pointer; }
 .link-button { border: 0; background: transparent; padding: 6px 0; color: var(--series-1); }
 .link-button:hover { background: transparent; text-decoration: underline; }
 @media (max-width: 480px) { .auth-card { padding: 22px 18px; } }

@@ -4,10 +4,12 @@ import {
 	OWNER_LOCK_MARGIN_MS,
 	OWNER_LOCK_MS,
 	SESSION_TTL_MS,
+	SETUP_CLAIM_MS,
 	SIGN_IN_MAX_FAILURES,
 	SIGN_IN_WINDOW_MS,
 } from "../src/auth/accounts.js";
 import { hashPassword, verifyPassword } from "../src/auth/passwords.js";
+import { tokenHash } from "../src/auth/tokens.js";
 import { createServer as createGatewayServer } from "../src/server.js";
 import {
 	authServer,
@@ -154,14 +156,24 @@ describe("first-run setup", () => {
 				(await server.inject({ url: "/v1/setup/token", headers })).statusCode,
 			).toBe(401);
 		}
-		expect(
-			(
-				await server.inject({
-					url: "/v1/setup/token",
-					headers: bearer("setup-secret"),
-				})
-			).statusCode,
-		).toBe(204);
+		const check = await server.inject({
+			url: "/v1/setup/token",
+			headers: bearer("setup-secret"),
+		});
+		expect(check.statusCode).toBe(200);
+		// A fresh memory-only gateway: nothing to keep, and nothing to clear.
+		expect(check.json()).toEqual({
+			existing: {
+				accounts: 0,
+				invites: 0,
+				connections: 0,
+				tokens: 0,
+				workspaces: 0,
+				notes: 0,
+				usageEvents: 0,
+			},
+			canClear: false,
+		});
 		// The setup token is not a login: it opens no other route.
 		for (const url of ["/v1/models", "/v1/team", "/v1/api-tokens"])
 			expect(
@@ -247,11 +259,361 @@ describe("first-run setup", () => {
 			{ email: "ada@example.com", name: "Ada", password: "short" },
 			{ email: "ada@example.com", name: "Ada", password: "x".repeat(129) },
 			{ email: "ada@example.com", password: PASSWORD },
+			{
+				email: "ada@example.com",
+				name: "Ada",
+				password: PASSWORD,
+				data: "wipe",
+			},
 		])
 			expect(
 				(await server.inject({ method: "POST", url: "/v1/setup", payload }))
 					.statusCode,
 			).toBe(400);
+		expect((await server.inject("/v1/auth/status")).json().setupComplete).toBe(
+			false,
+		);
+	});
+});
+
+/** As if the API restarted with this SETUP_TOKEN on the same saved data. */
+function restartWithSetupToken(store: AccountStore, token: string) {
+	Object.assign(store as unknown as Record<string, unknown>, {
+		setupHash: tokenHash(token),
+		completed: false,
+	});
+}
+const NEW_PASSWORD = "a brand new passphrase";
+
+describe("setup with a setup token on a gateway that is set up", () => {
+	it("reopens setup for a new token, keeps data, and spends the token", async () => {
+		const store = new AccountStore();
+		const ada = await store.completeSetup({
+			email: "ada@example.com",
+			name: "Ada",
+			password: PASSWORD,
+		});
+		expect(await store.status()).toMatchObject({
+			setupComplete: true,
+			setupTokenRequired: false,
+		});
+
+		restartWithSetupToken(store, "recover-one");
+		expect(await store.status()).toMatchObject({
+			setupComplete: false,
+			setupTokenRequired: true,
+		});
+		expect(await store.counts()).toEqual({ accounts: 1, invites: 0 });
+		const grace = await store.completeSetup({
+			email: "grace@example.com",
+			name: "Grace",
+			password: PASSWORD,
+			data: "keep",
+		});
+		expect(grace.user.role).toBe("owner");
+		// Existing accounts and their sessions keep working.
+		expect(await store.authenticate(ada.token)).not.toBeNull();
+		expect(
+			(await store.team(grace.user)).members.map((member) => member.email),
+		).toEqual(expect.arrayContaining(["ada@example.com", "grace@example.com"]));
+
+		// The token is spent, including after another restart.
+		expect(await store.status()).toMatchObject({ setupComplete: true });
+		restartWithSetupToken(store, "recover-one");
+		expect(await store.isSetupComplete()).toBe(true);
+		await expect(
+			store.completeSetup({
+				email: "mallory@example.com",
+				name: "Mallory",
+				password: PASSWORD,
+			}),
+		).rejects.toMatchObject({ statusCode: 409 });
+		// A different token reopens it.
+		restartWithSetupToken(store, "recover-two");
+		expect(await store.isSetupComplete()).toBe(false);
+	});
+
+	it("recovers an existing account: new password, owner role, other sessions signed out", async () => {
+		const store = new AccountStore();
+		const ada = await store.completeSetup({
+			email: "ada@example.com",
+			name: "Ada",
+			password: PASSWORD,
+		});
+		const bob = await store.addMember(
+			{
+				email: "bob@example.com",
+				name: "Bob",
+				role: "member",
+				password: PASSWORD,
+				workspace: {
+					workspaceId: ada.user.workspaces[0]?.workspaceId ?? "w",
+					role: "member",
+				},
+			},
+			ada.user,
+		);
+		const bobSession = await store.signIn({
+			email: "bob@example.com",
+			password: PASSWORD,
+		});
+
+		restartWithSetupToken(store, "recover");
+		const recovered = await store.completeSetup({
+			email: " BOB@example.com ",
+			name: "Robert",
+			password: NEW_PASSWORD,
+		});
+		expect(recovered.user).toMatchObject({
+			id: bob.id,
+			email: "bob@example.com",
+			name: "Robert",
+			role: "owner",
+		});
+		// Memberships stay stored, dormant while the account is an owner.
+		expect(recovered.user.workspaces).toEqual(bob.workspaces);
+		expect(await store.authenticate(bobSession.token)).toBeNull();
+		expect(await store.authenticate(recovered.token)).not.toBeNull();
+		await expect(
+			store.signIn({ email: "bob@example.com", password: PASSWORD }),
+		).rejects.toMatchObject({ statusCode: 401 });
+		await store.signIn({ email: "bob@example.com", password: NEW_PASSWORD });
+		// Other accounts are untouched.
+		expect(await store.authenticate(ada.token)).not.toBeNull();
+		expect(await store.isSetupComplete()).toBe(true);
+	});
+
+	it("never takes over an existing account without the setup token", async () => {
+		const store = new AccountStore();
+		await store.completeSetup({
+			email: "ada@example.com",
+			name: "Ada",
+			password: PASSWORD,
+		});
+		// Setup reopened without a token: only possible by editing the database.
+		await (
+			store as unknown as {
+				setup: { remove(id: string): Promise<boolean> };
+			}
+		).setup.remove("default");
+		Object.assign(store as unknown as Record<string, unknown>, {
+			completed: false,
+		});
+		expect(await store.isSetupComplete()).toBe(false);
+		await expect(
+			store.completeSetup({
+				email: "ada@example.com",
+				name: "Mallory",
+				password: NEW_PASSWORD,
+			}),
+		).rejects.toMatchObject({ statusCode: 409 });
+		await store.signIn({ email: "ada@example.com", password: PASSWORD });
+	});
+
+	it("clears data only with the setup token and a way to clear it", async () => {
+		const input = {
+			email: "fresh@example.com",
+			name: "Fresh",
+			password: PASSWORD,
+			data: "clear" as const,
+		};
+		let clears = 0;
+		const clear = async () => {
+			clears++;
+		};
+		// No SETUP_TOKEN: clearing is refused before anything happens.
+		await expect(
+			new AccountStore().completeSetup(input, clear),
+		).rejects.toMatchObject({
+			statusCode: 403,
+		});
+		// SETUP_TOKEN but nothing that can clear (memory only).
+		await expect(
+			new AccountStore({ setupToken: "t" }).completeSetup(input),
+		).rejects.toMatchObject({ statusCode: 409 });
+		expect(clears).toBe(0);
+	});
+
+	it("claims setup before clearing, stays open if clearing fails, and admits one clear at a time", async () => {
+		const store = new AccountStore();
+		const ada = await store.completeSetup({
+			email: "ada@example.com",
+			name: "Ada",
+			password: PASSWORD,
+		});
+		restartWithSetupToken(store, "start-fresh");
+		const input = {
+			email: "fresh@example.com",
+			name: "Fresh",
+			password: PASSWORD,
+			data: "clear" as const,
+		};
+
+		await expect(
+			store.completeSetup(input, async () => {
+				throw new Error("MongoDB went away");
+			}),
+		).rejects.toMatchObject({ statusCode: 503 });
+		// Still open, and the token is unspent: a retry clears again.
+		expect(await store.isSetupComplete()).toBe(false);
+
+		let release = () => {};
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		let clears = 0;
+		const slowClear = async () => {
+			clears++;
+			// Setup reads as open while the data is being deleted.
+			expect(await store.isSetupComplete()).toBe(false);
+			await gate;
+		};
+		const attempts = [
+			store.completeSetup(input, slowClear),
+			store.completeSetup({ ...input, email: "other@example.com" }, slowClear),
+		];
+		// Whichever claims setup first waits in its clear; the other loses its claim.
+		const loser = await Promise.race(
+			attempts.map((attempt) =>
+				attempt.then(
+					() => null,
+					(error) => error,
+				),
+			),
+		);
+		expect(loser).toMatchObject({ statusCode: 409 });
+		release();
+		const results = await Promise.allSettled(attempts);
+		const won = results.filter((result) => result.status === "fulfilled");
+		expect(won).toHaveLength(1);
+		expect(clears).toBe(1);
+		expect(won[0]?.value.user.role).toBe("owner");
+		expect(await store.isSetupComplete()).toBe(true);
+		await expect(store.completeSetup(input, slowClear)).rejects.toMatchObject({
+			statusCode: 409,
+		});
+		// This fake clear deleted nothing, so the earlier owner is still here.
+		expect(await store.authenticate(ada.token)).not.toBeNull();
+	});
+
+	it("refuses any other setup while a clear holds the claim", async () => {
+		const store = new AccountStore();
+		const ada = await store.completeSetup({
+			email: "ada@example.com",
+			name: "Ada",
+			password: PASSWORD,
+		});
+		restartWithSetupToken(store, "start-fresh");
+		let release = () => {};
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		let entered = () => {};
+		const clearing = new Promise<void>((resolve) => {
+			entered = resolve;
+		});
+		const first = store.completeSetup(
+			{
+				email: "fresh@example.com",
+				name: "Fresh",
+				password: PASSWORD,
+				data: "clear",
+			},
+			async () => {
+				entered();
+				await gate;
+			},
+		);
+		await clearing;
+		// These read setup after the claim, so its revision can't stop them.
+		let laterClears = 0;
+		for (const input of [
+			{ email: "other@example.com", data: "clear" as const },
+			{ email: "ada@example.com", data: "keep" as const },
+			{ email: "new@example.com", data: "keep" as const },
+		])
+			await expect(
+				store.completeSetup(
+					{ ...input, name: "Later", password: NEW_PASSWORD },
+					async () => {
+						laterClears++;
+					},
+				),
+			).rejects.toMatchObject({
+				statusCode: 409,
+				message: "Another setup is in progress. Try again in a moment.",
+			});
+		expect(laterClears).toBe(0);
+		// The refused recovery never touched Ada's account.
+		await store.signIn({ email: "ada@example.com", password: PASSWORD });
+		expect(await store.authenticate(ada.token)).not.toBeNull();
+		release();
+		expect((await first).user.email).toBe("fresh@example.com");
+	});
+
+	it("lets a stalled claim expire, and the stalled setup then can't commit", async () => {
+		let clock = Date.parse("2026-01-01T00:00:00Z");
+		const store = new AccountStore({ now: () => clock });
+		await store.completeSetup({
+			email: "ada@example.com",
+			name: "Ada",
+			password: PASSWORD,
+		});
+		restartWithSetupToken(store, "recover");
+		let release = () => {};
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		let entered = () => {};
+		const clearing = new Promise<void>((resolve) => {
+			entered = resolve;
+		});
+		const stalled = store.completeSetup(
+			{
+				email: "fresh@example.com",
+				name: "Fresh",
+				password: PASSWORD,
+				data: "clear",
+			},
+			async () => {
+				entered();
+				await gate;
+			},
+		);
+		const outcome = stalled.then(
+			() => null,
+			(error) => error,
+		);
+		await clearing;
+		clock += SETUP_CLAIM_MS + 1;
+		const recovered = await store.completeSetup({
+			email: "ada@example.com",
+			name: "Ada",
+			password: NEW_PASSWORD,
+		});
+		expect(recovered.user.role).toBe("owner");
+		release();
+		const error = await outcome;
+		expect([409, 503]).toContain(error?.statusCode);
+		// The recovery stands.
+		await store.signIn({ email: "ada@example.com", password: NEW_PASSWORD });
+		expect(await store.authenticate(recovered.token)).not.toBeNull();
+	});
+
+	it("refuses to clear over HTTP without MongoDB", async () => {
+		const server = start({ setupToken: "setup-secret" });
+		const response = await server.inject({
+			method: "POST",
+			url: "/v1/setup",
+			headers: bearer("setup-secret"),
+			payload: {
+				email: "ada@example.com",
+				name: "Ada",
+				password: PASSWORD,
+				data: "clear",
+			},
+		});
+		expect(response.statusCode).toBe(409);
 		expect((await server.inject("/v1/auth/status")).json().setupComplete).toBe(
 			false,
 		);

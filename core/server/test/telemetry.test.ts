@@ -87,6 +87,46 @@ describe("TelemetryService", () => {
 		expect(other).toMatchObject({ requests: 2, provider: "other" });
 	});
 
+	it("holds queued events aside: dropped after a clear, requeued if it fails", async () => {
+		const inserted: unknown[] = [];
+		let failing = true;
+		const sink = {
+			healthy: true,
+			ensureSchema: async () => {},
+			insert: async (batch: unknown[]) => {
+				if (failing) throw new Error("MongoDB went away");
+				inserted.push(...batch);
+			},
+			close: async () => {},
+		} as unknown as MongoTelemetrySink;
+		const telemetry = new TelemetryService({ sink, flushIntervalMs: 0 });
+		const chat = { model: "stub/a", provider: "stub", usage, latencyMs: 100 };
+		telemetry.recordChat(chat);
+		expect(await telemetry.drain()).toBe(false);
+
+		// A clear that fails puts the held events back, so nothing is lost.
+		const held = telemetry.takePending();
+		expect(held).toHaveLength(1);
+		telemetry.restorePending(held);
+		failing = false;
+		expect(await telemetry.flush()).toBe(true);
+		expect(inserted).toHaveLength(1);
+
+		// A clear that succeeds drops them: a later flush writes nothing old.
+		failing = true;
+		telemetry.recordChat(chat);
+		expect(await telemetry.drain()).toBe(false);
+		expect(telemetry.takePending()).toHaveLength(1);
+		failing = false;
+		expect(await telemetry.flush()).toBe(true);
+		expect(inserted).toHaveLength(1);
+		// Later events still reach the sink.
+		telemetry.recordChat(chat);
+		expect(await telemetry.drain()).toBe(true);
+		expect(inserted).toHaveLength(2);
+		await telemetry.stop();
+	});
+
 	it("falls back to memory when the sink is unreachable", async () => {
 		// Real network failure: nothing listens on port 9.
 		const sink = new MongoTelemetrySink(

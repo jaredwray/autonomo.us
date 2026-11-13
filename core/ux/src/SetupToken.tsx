@@ -1,8 +1,13 @@
+import type { SetupCheck } from "@autonomo.us/common";
 import { useState } from "react";
 import { verifySetupToken } from "./api.js";
 
-/** First-run step when the API has SETUP_TOKEN: proves you may set up this gateway. */
-export function SetupTokenForm({ onVerified }: { onVerified(): void }) {
+/** First setup step when the API has SETUP_TOKEN: proves you may set up this gateway. */
+export function SetupTokenForm({
+	onVerified,
+}: {
+	onVerified(check: SetupCheck): void;
+}) {
 	const [token, setToken] = useState("");
 	const [error, setError] = useState("");
 	const [busy, setBusy] = useState(false);
@@ -14,9 +19,9 @@ export function SetupTokenForm({ onVerified }: { onVerified(): void }) {
 				setBusy(true);
 				setError("");
 				try {
-					await verifySetupToken(token.trim());
+					const check = await verifySetupToken(token.trim());
 					setToken("");
-					onVerified();
+					onVerified(check);
 				} catch (cause) {
 					setError(
 						cause instanceof Error ? cause.message : "Could not verify.",
@@ -37,8 +42,8 @@ export function SetupTokenForm({ onVerified }: { onVerified(): void }) {
 					disabled={busy}
 				/>
 				<span className="field-hint">
-					The SETUP_TOKEN configured on the API. It's only used to finish setup
-					and stays in this tab.
+					The SETUP_TOKEN configured on the API. It's only used for setup and
+					stays in this tab.
 				</span>
 			</div>
 			{error && (
