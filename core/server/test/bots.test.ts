@@ -434,7 +434,8 @@ describe("bots the gateway runs", () => {
 	});
 
 	it("answers in the thread it was asked in", async () => {
-		const { createChannel, post, read, addAgent, bot, next } = await start();
+		const { createChannel, post, read, addAgent, bot, next, requests } =
+			await start();
 		const channel = await createChannel("general");
 		const helper = await bot({ name: "Helper", model: "stub/echo-model" });
 		await addAgent(channel.id, helper.id);
@@ -445,8 +446,17 @@ describe("bots the gateway runs", () => {
 		});
 		const reply = await next(channel.id, asked.seq);
 		expect(reply.threadId).toBe(root.id);
-		// It saw the thread, not the unrelated message.
 		expect(reply.body).toBe("Echo: Founder (person): @Helper any news?");
+		// It saw the thread from its root, not the unrelated message.
+		expect(
+			requests
+				.at(-1)
+				?.messages?.slice(1)
+				.map((message) => message.content),
+		).toEqual([
+			"Founder (person): Trailer status thread",
+			"Founder (person): @Helper any news?",
+		]);
 		const thread = await read(channel.id, `?thread=${root.id}`);
 		expect(thread.entries).toHaveLength(3);
 	});

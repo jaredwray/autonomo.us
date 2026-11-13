@@ -970,11 +970,15 @@ export class ChannelService {
 			Math.max(1, options.limit ?? CHANNEL_LIMITS.pageSize),
 		);
 		if (options.thread !== undefined) {
-			const root = await this.message(channel, options.thread);
+			// Any message of a thread names it: a reply leads to its root.
+			const named = await this.message(channel, options.thread);
+			const root = named.threadId
+				? await this.message(channel, named.threadId)
+				: named;
 			const top = await this.repository.topSeq(channel.id);
 			const replies = await this.repository.threadReplies(
 				channel.id,
-				root.threadId ?? root.id,
+				root.id,
 				limit,
 			);
 			return {

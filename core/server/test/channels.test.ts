@@ -275,6 +275,12 @@ describe("channels over REST", () => {
 			thread.entries.map((entry) => (entry as ChannelMessage).body),
 		).toEqual(["Who has the trailer cut?", "I do.", "Sending it."]);
 		expect((thread.entries[0] as ChannelMessage).replyCount).toBe(2);
+		// Any message of the thread names it.
+		expect(
+			(await read(channel.id, `?thread=${second.id}`)).entries.map(
+				(entry) => entry.id,
+			),
+		).toEqual(thread.entries.map((entry) => entry.id));
 		// History shows the conversation without the replies; following shows all.
 		expect(
 			(await read(channel.id)).entries
