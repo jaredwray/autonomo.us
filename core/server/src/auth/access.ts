@@ -18,7 +18,7 @@ import { type ApiTokenStore, secretMatches, tokenHash } from "./tokens.js";
 export type RequestAuth =
 	| { kind: "user"; member: TeamMember; expiresAt: string }
 	| { kind: "api-token"; token: { id: string; name: string } }
-	/** SETUP_TOKEN: accepted only on the first-run setup routes. */
+	/** SETUP_TOKEN: accepted only on the setup routes. */
 	| { kind: "setup" };
 
 /** The workspace a request operates on, resolved from its path by the access hook. */
@@ -105,7 +105,7 @@ export const ROUTE_RULES = new Map<string, RouteRule>([
 	["POST /v1/invites/preview", { scope: "public" }],
 	["POST /v1/invites/accept", { scope: "public" }],
 	// Open while SETUP_TOKEN is unset; otherwise they require it. Handlers
-	// refuse once setup is complete.
+	// refuse once setup is complete and the token is spent.
 	["POST /v1/setup", { scope: "setup" }],
 	["GET /v1/setup/token", { scope: "setup" }],
 	["GET /v1/auth/session", { scope: "instance" }],
@@ -285,7 +285,7 @@ export function registerApiAccess(
 		}
 		if (!match) return unauthorized(reply);
 		if (setupHash && secretMatches(match[1], setupHash))
-			return deny(reply, 403, "The setup token only unlocks first-run setup.");
+			return deny(reply, 403, "The setup token only unlocks setup.");
 
 		let member: TeamMember | undefined;
 		let token: Awaited<ReturnType<ApiTokenStore["authenticate"]>> | undefined;

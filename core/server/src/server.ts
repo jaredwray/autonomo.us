@@ -8,6 +8,7 @@ import { ApiTokenStore } from "./auth/tokens.js";
 import { type ApiConfig, configFromEnv } from "./config.js";
 import { registerDashboard } from "./dashboard.js";
 import { FailoverPolicyStore } from "./failover.js";
+import { GatewayData } from "./gateway-data.js";
 import { ModelCatalogService } from "./model-catalog-service.js";
 import { controlPlaneConnection, mongoErrorDetails } from "./mongo.js";
 import {
@@ -120,7 +121,9 @@ export function createServer(options: CreateServerOptions = {}) {
 	const accounts = new AccountStore({
 		mongo,
 		defaultWorkspaceId: () => workspaces.defaultWorkspaceId(),
+		setupToken: config.setupToken,
 	});
+	const gatewayData = new GatewayData(config.mongodbUrl);
 	const synapseRepository = config.mongodbUrl
 		? new MongoSynapseRepository(config.mongodbUrl)
 		: new MemorySynapseRepository();
@@ -153,7 +156,13 @@ export function createServer(options: CreateServerOptions = {}) {
 	server.register(authRoutes, {
 		accounts,
 		workspaces,
-		setupTokenConfigured: Boolean(config.setupToken),
+		data: gatewayData,
+		clearData: async () => {
+			// Queued usage lands first, so it is deleted with the rest.
+			await telemetry.drain().catch(() => false);
+			await gatewayData.clear();
+			workspaces.forgetDefault();
+		},
 	});
 	server.register(teamRoutes, { accounts, workspaces });
 	server.register(workspaceRoutes, { workspaces });
@@ -243,6 +252,7 @@ export function createServer(options: CreateServerOptions = {}) {
 			agentTokens.close(),
 			accounts.close(),
 			workspaces.close(),
+			gatewayData.close(),
 			synapseRepository.close(),
 		]);
 		const failed = results.find(

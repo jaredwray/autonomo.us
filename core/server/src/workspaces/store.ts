@@ -158,6 +158,14 @@ export class WorkspaceStore {
 		return this.defaultId;
 	}
 
+	/**
+	 * Forgets the cached default workspace id after setup cleared the
+	 * gateway's data, so the next call creates a new default workspace.
+	 */
+	forgetDefault(): void {
+		this.defaultId = undefined;
+	}
+
 	async defaultWorkspace(): Promise<WorkspaceRef> {
 		return { id: await this.defaultWorkspaceId(), isDefault: true };
 	}

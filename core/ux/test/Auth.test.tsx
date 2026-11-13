@@ -19,6 +19,7 @@ afterEach(async () => {
 	clearCredential();
 	for (const close of closers.splice(0)) await close();
 	vi.unstubAllEnvs();
+	vi.restoreAllMocks();
 	window.history.replaceState(null, "", "/");
 	window.localStorage.clear();
 });
@@ -129,6 +130,138 @@ it("asks for SETUP_TOKEN before setup when it is configured", async () => {
 	expect(await screen.findByRole("heading", { name: "Team" })).toBeDefined();
 	expect(JSON.stringify(window.localStorage)).not.toContain("setup-secret");
 	expect(screen.queryByRole("button", { name: /Lock dashboard/ })).toBeNull();
+});
+
+/**
+ * A memory-only test gateway can't hold data before setup, so the check the
+ * setup token unlocks is replaced with one for a gateway that has some. Every
+ * other request reaches the real server.
+ */
+function gatewayWithData(canClear: boolean) {
+	const realFetch = globalThis.fetch;
+	const bodies: unknown[] = [];
+	vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+		const url = String(input instanceof Request ? input.url : input);
+		if (url.endsWith("/v1/setup") && init?.body)
+			bodies.push(JSON.parse(String(init.body)));
+		const response = await realFetch(input, init);
+		if (!url.endsWith("/v1/setup/token") || !response.ok) return response;
+		return new Response(
+			JSON.stringify({
+				existing: {
+					accounts: 2,
+					invites: 0,
+					connections: 1,
+					tokens: 0,
+					workspaces: 0,
+					notes: 1,
+					usageEvents: 1200,
+				},
+				canClear,
+			}),
+			{ status: 200, headers: { "content-type": "application/json" } },
+		);
+	});
+	return bodies;
+}
+
+it("keeps existing data and adds an owner after the setup token", async () => {
+	await start("setup-secret");
+	const bodies = gatewayWithData(false);
+	renderApp();
+	await screen.findByLabelText("Setup token");
+	change("Setup token", "setup-secret");
+	fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+	expect(
+		await screen.findByRole("heading", {
+			name: "This gateway already has data",
+		}),
+	).toBeDefined();
+	expect(screen.getByText("Step 2 of 3")).toBeDefined();
+	expect(
+		within(screen.getByRole("list"))
+			.getAllByRole("listitem")
+			.map((item) => item.textContent),
+	).toEqual([
+		"2 team accounts",
+		"1 model connection",
+		"1 Synapse note",
+		"1,200 recorded requests",
+	]);
+	// Without MongoDB there is nothing setup could clear.
+	expect(
+		(
+			screen.getByRole("radio", {
+				name: /Delete it and start fresh/,
+			}) as HTMLInputElement
+		).disabled,
+	).toBe(true);
+	fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+	expect(
+		await screen.findByRole("heading", { name: "Create an owner account" }),
+	).toBeDefined();
+	expect(screen.getByText("Step 3 of 3")).toBeDefined();
+	change("Your name", "Grace");
+	change("Email", "grace@example.com");
+	change("Password", PASSWORD);
+	change("Confirm password", PASSWORD);
+	fireEvent.click(screen.getByRole("button", { name: "Create account" }));
+	expect(await screen.findByRole("heading", { name: "Team" })).toBeDefined();
+	expect(bodies).toEqual([
+		expect.objectContaining({ email: "grace@example.com", data: "keep" }),
+	]);
+});
+
+it("asks for confirmation before clearing data, and reports a refusal", async () => {
+	await start("setup-secret");
+	const bodies = gatewayWithData(true);
+	renderApp();
+	await screen.findByLabelText("Setup token");
+	change("Setup token", "setup-secret");
+	fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+	fireEvent.click(
+		await screen.findByRole("radio", { name: /Delete it and start fresh/ }),
+	);
+	const next = screen.getByRole("button", { name: "Continue" });
+	expect((next as HTMLButtonElement).disabled).toBe(true);
+	fireEvent.click(
+		screen.getByRole("checkbox", {
+			name: "I understand this can't be undone.",
+		}),
+	);
+	expect((next as HTMLButtonElement).disabled).toBe(false);
+	fireEvent.click(next);
+	expect(
+		await screen.findByRole("heading", { name: "Create your account" }),
+	).toBeDefined();
+	// Back to the choice, and forward again.
+	fireEvent.click(screen.getByRole("button", { name: "Back" }));
+	expect(
+		(await screen.findByRole("radio", {
+			name: /Delete it and start fresh/,
+		})) as HTMLInputElement,
+	).toHaveProperty("checked", true);
+	fireEvent.click(
+		screen.getByRole("checkbox", {
+			name: "I understand this can't be undone.",
+		}),
+	);
+	fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+	await screen.findByLabelText("Your name");
+	change("Your name", "Fresh");
+	change("Email", "fresh@example.com");
+	change("Password", PASSWORD);
+	change("Confirm password", PASSWORD);
+	fireEvent.click(
+		screen.getByRole("button", { name: "Delete data and create account" }),
+	);
+	// This test gateway is memory-only, so the real server refuses to clear.
+	expect((await screen.findByRole("alert")).textContent).toMatch(
+		/Only a gateway with MongoDB can clear its data/,
+	);
+	expect(bodies).toEqual([
+		expect.objectContaining({ email: "fresh@example.com", data: "clear" }),
+	]);
 });
 
 it("invites a member with a one-time link that creates their account", async () => {

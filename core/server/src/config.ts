@@ -83,7 +83,8 @@ function parseModels(value: string | undefined, fallback: string[]): string[] {
  *   LM Studio, vLLM, ...). `OPENAI_COMPAT_NAME` (default `local`),
  *   `OPENAI_COMPAT_API_KEY`, and `OPENAI_COMPAT_MODELS` refine it.
  * - `MONGODB_URI` persists team accounts, tokens, routing, provider settings, and telemetry.
- * - `SETUP_TOKEN` is required to complete first-run setup; it grants nothing afterwards.
+ * - `SETUP_TOKEN` is required for setup. Once it completes setup it grants
+ *   nothing; a new value reopens setup to recover the gateway.
  * - `FAILOVER_ENABLED`, `FAILOVER_TARGETS` (comma-separated `provider/model`
  *   ids), and `FAILOVER_TIMEOUT_MS` seed the failover policy, which stays
  *   runtime-configurable via PUT /v1/failover and the dashboard.

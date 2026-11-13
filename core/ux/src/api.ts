@@ -28,6 +28,7 @@ import type {
 	RollApiTokenRequest,
 	RoutingConfig,
 	RoutingSettings,
+	SetupCheck,
 	SetupRequest,
 	SynapseCategory,
 	SynapseDaily,
@@ -124,7 +125,8 @@ export function setSessionToken(token: string) {
 		window.localStorage.setItem(SESSION_KEY, token);
 	} catch {}
 }
-export async function verifySetupToken(value: string) {
+/** Checks a setup token and returns what setup would keep or clear. */
+export async function verifySetupToken(value: string): Promise<SetupCheck> {
 	const response = await fetch(`${apiBase()}/v1/setup/token`, {
 		headers: {
 			accept: "application/json",
@@ -140,8 +142,10 @@ export async function verifySetupToken(value: string) {
 						"Could not reach the API. Please retry.",
 					),
 		);
+	const check = (await response.json()) as SetupCheck;
 	clearCredential();
 	credential = { kind: "setup", value };
+	return check;
 }
 function authorize(headers: Headers) {
 	const active = current();

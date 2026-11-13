@@ -79,11 +79,33 @@ There is no unauthenticated mode. Before and after setup, every `/v1/*` request
 needs a signed-in team member or an API token. Only `/health`, CORS preflight,
 `GET /v1/auth/status`, sign-in, invite redemption, and setup itself answer
 without one. Set `SETUP_TOKEN` on the API to protect the first run: while setup
-is pending, the dashboard asks for it before creating the owner account, so
-nobody else can claim a deployed gateway. The setup token unlocks setup and
-nothing else. It is not a login, and after setup it grants nothing. Without
+is open, the dashboard shows only the setup screen and asks for the token
+before creating the owner account, so nobody else can claim a deployed gateway.
+The setup token unlocks setup and nothing else. It is not a login. Without
 `SETUP_TOKEN`, whoever reaches a fresh gateway first can complete setup; that's
 fine locally but not for a public deployment.
+
+A setup token is spent once it completes setup: the same value never opens
+setup again, even after a restart, and the dashboard goes back to sign-in.
+Setting a **new** value reopens setup on a gateway that is already set up, which
+is how you recover one when every owner is locked out. API tokens and existing
+sessions keep working meanwhile, but the dashboard shows only the setup screen
+until the new token is used. After you enter the token, setup shows what the
+gateway already holds and offers two choices:
+
+- **Keep it and add an owner.** Everything stays. If you use an email that
+  already has an account, that account gets the new password and the owner
+  role, and its other sessions are signed out. Otherwise a new owner account
+  is added beside the existing ones.
+- **Delete it and start fresh** (MongoDB only). Deletes every team account,
+  invite, provider connection and key, routing rule, API and agent token,
+  workspace, Synapse note, and usage record, then creates the owner as on
+  first run. It deletes documents only from the gateway's own collections, so
+  other data in the same database is untouched. This can't be undone.
+
+On Workers, the new secret takes effect with the deployment that saving it
+creates. With several Node replicas, restart them all after starting fresh so
+none keeps the old default workspace cached.
 
 Accounts sign in with email and password. The email is only a sign-in
 identifier: the gateway never sends email. Passwords are 12–128 characters and
@@ -121,7 +143,7 @@ There is always at least one owner, and nobody can remove themselves. Changes
 that remove an owner take a short lock on the setup record, so two owners
 demoting or removing each other at once cannot leave the team without one. A
 forgotten password is reset by an owner or admin. If every owner is locked out,
-fix the account in the `gateway_users` collection. Setup writes the owner account into its
+set a new `SETUP_TOKEN` and run setup again (above). Setup writes the owner account into its
 marker in the same atomic write that claims setup. If the request dies before
 the account is copied into `gateway_users`, the next request finishes the copy,
 so a crash can neither lock the gateway nor admit a second owner.
@@ -236,8 +258,8 @@ through environment variables:
 
 - `GET /health` and `GET /healthz` — API liveness (`status`, `timestamp`) plus `mongodb`, containing `configured`, `connected`, and `initialized`. The last field confirms saved settings loaded and the default routing document exists. A configured database is probed with a bounded timeout; an unavailable database reports `connected: false` while liveness remains HTTP 200. Set `MONGODB_URI` to enable the check.
 
-- `GET /v1/auth/status` — public: `{ setupComplete, setupTokenRequired, persistence }`. The dashboard reads it to choose setup or sign-in.
-- `POST /v1/setup` — first-run only: `{ email, name, password }` creates the first owner and returns `{ token, expiresAt, user }`. Requires `Authorization: Bearer <SETUP_TOKEN>` when it is set; returns 409 once setup is complete. `GET /v1/setup/token` checks a setup token (204) before the form is shown.
+- `GET /v1/auth/status` — public: `{ setupComplete, setupTokenRequired, persistence }`. The dashboard reads it to choose setup or sign-in. `setupComplete` is false while setup is open: on first run, and while an unspent `SETUP_TOKEN` is configured.
+- `POST /v1/setup` — while setup is open: `{ email, name, password, data? }` creates an owner and returns `{ token, expiresAt, user }`. Requires `Authorization: Bearer <SETUP_TOKEN>` when it is set; returns 409 once setup is complete and the token is spent. `data` is `keep` (default) or `clear`; with the setup token, `keep` recovers an existing account with that email, and `clear` deletes the gateway's data first (403 without `SETUP_TOKEN`, 409 without MongoDB). `GET /v1/setup/token` checks a setup token before the form is shown and returns `{ existing, canClear }`: counts of `accounts`, `invites`, `connections`, `tokens`, `workspaces` (besides Default), `notes`, and `usageEvents`.
 - `POST /v1/auth/session` — public sign-in with `{ email, password }`; returns `{ token, expiresAt, user }`. Send `Authorization: Bearer <token>` on later requests. `GET` returns the current identity; `DELETE` signs out that session.
 - `PUT /v1/auth/password` — signed-in member: `{ currentPassword, newPassword }`.
 - `GET /v1/workspaces` — signed-in members: the workspaces you can open, with your role in each, `isDefault`, and whether you can create workspaces.
@@ -688,11 +710,12 @@ Provision a MongoDB server or managed cluster outside this workflow and store
 its connection string as the `MONGODB_URI` Worker secret, as above. The
 deployment check fails until it is set.
 
-`SETUP_TOKEN` matters only while first-run setup is pending: with a fresh
-database, set it so only you can create the owner account, then open
-<https://dev.autonomo.us> and enter it. Setup state lives in MongoDB, so a
-Worker pointed at an already set-up database needs no token, and the token
-grants nothing after setup.
+With a fresh database, set `SETUP_TOKEN` so only you can create the owner
+account, then open <https://dev.autonomo.us> and enter it. Setup state lives in
+MongoDB, and a token that completed setup grants nothing afterwards, so it can
+stay set. To recover a gateway whose owners are all locked out, give the secret
+a new value (for example `openssl rand -hex 32`); saving it deploys the Worker,
+and the dashboard opens on setup until that token is used.
 
 Include the application database name in the connection string. The MongoDB
 user needs read/write access to that database, and the cluster must accept

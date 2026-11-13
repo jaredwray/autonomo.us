@@ -82,6 +82,11 @@ type SetupRecord = {
 	owner?: UserRecord | null;
 	/** Serializes changes that remove an owner, so two can't drop the last one. */
 	ownerLock?: { holder: string; expiresAt: string } | null;
+	/**
+	 * Digest of the SETUP_TOKEN that last completed setup. That token can't
+	 * open setup again; a different one can, which is how a gateway is recovered.
+	 */
+	setupTokenHash?: string | null;
 };
 type InviteRecord = Omit<TeamInvite, "id" | "status" | "workspace"> & {
 	/** Missing on invites created before workspaces: redeem as a default-workspace member. */
@@ -335,6 +340,7 @@ export class AccountStore {
 	private readonly users: Documents<UserRecord>;
 	private readonly setup: Documents<SetupRecord>;
 	private readonly invites: Documents<InviteRecord>;
+	private readonly setupHash: string | null;
 	private completed = false;
 	private indexed = false;
 	readonly persistence: "mongodb" | "memory";
@@ -346,8 +352,14 @@ export class AccountStore {
 			now?: () => number;
 			/** Resolves the default workspace's id, for accounts that predate workspaces. */
 			defaultWorkspaceId?: () => Promise<string>;
+			/**
+			 * SETUP_TOKEN. The access hook makes setup requests present it; this
+			 * store keeps setup open until it has completed setup once.
+			 */
+			setupToken?: string;
 		} = {},
 	) {
+		this.setupHash = options.setupToken ? tokenHash(options.setupToken) : null;
 		this.mongo =
 			options.mongo ??
 			(options.mongodbUrl
@@ -485,10 +497,29 @@ export class AccountStore {
 				const accounts = await this.storage(() => this.users.list());
 				return accounts.length ? ("complete" as const) : ("open" as const);
 			}
-			await this.insertUser(record.owner, true);
+			try {
+				await this.insertUser(record.owner, true);
+			} catch (error) {
+				// Setup that reran beside existing accounts lost its email to one
+				// added meanwhile. That account stays and the embedded copy goes,
+				// so the gateway can't be stuck retrying the copy.
+				if (!(error instanceof AccountError && error.statusCode === 409))
+					throw error;
+			}
 		}
 		if (record.owner) await this.forgetEmbeddedOwner(ownerId);
 		return "complete" as const;
+	}
+
+	/**
+	 * Setup is open on first run, and while the API has a SETUP_TOKEN that
+	 * hasn't completed setup yet. Setting a new token reopens setup on a
+	 * gateway that is already set up; once that token completes it, it opens
+	 * nothing again.
+	 */
+	private async setupOpen(record: SetupRecord | null): Promise<boolean> {
+		if ((await this.setupState(record)) === "open") return true;
+		return this.setupHash !== null && record?.setupTokenHash !== this.setupHash;
 	}
 
 	/** Drops the marker's copy of the owner once gateway_users has it. */
@@ -506,29 +537,90 @@ export class AccountStore {
 	async isSetupComplete(): Promise<boolean> {
 		if (this.completed) return true;
 		const record = await this.storage(() => this.setup.get("default"));
-		// Only a committed setup is cached; later requests then skip the reads.
-		if ((await this.setupState(record)) === "complete") this.completed = true;
+		// Only a closed setup is cached; later requests then skip the reads.
+		// SETUP_TOKEN can't change without a restart, and a token that closed
+		// setup never reopens it.
+		if (!(await this.setupOpen(record))) this.completed = true;
 		return this.completed;
 	}
 
-	async status(setupTokenConfigured: boolean): Promise<AuthStatus> {
+	get setupTokenConfigured(): boolean {
+		return this.setupHash !== null;
+	}
+
+	async status(): Promise<AuthStatus> {
 		const setupComplete = await this.isSetupComplete();
 		return {
 			setupComplete,
-			setupTokenRequired: setupTokenConfigured && !setupComplete,
+			setupTokenRequired: this.setupTokenConfigured && !setupComplete,
 			persistence: this.persistence,
 		};
 	}
 
-	/** Creates the first owner and marks setup complete in one atomic write. */
-	async completeSetup(input: SetupRequest): Promise<AuthSession> {
+	/** Team accounts and pending invites, for setup to show what it would keep. */
+	async counts(): Promise<{ accounts: number; invites: number }> {
+		const [users, invites] = await this.storage(() =>
+			Promise.all([this.users.list(), this.invites.list()]),
+		);
+		const now = this.now();
+		return {
+			accounts: users.length,
+			invites: invites.filter(
+				(invite) => publicInvite(invite, now).status === "pending",
+			).length,
+		};
+	}
+
+	/**
+	 * Creates an owner and closes setup in one atomic write. On first run that
+	 * is the first owner. With SETUP_TOKEN, which the access hook has checked,
+	 * setup also recovers a gateway that is already set up: `keep` adds the
+	 * owner beside the saved data, or gives the account that already has this
+	 * email the new password and the owner role, and `clear` calls `clear` to
+	 * delete everything first. Either way the token then opens nothing again.
+	 */
+	async completeSetup(
+		input: SetupRequest,
+		clear?: () => Promise<void>,
+	): Promise<AuthSession> {
 		assertPassword(input.password);
-		const seen = await this.storage(() => this.setup.get("default"));
-		if ((await this.setupState(seen)) === "complete") {
+		let seen = await this.storage(() => this.setup.get("default"));
+		if (!(await this.setupOpen(seen))) {
 			this.completed = true;
 			throw this.setupDone();
 		}
+		const clearing = input.data === "clear";
+		if (clearing && !this.setupHash)
+			throw new AccountError(
+				"Set SETUP_TOKEN on the API to clear its data during setup.",
+				403,
+			);
+		if (clearing && !clear)
+			throw new AccountError(
+				"Only a gateway with MongoDB can clear its data. Restart the API to start fresh.",
+				409,
+			);
+		const email = normalizeEmail(input.email);
+		// Without the setup token nobody may take over an existing account.
+		if (!clearing && !this.setupHash) await this.assertEmailAvailable(email);
 		const passwordHash = await hashPassword(input.password);
+		if (clearing && clear) {
+			seen = await this.reopenSetup(seen);
+			try {
+				await clear();
+			} catch {
+				// Setup stays open and the token unspent, so a retry clears again.
+				throw new AccountError(
+					"The gateway's data could not be cleared. Check MongoDB and retry.",
+					503,
+				);
+			}
+		}
+		const existing = clearing
+			? null
+			: await this.storage(() => this.users.findBy("email", email));
+		if (existing)
+			return this.recoverAccount(existing._id, input, passwordHash, seen);
 		const now = this.now();
 		const record = this.newUser(
 			{ ...input, role: "owner" },
@@ -546,10 +638,12 @@ export class AccountStore {
 			"default",
 			(setup, at) => {
 				// Any write since we looked means another setup got there first.
-				if (setup.revision !== (seen?.revision ?? 0)) throw this.setupDone();
+				if (setup.revision !== (seen?.revision ?? 0))
+					throw this.setupConflict(setup);
 				setup.completedAt = iso(at);
 				setup.ownerId = record._id;
 				setup.owner = record;
+				setup.setupTokenHash = this.setupHash;
 			},
 			() => ({
 				_id: "default",
@@ -571,8 +665,96 @@ export class AccountStore {
 		this.completed = true;
 		return { ...session, user: publicMember(record, await this.defaultId()) };
 	}
+
+	/**
+	 * Claims setup before clearing: a concurrent setup loses, and setup reads
+	 * as open until the new owner commits. Returns the claimed record.
+	 */
+	private async reopenSetup(seen: SetupRecord | null): Promise<SetupRecord> {
+		return this.mutate(
+			this.setup,
+			"default",
+			(setup) => {
+				if (setup.revision !== (seen?.revision ?? 0))
+					throw this.setupConflict(setup);
+				setup.completedAt = null;
+				setup.ownerId = null;
+				setup.owner = null;
+				setup.ownerLock = null;
+				return { ...structuredClone(setup), revision: setup.revision + 1 };
+			},
+			() => ({
+				_id: "default",
+				revision: 0,
+				completedAt: null,
+				ownerId: null,
+			}),
+		);
+	}
+
+	/**
+	 * Setup with the setup token onto an account that already exists: it gets
+	 * the new password and the owner role, and every other session signs out.
+	 * The account changes before the token is spent, so a request that dies in
+	 * between leaves setup open to retry.
+	 */
+	private async recoverAccount(
+		id: string,
+		input: SetupRequest,
+		passwordHash: string,
+		seen: SetupRecord | null,
+	): Promise<AuthSession> {
+		const defaultId = await this.defaultId();
+		const recovered = await this.mutate(
+			this.users,
+			id,
+			(record, now) => {
+				// Stored memberships stay dormant while the account is an owner.
+				record.workspaces = memberships(record, defaultId);
+				record.name = input.name.trim();
+				record.role = "owner";
+				record.passwordHash = passwordHash;
+				record.failedSignIns = [];
+				record.sessions = [];
+				record.lastSignInAt = iso(now);
+				record.updatedAt = iso(now);
+				const session = issueSession(record, now);
+				return { ...session, user: publicMember(record, defaultId) };
+			},
+			missingMember(),
+		);
+		await this.mutate(
+			this.setup,
+			"default",
+			(setup, at) => {
+				if (setup.revision !== (seen?.revision ?? 0))
+					throw this.setupConflict(setup);
+				setup.completedAt ??= iso(at);
+				setup.ownerId = id;
+				setup.owner = null;
+				setup.setupTokenHash = this.setupHash;
+			},
+			() => ({
+				_id: "default",
+				revision: 0,
+				completedAt: null,
+				ownerId: null,
+			}),
+		);
+		this.completed = true;
+		return recovered;
+	}
 	private setupDone() {
 		return new AccountError("Setup is already complete. Sign in instead.", 409);
+	}
+	/** The setup record changed after this request read it. */
+	private setupConflict(setup: SetupRecord) {
+		const closed =
+			Boolean(setup.completedAt && setup.ownerId) &&
+			(this.setupHash === null || setup.setupTokenHash === this.setupHash);
+		return closed
+			? this.setupDone()
+			: new AccountError("Setup changed during this request. Try again.", 409);
 	}
 
 	/**

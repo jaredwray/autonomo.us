@@ -4,12 +4,14 @@ import {
 	type CurrentSession,
 	PASSWORD_MAX_LENGTH,
 	PASSWORD_MIN_LENGTH,
+	type SetupCheck,
 	type SetupRequest,
 	type SignInRequest,
 } from "@autonomo.us/common";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { signedInMember } from "../auth/access.js";
 import type { AccountStore } from "../auth/accounts.js";
+import type { GatewayData } from "../gateway-data.js";
 import type { WorkspaceStore } from "../workspaces/store.js";
 import { accessibleWorkspaces } from "./workspaces.js";
 
@@ -42,37 +44,69 @@ export async function authRoutes(
 	options: {
 		accounts: AccountStore;
 		workspaces: WorkspaceStore;
-		setupTokenConfigured: boolean;
+		/** The gateway's saved data as a whole: counted, and cleared, by setup. */
+		data: GatewayData;
+		/** Deletes everything and resets what this server cached about it. */
+		clearData: () => Promise<void>;
 	},
 ) {
-	const { accounts } = options;
+	const { accounts, data } = options;
+	// Clearing needs the setup token (the store checks) and MongoDB.
+	const canClear = () => accounts.setupTokenConfigured && data.canClear;
 	server.addHook("onRequest", async (_request, reply) => {
 		reply.header("cache-control", "no-store");
 	});
-	server.get("/v1/auth/status", () =>
-		accounts.status(options.setupTokenConfigured),
-	);
-	// The access hook has already checked SETUP_TOKEN; this confirms it before setup.
+	server.get("/v1/auth/status", () => accounts.status());
+	// The access hook has already checked SETUP_TOKEN; this confirms it and
+	// reports what setup would keep or clear.
 	server.get("/v1/setup/token", async (_request, reply) => {
 		if (await accounts.isSetupComplete())
 			return reply.code(409).send({
 				error: { message: "Setup is already complete. Sign in instead." },
 			});
-		return reply.code(204).send();
+		let saved: Awaited<ReturnType<GatewayData["inventory"]>>;
+		try {
+			saved = await data.inventory();
+		} catch {
+			return reply.code(503).send({
+				error: {
+					message:
+						"The gateway's data is unavailable. Check MongoDB and retry.",
+				},
+			});
+		}
+		const check: SetupCheck = {
+			existing: { ...(await accounts.counts()), ...saved },
+			canClear: canClear(),
+		};
+		return check;
 	});
 	server.post<{ Body: SetupRequest }>(
 		"/v1/setup",
 		{
 			schema: {
-				body: body({
-					email: emailSchema,
-					name: { ...nameSchema, minLength: 1, pattern: "\\S" },
-					password: passwordSchema,
-				}),
+				body: {
+					type: "object",
+					additionalProperties: false,
+					required: ["email", "name", "password"],
+					properties: {
+						email: emailSchema,
+						name: { ...nameSchema, minLength: 1, pattern: "\\S" },
+						password: passwordSchema,
+						data: { type: "string", enum: ["keep", "clear"] },
+					},
+				},
 			},
 		},
 		async (request, reply) =>
-			reply.code(201).send(await accounts.completeSetup(request.body)),
+			reply
+				.code(201)
+				.send(
+					await accounts.completeSetup(
+						request.body,
+						canClear() ? options.clearData : undefined,
+					),
+				),
 	);
 	server.post<{ Body: SignInRequest }>(
 		"/v1/auth/session",

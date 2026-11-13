@@ -4,16 +4,13 @@ import {
 	type InvitePreview,
 	PASSWORD_MAX_LENGTH,
 	PASSWORD_MIN_LENGTH,
+	type SetupCheck,
+	type SetupDataChoice,
+	type SetupInventory,
 	TEAM_ROLES,
 } from "@autonomo.us/common";
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import {
-	acceptInvite,
-	completeSetup,
-	credentialKind,
-	previewInvite,
-	signIn,
-} from "./api.js";
+import { acceptInvite, completeSetup, previewInvite, signIn } from "./api.js";
 import { SetupTokenForm } from "./SetupToken.js";
 
 const logoMark = new URL("./assets/logo-mark.svg", import.meta.url).href;
@@ -206,7 +203,118 @@ function AccountForm({
 	);
 }
 
-/** First run: prove control of the gateway (when required), then create the owner account. */
+const INVENTORY: Array<[keyof SetupInventory, string, string]> = [
+	["accounts", "team account", "team accounts"],
+	["invites", "pending invite", "pending invites"],
+	["connections", "model connection", "model connections"],
+	["tokens", "API or agent token", "API and agent tokens"],
+	["workspaces", "workspace besides Default", "workspaces besides Default"],
+	["notes", "Synapse note", "Synapse notes"],
+	["usageEvents", "recorded request", "recorded requests"],
+];
+
+/** "3 team accounts", "1 Synapse note", … for each kind of data that exists. */
+export function inventoryLines(existing: SetupInventory): string[] {
+	return INVENTORY.filter(([key]) => existing[key] > 0).map(
+		([key, one, many]) =>
+			`${existing[key].toLocaleString()} ${existing[key] === 1 ? one : many}`,
+	);
+}
+
+/** With the setup token on a gateway that has data: keep it or start fresh. */
+function SetupDataStep({
+	check,
+	choice,
+	onChoice,
+	onContinue,
+}: {
+	check: SetupCheck;
+	choice: SetupDataChoice;
+	onChoice(choice: SetupDataChoice): void;
+	onContinue(): void;
+}) {
+	const [confirmed, setConfirmed] = useState(false);
+	const clearing = choice === "clear";
+	return (
+		<form
+			onSubmit={(event) => {
+				event.preventDefault();
+				if (!clearing || confirmed) onContinue();
+			}}
+		>
+			<p className="auth-intro">It already holds:</p>
+			<ul className="setup-inventory">
+				{inventoryLines(check.existing).map((line) => (
+					<li key={line}>{line}</li>
+				))}
+			</ul>
+			<fieldset className="setup-choices">
+				<legend>What should happen to it?</legend>
+				<label className="setup-choice">
+					<input
+						type="radio"
+						name="setup-data"
+						value="keep"
+						checked={choice === "keep"}
+						onChange={() => onChoice("keep")}
+					/>
+					<span>
+						<strong>Keep it and add an owner</strong>
+						<span className="field-hint">
+							Everything stays. If you use an email that already has an account,
+							that account gets your new password and the owner role, and its
+							other sessions are signed out.
+						</span>
+					</span>
+				</label>
+				<label className="setup-choice destructive">
+					<input
+						type="radio"
+						name="setup-data"
+						value="clear"
+						checked={clearing}
+						disabled={!check.canClear}
+						onChange={() => onChoice("clear")}
+					/>
+					<span>
+						<strong>Delete it and start fresh</strong>
+						<span className="field-hint">
+							{check.canClear
+								? "Permanently deletes every team account, model and key, routing rule, token, workspace, Synapse note, and usage record in this gateway's database."
+								: "Needs MongoDB. Without it, the gateway starts fresh each time the API restarts."}
+						</span>
+					</span>
+				</label>
+			</fieldset>
+			{clearing && (
+				<label className="setup-confirm">
+					<input
+						type="checkbox"
+						checked={confirmed}
+						onChange={(event) => setConfirmed(event.target.checked)}
+					/>
+					<span>I understand this can't be undone.</span>
+				</label>
+			)}
+			<div className="form-actions">
+				<button
+					className="button primary"
+					type="submit"
+					disabled={clearing && !confirmed}
+				>
+					Continue
+				</button>
+			</div>
+		</form>
+	);
+}
+
+type SetupStep = "token" | "data" | "account";
+
+/**
+ * Setup: prove control of the gateway (when SETUP_TOKEN is set), decide what
+ * happens to data it already holds, then create the owner account.
+ */
 export function SetupView({
 	status,
 	onComplete,
@@ -214,48 +322,105 @@ export function SetupView({
 	status: AuthStatus;
 	onComplete(session: AuthSession): void;
 }) {
-	const [step, setStep] = useState<"token" | "account">(() =>
-		status.setupTokenRequired && credentialKind() !== "setup"
-			? "token"
-			: "account",
+	const [step, setStep] = useState<SetupStep>(
+		status.setupTokenRequired ? "token" : "account",
 	);
+	const [check, setCheck] = useState<SetupCheck | null>(null);
+	const [choice, setChoice] = useState<SetupDataChoice>("keep");
+	const hasData = check
+		? Object.values(check.existing).some((count) => count > 0)
+		: false;
+	const steps: SetupStep[] = !status.setupTokenRequired
+		? ["account"]
+		: hasData
+			? ["token", "data", "account"]
+			: ["token", "account"];
 	const heading = useRef<HTMLHeadingElement>(null);
 	// biome-ignore lint/correctness/useExhaustiveDependencies: move focus to the new step's heading.
 	useEffect(() => {
 		heading.current?.focus();
 	}, [step]);
+	const clearing = hasData && choice === "clear";
+	const title =
+		step === "token"
+			? "Welcome to autonomo.us"
+			: step === "data"
+				? "This gateway already has data"
+				: hasData && !clearing
+					? "Create an owner account"
+					: "Create your account";
 	return (
 		<AuthLayout labelledBy="setup-heading">
-			{status.setupTokenRequired && (
-				<p className="auth-step">Step {step === "token" ? 1 : 2} of 2</p>
+			{steps.length > 1 && (
+				<p className="auth-step">
+					Step {steps.indexOf(step) + 1} of {steps.length}
+				</p>
 			)}
 			<h1 id="setup-heading" tabIndex={-1} ref={heading}>
-				{step === "token" ? "Welcome to autonomo.us" : "Create your account"}
+				{title}
 			</h1>
-			{step === "token" ? (
+			{step === "token" && (
 				<>
 					<p className="auth-intro">
-						This gateway hasn't been set up yet. Enter its setup token to
-						continue.
+						Setup is open on this gateway. Enter its setup token to continue.
 					</p>
-					<SetupTokenForm onVerified={() => setStep("account")} />
+					<SetupTokenForm
+						onVerified={(result) => {
+							setCheck(result);
+							setChoice("keep");
+							setStep(
+								Object.values(result.existing).some((count) => count > 0)
+									? "data"
+									: "account",
+							);
+						}}
+					/>
 				</>
-			) : (
+			)}
+			{step === "data" && check && (
+				<SetupDataStep
+					check={check}
+					choice={choice}
+					onChoice={setChoice}
+					onContinue={() => setStep("account")}
+				/>
+			)}
+			{step === "account" && (
 				<>
 					<p className="auth-intro">
-						{status.setupTokenRequired
-							? "Create the first owner account for this gateway."
-							: "Welcome! This gateway hasn't been set up yet. Create the first owner account."}{" "}
-						Once you're in, invite your team from the Team page.
+						{clearing
+							? "Creating this account first deletes everything this gateway holds. Then invite your team from the Team page."
+							: hasData
+								? "This account becomes an owner, and the gateway's data stays. If the email already has an account, that account gets this password."
+								: status.setupTokenRequired
+									? "Create the first owner account for this gateway. Once you're in, invite your team from the Team page."
+									: "Welcome! This gateway hasn't been set up yet. Create the first owner account. Once you're in, invite your team from the Team page."}
 					</p>
 					<AccountForm
 						nameRequired
-						submitLabel="Create account"
-						busyLabel="Creating account…"
+						submitLabel={
+							clearing ? "Delete data and create account" : "Create account"
+						}
+						busyLabel={clearing ? "Deleting data…" : "Creating account…"}
 						onSubmit={async (input) => {
-							onComplete(await completeSetup(input));
+							onComplete(
+								await completeSetup(
+									check
+										? { ...input, data: clearing ? "clear" : "keep" }
+										: input,
+								),
+							);
 						}}
 					/>
+					{hasData && (
+						<button
+							className="link-button auth-switch"
+							type="button"
+							onClick={() => setStep("data")}
+						>
+							Back
+						</button>
+					)}
 					<MemoryNote status={status} />
 				</>
 			)}
