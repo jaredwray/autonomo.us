@@ -747,6 +747,49 @@ describe("OAuth sign-in to the MCP endpoint", () => {
 		).toEqual([]);
 	});
 
+	it("reads a client id from HTTP Basic and answers unreadable requests in OAuth's terms", async () => {
+		const { origin, connect } = await start();
+		const { client, tokens } = await connect();
+		const token = (headers: Record<string, string>, body: string) =>
+			fetch(`${origin}/oauth/token`, { method: "POST", headers, body });
+		const urlencoded = "application/x-www-form-urlencoded";
+		const refresh = `grant_type=refresh_token&refresh_token=${tokens.refresh_token}`;
+		// A public client may send its id as the Basic user with no password.
+		const basic = await token(
+			{
+				"content-type": urlencoded,
+				authorization: `Basic ${Buffer.from(`${client}:`).toString("base64")}`,
+			},
+			refresh,
+		);
+		expect(basic.status).toBe(200);
+		const unreadable = await token(
+			{
+				"content-type": urlencoded,
+				authorization: `Basic ${Buffer.from("%E0%A4%A:").toString("base64")}`,
+			},
+			refresh,
+		);
+		expect(unreadable.status).toBe(401);
+		expect((await unreadable.json()).error).toBe("invalid_client");
+		for (const [type, body] of [
+			["application/json", "[1]"],
+			["application/json", "{not json"],
+			[urlencoded, "x".repeat(20_000)],
+		]) {
+			const response = await token({ "content-type": type }, body);
+			expect(response.status).toBeGreaterThanOrEqual(400);
+			expect(response.status).toBeLessThan(500);
+			expect((await response.json()).error).toBe("invalid_request");
+		}
+		const revoke = await fetch(`${origin}/oauth/revoke`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: "7",
+		});
+		expect((await revoke.json()).error).toBe("invalid_request");
+	});
+
 	it("gives workspace admins every kind of agent and keeps API tokens with the org", async () => {
 		const { ok, refused, join, apiToken } = await start();
 		const admin = await join("wsadmin@example.com");
