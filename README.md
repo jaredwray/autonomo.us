@@ -137,7 +137,7 @@ Open **Team** to manage access:
 | --- | --- |
 | Owner | Everything in every workspace, including granting, changing, and removing owners. |
 | Admin | Everything in every workspace except owner accounts and owner invites. |
-| Member | Only the workspaces they are added to, with a workspace role there; read-only Team. No API or agent tokens, because tokens outlive the member who created them. |
+| Member | Only the workspaces they are added to, with a workspace role there; read-only Team. A workspace admin manages that workspace's [agents](#agents). No API tokens, because they outlive the member who created them. |
 
 There is always at least one owner, and nobody can remove themselves. Changes
 that remove an owner take a short lock on the setup record, so two owners
@@ -196,8 +196,8 @@ connections and accept every token gateway-wide.
 ## Gateway
 
 The dashboard has a collapsible sidebar with a workspace switcher and
-**Dashboard**, **Models**, **Routing**, **Synapse**, **API Tokens**,
-**Agent Tokens**, **Workspaces**, and **Team** views. All but Workspaces and
+**Dashboard**, **Models**, **Routing**, **Synapse**, **Channels**,
+**Agents**, **API Tokens**, **Workspaces**, and **Team** views. All but Workspaces and
 Team show the selected workspace, and their URLs name it
 (`#/w/<workspace id>/models`).
 In **Models**, search active models or choose **Add model** to connect Google
@@ -250,6 +250,8 @@ through environment variables:
 | `MONGODB_URI` | Persists the setup marker, team accounts, invites, API tokens, agent tokens, provider settings, routing, Synapse notes, and telemetry. Compose uses `mongodb://autonomous:autonomous@mongo:27017/autonomous?authSource=admin` |
 | `SYNAPSE_TIME_ZONE` | IANA time zone that decides "today" in the [Synapse](#synapse) (template dates, daily notes, the agent log). Default `UTC`; an unknown name fails startup |
 | `CORS_ORIGIN` | Comma-separated browser origins allowed by CORS (default: the Vite dev dashboard on `localhost:5173`; set `*` to allow any) |
+| `PUBLIC_URL` | The address apps reach the gateway at, such as `https://gateway.example.com`, named in [OAuth sign-in](#agents-that-sign-in-with-oauth) metadata. Unset, each request's own address is used: its `Host`, with `x-forwarded-proto` when a proxy sets it |
+| `DASHBOARD_URL` | Where people approve an OAuth sign-in, when the dashboard is not served from the gateway's own address (for example `http://localhost:5173` in development) |
 | `FAILOVER_ENABLED` | Seeds the failover policy switch (`true`/`1`; default off) — see [Failover](#failover) |
 | `FAILOVER_TARGETS` | Comma-separated `provider/model` ids tried, in order, when a request fails |
 | `FAILOVER_TIMEOUT_MS` | Per-attempt budget in ms before failing over (default `30000`; `0` disables the timeout) |
@@ -276,11 +278,15 @@ through environment variables:
 - `POST /v1/:workspace/api-tokens/:id/roll` — issue a new secret with `{ ttlDays, previousTokenTtlSeconds }`. Overlap is 0–2592000 seconds (30 days), capped at the previous value's original expiry.
 - `DELETE /v1/:workspace/api-tokens/:id` — revoke the token and all overlapping values; retains its metadata and action history.
 
-- `GET /v1/:workspace/agent-tokens` — agent token metadata, latest 100 lifecycle actions, persistence and authentication mode.
-- `POST /v1/:workspace/agent-tokens` — create an agent credential with `{ name, description, ttlDays, permissions? }`. Returns `{ token, secret }` once; omitted permissions grant no access.
+- `GET /v1/:workspace/agents` — every agent in the workspace, whichever way it was made: `{ id, kind, name, description, status, permissions, model, connections, createdAt }` with `kind` `instructions`, `oauth`, or `token`. Any member; see [Agents](#agents).
+- `GET /v1/:workspace/agent-tokens` — workspace admins: the agents that use MCP (`auth` is `token` or `oauth`), their latest 100 lifecycle actions, persistence and authentication mode.
+- `POST /v1/:workspace/agent-tokens` — create an agent with a token: `{ name, description, ttlDays, permissions? }`. Returns `{ token, secret }` once; omitted permissions grant no access.
+- `POST /v1/:workspace/agents/oauth` — create an agent that apps sign in to with OAuth: `{ name, description, permissions? }`. It has no token.
 - `PATCH /v1/:workspace/agent-tokens/:id` — update `{ name, description, permissions? }`; omitted permissions stay unchanged and `[]` removes all grants.
-- `POST /v1/:workspace/agent-tokens/:id/roll` — rotate with `{ ttlDays, previousTokenTtlSeconds }`, using the same TTL and overlap choices as API tokens.
-- `DELETE /v1/:workspace/agent-tokens/:id` — revoke all current and overlapping values, retaining metadata and history.
+- `POST /v1/:workspace/agent-tokens/:id/roll` — rotate with `{ ttlDays, previousTokenTtlSeconds }`, using the same TTL and overlap choices as API tokens. An OAuth agent has nothing to roll (409).
+- `DELETE /v1/:workspace/agent-tokens/:id` — revoke all current and overlapping values and sign out every app, retaining metadata and history.
+- `GET /v1/:workspace/agents/:id/connections` — the apps signed in to an OAuth agent; `DELETE /v1/:workspace/agents/:id/connections/:connection` signs one out.
+- `GET /v1/oauth/sign-ins/:id`, `POST /v1/oauth/sign-ins/:id/deny`, `POST /v1/:workspace/oauth/sign-ins/:id/approve` — the dashboard's side of an OAuth sign-in; see [Agents that sign in with OAuth](#agents-that-sign-in-with-oauth).
 
 - `POST /v1/:workspace/chat` — proxy a chat request; body `{ model, messages, stream?, temperature?, maxTokens? }` where `model` is `connection/model`, `auto`, or `pool/<id>`. Returns the assistant message plus `usage` token counts; with `stream: true` responds with SSE (`text-delta` events, then `finish` with usage).
 - `GET /v1/:workspace/models` — routable models and providers.
@@ -297,8 +303,9 @@ through environment variables:
 
 - `/v1/:workspace/synapse/...` — Synapse's notes, spaces, export/import, and proposals; see [Synapse](#synapse).
 - `/v1/:workspace/channels/...` — channels, their messages, agents, and read marks; see [Channels](#channels).
-- `/v1/:workspace/bots/...` — bots the gateway runs and their runs; see [Bots](#bots).
-- `POST /mcp` — the MCP endpoint for agent tokens; see [Synapse](#synapse) and [Channels](#channels).
+- `/v1/:workspace/bots/...` — agents the gateway runs and their runs; see [Agents with instructions](#agents-with-instructions).
+- `POST /mcp` — the MCP endpoint for agents; see [Synapse](#synapse) and [Channels](#channels).
+- `/.well-known/oauth-protected-resource`, `/.well-known/oauth-authorization-server`, `/oauth/register`, `/oauth/authorize`, `/oauth/token`, `/oauth/revoke` — OAuth sign-in for MCP apps; see [Agents that sign in with OAuth](#agents-that-sign-in-with-oauth).
 
 ```bash
 # Host-run API against the compose services
@@ -366,23 +373,38 @@ latest 100 actions atomically with its metadata. Future resource scopes,
 delegated token management, and a permanent audit log are covered in the
 [API token permissions plan](docs/API_TOKEN_PERMISSIONS_PLAN.md).
 
-### Agent tokens
+### Agents
 
-Open **Agent Tokens** to issue credentials for agents that connect over MCP.
-The MCP server at `POST /mcp` serves the [Synapse](#synapse) and
-[Channels](#channels) tools; an agent sends
-its token as `Authorization: Bearer agt_…`. Each token supports the same name,
-description, TTL, one-time secret display, rolling with overlap, revocation, and
-action log as API Tokens.
+An agent is anything that takes part in a workspace as itself: it has a name,
+a place in [channels](#channels), and a private [Synapse](#synapse) space.
+Open **Agents** to see all of a workspace's agents in one list and to create
+one. How an agent is made decides how it works, and does not change later:
+
+| Made with | What it is |
+| --- | --- |
+| Instructions | The gateway runs it. It answers in channels when mentioned, using a model from the workspace. See [Agents with instructions](#agents-with-instructions). |
+| OAuth sign-in | An MCP app such as Claude or Cursor signs in and a workspace admin approves it in the dashboard. Nothing is copied by hand. See [Agents that sign in with OAuth](#agents-that-sign-in-with-oauth). |
+| Token | An MCP app or script is given an agent token. See [Agents with a token](#agents-with-a-token). |
+
+Workspace admins create, change, and revoke every kind of agent in their
+workspace, and approve OAuth sign-ins to it. Members see the list. An agent
+acts only in its own workspace. Agents of the last two kinds use the MCP
+server at `POST /mcp`, which serves the [Synapse](#synapse) and
+[Channels](#channels) tools, and hold MCP grants that an admin chooses.
+
+#### Agents with a token
+
+An agent sends its token as `Authorization: Bearer agt_…`. Each token supports
+the same name, description, TTL, one-time secret display, rolling with overlap,
+revocation, and action log as API Tokens.
 
 Agent secrets use the `agt_` prefix and store only SHA-256 digests in the separate
 `gateway_agent_tokens` MongoDB collection. Without MongoDB they last until API
 restart. API and agent token lists, histories, permission sets, and authentication
 are isolated: an agent credential cannot authenticate a `/v1/*` request, and an
-API credential cannot authenticate through `AgentTokenStore`. Management requires
-a signed-in owner or admin.
+API credential cannot authenticate through `AgentTokenStore`.
 
-New agent tokens start with no permissions, both in the dashboard and through the
+New agents start with no permissions, both in the dashboard and through the
 API. The MCP grants are `mcp:read` (`tools/list`) and `mcp:call` (`tools/call`).
 They are independent; an agent that uses Synapse or Channels needs both. A third
 grant, `channels:manage`, lets an agent create, rename, and archive channels and
@@ -392,6 +414,56 @@ not authorize any REST endpoint: an agent token on `/v1/*` gets 401. Permission
 edits apply to all overlapping values, and rolling preserves grants. An agent's
 token ID names its private Synapse space (`agent-<id>`), so rolling a credential
 keeps the agent's memory and revoking it cuts the agent off without deleting it.
+
+#### Agents that sign in with OAuth
+
+Give an MCP app the gateway's MCP address, `https://<gateway>/mcp`, and no
+token. The app finds out by itself how to sign in, opens a browser, and a
+workspace admin approves it in the dashboard:
+
+1. The app calls `/mcp` and gets `401` with
+   `WWW-Authenticate: Bearer resource_metadata="…/.well-known/oauth-protected-resource/mcp"`.
+   That document and `/.well-known/oauth-authorization-server` name the
+   gateway as the OAuth 2.1 authorization server for its own MCP endpoint.
+2. The app registers itself at `POST /oauth/register` (Dynamic Client
+   Registration, public clients only) and sends the person's browser to
+   `/oauth/authorize` with a PKCE `S256` challenge.
+3. The gateway hands the sign-in to the dashboard (`#/authorize/<id>`). The
+   person signs in if needed and sees the app's name, which the app chose
+   itself, and the address it will be sent back to. A workspace admin picks
+   the workspace and one of its OAuth agents, or creates one there, and
+   approves. Anyone signed in can refuse.
+4. The app exchanges its code at `POST /oauth/token` and uses the access
+   token on `/mcp`. What it may do is the agent's own grants, so changing the
+   agent changes every app signed in to it at once.
+
+Registration grants nothing. A registration nobody approves is forgotten
+after 7 days, and at most 1,000 wait at a time: beyond that the oldest makes
+room. Until a person has approved an app once, the gateway never sends a
+browser to the address the app registered, not even to report a mistake, so
+a registration cannot be used to bounce people to another site. A sign-in
+waits 15 minutes for a decision and is decided once, and at most 20 from one
+app wait at a time. Redirect
+addresses must match what the app registered exactly (an app on `localhost`
+may use any port) and must be HTTPS, `http://localhost`, or an app's own
+scheme such as `cursor://`; `javascript:`, `data:`, and other browser schemes
+are refused. Authorization codes last 2 minutes and work once: a code that
+arrives twice ends the connection it started.
+
+Access tokens (`oat_…`) last an hour. Refresh tokens (`ort_…`) are replaced
+on every use; a replaced one that turns up again later ends the connection,
+and a connection whose app has not renewed for 30 days ends by itself. Only
+SHA-256 digests are stored, in `gateway_oauth_clients`,
+`gateway_oauth_requests`, and `gateway_oauth_grants`; without MongoDB they
+last until restart. An agent's page lists the apps signed in to it, with who
+approved each, and can disconnect one; revoking the agent signs all of them
+out. Up to 10 apps can be signed in to one agent. Sign-ins and sign-outs are
+written to the agent's history. An app can also sign itself out at
+`POST /oauth/revoke`.
+
+OAuth metadata must name the address the app itself uses. Behind a proxy that
+ends TLS without sending `x-forwarded-proto`, or when the dashboard is served
+from another address, set `PUBLIC_URL` and `DASHBOARD_URL`.
 
 ### Synapse
 
@@ -423,7 +495,8 @@ in their workspace, read `global`, and never change it or decide proposals.
 
 Agents use Synapse over MCP. `POST /mcp` speaks Streamable HTTP in stateless
 mode (one JSON-RPC message per request, JSON responses, no sessions) and
-accepts agent tokens only. `initialize` returns short instructions (search
+accepts agents only: an agent token, or the access token of an app that
+[signed in with OAuth](#agents-that-sign-in-with-oauth). `initialize` returns short instructions (search
 before you write, one note per thing, link first mentions, dates as
 `YYYY-MM-DD`, log what you did); the tools are `synapse_search`, `synapse_read`,
 `synapse_create`, `synapse_update`, `synapse_append`, `synapse_delete`, `synapse_log`,
@@ -516,9 +589,10 @@ With `MONGODB_URI`, channels live in `channels`, their logs in
 `channel_messages`, and read marks in `channel_reads`; without it they last
 until restart.
 
-### Bots
+### Agents with instructions
 
-A bot is a participant the gateway answers for. Open **Bots** to create one
+An agent with instructions, also called a bot, is a participant the gateway
+answers for. Open **Agents**, choose **New agent**, and create one
 with a name, instructions, and a model (a model, a pool, or `auto` from the
 workspace's routing), then add it to a channel from the channel's details.
 When a person mentions it there, the gateway builds a prompt from the recent
@@ -780,7 +854,7 @@ one origin, one deployable.
 
 | Path | Served by |
 | --- | --- |
-| `/v1/*`, `/mcp`, `/health`, `/healthz` | The API (Fastify) inside the Worker (`run_worker_first`). |
+| `/v1/*`, `/mcp`, `/oauth/*`, `/.well-known/*`, `/health`, `/healthz` | The API (Fastify) inside the Worker (`run_worker_first`). |
 | Everything else | The dashboard build. Unknown paths get `index.html` for client-side routes. These requests never invoke the Worker. |
 
 The dashboard calls the API on its own origin, so the build needs no

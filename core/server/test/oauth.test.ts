@@ -10,6 +10,7 @@ import type {
 import { afterEach, describe, expect, it } from "vitest";
 import { type OAuthAgents, OAuthService } from "../src/oauth/oauth.js";
 import { MemoryOAuthRepository } from "../src/oauth/repository.js";
+import { createServer } from "../src/server.js";
 import { startChannels } from "./channel-helpers.js";
 
 const cleanups: Array<() => Promise<unknown>> = [];
@@ -219,6 +220,43 @@ describe("OAuth sign-in to the MCP endpoint", () => {
 		);
 	});
 
+	it("takes its address from the request when PUBLIC_URL is unset", async () => {
+		const issuer = async (
+			options: { assumeHttps?: boolean },
+			headers: Record<string, string>,
+		) => {
+			const server = createServer({
+				config: { providers: [], corsOrigins: [] },
+				logger: false,
+				...options,
+			});
+			cleanups.push(() => server.close());
+			return (
+				await server.inject({
+					url: "/.well-known/oauth-authorization-server",
+					headers,
+				})
+			).json().issuer as string;
+		};
+		const host = "gateway.example.com";
+		// A proxy that ends TLS says so; a Worker's runtime does not.
+		expect(await issuer({}, { host })).toBe(`http://${host}`);
+		expect(await issuer({}, { host, "x-forwarded-proto": "https" })).toBe(
+			`https://${host}`,
+		);
+		expect(await issuer({ assumeHttps: true }, { host })).toBe(
+			`https://${host}`,
+		);
+		expect(
+			await issuer({ assumeHttps: true }, { host: "localhost:8787" }),
+		).toBe("http://localhost:8787");
+		expect(await issuer({}, { host: "[::1]:3000" })).toBe("http://[::1]:3000");
+		// A Host header that is not a host name is not repeated back.
+		expect(await issuer({}, { host: 'evil"example.com' })).toBe(
+			"http://localhost",
+		);
+	});
+
 	it("registers public clients and refuses unsafe redirect addresses", async () => {
 		const { register } = await start();
 		const created = await register({
@@ -266,7 +304,7 @@ describe("OAuth sign-in to the MCP endpoint", () => {
 	});
 
 	it("shows a problem with the app to the person and any other to the app", async () => {
-		const { register, authorize, begin } = await start();
+		const { register, authorize, begin, approve } = await start();
 		const client = (await register()).body.client_id as string;
 		const base = {
 			response_type: "code",
@@ -293,14 +331,31 @@ describe("OAuth sign-in to the MCP endpoint", () => {
 			[{ ...base, code_challenge_method: "plain" }, "invalid_request"],
 			[{ ...base, resource: "https://other.example/mcp" }, "invalid_target"],
 		];
-		for (const [params, error] of refusals) {
+		// Nobody has approved this app yet, so the gateway sends no browser to
+		// the address it registered, not even to report a mistake.
+		for (const [params] of refusals) {
 			const response = await authorize(params);
+			expect(response.status).toBe(400);
+			expect(response.headers.get("location")).toBeNull();
+		}
+		const known = await begin();
+		await approve(known.request, {
+			agent: { name: "Known", description: "" },
+		});
+		for (const [params, error] of refusals) {
+			const response = await authorize({ ...params, client_id: known.client });
 			expect(response.status).toBe(302);
 			const back = new URL(response.headers.get("location") as string);
 			expect(back.origin + back.pathname).toBe(REDIRECT);
 			expect(back.searchParams.get("error")).toBe(error);
 			expect(back.searchParams.get("state")).toBe("s");
 		}
+		// One app can keep only so many sign-ins waiting.
+		for (let index = 0; index < 20; index++)
+			expect((await authorize(base)).status).toBe(302);
+		const full = await authorize(base);
+		expect(full.status).toBe(400);
+		expect(await full.text()).toMatch(/Too many sign-ins/);
 		// An app on this computer may listen on another port than it registered.
 		const moved = await begin({
 			redirect_uri: "http://127.0.0.1:50123/callback",
@@ -935,7 +990,7 @@ describe("OAuth sign-in over time", () => {
 			{ client_id: (await begin()).client, response_type: "code" },
 			"https://gateway.example.com",
 		);
-		expect(late).toHaveProperty("redirect");
+		expect(late).toHaveProperty("page");
 		expect(
 			await repository.countPendingClients(
 				new Date(Date.parse("2026-01-09T00:00:01Z")),

@@ -131,7 +131,15 @@ export async function oauthRoutes(
 		const basic = /^Basic (\S+)$/i.exec(request.headers.authorization ?? "");
 		if (basic && input.client_id === undefined) {
 			const [id] = Buffer.from(basic[1], "base64").toString().split(":");
-			input.client_id = decodeURIComponent(id);
+			try {
+				input.client_id = decodeURIComponent(id);
+			} catch {
+				throw new OAuthError(
+					"invalid_client",
+					"The client id in the Authorization header cannot be read.",
+					401,
+				);
+			}
 		}
 		return input;
 	};

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
@@ -210,6 +210,19 @@ await withWorker("", async (request, logs, base) => {
 	// /mcp is a Worker path too: agent-token auth answers, not the asset stub.
 	await request("/mcp", 401, { method: "POST", headers: json, body: "{}" });
 	await request("/mcp", 405);
+	// So are the OAuth sign-in paths an MCP app looks up after that 401.
+	const resource = (await request(
+		"/.well-known/oauth-protected-resource/mcp",
+	)) as { resource: string; authorization_servers: string[] };
+	assert.equal(resource.resource, `${base}/mcp`);
+	assert.deepEqual(resource.authorization_servers, [base]);
+	const metadata = (await request(
+		"/.well-known/oauth-authorization-server",
+	)) as { token_endpoint: string };
+	assert.equal(metadata.token_endpoint, `${base}/oauth/token`);
+	const unknown = await fetch(`${base}/oauth/authorize?client_id=nobody`);
+	assert.equal(unknown.status, 400);
+	assert.match(unknown.headers.get("content-type") ?? "", /text\/plain/);
 	const auth = await setUp(request);
 	const workspace = await defaultWorkspace(request, auth);
 	await request(`${workspace}/models`, 200, { headers: auth });
@@ -238,7 +251,7 @@ const client = new MongoClient(url.toString(), {
 try {
 	await client.connect(); // Required: this regression check must not silently skip MongoDB.
 	assert.deepEqual(await client.db().listCollections().toArray(), []);
-	await withWorker(url.toString(), async (request, logs) => {
+	await withWorker(url.toString(), async (request, logs, base) => {
 		// Concurrent cold requests must also complete the same initialization.
 		await Promise.all(
 			Array.from({ length: 4 }, async () => {
@@ -392,6 +405,84 @@ try {
 		assert.equal(tool.result.isError, undefined);
 		assert.equal(tool.result.structuredContent.seq, 5);
 
+		// An MCP app signs in with OAuth: every step is its own request, so
+		// the sign-in, the code, and the tokens all live in MongoDB.
+		const redirect = "http://127.0.0.1:9/callback";
+		const verifier = randomUUID() + randomUUID();
+		const registered = (await request("/oauth/register", 201, {
+			method: "POST",
+			headers: json,
+			body: JSON.stringify({ client_name: "App", redirect_uris: [redirect] }),
+		})) as { client_id: string };
+		const started = await fetch(
+			`${base}/oauth/authorize?${new URLSearchParams({
+				response_type: "code",
+				client_id: registered.client_id,
+				redirect_uri: redirect,
+				code_challenge: createHash("sha256")
+					.update(verifier)
+					.digest("base64url"),
+				code_challenge_method: "S256",
+				state: "s",
+			})}`,
+			{ redirect: "manual" },
+		);
+		assert.equal(started.status, 302);
+		const signIn = /^http:\/\/[^/]+\/#\/authorize\/([\w-]{43})$/.exec(
+			started.headers.get("location") ?? "",
+		)?.[1];
+		assert(signIn, "The sign-in was not handed to the dashboard");
+		const decided = (await send(
+			`/oauth/sign-ins/${signIn}/approve`,
+			{
+				agent: {
+					name: "OAuth agent",
+					description: "",
+					permissions: ["mcp:read", "mcp:call"],
+				},
+			},
+			200,
+		)) as { redirectTo: string };
+		const back = new URL(decided.redirectTo);
+		assert.equal(back.searchParams.get("state"), "s");
+		const form = { "content-type": "application/x-www-form-urlencoded" };
+		const issued = (await request("/oauth/token", 200, {
+			method: "POST",
+			headers: form,
+			body: new URLSearchParams({
+				grant_type: "authorization_code",
+				code: back.searchParams.get("code") ?? "",
+				client_id: registered.client_id,
+				redirect_uri: redirect,
+				code_verifier: verifier,
+			}),
+		})) as { access_token: string; refresh_token: string };
+		const renewed = (await request("/oauth/token", 200, {
+			method: "POST",
+			headers: form,
+			body: new URLSearchParams({
+				grant_type: "refresh_token",
+				refresh_token: issued.refresh_token,
+				client_id: registered.client_id,
+			}),
+		})) as { access_token: string };
+		const listed = (await request("/mcp", 200, {
+			method: "POST",
+			headers: { ...json, authorization: `Bearer ${renewed.access_token}` },
+			body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+		})) as { result: { tools: unknown[] } };
+		assert(listed.result.tools.length > 0);
+		const everyone = (await request(`${workspace}/agents`, 200, {
+			headers: auth,
+		})) as { agents: Array<{ kind: string; connections: number }> };
+		assert.deepEqual(
+			everyone.agents.map((item) => [item.kind, item.connections]),
+			[
+				["oauth", 1],
+				["token", 0],
+			],
+		);
+
 		// A bot the gateway runs: the model call and the reply happen after the
 		// post has returned, on the posting request's sockets.
 		let modelCalls = 0;
@@ -451,7 +542,7 @@ try {
 			assert(!logs().includes(secret));
 	});
 	console.log(
-		"Worker: fresh database, concurrent requests, durable writes, parameter routes, team sign-in, channels, and bots passed",
+		"Worker: fresh database, concurrent requests, durable writes, parameter routes, team sign-in, channels, OAuth sign-in, and bots passed",
 	);
 
 	await client.db().dropDatabase();

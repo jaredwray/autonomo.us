@@ -223,6 +223,9 @@ describe.skipIf(!available)("OAuth sign-in with MongoDB", () => {
 			expiresAt: later,
 		});
 		expect((await repository.getRequest("request"))?.expiresAt).toEqual(later);
+		expect(await repository.countRequests("new", now)).toBe(1);
+		expect(await repository.countRequests("new", later)).toBe(0);
+		expect(await repository.countRequests("old", now)).toBe(0);
 		const taken = await Promise.all(
 			Array.from({ length: 5 }, () => repository.takeRequest("request")),
 		);

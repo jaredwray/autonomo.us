@@ -79,6 +79,8 @@ export interface OAuthRepository {
 	removeOldestPendingClient(): Promise<void>;
 
 	insertRequest(request: StoredRequest): Promise<void>;
+	/** One app's sign-ins that are still waiting. */
+	countRequests(clientId: string, now: Date): Promise<number>;
 	getRequest(id: string): Promise<StoredRequest | null>;
 	/** Returns the request and removes it, so only one caller gets it. */
 	takeRequest(id: string): Promise<StoredRequest | null>;
@@ -136,6 +138,11 @@ export class MemoryOAuthRepository implements OAuthRepository {
 		for (const [id, stored] of this.requests)
 			if (stored.expiresAt <= now) this.requests.delete(id);
 		this.requests.set(request.id, structuredClone(request));
+	}
+	async countRequests(clientId: string, now: Date) {
+		return [...this.requests.values()].filter(
+			(request) => request.clientId === clientId && request.expiresAt > now,
+		).length;
 	}
 	async getRequest(id: string) {
 		const request = this.requests.get(id);
@@ -224,6 +231,7 @@ export class MongoOAuthRepository implements OAuthRepository {
 				this.clients().createIndex({ expiresAt: 1 }, ttl),
 				this.clients().createIndex({ approvedAt: 1, createdAt: 1 }),
 				this.requests().createIndex({ expiresAt: 1 }, ttl),
+				this.requests().createIndex({ clientId: 1 }),
 				this.grants().createIndex({ expiresAt: 1 }, ttl),
 				this.grants().createIndex({ workspaceId: 1, agentId: 1 }),
 			]);
@@ -283,6 +291,14 @@ export class MongoOAuthRepository implements OAuthRepository {
 	async insertRequest(request: StoredRequest) {
 		await this.ensureIndexes();
 		await this.run(() => this.requests().insertOne(stored(request)));
+	}
+	countRequests(clientId: string, now: Date) {
+		return this.run(() =>
+			this.requests().countDocuments({
+				clientId: { $eq: clientId },
+				expiresAt: { $gt: now },
+			}),
+		);
 	}
 	getRequest(id: string) {
 		return this.run(async () =>

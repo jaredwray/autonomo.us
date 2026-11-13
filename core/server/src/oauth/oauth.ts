@@ -237,13 +237,21 @@ export class OAuthService {
 				page: "The address this app asked to return to is not one it registered. Nothing was approved.",
 			};
 		const state = typeof query.state === "string" ? query.state : null;
-		const refuse = (error: string, description: string) => ({
-			redirect: redirectWith(redirectUri, {
-				error,
-				error_description: description,
-				state: state?.slice(0, OAUTH_LIMITS.stateLength) ?? null,
-			}),
-		});
+		// Anyone can register an app and its address. Until a person has
+		// approved the app once, the gateway does not send browsers there.
+		const refuse = (
+			error: string,
+			description: string,
+		): { page: string } | { redirect: string } =>
+			client.approvedAt
+				? {
+						redirect: redirectWith(redirectUri, {
+							error,
+							error_description: description,
+							state: state?.slice(0, OAUTH_LIMITS.stateLength) ?? null,
+						}),
+					}
+				: { page: `The app's sign-in request cannot be used. ${description}` };
 		if (query.response_type !== "code")
 			return refuse(
 				"unsupported_response_type",
@@ -265,6 +273,13 @@ export class OAuthService {
 				"invalid_target",
 				`This server signs apps in to ${mcpResource(origin)} only.`,
 			);
+		if (
+			(await this.repository.countRequests(client.id, this.date())) >=
+			OAUTH_LIMITS.requestsPerClient
+		)
+			return {
+				page: "Too many sign-ins from this app are waiting for a decision. Decide them in the dashboard, or try again in a few minutes.",
+			};
 		const id = randomBytes(32).toString("base64url");
 		await this.repository.insertRequest({
 			id: tokenHash(id),

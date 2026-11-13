@@ -695,7 +695,9 @@ As PRs, after C4:
 ## 17. What was built
 
 Everything in sections 3–13 and 16 is implemented. The README's **Channels**
-and **Bots** sections are the reference for what runs; this section records
+and **Agents** sections are the reference for what runs (bots are now
+"agents with instructions", listed with every other agent, and workspace
+admins manage agents of every kind); this section records
 where the build differs from the text above, and how the open choices were
 settled.
 

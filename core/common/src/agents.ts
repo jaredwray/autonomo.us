@@ -45,13 +45,15 @@ export const OAUTH_LIMITS = {
 	clientNameLength: 100,
 	redirectUris: 10,
 	redirectUriLength: 2000,
-	stateLength: 4096,
+	stateLength: 2048,
 	/** App registrations nobody has approved yet; the oldest make room. */
 	pendingClients: 1000,
 	/** How long a registration waits for its first approval. */
 	pendingClientDays: 7,
 	/** How long a sign-in waits for a person to decide. */
 	requestMinutes: 15,
+	/** Sign-ins from one app that may wait at the same time. */
+	requestsPerClient: 20,
 	codeSeconds: 120,
 	accessTokenSeconds: 3600,
 	/** A connection ends when its app has not refreshed for this long. */
