@@ -33,6 +33,11 @@ export type ApiToken<Permission extends string = ApiTokenPermission> = {
 	expiresAt: string | null;
 	revokedAt: string | null;
 	status: "active" | "expired" | "revoked";
+	/**
+	 * How the holder proves who it is: a copied token, or, for agents only,
+	 * an app that signs in with OAuth and holds no token of this kind.
+	 */
+	auth: "token" | "oauth";
 	previousTokens: Array<{ prefix: string; expiresAt: string }>;
 };
 
@@ -63,7 +68,14 @@ export type ApiTokenAction = {
 	id: string;
 	tokenId: string;
 	tokenName: string;
-	action: "created" | "updated" | "rolled" | "revoked";
+	/** `connected` and `disconnected`: an app signing in to an OAuth agent, or leaving. */
+	action:
+		| "created"
+		| "updated"
+		| "rolled"
+		| "revoked"
+		| "connected"
+		| "disconnected";
 	timestamp: string;
 	/** `owner` and `local-admin` appear only in history from before team accounts. */
 	actor: "owner" | "local-admin" | "user";

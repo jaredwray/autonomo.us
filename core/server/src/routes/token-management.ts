@@ -5,7 +5,11 @@ import {
 	type UpdateApiTokenRequest,
 } from "@autonomo.us/common";
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { requestWorkspace, signedInMember } from "../auth/access.js";
+import {
+	type RequestWorkspace,
+	requestWorkspace,
+	signedInMember,
+} from "../auth/access.js";
 import { AccountError, AccountStore } from "../auth/accounts.js";
 import { ApiTokenError, type TokenStore } from "../auth/token-store.js";
 
@@ -26,6 +30,13 @@ export async function tokenManagementRoutes<Permission extends string>(
 		tokens: TokenStore<Permission>;
 		path: string;
 		permissions: Record<Permission, string>;
+		/**
+		 * Org owners and admins only, whatever the route's scope allows. For
+		 * API tokens, which outlive the member who made them.
+		 */
+		orgOnly?: boolean;
+		/** Runs after a token is revoked, to end what depended on it. */
+		revoked?(workspace: RequestWorkspace, id: string): Promise<unknown>;
 	},
 ) {
 	const tokenActor = (request: FastifyRequest) => {
@@ -41,10 +52,11 @@ export async function tokenManagementRoutes<Permission extends string>(
 	server.addHook("onRequest", async (_request, reply) => {
 		reply.header("cache-control", "no-store");
 	});
-	// Tokens outlive the member who minted them, so only owners and admins
-	// may create, change, or list them.
+	// Tokens are for people to manage: a signed-in member, and for API tokens
+	// an org owner or admin.
 	server.addHook("preHandler", async (request) => {
-		if (!AccountStore.canManage(signedInMember(request)))
+		const member = signedInMember(request);
+		if (options.orgOnly && !AccountStore.canManage(member))
 			throw new AccountError("Only owners and admins can manage tokens.", 403);
 	});
 	// Fastify can coerce a scalar to an array during schema validation. Grants
@@ -150,14 +162,17 @@ export async function tokenManagementRoutes<Permission extends string>(
 	server.delete<{ Params: { id: string } }>(
 		`${options.path}/:id`,
 		{ schema: { params } },
-		(request) => {
+		async (request) => {
 			const { actor, name } = tokenActor(request);
-			return options.tokens.revoke(
-				requestWorkspace(request),
+			const workspace = requestWorkspace(request);
+			const token = await options.tokens.revoke(
+				workspace,
 				request.params.id,
 				actor,
 				name,
 			);
+			await options.revoked?.(workspace, request.params.id);
+			return token;
 		},
 	);
 }

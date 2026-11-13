@@ -10,6 +10,7 @@ export async function apiTokenRoutes(
 	await tokenManagementRoutes(server, {
 		...options,
 		path: "/api-tokens",
+		orgOnly: true,
 		permissions: API_TOKEN_PERMISSIONS,
 	});
 }

@@ -120,7 +120,9 @@ describe("MCP endpoint", () => {
 		});
 		const missing = await post(initialize);
 		expect(missing.status).toBe(401);
-		expect(missing.headers.get("www-authenticate")).toBe("Bearer");
+		expect(missing.headers.get("www-authenticate")).toMatch(
+			/^Bearer resource_metadata="http/,
+		);
 		expect(missing.body).toEqual({ error: { message: expect.any(String) } });
 		expect(
 			(await post(initialize, { authorization: `Bearer ${owner.token}` }))

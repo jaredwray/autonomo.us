@@ -6,7 +6,9 @@ import {
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { AgentTokenStore } from "../auth/agent-tokens.js";
 import { ApiTokenError, type AuthenticatedToken } from "../auth/token-store.js";
+import type { OAuthService } from "../oauth/oauth.js";
 import { resolveCorsOrigin } from "../routes/chat.js";
+import { resourceMetadataUrl } from "../routes/oauth.js";
 import { ServiceError } from "../service-error.js";
 import type { WorkspaceStore } from "../workspaces/store.js";
 
@@ -62,7 +64,7 @@ export type McpToolDefinition = {
 export type McpArgs = Record<string, unknown>;
 /** The agent a request authenticated as, in its workspace. */
 export type McpAgent = {
-	/** An agent token, or the identity of a bot the gateway runs. */
+	/** An agent that uses MCP, or the identity of one the gateway runs. */
 	token: Pick<
 		AuthenticatedToken<AgentTokenPermission>,
 		"id" | "name" | "permissions"
@@ -155,7 +157,11 @@ export function requireGrant(
 export type McpRouteOptions = {
 	toolSets: McpToolSet[];
 	agentTokens: AgentTokenStore;
-	/** An agent token works only while its workspace exists and is not archived. */
+	/** Access tokens of apps that signed in to an agent with OAuth. */
+	oauth: Pick<OAuthService, "authenticate">;
+	/** The address the request reached the gateway at, without a path. */
+	origin(request: FastifyRequest): string;
+	/** An agent works only while its workspace exists and is not archived. */
 	workspaces: Pick<WorkspaceStore, "get" | "defaultWorkspaceId">;
 	/** Browser origins allowed by CORS_ORIGIN; `["*"]` allows any. */
 	corsOrigins: string[];
@@ -263,34 +269,68 @@ export async function mcpRoutes(
 		}
 	};
 
-	const unauthorized = (reply: FastifyReply) =>
+	/**
+	 * Tells an MCP app where to sign in (RFC 9728): the metadata names this
+	 * gateway as the authorization server for the endpoint.
+	 */
+	const unauthorized = (
+		request: FastifyRequest,
+		reply: FastifyReply,
+		presented: boolean,
+	) =>
 		reply
 			.code(401)
-			.header("www-authenticate", "Bearer")
-			.send({ error: { message: "Provide a valid agent token." } });
+			.header(
+				"www-authenticate",
+				`Bearer ${presented ? 'error="invalid_token", ' : ""}resource_metadata="${resourceMetadataUrl(options.origin(request))}", scope="mcp:read mcp:call"`,
+			)
+			.send({
+				error: {
+					message: "Provide a valid agent token, or sign in with OAuth.",
+				},
+			});
 
-	/** Only agent tokens speak MCP; sessions, API tokens, and SETUP_TOKEN are refused. */
+	/** The agent an OAuth access token was issued for, while both still stand. */
+	const signedIn = async (secret: string) => {
+		const identity = await options.oauth.authenticate(secret);
+		const agent = identity
+			? await options.agentTokens.find(identity.agentId)
+			: null;
+		if (!identity || !agent || agent.auth !== "oauth") return null;
+		const workspaceId =
+			agent.workspaceId ?? (await options.workspaces.defaultWorkspaceId());
+		return workspaceId === identity.workspaceId ? agent : null;
+	};
+
+	/**
+	 * Agents speak MCP with an agent token or an OAuth access token; sessions,
+	 * API tokens, and SETUP_TOKEN are refused.
+	 */
 	const authenticate = async (
 		request: FastifyRequest,
 		reply: FastifyReply,
 	): Promise<McpAgent | undefined> => {
-		const match = /^Bearer (agt_\S+)$/i.exec(
+		const match = /^Bearer ((agt|oat)_\S+)$/i.exec(
 			request.headers.authorization ?? "",
 		);
 		if (!match) {
-			unauthorized(reply);
+			unauthorized(request, reply, false);
 			return undefined;
 		}
 		let token: AuthenticatedToken<AgentTokenPermission> | null;
 		try {
-			token = await options.agentTokens.authenticate(match[1]);
+			token =
+				match[2].toLowerCase() === "oat"
+					? await signedIn(match[1])
+					: await options.agentTokens.authenticate(match[1]);
 		} catch (error) {
-			if (!(error instanceof ApiTokenError)) throw error;
+			if (!(error instanceof ApiTokenError || error instanceof ServiceError))
+				throw error;
 			reply.code(error.statusCode).send({ error: { message: error.message } });
 			return undefined;
 		}
 		if (!token) {
-			unauthorized(reply);
+			unauthorized(request, reply, true);
 			return undefined;
 		}
 		// The same rule as REST: archiving a workspace refuses its tokens. A
@@ -299,7 +339,7 @@ export async function mcpRoutes(
 			token.workspaceId ?? (await options.workspaces.defaultWorkspaceId()),
 		);
 		if (!workspace) {
-			unauthorized(reply);
+			unauthorized(request, reply, true);
 			return undefined;
 		}
 		if (workspace.archivedAt) {

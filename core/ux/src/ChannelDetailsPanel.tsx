@@ -279,9 +279,9 @@ export function ChannelDetailsPanel({
 						</ul>
 					) : (
 						<p className="card-note">
-							No agents are in this channel yet. Add one below. An agent also
-							needs the <code>mcp:call</code> grant on its agent token to read
-							and post here.
+							No agents are in this channel yet. Add one below. An agent that
+							uses MCP also needs the <code>mcp:call</code> grant, set under
+							Agents, to read and post here.
 						</p>
 					)}
 					{!archived && (
@@ -350,7 +350,7 @@ export function ChannelDetailsPanel({
 					)}
 					<p className="card-note">
 						{options !== null && !options.length
-							? "This workspace has no agents yet. An owner or admin creates an agent token under Agent Tokens; a workspace admin creates a gateway bot under Bots. "
+							? "This workspace has no agents yet. A workspace admin creates one under Agents. "
 							: options !== null && !available.length
 								? "Every agent in this workspace is already in this channel. "
 								: ""}

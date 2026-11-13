@@ -53,8 +53,8 @@ export type WorkspaceAction =
 	| "synapse:decide"
 	| "channels:manage"
 	| "channels:moderate"
-	| "bots:read"
-	| "bots:manage";
+	| "agents:read"
+	| "agents:manage";
 
 type RouteRule =
 	| { scope: "public" }
@@ -113,13 +113,13 @@ const channelRoutes = (base: string) =>
 		[`DELETE ${base}/:channel/messages/:message`, workspace("channels:edit")],
 		[`PUT ${base}/:channel/read`, workspace("channels:read")],
 	] as const;
-const tokenRoutes = (base: string) =>
+const tokenRoutes = (base: string, action: "tokens:manage" | "agents:manage") =>
 	[
-		[`GET ${base}`, workspace("tokens:manage")],
-		[`POST ${base}`, workspace("tokens:manage")],
-		[`PATCH ${base}/:id`, workspace("tokens:manage")],
-		[`POST ${base}/:id/roll`, workspace("tokens:manage")],
-		[`DELETE ${base}/:id`, workspace("tokens:manage")],
+		[`GET ${base}`, workspace(action)],
+		[`POST ${base}`, workspace(action)],
+		[`PATCH ${base}/:id`, workspace(action)],
+		[`POST ${base}/:id/roll`, workspace(action)],
+		[`DELETE ${base}/:id`, workspace(action)],
 	] as const;
 
 /**
@@ -168,8 +168,26 @@ export const ROUTE_RULES = new Map<string, RouteRule>([
 	["GET /v1/:workspace/telemetry/summary", workspace("telemetry:read")],
 	["GET /v1/:workspace/telemetry/events", workspace("telemetry:read")],
 	["GET /v1/:workspace/telemetry/analytics", workspace("telemetry:read")],
-	...tokenRoutes("/v1/:workspace/api-tokens"),
-	...tokenRoutes("/v1/:workspace/agent-tokens"),
+	// API tokens reach the gateway's own REST API: org owners and admins only.
+	...tokenRoutes("/v1/:workspace/api-tokens", "tokens:manage"),
+	// Agents, however they are made, belong to their workspace's admins.
+	...tokenRoutes("/v1/:workspace/agent-tokens", "agents:manage"),
+	["GET /v1/:workspace/agents", workspace("agents:read")],
+	["POST /v1/:workspace/agents/oauth", workspace("agents:manage")],
+	["GET /v1/:workspace/agents/:agent/connections", workspace("agents:manage")],
+	[
+		"DELETE /v1/:workspace/agents/:agent/connections/:connection",
+		workspace("agents:manage"),
+	],
+	// An app's OAuth sign-in to the MCP endpoint, decided in the dashboard.
+	// Approving names a workspace and one of its agents; looking and refusing
+	// grant nothing, so any signed-in person may.
+	["GET /v1/oauth/sign-ins/:id", { scope: "instance" }],
+	["POST /v1/oauth/sign-ins/:id/deny", { scope: "instance" }],
+	[
+		"POST /v1/:workspace/oauth/sign-ins/:id/approve",
+		workspace("agents:manage"),
+	],
 	["GET /v1/:workspace/members", workspace("members:read")],
 	["PUT /v1/:workspace/members/:userId", workspace("members:manage")],
 	["DELETE /v1/:workspace/members/:userId", workspace("members:manage")],
@@ -177,13 +195,13 @@ export const ROUTE_RULES = new Map<string, RouteRule>([
 	// to `global` also need an org owner or admin (routes/synapse.ts).
 	...synapseRoutes("/v1/:workspace/synapse"),
 	...channelRoutes("/v1/:workspace/channels"),
-	// Bots the gateway runs. Dashboard only: no token holds these actions.
-	["GET /v1/:workspace/bots", workspace("bots:read")],
-	["POST /v1/:workspace/bots", workspace("bots:manage")],
-	["GET /v1/:workspace/bots/activity", workspace("bots:read")],
-	["GET /v1/:workspace/bots/:bot", workspace("bots:read")],
-	["PATCH /v1/:workspace/bots/:bot", workspace("bots:manage")],
-	["DELETE /v1/:workspace/bots/:bot", workspace("bots:manage")],
+	// Agents the gateway runs. Dashboard only: no token holds these actions.
+	["GET /v1/:workspace/bots", workspace("agents:read")],
+	["POST /v1/:workspace/bots", workspace("agents:manage")],
+	["GET /v1/:workspace/bots/activity", workspace("agents:read")],
+	["GET /v1/:workspace/bots/:bot", workspace("agents:read")],
+	["PATCH /v1/:workspace/bots/:bot", workspace("agents:manage")],
+	["DELETE /v1/:workspace/bots/:bot", workspace("agents:manage")],
 ]);
 
 /** What each workspace role may do, as a signed-in member. */
@@ -200,7 +218,7 @@ const MEMBER_ACTIONS = new Set<WorkspaceAction>([
 	"channels:edit",
 	// Any member creates and manages channels and their agents.
 	"channels:manage",
-	"bots:read",
+	"agents:read",
 ]);
 const ADMIN_ACTIONS = new Set<WorkspaceAction>([
 	...MEMBER_ACTIONS,
@@ -212,10 +230,12 @@ const ADMIN_ACTIONS = new Set<WorkspaceAction>([
 	"synapse:decide",
 	// Deleting someone else's message.
 	"channels:moderate",
-	// A bot spends the workspace's provider keys, like adding a connection.
-	"bots:manage",
+	// Creating and changing agents of every kind, and approving an app's
+	// OAuth sign-in. An agent acts in this workspace only; one with
+	// instructions spends its provider keys, like adding a connection.
+	"agents:manage",
 ]);
-/** Org owners and admins only (D3: tokens outlive the member who made them). */
+/** Org owners and admins only (D3: API tokens outlive the member who made them). */
 const ORG_ACTIONS = new Set<WorkspaceAction>([
 	...ADMIN_ACTIONS,
 	"tokens:manage",
@@ -246,8 +266,8 @@ const ACTION_LABELS: Record<WorkspaceAction, string> = {
 	"synapse:decide": "Synapse: Decide proposals",
 	"channels:manage": "Channels: Manage",
 	"channels:moderate": "Channels: Moderate",
-	"bots:read": "Bots: Read",
-	"bots:manage": "Bots: Manage",
+	"agents:read": "Agents: Read",
+	"agents:manage": "Agents: Manage",
 };
 
 /** The signed-in member for team and account routes. */

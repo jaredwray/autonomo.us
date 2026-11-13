@@ -3,6 +3,8 @@ import type {
 	AcceptInviteRequest,
 	AddModelRequest,
 	AddTeamMemberRequest,
+	AgentConnectionList,
+	AgentList,
 	AgentToken,
 	AgentTokenSecret,
 	AgentTokenSettings,
@@ -10,6 +12,7 @@ import type {
 	ApiToken,
 	ApiTokenSecret,
 	ApiTokenSettings,
+	ApproveOAuthSignInRequest,
 	AuthSession,
 	AuthStatus,
 	BotActivity,
@@ -26,6 +29,7 @@ import type {
 	CreateApiTokenRequest,
 	CreateBotRequest,
 	CreateChannelRequest,
+	CreateOAuthAgentRequest,
 	CreateSynapseNoteRequest,
 	CreateTeamInviteRequest,
 	CreateWorkspaceRequest,
@@ -35,6 +39,8 @@ import type {
 	GatewayResponse,
 	InvitePreview,
 	ModelInfo,
+	OAuthSignIn,
+	OAuthSignInDecision,
 	ProviderSettings,
 	RollAgentTokenRequest,
 	RollApiTokenRequest,
@@ -87,6 +93,10 @@ export type ProviderInfo = {
 
 function apiBase(): string {
 	return import.meta.env?.VITE_API_URL ?? "";
+}
+/** The address an MCP app is given to reach this gateway's agents. */
+export function mcpAddress(): string {
+	return `${apiBase() || window.location.origin}/mcp`;
 }
 
 /**
@@ -866,4 +876,57 @@ export function fetchBotActivity(
 		ws(`/bots/activity?channel=${encodeURIComponent(channelId)}`),
 		{ signal },
 	);
+}
+
+const inWorkspace = (workspaceId: string | undefined, path: string) =>
+	workspaceId ? `/v1/${encodeURIComponent(workspaceId)}${path}` : ws(path);
+const agentPath = (id: string, rest = "") =>
+	ws(`/agents/${encodeURIComponent(id)}${rest}`);
+
+/**
+ * Every agent of a workspace, whichever way it was made. The shown workspace
+ * unless `workspaceId` names another, as approving a sign-in does.
+ */
+export function fetchAgents(workspaceId?: string): Promise<AgentList> {
+	return apiRequest(inWorkspace(workspaceId, "/agents"));
+}
+/** An agent that apps sign in to with OAuth; it has no token. */
+export function createOAuthAgent(
+	input: CreateOAuthAgentRequest,
+): Promise<AgentToken> {
+	return apiRequest(ws("/agents/oauth"), { method: "POST", body: input });
+}
+/** The apps signed in to an OAuth agent. */
+export function fetchAgentConnections(
+	id: string,
+): Promise<AgentConnectionList> {
+	return apiRequest(agentPath(id, "/connections"));
+}
+export function disconnectAgentApp(
+	id: string,
+	connectionId: string,
+): Promise<void> {
+	return apiRequest(
+		agentPath(id, `/connections/${encodeURIComponent(connectionId)}`),
+		{ method: "DELETE" },
+	);
+}
+
+const signInPath = (id: string) => `/oauth/sign-ins/${encodeURIComponent(id)}`;
+/** An app's sign-in that waits for a person to decide it. */
+export function fetchOAuthSignIn(id: string): Promise<OAuthSignIn> {
+	return apiRequest(`/v1${signInPath(id)}`);
+}
+export function approveOAuthSignIn(
+	workspaceId: string,
+	id: string,
+	input: ApproveOAuthSignInRequest,
+): Promise<OAuthSignInDecision> {
+	return apiRequest(inWorkspace(workspaceId, `${signInPath(id)}/approve`), {
+		method: "POST",
+		body: input,
+	});
+}
+export function denyOAuthSignIn(id: string): Promise<OAuthSignInDecision> {
+	return apiRequest(`/v1${signInPath(id)}/deny`, { method: "POST" });
 }

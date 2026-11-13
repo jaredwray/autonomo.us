@@ -7,9 +7,8 @@ export function Icon({
 		| "routing"
 		| "synapse"
 		| "channels"
-		| "bots"
+		| "agents"
 		| "api-tokens"
-		| "agent-tokens"
 		| "team"
 		| "workspaces"
 		| "chevron"
@@ -27,10 +26,9 @@ export function Icon({
 		synapse:
 			"M12 5v15 M12 5a3 3 0 0 0-5.6-1.5A3 3 0 0 0 4 7.5a3 3 0 0 0 .6 4.5A3 3 0 0 0 5 17a3 3 0 0 0 4 2.6A3 3 0 0 0 12 20 M12 5a3 3 0 0 1 5.6-1.5A3 3 0 0 1 20 7.5a3 3 0 0 1-.6 4.5A3 3 0 0 1 19 17a3 3 0 0 1-4 2.6A3 3 0 0 1 12 20 M7 9.5h5 M12 13.5h5",
 		channels: "M4 5h16v11H10l-5 4v-4H4z M8 9h8 M8 12h5",
-		bots: "M11 3l1.9 5.1L18 10l-5.1 1.9L11 17l-1.9-5.1L4 10l5.1-1.9z M18.5 15l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z M5 17v4 M3 19h4",
-		"api-tokens": "M14 7a5 5 0 1 1-3 9L4 23H1v-3l7-7a5 5 0 0 1 6-6z M16 10h.01",
-		"agent-tokens":
+		agents:
 			"M12 3v3 M5 6h14v14H5z M2 10v6 M22 10v6 M9 11h.01 M15 11h.01 M9 16h6",
+		"api-tokens": "M14 7a5 5 0 1 1-3 9L4 23H1v-3l7-7a5 5 0 0 1 6-6z M16 10h.01",
 		team: "M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z M2 21v-1a6 6 0 0 1 12 0v1 M16 3.5a4 4 0 0 1 0 7.5 M18 14.5a6 6 0 0 1 4 5.5v1",
 		workspaces: "M3 7l9-4 9 4-9 4-9-4z M3 7v10l9 4 9-4V7 M12 11v10",
 		chevron: "M8 9l4-4 4 4 M8 15l4 4 4-4",

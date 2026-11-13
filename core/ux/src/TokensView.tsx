@@ -11,7 +11,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Icon } from "./Icons.js";
 
-type Panel<Permission extends string> =
+export type TokenPanel<Permission extends string> =
 	| { kind: "create" }
 	| { kind: "edit" | "roll" | "revoke"; token: ApiToken<Permission> };
 const date = (value: string | null) =>
@@ -52,7 +52,7 @@ export type TokenViewConfig<Permission extends string> = {
 	};
 };
 
-function PermissionFields<Permission extends string>({
+export function PermissionFields<Permission extends string>({
 	config,
 	value,
 	onChange,
@@ -119,14 +119,14 @@ function PermissionFields<Permission extends string>({
 	);
 }
 
-function TokenForm<Permission extends string>({
+export function TokenForm<Permission extends string>({
 	config,
 	panel,
 	onClose,
 	onSaved,
 }: {
 	config: TokenViewConfig<Permission>;
-	panel: Panel<Permission>;
+	panel: TokenPanel<Permission>;
 	onClose(): void;
 	onSaved(message: string, secret?: ApiTokenSecret<Permission>): void;
 }) {
@@ -363,7 +363,7 @@ function TokenForm<Permission extends string>({
 	);
 }
 
-function NewSecret<Permission extends string>({
+export function NewSecret<Permission extends string>({
 	config,
 	value,
 	onDismiss,
@@ -435,7 +435,7 @@ export function TokensView<Permission extends string>({
 	workspace?: { id: string; name: string };
 }) {
 	const [data, setData] = useState<ApiTokenSettings<Permission> | null>(null);
-	const [panel, setPanel] = useState<Panel<Permission> | null>(null);
+	const [panel, setPanel] = useState<TokenPanel<Permission> | null>(null);
 	const [secret, setSecret] = useState<ApiTokenSecret<Permission> | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState("");

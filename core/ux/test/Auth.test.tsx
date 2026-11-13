@@ -497,9 +497,10 @@ it("shows members a read-only team and sends signed-out users back to sign in", 
 	expect(screen.queryByRole("button", { name: "Add member" })).toBeNull();
 	expect(screen.queryByRole("button", { name: "Edit Founder" })).toBeNull();
 	expect(screen.getByRole("button", { name: "Change password" })).toBeDefined();
-	// Members don't manage tokens: the pages are hidden and their links fall back.
+	// Members don't manage API tokens: the page is hidden and its link falls
+	// back. Agents they can see.
 	expect(screen.queryByRole("link", { name: "API Tokens" })).toBeNull();
-	expect(screen.queryByRole("link", { name: "Agent Tokens" })).toBeNull();
+	expect(screen.getByRole("link", { name: "Agents" })).toBeDefined();
 
 	// Removing the member ends their session on the next request.
 	const team = (

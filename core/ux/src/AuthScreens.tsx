@@ -19,14 +19,20 @@ const message = (cause: unknown, fallback: string) =>
 
 export function AuthLayout({
 	labelledBy,
+	wide,
 	children,
 }: {
 	labelledBy: string;
+	/** Room for a form with more than a few fields. */
+	wide?: boolean;
 	children: ReactNode;
 }) {
 	return (
 		<main id="main-content" tabIndex={-1} className="auth-shell">
-			<section className="card auth-card" aria-labelledby={labelledBy}>
+			<section
+				className={`card auth-card${wide ? " wide" : ""}`}
+				aria-labelledby={labelledBy}
+			>
 				<div className="auth-brand">
 					<img src={logoMark} alt="" width="36" height="29" />
 					<span>autonomo.us</span>
