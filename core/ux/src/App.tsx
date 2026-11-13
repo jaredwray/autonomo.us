@@ -293,9 +293,11 @@ export function App() {
 				href(route.view, selected.id, rest),
 			);
 			// The view on screen was mounted from the old address. Mount it
-			// again, so it reads the one it has now.
+			// again, so it reads the one it has now. The route keeps the
+			// workspace the link named, so the notice that it is not
+			// available stays until the person goes somewhere.
 			if (rest !== route.rest) {
-				setRoute(currentRoute());
+				setRoute({ ...route, rest });
 				setLanded((count) => count + 1);
 			}
 		}

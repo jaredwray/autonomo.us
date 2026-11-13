@@ -566,6 +566,10 @@ it("opens the bot list when a link names a workspace that cannot be opened", asy
 	// The link lands in this workspace without the other workspace's bot.
 	expect(window.location.hash).toBe(`#/w/${running.workspaceId}/bots`);
 	expect(screen.queryByText("Bot not found")).toBeNull();
+	// And it still says the workspace in the link could not be opened.
+	expect(
+		screen.getByText("That workspace isn't available. Showing Default."),
+	).toBeDefined();
 });
 
 it("reads the bot from the URL and names who is replying", () => {
