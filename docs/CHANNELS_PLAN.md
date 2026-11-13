@@ -1,6 +1,6 @@
 # Channels plan
 
-*Status: v0.1, November 2026. Proposal; nothing here is built. The positions in [section 14](#14-open-decisions) are recommendations waiting for an owner decision. Owner: Jared Wray.*
+*Status: v0.2, November 2026. Proposal; nothing here is built. Owner decisions D2, D3, and D5 are recorded in [section 14](#14-decisions); the rest are recommendations waiting for a decision. Owner: Jared Wray.*
 
 Nothing in this document is code. It proposes chat channels inside a
 workspace, where team members and bots (agents) talk to each other, and orders
@@ -21,8 +21,9 @@ the work into reviewable PRs.
 11. [Security invariants](#11-security-invariants)
 12. [Testing](#12-testing)
 13. [PR sequence](#13-pr-sequence)
-14. [Open decisions](#14-open-decisions)
+14. [Decisions](#14-decisions)
 15. [Out of scope and follow-ups](#15-out-of-scope-and-follow-ups)
+16. [Gateway-run bots](#16-gateway-run-bots)
 
 ## 1. What exists today
 
@@ -82,8 +83,9 @@ Non-goals for this plan:
 
 - Direct messages, private channels, file attachments, reactions, search, and
   retention policies ([section 15](#15-out-of-scope-and-follow-ups)).
-- Bots hosted by the gateway. A bot here is an external runtime holding an
-  agent token; the gateway does not run a model to answer on its behalf.
+- Bots run by the gateway. A bot here is an external runtime holding an
+  agent token. [Section 16](#16-gateway-run-bots) lists what it takes for the
+  gateway to answer as a bot itself.
 - Push to people outside the dashboard (Slack, email, mobile).
 - Channel messages as approvals. Typing "approved" in a channel approves
   nothing; approvals keep their own routes, which need a person.
@@ -205,8 +207,9 @@ export type PostChannelMessageRequest = {
 
 `API_TOKEN_PERMISSIONS` gains `channels:read` ("Channels: Read") and
 `channels:edit` ("Channels: Post"). Edit includes read, as everywhere else.
-`AGENT_TOKEN_PERMISSIONS` is unchanged: `mcp:call` plus membership of a
-channel is what lets an agent use it.
+`AGENT_TOKEN_PERMISSIONS` gains `channels:manage` ("Channels: Manage"), off
+by default (decision D3). Without it, `mcp:call` plus membership of a channel
+is what lets an agent use that channel, and nothing lets it change one.
 
 ### 4.2 Collections
 
@@ -295,18 +298,21 @@ workspace and the action; the channel service then checks the channel.
 | --- | --- | --- | --- | --- | --- |
 | List and read channels, read messages | ✓ | ✓ | ✓ | `channels:read` | Its own channels only |
 | Post a message, delete its own message, move its read mark | ✓ | ✓ | ✓ | `channels:edit` | Where its access is `post` (read mark: always) |
-| Create a channel | ✓ | ✓ | ✓ | – | – |
-| Rename, change topic, archive, unarchive | ✓ | ✓ | – | – | – |
-| Add or remove an agent, change its access | ✓ | ✓ | – | – | – |
+| Create a channel | ✓ | ✓ | ✓ | – | With `channels:manage` |
+| Rename, change topic, archive, unarchive | ✓ | ✓ | ✓ | – | With `channels:manage` |
+| Add or remove an agent, change its access | ✓ | ✓ | ✓ | – | With `channels:manage` |
 | Delete someone else's message | ✓ | ✓ | – | – | – |
 
 New `WorkspaceAction`s in `auth/access.ts`:
 
 - `channels:read` and `channels:edit`: token permissions, and in
   `MEMBER_ACTIONS`.
-- `channels:create`: in `MEMBER_ACTIONS`, not a token permission, so the hook
-  refuses tokens with the existing "Sign in to the dashboard for this action."
-- `channels:manage`: in `ADMIN_ACTIONS`, not a token permission.
+- `channels:manage`: in `MEMBER_ACTIONS` (decision D3), not an API token
+  permission, so the hook refuses API tokens with the existing "Sign in to the
+  dashboard for this action." It covers creating, renaming, archiving, and
+  the agent list.
+- `channels:moderate`: in `ADMIN_ACTIONS`, not a token permission. It is
+  deleting someone else's message.
 
 Notes:
 
@@ -314,10 +320,18 @@ Notes:
   with access to the workspace (decision D2), so the workspace membership is
   the grant and a person's first read creates their read mark.
 - **Agents are listed per channel, with a verb.** An agent token alone opens
-  no channel. A workspace admin adds the agent with `read` or `post`, which
+  no channel. A workspace member adds the agent with `read` or `post`, which
   matches the design doc's rule that scopes are granted per agent per tool
   with verbs. Only this workspace's agent tokens can be added
   (`AgentTokenStore.ids`).
+- **An agent manages channels only with the `channels:manage` grant** on its
+  token (decision D3). With it, the agent can create a channel (it joins with
+  `post`), rename and archive channels, and change agent lists, through the
+  tools in section 8. That includes adding itself to any channel, so the grant
+  amounts to access to every channel in the agent's workspace. Agent tokens
+  are created and edited only by org owners and admins, so handing a bot this
+  grant is their decision, and every use is recorded in the channel's
+  `actions` under the agent's name.
 - **A channel an agent is not in does not exist for it.** `channels_list`
   omits it, and naming it returns the same "Channel not found." as a channel
   that was never created.
@@ -340,15 +354,15 @@ constrained in the route definition. Errors use `{ error: { message } }`.
 | Route | Action | Purpose |
 | --- | --- | --- |
 | `GET /channels` | `channels:read` | `ChannelSummary[]` for the caller, archived ones with `?archived=true`. |
-| `POST /channels` | `channels:create` | `{ name, topic?, description? }` → 201 `Channel`. A taken name is 409. |
-| `GET /channels/:channel` | `channels:read` | `ChannelSummary`; `actions` included for workspace admins. |
+| `POST /channels` | `channels:manage` | `{ name, topic?, description? }` → 201 `Channel`. A taken name is 409. |
+| `GET /channels/:channel` | `channels:read` | `ChannelSummary` with its `actions`. |
 | `PATCH /channels/:channel` | `channels:manage` | `{ name?, topic?, description?, revision }`. A stale `revision` is 409. |
 | `POST /channels/:channel/archive`, `/unarchive` | `channels:manage` | Soft archive. |
 | `PUT /channels/:channel/agents/:agentTokenId` | `channels:manage` | `{ access }`. Adds the agent or changes its access. |
 | `DELETE /channels/:channel/agents/:agentTokenId` | `channels:manage` | Removes the agent. |
 | `GET /channels/:channel/messages` | `channels:read` | `?after=<seq>&limit=` follows (oldest first, `wait=` from C5). `?before=<seq>&limit=` pages back through messages and system notes (newest first). With neither, the latest page. `limit` defaults to 50, at most 100. |
 | `POST /channels/:channel/messages` | `channels:edit` | `PostChannelMessageRequest` → 201 with the message entry; 200 when the nonce was already used. |
-| `DELETE /channels/:channel/messages/:message` | `channels:edit` | The author, or a workspace admin for anyone's message. 204. |
+| `DELETE /channels/:channel/messages/:message` | `channels:edit` | The author, or a caller with `channels:moderate` for anyone's message. 204. |
 | `PUT /channels/:channel/read` | `channels:read` | `{ seq }`. Moves the caller's read mark forward. |
 
 Every route gets its entry in `ROUTE_RULES`; the startup check refuses any
@@ -370,7 +384,13 @@ to. Behavior does not change, and `synapse-mcp.test.ts` passes untouched.
 | `channels_mark_read` | `channel`, `seq` | `{ readSeq }`. |
 | `channels_members` | `channel` | The people and agents in the channel, each with the mention to write for them. |
 | `channels_wait` (C5) | `timeoutSeconds?` (at most 25), `mentionsOnly?` | The agent's channels that have something new, as soon as one does. |
+| `channels_create` | `name`, `topic?`, `description?` | The new channel, with the agent in it as `post`. Needs `channels:manage`. |
+| `channels_update` | `channel`, `name?`, `topic?`, `description?`, `archived?` | The channel. Needs `channels:manage`. |
+| `channels_set_agent` | `channel`, `agent`, `access` (`read`, `post`, or `none` to remove) | The channel's agents. Needs `channels:manage`. |
 
+- The three management tools are listed for every agent and refuse a caller
+  without the grant, naming it, as `tools/call` does for `mcp:call` today.
+  With the grant, `channel` may name any channel in the workspace.
 - `channel` is a name (`general`) or an id. Agents handle names better than
   UUIDs, and names are unique in a workspace.
 - The text form of a message is one line an agent can scan:
@@ -407,8 +427,10 @@ to. Behavior does not change, and `synapse-mcp.test.ts` passes untouched.
   messages are on screen and the tab has focus. Views render with
   `key={channel.id}` so a late response for one channel cannot land in another.
 - **Channel details** (a side panel): topic and description, the agents with
-  their access, and for workspace admins: add an agent from this workspace's
-  agent tokens, change access, rename, archive, and the action history.
+  their access, add an agent from this workspace's agent tokens, change
+  access, rename, archive, and the action history. The agent token dialog
+  gains the **Channels: Manage** grant with a line saying it opens every
+  channel in the workspace to that bot.
 - **Empty states.** No channels: "Create a channel to talk with your team and
   agents." A channel with no agents says how to add one and that agents also
   need the `mcp:call` grant.
@@ -445,8 +467,9 @@ Each is a test, not a review note:
 3. An agent reads, lists, and posts only in channels whose `agents` list
    holds its token ID. Any other channel is "Channel not found."
 4. An agent with `read` access cannot post or delete.
-5. No token of either kind creates, renames, or archives a channel, or
-   changes its agents.
+5. No API token creates, renames, or archives a channel, or changes its
+   agents. An agent token does so only while it holds `channels:manage`, and
+   only in its own workspace.
 6. A change to a channel's agents and its `actions` entry commit in one write.
 7. Sequence numbers are unique and gapless per channel, and a follower
    polling during concurrent posts from two servers receives every entry once,
@@ -475,7 +498,8 @@ Following the repository's rule of real services, not mocks:
 - **MCP:** a bot lists, reads, posts, acknowledges; a bot outside the channel
   gets "Channel not found."; a read-only bot's post is refused; a person's
   mention shows up in `channels_list` and in `channels_read` with
-  `mentionsOnly`.
+  `mentionsOnly`; a bot without `channels:manage` is refused by each
+  management tool, and one with it creates a channel and adds another agent.
 - **Limits:** the 31st agent post in a minute returns 429; an oversized body
   returns 400.
 - **Worker runtime:** `pnpm test:worker` posts and follows in workerd and
@@ -522,8 +546,9 @@ screenshots in the PR.
 
 - Agents on the channel document with `actions`; the agent routes; system
   notes; `channels_list`, `channels_read`, `channels_post`,
-  `channels_mark_read`, `channels_members`; the new instructions; the agents
-  panel in the dashboard.
+  `channels_mark_read`, `channels_members`; the `channels:manage` agent grant
+  with `channels_create`, `channels_update`, and `channels_set_agent`; the new
+  instructions; the agents panel in the dashboard.
 
 **Accept:** the MCP and authorization tests; invariants 3, 4, 6. A real MCP
 client holding an agent token holds a conversation with a signed-in person.
@@ -559,27 +584,33 @@ C2 and C3 both depend only on C1 and can be built in parallel. After C3 the
 feature does what was asked: a person and bots talking in a channel. C4–C6
 make it pleasant.
 
-## 14. Open decisions
+## 14. Decisions
 
-Each has a recommended position, which the rest of this plan assumes.
+Decided by the owner on 2026-11-13. The plan follows these.
+
+| # | Question | Decision | Affects |
+| --- | --- | --- | --- |
+| D2 | Private channels? | **No.** Every channel is open to everyone with access to the workspace. Agents are always listed per channel. | C1, section 6 |
+| D3 | Who creates and manages channels? | **Any workspace member, and a bot that has been given permission.** Members create, rename, archive, and change agent lists. A bot does the same only with the `channels:manage` grant on its agent token, which org owners and admins control. Deleting someone else's message stays with workspace admins (an assumption of this plan, not part of the decision). | Sections 4.1, 6, 8; C3 |
+| D5 | Does reading move an agent's read mark? | **No, the agent acknowledges with `channels_mark_read`.** A crash between reading and acting repeats messages instead of losing them. | C3 |
+
+Still open. Each has a recommended position, which the rest of this plan
+assumes.
 
 | # | Question | Recommendation | Affects |
 | --- | --- | --- | --- |
 | D1 | What is a bot? | **An agent token over MCP.** It reuses the identity Synapse already keys memory by, and its channel access is separate from its token grants. Scripts that only post (CI, cron) use an API token over REST. | C1, C3 |
-| D2 | Private channels in the first version? | **No.** Every channel is open to everyone with access to the workspace; agents are always explicit. Private channels need per-person membership, invitations, and a second read path, and can be added without changing the log. | C1, section 6 |
-| D3 | Who creates and manages channels? | **Any workspace member creates. Workspace admins rename, archive, and add agents,** because adding an agent hands a bot the whole conversation. Stricter alternative: admins create too. | Section 6 |
 | D4 | How do messages arrive? | **Polling first, long polling in C5,** SSE or WebSockets only if measurement asks for them. Standalone MongoDB has no change streams and Worker isolates share nothing, so anything push-based is new infrastructure. | Section 5 |
-| D5 | Does reading move an agent's read mark? | **No, the agent acknowledges with `channels_mark_read`.** A crash between reading and acting then repeats messages instead of losing them, which matches the design doc's "durable and acknowledged". Simpler alternative: reading acknowledges. | C3 |
-| D6 | Direct messages with a bot? | **After C6.** A DM is a two-participant private channel, so it follows D2's follow-up. Until then, a channel with one agent in it does the job. | Section 15 |
+| D6 | Direct messages with a bot? | **After C6.** Until then, a channel with one agent in it does the job. | Section 15 |
 | D7 | Threads? | **`threadId` is in the data model from C1; the UI and tool argument ship in C6.** | C1, C6 |
 | D8 | Can messages be edited and deleted? | **Delete from C1** (a pasted secret has to be removable), **edit in C6.** Both leave a `change` entry, so there is a record that something changed and by whom. | C1, C6 |
 | D9 | Retention? | **Keep everything for now.** Per-channel retention is a follow-up; the rule it must keep is in section 15. | Section 15 |
-| D10 | Should the gateway run bots itself (a model that answers mentions)? | **Not in this plan.** It needs a runner, cost attribution, and loop control that the MVP orchestrator is meant to provide. Channels are built so that a hosted bot is one more participant holding an agent identity. | Section 15 |
+| D10 | Should the gateway run bots itself? | **Open.** [Section 16](#16-gateway-run-bots) lists what it needs and the four choices to make first. | Section 16 |
 
 ## 15. Out of scope and follow-ups
 
-- **Private channels and direct messages** (D2, D6).
-- **Hosted bots** (D10).
+- **Direct messages** (D6). Private channels are decided against (D2).
+- **Gateway-run bots** (D10, [section 16](#16-gateway-run-bots)).
 - **Triggers.** The design doc lists "a message from another agent" as a
   trigger. Once the orchestrator exists, a mention can start an agent's run
   instead of waiting for it to poll. Outbound webhooks on new messages are the
@@ -601,3 +632,48 @@ Each has a recommended position, which the rest of this plan assumes.
   append rule in 4.3 stops holding.
 - **Cost attribution** of a conversation to the agents in it, once the MVP
   cost meter exists.
+
+## 16. Gateway-run bots
+
+Everything above assumes a bot is a program running somewhere else that holds
+an agent token. A gateway-run bot is one the gateway answers for: someone
+mentions it, the gateway calls a model from the workspace's own connections,
+and posts the reply. Nothing has to be running outside the gateway.
+
+The gateway has most of the parts. It is missing one: a place to do work that
+no request is waiting for.
+
+| Need | What exists | What is missing |
+| --- | --- | --- |
+| **A bot record** per workspace: name, instructions, model, the trigger, limits, an on/off switch. | Agent tokens give a bot its identity, name, workspace, and Synapse space. | A record for the instructions and settings. Its ID is used wherever an agent token ID is used today, so channel membership, authorship, and the bot's Synapse space work unchanged. No secret is issued, because nothing outside the gateway signs in as this bot. |
+| **A trigger.** | Mentions (C4) say when a message is meant for a bot. | When a message that mentions a gateway-run bot is posted, a run record is written, unique per bot, channel, and triggering `seq`, so one message starts one run. |
+| **A runner.** This is the new piece. | Nothing. Every model call today happens inside the request that asked for it. | Something that executes runs after the post has returned. On Node: in-process, plus a timer that picks up runs nobody finished. On Workers: `ctx.waitUntil` after the response, plus a Cron Trigger for leftovers. A run is claimed with a time-limited lease, the way Synapse proposals are claimed during approval, so a crash is retried and two isolates never answer the same message. |
+| **A model call outside a route.** | The failover loop, routing, and telemetry, all inside `routes/chat.ts`. | The attempt loop extracted into a function the runner can call. The MVP plan already schedules that move. Usage is recorded under the bot (`TelemetryCaller` already has the `agent` kind), so its cost shows in analytics. |
+| **Context.** | The channel log. | The prompt: the bot's instructions, then the last N messages of the channel or thread, each labelled with its author and kind. The reply is posted with a nonce derived from the run, so a retried run cannot post twice. |
+| **Tools** (can come second). | `synapse_*` and `channels_*` tools, callable in-process once C0's registry exists. | A bounded tool loop, so the bot can remember things in Synapse and read other channels it is in. A first version can be reply-only. |
+| **Brakes.** | The per-author rate limit in section 10. | A bot answers people only, unless bot-to-bot replies are switched on with a hop limit. Replies per hour, a daily token budget, a cap on output tokens, and a pause switch per bot. A gateway-run bot spends the workspace's provider keys with nobody watching, so these ship with the runner. |
+| **Dashboard.** | The agents panel from C3. | A Bots view: create, instructions, model, channels, limits, pause, and recent runs with their cost and errors. A pending run shows as "is replying…" in the channel. |
+
+One limit to measure before committing: on Workers, work started with
+`ctx.waitUntil` has roughly 30 seconds after the response is sent. A slow
+model or a tool loop can outlast that. If it does, runs need Cloudflare Queues
+or a Durable Object alarm on Workers, which is new infrastructure; on Node
+there is no such limit.
+
+The choices to make first:
+
+| # | Question | Recommendation |
+| --- | --- | --- |
+| G1 | What starts a reply? | **A mention by a person.** Answering every message in a channel is expensive and is how loops start. |
+| G2 | Reply-only first, or with Synapse memory from the start? | **Reply-only first.** The tool loop is the larger and riskier half. |
+| G3 | How does the bot pick a model? | **One model, pool, or `auto` from the workspace's routing,** chosen per bot. |
+| G4 | Where does it sit in the sequence? | **After C4,** since it needs mentions, and ahead of C5 and C6 if talking to a bot without running one matters more than speed and threads. |
+
+As PRs, after C4:
+
+- **B1:** extract the chat attempt loop into a callable function, with no
+  behavior change.
+- **B2:** bot records, run records with leases, the runner on Node and
+  Workers, reply-only, with the brakes.
+- **B3:** the Bots view and the "is replying…" indicator.
+- **B4:** the tool loop.
