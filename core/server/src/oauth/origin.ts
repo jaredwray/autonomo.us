@@ -35,5 +35,7 @@ export function publicOrigin(
 				: options.assumeHttps
 					? "https"
 					: request.protocol;
-	return `${protocol}://${host}`;
+	// Without a default port: `gateway.example:443` is `https://gateway.example`,
+	// which is also how an app's own URL for the MCP endpoint is compared.
+	return new URL(`${protocol}://${host}`).origin;
 }

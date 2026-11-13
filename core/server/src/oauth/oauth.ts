@@ -184,9 +184,14 @@ export class OAuthService {
 			if (parsed.protocol === "https:" && parsed.href.length <= 500)
 				uri = parsed.href;
 		} catch {}
-		if (
+		// Registrations arriving together can each see room and overshoot the
+		// limit, so every one removes a few of the oldest until it holds again.
+		for (
+			let removed = 0;
+			removed < 5 &&
 			(await this.repository.countPendingClients(this.date())) >=
-			OAUTH_LIMITS.pendingClients
+				OAUTH_LIMITS.pendingClients;
+			removed++
 		)
 			await this.repository.removeOldestPendingClient();
 		const client: StoredClient = {
@@ -282,23 +287,24 @@ export class OAuthService {
 				"invalid_target",
 				`This server signs apps in to ${mcpResource(origin)} only.`,
 			);
-		if (
-			(await this.repository.countRequests(client.id, this.date())) >=
-			OAUTH_LIMITS.requestsPerClient
-		)
+		const id = randomBytes(32).toString("base64url");
+		const saved = await this.repository.insertRequest(
+			{
+				id: tokenHash(id),
+				clientId: client.id,
+				redirectUri,
+				state,
+				codeChallenge: challenge,
+				createdAt: this.iso(),
+				expiresAt: this.date(OAUTH_LIMITS.requestMinutes * 60_000),
+			},
+			OAUTH_LIMITS.requestsPerClient,
+			this.date(),
+		);
+		if (!saved)
 			return {
 				page: "Too many sign-ins from this app are waiting for a decision. Decide them in the dashboard, or try again in a few minutes.",
 			};
-		const id = randomBytes(32).toString("base64url");
-		await this.repository.insertRequest({
-			id: tokenHash(id),
-			clientId: client.id,
-			redirectUri,
-			state,
-			codeChallenge: challenge,
-			createdAt: this.iso(),
-			expiresAt: this.date(OAUTH_LIMITS.requestMinutes * 60_000),
-		});
 		return { request: id };
 	}
 

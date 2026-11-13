@@ -213,19 +213,48 @@ describe.skipIf(!available)("OAuth sign-in with MongoDB", () => {
 			await repository.getClient({ $ne: "" } as unknown as string),
 		).toBeNull();
 
-		await repository.insertRequest({
-			id: "request",
-			clientId: "new",
+		const request = (id: string, clientId = "new") => ({
+			id,
+			clientId,
 			redirectUri: "https://app.example/cb",
 			state: null,
 			codeChallenge: "c",
 			createdAt: now.toISOString(),
 			expiresAt: later,
 		});
-		expect((await repository.getRequest("request"))?.expiresAt).toEqual(later);
-		expect(await repository.countRequests("new", now)).toBe(1);
-		expect(await repository.countRequests("new", later)).toBe(0);
-		expect(await repository.countRequests("old", now)).toBe(0);
+		expect(await repository.insertRequest(request("request"), 3, now)).toBe(
+			true,
+		);
+		expect(await repository.getRequest("request")).toMatchObject({
+			expiresAt: later,
+			slot: 0,
+		});
+		// Ten sign-ins of one app arrive together: the limit of three holds.
+		const together = await Promise.all(
+			Array.from({ length: 10 }, (_, index) =>
+				repository.insertRequest(request(`burst-${index}`), 3, now),
+			),
+		);
+		expect(together.filter(Boolean)).toHaveLength(2);
+		// Another app has places of its own, and expired sign-ins give theirs up.
+		expect(
+			await repository.insertRequest(request("other", "kept"), 3, now),
+		).toBe(true);
+		expect(await repository.insertRequest(request("full"), 3, now)).toBe(false);
+		expect(
+			await repository.insertRequest(request("second", "kept"), 1, now),
+		).toBe(false);
+		expect(
+			await repository.insertRequest(
+				{
+					...request("after", "kept"),
+					expiresAt: new Date(later.getTime() + 60_000),
+				},
+				1,
+				later,
+			),
+		).toBe(true);
+		expect(await repository.getRequest("other")).toBeNull();
 		const taken = await Promise.all(
 			Array.from({ length: 5 }, () => repository.takeRequest("request")),
 		);

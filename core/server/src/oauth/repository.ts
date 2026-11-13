@@ -1,4 +1,8 @@
-import { controlPlaneConnection, type MongoConnection } from "../mongo.js";
+import {
+	controlPlaneConnection,
+	isDuplicateKey,
+	type MongoConnection,
+} from "../mongo.js";
 import { ServiceError } from "../service-error.js";
 
 export const OAUTH_CLIENTS_COLLECTION = "gateway_oauth_clients";
@@ -27,6 +31,11 @@ export type StoredRequest = {
 	codeChallenge: string;
 	createdAt: string;
 	expiresAt: Date;
+	/**
+	 * Which of its app's waiting places this sign-in holds. A place is held by
+	 * one sign-in at a time, which is what keeps their number bounded.
+	 */
+	slot: number;
 };
 
 export type StoredSecret = { hash: string; expiresAt: string };
@@ -83,9 +92,16 @@ export interface OAuthRepository {
 	/** Forgets the registration that has waited longest. */
 	removeOldestPendingClient(): Promise<void>;
 
-	insertRequest(request: StoredRequest): Promise<void>;
-	/** One app's sign-ins that are still waiting. */
-	countRequests(clientId: string, now: Date): Promise<number>;
+	/**
+	 * Saves a sign-in in one of its app's `limit` waiting places. False when
+	 * sign-ins that have not expired hold them all. Two inserts never get the
+	 * same place, so requests arriving together cannot pass the limit.
+	 */
+	insertRequest(
+		request: Omit<StoredRequest, "slot">,
+		limit: number,
+		now: Date,
+	): Promise<boolean>;
 	getRequest(id: string): Promise<StoredRequest | null>;
 	/** Returns the request and removes it, so only one caller gets it. */
 	takeRequest(id: string): Promise<StoredRequest | null>;
@@ -138,16 +154,24 @@ export class MemoryOAuthRepository implements OAuthRepository {
 		if (oldest) this.clients.delete(oldest.id);
 	}
 
-	async insertRequest(request: StoredRequest) {
-		const now = new Date(this.now());
+	async insertRequest(
+		request: Omit<StoredRequest, "slot">,
+		limit: number,
+		now: Date,
+	) {
 		for (const [id, stored] of this.requests)
 			if (stored.expiresAt <= now) this.requests.delete(id);
-		this.requests.set(request.id, structuredClone(request));
-	}
-	async countRequests(clientId: string, now: Date) {
-		return [...this.requests.values()].filter(
-			(request) => request.clientId === clientId && request.expiresAt > now,
-		).length;
+		const taken = new Set(
+			[...this.requests.values()]
+				.filter((stored) => stored.clientId === request.clientId)
+				.map((stored) => stored.slot),
+		);
+		for (let slot = 0; slot < limit; slot++)
+			if (!taken.has(slot)) {
+				this.requests.set(request.id, { ...structuredClone(request), slot });
+				return true;
+			}
+		return false;
 	}
 	async getRequest(id: string) {
 		const request = this.requests.get(id);
@@ -236,7 +260,8 @@ export class MongoOAuthRepository implements OAuthRepository {
 				this.clients().createIndex({ expiresAt: 1 }, ttl),
 				this.clients().createIndex({ approvedAt: 1, createdAt: 1 }),
 				this.requests().createIndex({ expiresAt: 1 }, ttl),
-				this.requests().createIndex({ clientId: 1 }),
+				// One sign-in per waiting place: the limit holds under concurrency.
+				this.requests().createIndex({ clientId: 1, slot: 1 }, { unique: true }),
 				this.grants().createIndex({ expiresAt: 1 }, ttl),
 				this.grants().createIndex({ workspaceId: 1, agentId: 1 }),
 			]);
@@ -293,17 +318,35 @@ export class MongoOAuthRepository implements OAuthRepository {
 		);
 	}
 
-	async insertRequest(request: StoredRequest) {
+	async insertRequest(
+		request: Omit<StoredRequest, "slot">,
+		limit: number,
+		now: Date,
+	) {
 		await this.ensureIndexes();
-		await this.run(() => this.requests().insertOne(stored(request)));
-	}
-	countRequests(clientId: string, now: Date) {
-		return this.run(() =>
-			this.requests().countDocuments({
-				clientId: { $eq: clientId },
-				expiresAt: { $gt: now },
-			}),
-		);
+		return this.run(async () => {
+			const own = { clientId: { $eq: request.clientId } };
+			// MongoDB clears expired sign-ins about once a minute; do not wait.
+			await this.requests().deleteMany({ ...own, expiresAt: { $lte: now } });
+			const taken = new Set(
+				(
+					await this.requests()
+						.find(own, { projection: { slot: 1 } })
+						.toArray()
+				).map((document) => document.slot),
+			);
+			for (let slot = 0; slot < limit; slot++) {
+				if (taken.has(slot)) continue;
+				try {
+					await this.requests().insertOne(stored({ ...request, slot }));
+					return true;
+				} catch (error) {
+					// Another sign-in took this place a moment ago: try the next.
+					if (!isDuplicateKey(error)) throw error;
+				}
+			}
+			return false;
+		});
 	}
 	getRequest(id: string) {
 		return this.run(async () =>

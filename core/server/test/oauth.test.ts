@@ -251,6 +251,10 @@ describe("OAuth sign-in to the MCP endpoint", () => {
 			await issuer({ assumeHttps: true }, { host: "localhost:8787" }),
 		).toBe("http://localhost:8787");
 		expect(await issuer({}, { host: "[::1]:3000" })).toBe("http://[::1]:3000");
+		// A default port is left out, as it is in the app's own URL.
+		expect(
+			await issuer({}, { host: `${host}:443`, "x-forwarded-proto": "https" }),
+		).toBe(`https://${host}`);
 		// A Host header that is not a host name is not repeated back.
 		expect(await issuer({}, { host: 'evil"example.com' })).toBe(
 			"http://localhost",
