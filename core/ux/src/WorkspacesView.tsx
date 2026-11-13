@@ -85,7 +85,7 @@ function CreateWorkspaceForm({
 							id="workspace-name"
 							required
 							maxLength={100}
-							placeholder="Hyphen"
+							placeholder="Acme"
 							value={name}
 							onChange={(event) => setName(event.target.value)}
 						/>
