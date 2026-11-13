@@ -16,6 +16,7 @@ import type { BotRepository } from "./repository.js";
 
 const HOUR_MS = 3_600_000;
 const RUNS_SHOWN = 50;
+const PENDING_SHOWN_MS = 120_000;
 const MAX_MODEL_LENGTH = 200;
 
 /** The start of the current UTC day: token budgets reset there. */
@@ -239,10 +240,12 @@ export class BotService {
 
 	/** Bots working on a reply in a channel, for "is replying…". */
 	async activity(workspaceId: string, channelId: string): Promise<BotActivity> {
+		// A run nobody started within two minutes is not a reply in progress.
 		const runs = await this.repository.activeRuns(
 			workspaceId,
 			channelId,
 			this.at(),
+			new Date(this.now() - PENDING_SHOWN_MS).toISOString(),
 		);
 		if (!runs.length) return { replying: [] };
 		const names = new Map(

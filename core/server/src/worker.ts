@@ -8,7 +8,6 @@ import {
 	initializePersistence,
 	releaseRequestResources,
 	settleBackgroundWork,
-	sweepBackgroundWork,
 } from "./server.js";
 import {
 	releaseAfterResponse,
@@ -115,27 +114,5 @@ export default {
 			);
 			return tracked.response;
 		});
-	},
-	/**
-	 * The Cron Trigger in wrangler.jsonc. An isolate can be evicted while a bot
-	 * is replying; this starts runs nobody is working on any more.
-	 */
-	scheduled(_controller: unknown, _bindings: unknown, ctx: ExecutionContext) {
-		ctx.waitUntil(
-			withMongoRequestScope(async (close) => {
-				try {
-					if (await initializePersistence(server))
-						await sweepBackgroundWork(server);
-				} catch (error) {
-					console.error("gateway.sweep_failed", mongoErrorDetails(error));
-				} finally {
-					try {
-						await releaseRequestResources(server);
-					} finally {
-						await close();
-					}
-				}
-			}),
-		);
 	},
 };

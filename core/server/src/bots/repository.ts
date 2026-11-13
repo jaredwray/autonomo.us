@@ -69,12 +69,19 @@ export interface BotRepository {
 		botId: string,
 		limit: number,
 	): Promise<BotRun[]>;
-	/** Runs in a channel that are pending or running under a live lease. */
+	/**
+	 * Runs in a channel that someone is working on: running under a live
+	 * lease, or pending since `pendingAfter`. An older pending run was never
+	 * started and is not in progress.
+	 */
 	activeRuns(
 		workspaceId: string,
 		channelId: string,
 		now: string,
+		pendingAfter: string,
 	): Promise<BotRun[]>;
+	/** How many of the bot's runs hold a live lease right now. */
+	countRunning(botId: string, now: string): Promise<number>;
 	/** Replies the bot started since `since`; skipped runs do not count. */
 	countRunsSince(botId: string, since: string): Promise<number>;
 	tokensSince(botId: string, since: string): Promise<number>;
@@ -176,16 +183,29 @@ export class MemoryBotRepository implements BotRepository {
 			.slice(0, limit)
 			.map(publicRun);
 	}
-	async activeRuns(workspaceId: string, channelId: string, now: string) {
+	async activeRuns(
+		workspaceId: string,
+		channelId: string,
+		now: string,
+		pendingAfter: string,
+	) {
 		return [...this.runs.values()]
 			.filter(
 				(run) =>
 					run.workspaceId === workspaceId &&
 					run.channelId === channelId &&
-					(run.status === "pending" ||
+					((run.status === "pending" && run.createdAt > pendingAfter) ||
 						(run.status === "running" && (run.leaseUntil ?? "") > now)),
 			)
 			.map(publicRun);
+	}
+	async countRunning(botId: string, now: string) {
+		return [...this.runs.values()].filter(
+			(run) =>
+				run.botId === botId &&
+				run.status === "running" &&
+				(run.leaseUntil ?? "") > now,
+		).length;
 	}
 	async countRunsSince(botId: string, since: string) {
 		return [...this.runs.values()].filter(
@@ -374,20 +394,34 @@ export class MongoBotRepository implements BotRepository {
 		);
 		return found.map((run) => publicRun(toRun(run)));
 	}
-	async activeRuns(workspaceId: string, channelId: string, now: string) {
+	async activeRuns(
+		workspaceId: string,
+		channelId: string,
+		now: string,
+		pendingAfter: string,
+	) {
 		const found = await this.storage(() =>
 			this.runs()
 				.find({
 					workspaceId,
 					channelId,
 					$or: [
-						{ status: "pending" },
+						{ status: "pending", createdAt: { $gt: pendingAfter } },
 						{ status: "running", leaseUntil: { $gt: now } },
 					],
 				})
 				.toArray(),
 		);
 		return found.map((run) => publicRun(toRun(run)));
+	}
+	countRunning(botId: string, now: string) {
+		return this.storage(() =>
+			this.runs().countDocuments({
+				botId,
+				status: "running",
+				leaseUntil: { $gt: now },
+			}),
+		);
 	}
 	countRunsSince(botId: string, since: string) {
 		return this.storage(() =>

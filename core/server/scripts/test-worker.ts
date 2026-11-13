@@ -59,13 +59,7 @@ async function withWorker(
 		JSON.stringify({
 			...config,
 			main: join(root, "core/server/src/worker.ts"),
-			assets: {
-				...config.assets,
-				directory: assets,
-				// `--test-scheduled` serves the Cron Trigger at /__scheduled, which
-				// must reach the Worker here. Production has no such path.
-				run_worker_first: [...config.assets.run_worker_first, "/__scheduled"],
-			},
+			assets: { ...config.assets, directory: assets },
 			routes: [],
 			vars: {
 				...config.vars,
@@ -80,8 +74,6 @@ async function withWorker(
 			join(root, "node_modules/wrangler/bin/wrangler.js"),
 			"dev",
 			"--local",
-			// Exposes /__scheduled, which runs the Cron Trigger's handler.
-			"--test-scheduled",
 			"--port",
 			String(port),
 			"--inspector-port",
@@ -246,7 +238,7 @@ const client = new MongoClient(url.toString(), {
 try {
 	await client.connect(); // Required: this regression check must not silently skip MongoDB.
 	assert.deepEqual(await client.db().listCollections().toArray(), []);
-	await withWorker(url.toString(), async (request, logs, base) => {
+	await withWorker(url.toString(), async (request, logs) => {
 		// Concurrent cold requests must also complete the same initialization.
 		await Promise.all(
 			Array.from({ length: 4 }, async () => {
@@ -447,39 +439,6 @@ try {
 			};
 			assert.equal((await nextMessage(asked.seq)).body, "Hello there");
 			assert.equal(modelCalls, 1);
-
-			// A run an evicted isolate left behind is finished by the Cron Trigger.
-			const orphan = (await send(messages, { body: "left behind" })) as Entry;
-			await client
-				.db()
-				.collection<{ _id: string }>("channel_bot_runs")
-				.insertOne({
-					_id: `${bot.id}:${channel.id}:${orphan.seq}`,
-					botId: bot.id,
-					workspaceId: workspace.slice(4),
-					channelId: channel.id,
-					triggerSeq: orphan.seq,
-					triggerMessageId: orphan.id,
-					depth: 0,
-					status: "pending",
-					attempts: 0,
-					createdAt: new Date(Date.now() - 60_000).toISOString(),
-					startedAt: null,
-					finishedAt: null,
-					detail: null,
-					model: null,
-					usage: null,
-					replyMessageId: null,
-					leaseId: null,
-					leaseUntil: null,
-				} as { _id: string });
-			const swept = await fetch(`${base}/__scheduled?cron=*+*+*+*+*`, {
-				signal: AbortSignal.timeout(20_000),
-			});
-			assert.equal(swept.status, 200, `scheduled: HTTP ${swept.status}`);
-			assert.doesNotMatch(await swept.text(), /dashboard stub/);
-			assert.equal((await nextMessage(orphan.seq)).body, "Hello there");
-			assert.equal(modelCalls, 2);
 		} finally {
 			await stub.close();
 		}

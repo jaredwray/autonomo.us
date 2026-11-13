@@ -722,11 +722,11 @@ the four questions, so each follows its recommendation, with one addition:
 - **A bot is paused, not removed from channels, when it is disabled.** A
   deleted bot stays in a channel's agent list until someone removes it; it
   answers nothing.
-- **The Worker needs a Cron Trigger** (`triggers.crons` in
-  `core/server/wrangler.jsonc`, every minute) for the sweep. Cloudflare gives
-  a Worker 30 seconds after a response; a reply slower than that is cancelled
-  there and retried once by the sweep. Queues remain the answer if that proves
-  too tight.
+- **The Worker does not retry a reply** (decision R8). A Cron Trigger for
+  the sweep was built and then removed at the owner's choice. Cloudflare gives
+  a Worker 30 seconds after a response; a reply slower than that, or one whose
+  isolate is evicted, is not answered and the person mentions the bot again.
+  Node deployments keep their 30-second sweep.
 - **`channels:create` does not exist.** With D3, creating a channel is part
   of `channels:manage`.
 - **Mentions are checked when a message is posted.** A mention of someone
@@ -755,11 +755,13 @@ stand in for the reply of a retry that succeeds. The post rate limit counts
 messages only, not system notes or change entries. `channels_update` can
 unarchive a channel.
 
-**Known and accepted.**
+**Known and accepted.** The owner went through these on 2026-11-13; the
+choices are in the table that follows this list.
 
 - Limits that are counted before a write (posts a minute, channels an hour,
-  open channels, a bot's replies an hour and tokens a day) can be passed by
-  requests that arrive together. They are brakes, not exact quotas.
+  open channels, a bot's replies an hour) can be passed by requests that
+  arrive together. They are brakes, not exact quotas. A bot's daily token
+  budget is tighter: it counts each reply still under way at its output cap.
 - A request that was allowed when it started finishes, even if the channel is
   archived or the bot removed a moment later. The gateway treats token
   revocation and workspace archiving the same way.
@@ -774,10 +776,20 @@ unarchive a channel.
   a nonce, or one that is never retried, gets no reply. An outbox that the
   sweep reads would close this, and is a follow-up.
 
+| # | Question from review | Owner's choice |
+| --- | --- | --- |
+| R1 | Channel creation limits can be passed by simultaneous requests. | Keep as a brake. |
+| R2 | A bot's daily token budget can be passed by replies that start together. | Count each reply still under way at its output cap. Built. |
+| R3 | A post can land just after the channel is archived or access removed. | Keep: admitted requests finish. |
+| R4 | An edit or delete is two writes. | Keep. |
+| R5 | A bot's trigger is lost if the gateway crashes before recording it and the post is not retried. | Keep; the outbox stays a follow-up. |
+| R6 | A crash retry can repeat a bot's Synapse write. | Keep. |
+| R7 | Who manages gateway-run bots? | Workspace admins, as built. |
+| R8 | How often should the Worker's Cron Trigger sweep? | Remove it. Removed. |
+
 **Tested as planned** (section 12): the repository contracts for channels and
 bots against memory and MongoDB; one gapless order with two servers posting
 and a follower reading by cursor; workspace isolation; the authorization
 matrix over REST and MCP; limits; crash recovery of bot runs across two
 servers; the dashboard against the real server; and, in workerd, a long poll
-answered by another request, a bot reply finished after its response, and the
-scheduled sweep.
+answered by another request and a bot reply finished after its response.

@@ -351,7 +351,7 @@ export function createServer(options: CreateServerOptions = {}) {
 		if (failed) throw failed.reason;
 	};
 	// A crashed or restarted run is picked up here. Workers have no timers
-	// between requests; there the Worker entry sweeps on a schedule.
+	// between requests, so a reply interrupted there is not retried.
 	let sweeper: ReturnType<typeof setInterval> | undefined;
 	if (!options.deferPersistence)
 		server.addHook("onReady", async () => {

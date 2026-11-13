@@ -38,6 +38,7 @@ async function start() {
 					"mention-model",
 					"tool-model",
 					"broken-model",
+					"slow-model",
 				],
 			},
 		],
@@ -427,6 +428,33 @@ describe("bots the gateway runs", () => {
 			status: "skipped",
 			detail: "Used its 10 tokens for today.",
 		});
+	});
+
+	it("counts replies still under way against the daily budget", async () => {
+		const { createChannel, post, addAgent, bot, details, next } = await start();
+		const channel = await createChannel("general");
+		// One reply may write up to 600 tokens of a 500-token day.
+		const slow = await bot({
+			name: "Slow",
+			model: "stub/slow-model",
+			limits: { tokensPerDay: 500, maxOutputTokens: 600 },
+		});
+		await addAgent(channel.id, slow.id);
+		const first = await post(channel.id, `<@agent:${slow.id}> one`);
+		// The second arrives while the first is still waiting on the model.
+		await post(channel.id, `<@agent:${slow.id}> two`);
+		expect(await next(channel.id, first.seq + 1)).toMatchObject({
+			body: "Slow reply",
+		});
+		expect((await details(slow.id)).runs).toMatchObject([
+			{
+				status: "skipped",
+				detail:
+					"Its 500 tokens for today may be used up by replies already under way.",
+				usage: null,
+			},
+			{ status: "succeeded", usage: { totalTokens: 15 } },
+		]);
 	});
 
 	it("records a failed model call and tells the person who asked", async () => {

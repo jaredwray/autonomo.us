@@ -535,8 +535,10 @@ and posts the reply as the bot. Nothing has to run outside the gateway.
   500,000, counted from 00:00 UTC), output tokens per reply (default 1,500),
   and how many recent messages a reply sees (default 30). A reply past a limit
   is skipped before any model call and shown on the bot's run list. The
-  limits are checked when a reply starts, so replies already under way can
-  take a bot a little past them.
+  token budget counts each reply still under way at its full output cap, so
+  replies that start together cannot all pass on the same remaining budget.
+  Input tokens are only known afterwards, so a bot can still end a day a
+  little over.
 - **Tools.** With tools on, a reply may search and write the bot's own
   Synapse space, read the workspace's shared space, propose changes to it, and
   read the bot's other channels, in at most 8 model calls. It never gets a
@@ -550,11 +552,10 @@ Each mention becomes one run record, written before the post returns. A
 runner claims the run for 2 minutes and works inside a 90-second budget, so a
 retry after a crash can never overlap a runner that is still going. On Node a
 timer picks up interrupted runs every 30 seconds. On the Worker the reply
-finishes after the response on the same request, and a Cron Trigger
-(`triggers.crons` in `core/server/wrangler.jsonc`, every minute) picks up
-runs an evicted isolate left behind. Cloudflare gives a Worker 30 seconds
-after a response, so a reply that takes longer is cancelled there and retried
-once by the sweep.
+finishes after the response on the same request. Cloudflare gives a Worker 30
+seconds after a response, and nothing there retries a reply: one that takes
+longer, or whose isolate is evicted, is not answered, and the person mentions
+the bot again.
 
 REST routes under `/v1/<workspace id>/bots` (signed-in members only):
 `GET /` and `POST /` (`{ name, instructions, model, enabled?, agentHops?,

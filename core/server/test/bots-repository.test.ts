@@ -230,14 +230,27 @@ describe.each(implementations)("bot repository (%s)", (_name, create) => {
 			.map((item) => item.triggerSeq)
 			.sort();
 		expect(stale).toEqual([1, 3]);
-		const active = (
-			await repository.activeRuns(owner.workspaceId, "channel-1", T2)
-		)
-			.map((item) => item.triggerSeq)
-			.sort();
+		const active = async (pendingAfter: string) =>
+			(
+				await repository.activeRuns(
+					owner.workspaceId,
+					"channel-1",
+					T2,
+					pendingAfter,
+				)
+			)
+				.map((item) => item.triggerSeq)
+				.sort();
 		// Pending runs and the one under a live lease are in progress.
-		expect(active).toEqual([1, 2, 4]);
-		expect(await repository.activeRuns("other", "channel-1", T2)).toEqual([]);
+		expect(await active("2026-11-13T09:00:00.000Z")).toEqual([1, 2, 4]);
+		// A pending run nobody started for a while is not.
+		expect(await active(T1)).toEqual([2, 4]);
+		expect(await repository.activeRuns("other", "channel-1", T2, T0)).toEqual(
+			[],
+		);
+		// Only a live lease counts as running.
+		expect(await repository.countRunning(owner.id, T2)).toBe(1);
+		expect(await repository.countRunning(owner.id, T3)).toBe(0);
 
 		expect(await repository.countRunsSince(owner.id, T0)).toBe(5);
 		expect(await repository.countRunsSince(owner.id, T1)).toBe(2);

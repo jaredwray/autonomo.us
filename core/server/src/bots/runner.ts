@@ -317,9 +317,10 @@ export class BotRunner {
 			agent: { manage: false },
 		};
 		// Brakes first: a paused, removed, or exhausted bot spends nothing.
-		const [replies, tokens] = await Promise.all([
+		const [replies, tokens, running] = await Promise.all([
 			bots.countRunsSince(bot.id, this.at(-HOUR_MS)),
 			bots.tokensSince(bot.id, startOfDay(this.now())),
+			bots.countRunning(bot.id, this.at()),
 		]);
 		// This run is one of the replies counted.
 		if (replies > bot.limits.repliesPerHour)
@@ -328,6 +329,14 @@ export class BotRunner {
 			);
 		if (tokens >= bot.limits.tokensPerDay)
 			throw new Skip(`Used its ${bot.limits.tokensPerDay} tokens for today.`);
+		// Replies still under way have recorded nothing yet. Each is counted
+		// at the most it may write, so replies that start together cannot all
+		// pass on the same remaining budget. This run is one of `running`.
+		const underWay = Math.max(0, running - 1) * bot.limits.maxOutputTokens;
+		if (tokens + underWay >= bot.limits.tokensPerDay)
+			throw new Skip(
+				`Its ${bot.limits.tokensPerDay} tokens for today may be used up by replies already under way.`,
+			);
 
 		let channel: Awaited<ReturnType<ChannelService["getChannel"]>>;
 		let members: ChannelMember[];
