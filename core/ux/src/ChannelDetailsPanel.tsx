@@ -279,9 +279,9 @@ export function ChannelDetailsPanel({
 						</ul>
 					) : (
 						<p className="card-note">
-							No agents are in this channel yet. Add one below. An agent also
-							needs the <code>mcp:call</code> grant on its agent token to read
-							and post here.
+							No agents are in this channel yet. Add one below. An agent that
+							uses MCP also needs the <code>mcp:call</code> grant, set under
+							Agents, to read and post here.
 						</p>
 					)}
 					{!archived && (

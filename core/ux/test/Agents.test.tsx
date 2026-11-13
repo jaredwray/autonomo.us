@@ -1045,13 +1045,24 @@ it("creates an agent that signs in with OAuth, lists its apps, and disconnects a
 			.map((row) =>
 				within(row)
 					.getAllByRole("cell")
-					.slice(0, 3)
-					.map((cell) => cell.textContent),
+					.slice(0, 2)
+					// Who approved it, without the time under the name.
+					.map((cell) => cell.firstChild?.textContent),
 			);
 	expect(await rows()).toEqual([
-		["CursorThe app chose this name.", "127.0.0.1:7777", "Founder"],
-		["Claude DesktopThe app chose this name.", "127.0.0.1:7777", "Founder"],
+		["Cursor", "Founder"],
+		["Claude Desktop", "Founder"],
 	]);
+	expect(
+		within(screen.getByRole("region", { name: "Signed-in apps" })).getAllByText(
+			"Signed in at 127.0.0.1:7777",
+		),
+	).toHaveLength(2);
+	expect(
+		within(screen.getByRole("region", { name: "Signed-in apps" })).getAllByText(
+			"The app chose this name.",
+		),
+	).toHaveLength(2);
 	expect(screen.queryByText(/Next: connect an app/)).toBeNull();
 	expect(agentList().getByRole("link", { name: /^Claude/ }).textContent).toBe(
 		"ClaudeOAuth sign-inMCP: Read, MCP: Call · 2 apps signed in",

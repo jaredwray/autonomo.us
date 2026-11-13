@@ -232,7 +232,7 @@ it("creates a channel from the UI, posts to it, and shows the message", async ()
 	// A channel with no agents says how to add one, and what the agent needs.
 	expect(
 		view.getByText(/No agents are in this channel yet/).textContent,
-	).toMatch(/Add one from Details.*mcp:call.*grant on its agent token/);
+	).toMatch(/Add one from Details.*mcp:call.*grant, set under Agents/);
 	expect(
 		channelList()
 			.getByRole("link", { name: "general" })

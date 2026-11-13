@@ -602,11 +602,8 @@ export function OAuthAgent({
 							<thead>
 								<tr>
 									<th>App</th>
-									<th>Signed in at</th>
-									<th>Approved by</th>
-									<th>Since</th>
-									<th>Last renewed</th>
-									<th>Ends</th>
+									<th>Approved</th>
+									<th>Renewed</th>
 									<th>Actions</th>
 								</tr>
 							</thead>
@@ -618,12 +615,22 @@ export function OAuthAgent({
 											<small className="token-date">
 												The app chose this name.
 											</small>
+											<small className="token-date">
+												Signed in at {connection.redirectHost}
+											</small>
 										</td>
-										<td>{connection.redirectHost}</td>
-										<td>{connection.approvedBy}</td>
-										<td>{date(connection.createdAt)}</td>
-										<td>{date(connection.lastUsedAt)}</td>
-										<td>{date(connection.expiresAt)}</td>
+										<td>
+											{connection.approvedBy}
+											<small className="token-date">
+												{date(connection.createdAt)}
+											</small>
+										</td>
+										<td>
+											{date(connection.lastUsedAt)}
+											<small className="token-date">
+												Ends {date(connection.expiresAt)} unless renewed
+											</small>
+										</td>
 										<td>
 											<button
 												className="button danger"

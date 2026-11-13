@@ -628,8 +628,9 @@ export function ChannelRoom({
 											<button type="button" onClick={() => setPanel("details")}>
 												Add one from Details
 											</button>
-											. An agent also needs the <code>mcp:call</code> grant on
-											its agent token to read and post here.
+											. An agent that uses MCP also needs the{" "}
+											<code>mcp:call</code> grant, set under Agents, to read and
+											post here.
 										</p>
 									)}
 								</div>

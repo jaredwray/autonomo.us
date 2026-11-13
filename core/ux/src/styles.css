@@ -1134,6 +1134,9 @@ a.button { text-decoration: none; }
 .agent-address-row input { flex: 1; min-width: 0; font-family: monospace; }
 .agent-steps { margin: 12px 0 0; padding-left: 20px; color: var(--text-secondary); font-size: 13px; }
 .agent-steps li { margin: 6px 0; }
+.agents-main .token-log-table { min-width: 520px; }
+.agents-main .token-log-table td:last-child { min-width: 180px; }
+.agents-main .agent-connections td:last-child { min-width: 0; }
 .agent-connections td { padding-top: 12px; padding-bottom: 12px; }
 .bot-chip.revoked, .bot-chip.expired { color: var(--text-muted); }
 .auth-card.wide { max-width: 620px; }
