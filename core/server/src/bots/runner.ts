@@ -53,6 +53,15 @@ const BOT_TOOLS = new Set([
 	"channels_read",
 	"channels_members",
 ]);
+/** The tools among them that change something and cannot be repeated safely. */
+const WRITING_TOOLS = new Set([
+	"synapse_create",
+	"synapse_update",
+	"synapse_append",
+	"synapse_delete",
+	"synapse_log",
+	"synapse_propose",
+]);
 const KIND_LABELS = { user: "person", agent: "agent", "api-token": "token" };
 
 export type BotRunnerOptions = {
@@ -243,6 +252,8 @@ export class BotRunner {
 			if (budget.signal.aborted || this.now() >= deadline)
 				throw new Failure("Ran out of time before finishing.");
 		};
+		/** Whether the run has changed anything a retry would change again. */
+		const progress = { wrote: false };
 		const result: RunResult = {
 			status: "failed",
 			detail: null,
@@ -252,7 +263,10 @@ export class BotRunner {
 			finishedAt: null,
 		};
 		try {
-			Object.assign(result, await this.reply(run, budget.signal, fence));
+			Object.assign(
+				result,
+				await this.reply(run, budget.signal, fence, progress),
+			);
 			result.status = "succeeded";
 		} catch (error) {
 			if (error instanceof Skip) {
@@ -272,10 +286,15 @@ export class BotRunner {
 			this.budgets.delete(budget);
 		}
 		// Interrupted by shutdown: this runner has stopped, so hand the run
-		// back for the sweep to retry instead of recording a failure.
+		// back for the sweep to retry instead of recording a failure. Not once
+		// a tool has written something: a retry would write it again.
 		if (this.closing && result.status === "failed" && budget.signal.aborted) {
-			await this.options.bots.releaseRun(id, lease.id, this.at());
-			return;
+			if (!progress.wrote) {
+				await this.options.bots.releaseRun(id, lease.id, this.at());
+				return;
+			}
+			result.detail =
+				"Interrupted by a restart after it had written to Synapse. Ask again if an answer is still needed.";
 		}
 		result.finishedAt = this.at();
 		await this.options.bots.finishRun(id, lease.id, result);
@@ -285,6 +304,7 @@ export class BotRunner {
 		run: StoredRun,
 		signal: AbortSignal,
 		fence: () => void,
+		progress: { wrote: boolean },
 	): Promise<Pick<RunResult, "model" | "usage" | "replyMessageId">> {
 		const { bots, channels } = this.options;
 		const workspace = await this.options.workspaces.get(run.workspaceId);
@@ -343,7 +363,9 @@ export class BotRunner {
 			},
 			signal,
 			caller: { id: `agent:${bot.id}`, name: bot.name, kind: "agent" },
-			extras: bot.tools ? this.tools(bot, workspace, fence) : undefined,
+			extras: bot.tools
+				? this.tools(bot, workspace, fence, progress)
+				: undefined,
 		});
 		if (outcome.status === "aborted")
 			throw new Failure("Ran out of time waiting for the model.");
@@ -507,6 +529,7 @@ export class BotRunner {
 		bot: Bot,
 		workspace: McpAgent["workspace"],
 		fence: () => void,
+		progress: { wrote: boolean },
 	): ChatExtras {
 		const agent: McpAgent = {
 			token: {
@@ -529,6 +552,7 @@ export class BotRunner {
 						fence();
 						const problem = argumentProblem(definition.inputSchema, input);
 						if (problem) return `Invalid arguments: ${problem}`;
+						if (WRITING_TOOLS.has(definition.name)) progress.wrote = true;
 						try {
 							const result = await set.handlers[definition.name](
 								agent,

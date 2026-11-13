@@ -766,6 +766,9 @@ unarchive a channel.
 - An edit or delete is two writes. A crash between them changes the message
   but not the log, so a dashboard that is open shows the old text until it
   reloads. The text itself is gone from storage.
+- A bot run that is retried after a crash repeats what its tools did, such
+  as a line in the bot's Synapse log. A shutdown does not: a run that has
+  already written through a tool is closed as failed instead of retried.
 - A bot's trigger is written after the message, not with it. A crash between
   the two is repaired when the post is retried with its nonce; a post without
   a nonce, or one that is never retried, gets no reply. An outbox that the
