@@ -92,6 +92,13 @@ export function ModelCombobox(props: {
 		? search(props.options, props.value)
 		: props.options;
 	const shown = open && props.options.length > 0;
+	// Names that more than one option uses. Only those rows show their id,
+	// since the id is the only thing that tells them apart.
+	const sharedNames = new Set(
+		props.options
+			.map((item) => item.name)
+			.filter((name, index, names) => names.indexOf(name) !== index),
+	);
 	const current = props.value.trim();
 
 	// Opens the list above the field when there is no room for it below.
@@ -247,6 +254,7 @@ export function ModelCombobox(props: {
 										role="option"
 										tabIndex={-1}
 										aria-selected={index === cursor}
+										title={item.id}
 										data-current={item.id === current || undefined}
 										onMouseDown={(event) => {
 											event.preventDefault();
@@ -263,7 +271,9 @@ export function ModelCombobox(props: {
 													<span className="model-option-tag">Active</span>
 												) : null}
 											</span>
-											<code>{item.id}</code>
+											{sharedNames.has(item.name) ? (
+												<code>{item.id}</code>
+											) : null}
 										</span>
 										{price || released ? (
 											<span className="model-option-meta">

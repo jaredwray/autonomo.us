@@ -47,6 +47,15 @@ const CATALOG = {
 				{ id: "text-embedding-9", name: "Embedding 9" },
 			],
 		},
+		mistral: {
+			name: "Mistral",
+			source: "documentation" as const,
+			models: [
+				{ id: "devstral-2512", name: "Devstral 2" },
+				{ id: "devstral-latest", name: "Devstral 2" },
+				{ id: "mistral-large", name: "Mistral Large" },
+			],
+		},
 	},
 };
 
@@ -120,10 +129,10 @@ describe("Model field", () => {
 		expect(field.getAttribute("aria-expanded")).toBe("true");
 		const list = screen.getByRole("listbox", { name: "Model suggestions" });
 		expect(options().map((item) => item.textContent)).toEqual([
-			"GPT Alphagpt-alpha$4 / $20Jul 2026",
-			"GPT Alpha minigpt-alpha-mini$0.2 / $1.25Mar 2026",
-			"GPT BetaActivegpt-beta",
-			"Open Weightsopen-weightsFree",
+			"GPT Alpha$4 / $20Jul 2026",
+			"GPT Alpha mini$0.2 / $1.25Mar 2026",
+			"GPT BetaActive",
+			"Open WeightsFree",
 		]);
 		expect(within(list).queryByText("text-embedding-9")).toBeNull();
 		expect(screen.getByRole("status").textContent).toBe("4 models");
@@ -136,7 +145,7 @@ describe("Model field", () => {
 		const { field, models } = await openForm();
 		fireEvent.change(field, { target: { value: "ALPHA mini" } });
 		expect(options()).toHaveLength(1);
-		expect(options()[0]?.textContent).toContain("gpt-alpha-mini");
+		expect(options()[0]?.textContent).toContain("GPT Alpha mini");
 		expect(screen.getByRole("status").textContent).toBe("1 of 4 models");
 		// The closest id comes first, whatever the catalog's order.
 		fireEvent.change(field, { target: { value: "gpt-alpha-m" } });
@@ -145,14 +154,14 @@ describe("Model field", () => {
 		expect(options()).toHaveLength(3);
 		fireEvent.keyDown(field, { key: "ArrowDown" });
 		fireEvent.keyDown(field, { key: "ArrowDown" });
-		expect(highlighted()?.textContent).toContain("gpt-alpha-mini");
+		expect(highlighted()?.textContent).toContain("GPT Alpha mini");
 		expect(field.getAttribute("aria-activedescendant")).toBe(highlighted()?.id);
 		fireEvent.keyDown(field, { key: "ArrowUp" });
 		fireEvent.keyDown(field, { key: "ArrowUp" });
-		expect(highlighted()?.textContent).toContain("gpt-beta");
+		expect(highlighted()?.textContent).toContain("GPT Beta");
 		fireEvent.keyDown(field, { key: "ArrowDown" });
 		fireEvent.keyDown(field, { key: "ArrowDown" });
-		expect(highlighted()?.textContent).toContain("gpt-alpha-mini");
+		expect(highlighted()?.textContent).toContain("GPT Alpha mini");
 		fireEvent.keyDown(field, { key: "Enter" });
 		expect(field.value).toBe("gpt-alpha-mini");
 		expect(screen.queryByRole("listbox")).toBeNull();
@@ -169,7 +178,7 @@ describe("Model field", () => {
 	it("reopens on the chosen model and picks another with the mouse", async () => {
 		const { field } = await openForm();
 		fireEvent.keyDown(field, { key: "ArrowUp" });
-		expect(highlighted()?.textContent).toContain("open-weights");
+		expect(highlighted()?.textContent).toContain("Open Weights");
 		fireEvent.keyDown(field, { key: "Escape" });
 		expect(screen.queryByRole("listbox")).toBeNull();
 		fireEvent.change(field, { target: { value: "gpt-alpha-mini" } });
@@ -180,7 +189,7 @@ describe("Model field", () => {
 		});
 		fireEvent.mouseDown(toggle);
 		expect(options()).toHaveLength(4);
-		expect(highlighted()?.textContent).toContain("gpt-alpha-mini");
+		expect(highlighted()?.textContent).toContain("GPT Alpha mini");
 		expect(highlighted()?.hasAttribute("data-current")).toBe(true);
 		const first = options()[0] as HTMLElement;
 		fireEvent.mouseMove(first);
@@ -230,6 +239,22 @@ describe("Model field", () => {
 		).toBeDefined();
 		fireEvent.change(field, { target: { value: "gpt-beta" } });
 		expect(screen.getByText("This model is already active.")).toBeDefined();
+	});
+
+	it("shows a model's id only when another model has the same name", async () => {
+		const { field } = await openForm("mistral");
+		fireEvent.click(field);
+		expect(options().map((item) => item.textContent)).toEqual([
+			"Devstral 2devstral-2512",
+			"Devstral 2devstral-latest",
+			"Mistral Large",
+		]);
+		// Every row still names its id on hover.
+		expect(options().map((item) => item.title)).toEqual([
+			"devstral-2512",
+			"devstral-latest",
+			"mistral-large",
+		]);
 	});
 
 	it("is a plain text box for a provider without suggestions", async () => {
