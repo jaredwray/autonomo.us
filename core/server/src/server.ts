@@ -9,6 +9,7 @@ import { type ApiConfig, configFromEnv } from "./config.js";
 import { registerDashboard } from "./dashboard.js";
 import { FailoverPolicyStore } from "./failover.js";
 import { GatewayData } from "./gateway-data.js";
+import { mcpRoutes } from "./mcp/server.js";
 import { ModelCatalogService } from "./model-catalog-service.js";
 import { controlPlaneConnection, mongoErrorDetails } from "./mongo.js";
 import {
@@ -31,7 +32,7 @@ import { telemetryRoutes } from "./routes/telemetry.js";
 import { memberRoutes, workspaceRoutes } from "./routes/workspaces.js";
 import { ModelRouter } from "./routing/router.js";
 import { RoutingSettingsStore } from "./routing/settings.js";
-import { mcpRoutes } from "./synapse/mcp.js";
+import { synapseToolSet } from "./synapse/mcp.js";
 import { MemorySynapseRepository } from "./synapse/memory-repository.js";
 import { MongoSynapseRepository } from "./synapse/mongo-repository.js";
 import { SynapseService } from "./synapse/synapse.js";
@@ -198,9 +199,9 @@ export function createServer(options: CreateServerOptions = {}) {
 		},
 		{ prefix: "/v1/:workspace" },
 	);
-	// Agents reach their workspace's Synapse through their token.
+	// Agents reach their workspace through their token: one tool set per feature.
 	server.register(mcpRoutes, {
-		synapse,
+		toolSets: [synapseToolSet(synapse)],
 		agentTokens,
 		workspaces,
 		corsOrigins: config.corsOrigins,
