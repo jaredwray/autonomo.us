@@ -162,6 +162,9 @@ function ThreadPanel({
 	);
 }
 
+/** A thread is read whole, up to this many pages of 100 replies. */
+const THREAD_PAGES = 50;
+
 /**
  * One open channel: its messages, followed by long poll, with the composer,
  * the thread panel, and the details panel. The view renders it with
@@ -409,13 +412,31 @@ export function ChannelRoom({
 			const rootId = root.threadId ?? root.id;
 			dispatch({ type: "thread-open", rootId });
 			setPanel("thread");
-			fetchChannelEntries(id, {
-				thread: rootId,
-				limit: CHANNEL_LIMITS.maxPageSize,
-			})
-				.then((page) =>
-					dispatch({ type: "thread-loaded", rootId, entries: page.entries }),
-				)
+			// A long thread comes in pages; each next one starts after the last
+			// reply of the page before it.
+			const load = async () => {
+				const limit = CHANNEL_LIMITS.maxPageSize;
+				let page = await fetchChannelEntries(id, { thread: rootId, limit });
+				const entries = [...page.entries];
+				// The first page also holds the root.
+				let replies = page.entries.length - 1;
+				for (
+					let pages = 1;
+					replies === limit && pages < THREAD_PAGES;
+					pages++
+				) {
+					page = await fetchChannelEntries(id, {
+						thread: rootId,
+						after: page.cursor,
+						limit,
+					});
+					entries.push(...page.entries);
+					replies = page.entries.length;
+				}
+				return entries;
+			};
+			load()
+				.then((entries) => dispatch({ type: "thread-loaded", rootId, entries }))
 				.catch((cause) =>
 					dispatch({
 						type: "thread-failed",

@@ -213,7 +213,9 @@ function MessageRow({
 	const deleted = message.deletedAt !== null;
 	const mine = message.author.kind === "user" && message.author.id === tools.me;
 	const canEdit = !deleted && !tools.archived && mine;
-	const canDelete = !deleted && !tools.archived && (mine || tools.moderate);
+	// Deleting stays possible in an archived channel, as on the server: a
+	// pasted secret has to be removable.
+	const canDelete = !deleted && (mine || tools.moderate);
 	const time = new Date(message.createdAt).toLocaleString();
 	return (
 		<li className={`channel-message${head ? " head" : ""}`}>

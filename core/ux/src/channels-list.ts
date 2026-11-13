@@ -14,7 +14,11 @@ export type ChannelListState = {
 	persistence: ChannelList["persistence"] | null;
 	error: string;
 	refresh(): Promise<void>;
-	/** Applies a local change at once; a response already on its way is dropped. */
+	/**
+	 * Applies a local change at once; a response already on its way is dropped.
+	 * Before the first response there is nothing to change, so the list is
+	 * loaded again instead and the change shows up in that answer.
+	 */
 	change(update: (channels: ChannelSummary[]) => ChannelSummary[]): void;
 };
 
@@ -34,6 +38,8 @@ const nothing = (workspaceId: string | null): Loaded => ({
 export function useChannelList(workspaceId: string | null): ChannelListState {
 	const [loaded, setLoaded] = useState<Loaded>(() => nothing(workspaceId));
 	const sequence = useRef(0);
+	/** The workspace whose list has arrived, if any. */
+	const arrived = useRef<string | null>(null);
 	const refresh = useCallback(async () => {
 		// The shell sets the workspace while rendering; a timer can fire between
 		// that and this effect's cleanup.
@@ -41,13 +47,15 @@ export function useChannelList(workspaceId: string | null): ChannelListState {
 		const request = ++sequence.current;
 		try {
 			const result = await fetchChannels();
-			if (request === sequence.current)
+			if (request === sequence.current) {
+				arrived.current = workspaceId;
 				setLoaded({
 					workspaceId,
 					channels: result.channels,
 					persistence: result.persistence,
 					error: "",
 				});
+			}
 		} catch (cause) {
 			if (request === sequence.current)
 				setLoaded((current) => ({
@@ -77,6 +85,12 @@ export function useChannelList(workspaceId: string | null): ChannelListState {
 	}, [workspaceId, refresh]);
 	const change = useCallback<ChannelListState["change"]>(
 		(update) => {
+			// The first load is still on its way and may have been answered
+			// before this change happened: ask again rather than drop both.
+			if (arrived.current !== workspaceId) {
+				void refresh();
+				return;
+			}
 			sequence.current++;
 			setLoaded((current) =>
 				current.workspaceId === workspaceId && current.channels
@@ -84,7 +98,7 @@ export function useChannelList(workspaceId: string | null): ChannelListState {
 					: current,
 			);
 		},
-		[workspaceId],
+		[workspaceId, refresh],
 	);
 	const current = loaded.workspaceId === workspaceId ? loaded : null;
 	return {

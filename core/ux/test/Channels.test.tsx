@@ -740,6 +740,88 @@ it("archives a channel, which stops posting, and brings it back", async () => {
 	).toBeDefined();
 });
 
+it("still deletes a message in an archived channel", async () => {
+	const running = await boot();
+	const channel = await running.createChannel("old-news");
+	const mine = await running.post(channel, "token=abc123");
+	await running.api("POST", `${running.channels}/${channel.id}/archive`);
+	renderAt("#/channels/old-news");
+	const view = await room("old-news");
+	expect(composer("old-news").disabled).toBe(true);
+	const own = await row(view, "token=abc123");
+	// A pasted secret must be removable; nothing else is offered here.
+	expect(own.queryByRole("button", { name: "Edit" })).toBeNull();
+	fireEvent.click(own.getByRole("button", { name: "Delete" }));
+	fireEvent.click(own.getByRole("button", { name: "Delete message" }));
+	expect(await own.findByText("Message deleted")).toBeDefined();
+	expect(
+		(await running.messages(channel)).map((message) => [
+			message.id,
+			message.body,
+		]),
+	).toEqual([[mine.id, ""]]);
+});
+
+it("loads every reply of a thread longer than one page", async () => {
+	const running = await boot();
+	const channel = await running.createChannel("general");
+	const root = await running.post(channel, "Long thread");
+	// One page is 100 replies; this thread needs two.
+	for (let index = 1; index <= 103; index++)
+		await running.post(channel, `reply ${index}`, { threadId: root.id });
+	renderAt("#/channels/general");
+	const view = await room("general");
+	const asked = await row(view, "Long thread");
+	fireEvent.click(asked.getByRole("button", { name: "103 replies" }));
+	const thread = within(
+		await screen.findByRole("complementary", { name: "Thread" }),
+	);
+	expect(await thread.findByText("reply 103", {}, SOON)).toBeDefined();
+	expect(thread.getByText("reply 1")).toBeDefined();
+	expect(thread.getByText("reply 100")).toBeDefined();
+	expect(thread.queryByText(/Showing \d+ of/)).toBeNull();
+});
+
+it("shows a channel created while the list was still loading", async () => {
+	const running = await boot();
+	// No periodic refresh rescues this test: the list is read once.
+	setChannelTimings({ listIntervalMs: 600_000 });
+	// Hold the first read of the channel list until a channel has been created.
+	let release = () => {};
+	const held = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	const real = globalThis.fetch;
+	let first = true;
+	vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+		const url = String(input instanceof Request ? input.url : input);
+		const response = await real(input, init);
+		if (
+			first &&
+			(init?.method ?? "GET") === "GET" &&
+			url.endsWith("/channels")
+		) {
+			first = false;
+			await held;
+		}
+		return response;
+	});
+	renderAt("#/channels");
+	fireEvent.click(await screen.findByRole("button", { name: "New channel" }));
+	const form = within(screen.getByRole("region", { name: "New channel" }));
+	type(form.getByLabelText("Name"), "general");
+	fireEvent.click(form.getByRole("button", { name: "Create channel" }));
+	await waitFor(async () =>
+		expect((await running.list()).map((item) => item.name)).toEqual([
+			"general",
+		]),
+	);
+	// The held answer predates the channel; the view must not settle on it.
+	release();
+	expect(await room("general")).toBeDefined();
+	expect(channelList().getByText("general")).toBeDefined();
+});
+
 it("pages back through earlier messages", async () => {
 	const running = await boot();
 	const channel = await running.createChannel("general");
