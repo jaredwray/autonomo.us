@@ -766,6 +766,10 @@ unarchive a channel.
 - An edit or delete is two writes. A crash between them changes the message
   but not the log, so a dashboard that is open shows the old text until it
   reloads. The text itself is gone from storage.
+- A bot's trigger is written after the message, not with it. A crash between
+  the two is repaired when the post is retried with its nonce; a post without
+  a nonce, or one that is never retried, gets no reply. An outbox that the
+  sweep reads would close this, and is a follow-up.
 
 **Tested as planned** (section 12): the repository contracts for channels and
 bots against memory and MongoDB; one gapless order with two servers posting
