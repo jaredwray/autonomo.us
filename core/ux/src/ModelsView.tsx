@@ -15,6 +15,7 @@ import {
 	type ModelsData,
 } from "./api.js";
 import { Icon } from "./Icons.js";
+import { ModelCombobox } from "./ModelCombobox.js";
 
 const providerNames: Record<string, string> = PROVIDER_NAMES;
 
@@ -58,6 +59,12 @@ function AddModelForm(props: {
 			!/(embedding|image|imagine|video|tts|live|audio|robotics|voice|whisper|rerank|moderation)/i.test(
 				item.id,
 			),
+	);
+	const suggested = suggestions.some((item) => item.id === model.trim());
+	const activeIds = new Set(
+		props.models
+			.filter((item) => item.provider === connectionId)
+			.map((item) => item.model),
 	);
 
 	return (
@@ -189,30 +196,25 @@ function AddModelForm(props: {
 						) : null}
 						<div className="form-field">
 							<label htmlFor="provider-model">Model</label>
-							<input
+							<ModelCombobox
 								id="provider-model"
-								required
-								list="model-options"
 								value={model}
-								onChange={(event) => {
-									setModel(event.target.value);
+								options={suggestions}
+								activeIds={activeIds}
+								describedBy="model-help"
+								onChange={(value) => {
+									setModel(value);
 									setError(null);
 								}}
-								placeholder="Choose or enter a model ID"
-								maxLength={200}
-								aria-describedby="model-help"
 							/>
-							<datalist id="model-options">
-								{suggestions.map((item) => (
-									<option key={item.id} value={item.id}>
-										{item.name}
-									</option>
-								))}
-							</datalist>
 							<span className="field-hint" id="model-help">
 								{active
 									? "This model is already active."
-									: "Select a suggestion or enter a model ID from your provider."}
+									: suggestions.length === 0
+										? "Enter a model ID from your provider."
+										: model.trim() && !suggested
+											? `Not in the suggested list. It is sent to ${providerNames[provider] ?? provider} as entered.`
+											: "Pick a suggestion or enter any model ID from your provider."}
 							</span>
 						</div>
 						{provider === "cloudflare" ? (

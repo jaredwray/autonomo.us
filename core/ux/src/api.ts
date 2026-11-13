@@ -281,7 +281,12 @@ export type ModelCatalog = {
 		string,
 		{
 			name: string;
-			models: Array<{ id: string; name: string }>;
+			models: Array<{
+				id: string;
+				name: string;
+				released?: string;
+				pricing?: { input: number; output: number };
+			}>;
 		}
 	>;
 };
