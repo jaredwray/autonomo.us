@@ -16,6 +16,8 @@ import type { BotRepository } from "./repository.js";
 
 const HOUR_MS = 3_600_000;
 const RUNS_SHOWN = 50;
+const BOT_ID =
+	/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const PENDING_SHOWN_MS = 120_000;
 const MAX_MODEL_LENGTH = 200;
 
@@ -148,7 +150,11 @@ export class BotService {
 		return this.repository.listBots(workspaceId);
 	}
 	private async find(workspaceId: string, id: string): Promise<Bot> {
-		const bot = await this.repository.getBot(workspaceId, id);
+		// Routes check the id's shape too; this does not depend on them.
+		const bot =
+			typeof id === "string" && BOT_ID.test(id)
+				? await this.repository.getBot(workspaceId, id)
+				: null;
 		if (!bot) throw new BotError("Bot not found.", 404);
 		return bot;
 	}
@@ -234,6 +240,7 @@ export class BotService {
 	}
 
 	async remove(workspaceId: string, id: string): Promise<void> {
+		await this.find(workspaceId, id);
 		if (!(await this.repository.deleteBot(workspaceId, id)))
 			throw new BotError("Bot not found.", 404);
 	}

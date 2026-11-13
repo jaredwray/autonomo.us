@@ -281,8 +281,13 @@ export class MongoBotRepository implements BotRepository {
 		await this.storage(() => this.bots().insertOne({ _id: id, ...rest }));
 	}
 	async getBot(workspaceId: string, id: string) {
+		// `$eq` compares values only: an id that somehow arrived as an object
+		// could not act as a query operator.
 		const found = await this.storage(() =>
-			this.bots().findOne({ _id: id, workspaceId }),
+			this.bots().findOne({
+				_id: { $eq: id },
+				workspaceId: { $eq: workspaceId },
+			}),
 		);
 		return found ? toBot(found) : null;
 	}
@@ -304,7 +309,10 @@ export class MongoBotRepository implements BotRepository {
 	}
 	deleteBot(workspaceId: string, id: string) {
 		return this.storage(async () => {
-			const result = await this.bots().deleteOne({ _id: id, workspaceId });
+			const result = await this.bots().deleteOne({
+				_id: { $eq: id },
+				workspaceId: { $eq: workspaceId },
+			});
 			return result.deletedCount > 0;
 		});
 	}
