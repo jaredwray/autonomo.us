@@ -10,14 +10,16 @@ import {
 	useRef,
 	useState,
 } from "react";
-import { AgentTokensView } from "./AgentTokensView.js";
+import { AgentsView } from "./AgentsView.js";
 import { ApiTokensView } from "./ApiTokensView.js";
+import { AuthorizeView } from "./AuthorizeView.js";
 import {
 	AuthLayout,
 	InviteView,
 	SetupView,
 	SignInView,
 } from "./AuthScreens.js";
+import { signInRequestId } from "./agents-route.js";
 import {
 	clearCredential,
 	credentialKind,
@@ -26,7 +28,6 @@ import {
 	setCurrentWorkspace,
 	signOut,
 } from "./api.js";
-import { BotsView } from "./BotsView.js";
 import { ChannelsView } from "./ChannelsView.js";
 import { channelAttention, useChannelList } from "./channels-list.js";
 import { Dashboard } from "./Dashboard.js";
@@ -47,17 +48,34 @@ const workspaceViews = {
 	routing: "Routing",
 	synapse: "Synapse",
 	channels: "Channels",
-	bots: "Bots",
+	agents: "Agents",
 	"api-tokens": "API Tokens",
-	"agent-tokens": "Agent Tokens",
 };
+/**
+ * Where links from before Bots and Agent Tokens became Agents lead now. A
+ * bot's link keeps naming its agent; the token list had nothing after it.
+ */
+const formerViews: Record<string, { view: WorkspaceView; keepRest: boolean }> =
+	{
+		bots: { view: "agents", keepRest: true },
+		"agent-tokens": { view: "agents", keepRest: false },
+	};
 /** Views of the whole gateway, at `#/<view>`. */
 const instanceViews = { workspaces: "Workspaces", team: "Team" };
 const viewLabels = { ...workspaceViews, ...instanceViews };
 type WorkspaceView = keyof typeof workspaceViews;
 type View = keyof typeof viewLabels | "profile";
-/** `rest` is a view's own state after its name: Synapse's /<space>/<note>, a channel's /<name>, a bot's /<id>. */
-type Route = { view: View; workspaceId: string | null; rest: string };
+/**
+ * `rest` is a view's own state after its name: Synapse's /<space>/<note>, a
+ * channel's /<name>, an agent's /<id>. `renamed` marks an address that still
+ * uses a view's former name and is rewritten once the view is shown.
+ */
+type Route = {
+	view: View;
+	workspaceId: string | null;
+	rest: string;
+	renamed?: boolean;
+};
 const isWorkspaceView = (view: View): view is WorkspaceView =>
 	Object.hasOwn(workspaceViews, view);
 function currentRoute(): Route {
@@ -65,23 +83,34 @@ function currentRoute(): Route {
 		window.location.hash,
 	);
 	if (scoped) {
-		const view = (scoped[2] ?? "dashboard") as View;
+		const former = formerView(scoped[2] ?? "");
+		const view = (former?.view ?? scoped[2] ?? "dashboard") as View;
 		const known = isWorkspaceView(view);
 		return {
 			view: known ? view : "dashboard",
 			workspaceId: decodeURIComponent(scoped[1]),
-			rest: known ? (scoped[3] ?? "") : "",
+			rest: known && former?.keepRest !== false ? (scoped[3] ?? "") : "",
+			renamed: Boolean(former),
 		};
 	}
 	// A pre-workspace link such as #/models or #/synapse/shared/<note> opens
 	// in the remembered workspace.
-	const [view = "", ...rest] = window.location.hash.slice(2).split("/");
+	const [name = "", ...rest] = window.location.hash.slice(2).split("/");
+	const former = formerView(name);
+	const view = former?.view ?? name;
 	const known = view === "profile" || Object.hasOwn(viewLabels, view);
 	return {
 		view: known ? (view as View) : "dashboard",
 		workspaceId: null,
-		rest: known && rest.length ? `/${rest.join("/")}` : "",
+		rest:
+			known && rest.length && former?.keepRest !== false
+				? `/${rest.join("/")}`
+				: "",
+		renamed: Boolean(former),
 	};
+}
+function formerView(name: string) {
+	return Object.hasOwn(formerViews, name) ? formerViews[name] : undefined;
 }
 const href = (view: View, workspaceId: string | null, rest = "") =>
 	isWorkspaceView(view) && workspaceId
@@ -119,6 +148,8 @@ function chooseWorkspace(
 function inviteToken() {
 	return /^#\/invite\/([\w-]+)$/.exec(window.location.hash)?.[1] ?? null;
 }
+/** An app's OAuth sign-in that the gateway sent here to be decided. */
+const signInRequest = () => signInRequestId(window.location.hash);
 
 type Gate =
 	| { state: "loading" }
@@ -130,6 +161,7 @@ type Gate =
 export function App() {
 	const [gate, setGate] = useState<Gate>({ state: "loading" });
 	const [invite, setInvite] = useState(inviteToken);
+	const [signInId, setSignInId] = useState(signInRequest);
 	const sequence = useRef(0);
 	const load = useCallback(async () => {
 		const request = ++sequence.current;
@@ -242,6 +274,7 @@ export function App() {
 		const navigate = () => {
 			setRoute(currentRoute());
 			setInvite(inviteToken());
+			setSignInId(signInRequest());
 		};
 		window.addEventListener("hashchange", navigate);
 		return () => window.removeEventListener("hashchange", navigate);
@@ -250,6 +283,7 @@ export function App() {
 		window.history.replaceState(null, "", href(next, workspaceId));
 		setRoute({ view: next, workspaceId, rest: "" });
 		setInvite(null);
+		setSignInId(null);
 	};
 	/** Re-reads the session after a workspace is created, renamed, or archived. */
 	const refreshSession = useCallback(async () => {
@@ -274,19 +308,28 @@ export function App() {
 	// Read here, not in the Channels view, so the sidebar shows unread channels
 	// and mentions from every view.
 	const channelList = useChannelList(
-		gate.state === "ready" && !invite ? (selected?.id ?? null) : null,
+		gate.state === "ready" && !invite && !signInId
+			? (selected?.id ?? null)
+			: null,
 	);
 	const attention = channelAttention(channelList.channels);
 	// A layout effect, so the address is right by the time the view is seen.
 	useLayoutEffect(() => {
-		if (gate.state !== "ready" || !selected) return;
+		if (gate.state !== "ready" || !selected || signInId) return;
 		rememberWorkspace(selected.id);
-		// Canonical URL: a workspace view always names its workspace.
-		if (isWorkspaceView(route.view) && route.workspaceId !== selected.id) {
+		// Canonical URL: a workspace view always names its workspace, by the
+		// name the view has now.
+		if (
+			isWorkspaceView(route.view) &&
+			(route.workspaceId !== selected.id || route.renamed)
+		) {
 			// A link into a workspace that cannot be opened lands in this one.
-			// What followed the view (a note, a channel, a bot) named something
+			// What followed the view (a note, a channel, an agent) named something
 			// there, so it is dropped. A link from before workspaces keeps it.
-			const rest = route.workspaceId === null ? route.rest : "";
+			const rest =
+				route.workspaceId === null || route.workspaceId === selected.id
+					? route.rest
+					: "";
 			window.history.replaceState(
 				null,
 				"",
@@ -297,11 +340,13 @@ export function App() {
 			// workspace the link named, so the notice that it is not
 			// available stays until the person goes somewhere.
 			if (rest !== route.rest) {
-				setRoute({ ...route, rest });
+				setRoute({ ...route, rest, renamed: false });
 				setLanded((count) => count + 1);
 			}
+			// Rewritten once: afterwards the view keeps its own address.
+			else if (route.renamed) setRoute({ ...route, renamed: false });
 		}
-	}, [gate.state, selected, route]);
+	}, [gate.state, selected, route, signInId]);
 	const toggle = () => {
 		const next = !collapsed;
 		setCollapsed(next);
@@ -365,12 +410,21 @@ export function App() {
 		);
 	if (gate.state === "sign-in")
 		return <SignInView status={gate.status} onSignedIn={() => void load()} />;
+	// After the sign-in gate, so someone signed out signs in and then decides.
+	if (signInId)
+		return (
+			<AuthorizeView
+				key={signInId}
+				id={signInId}
+				workspaces={workspaces}
+				onLeave={() => go("dashboard")}
+			/>
+		);
 
 	const { user } = gate.session;
-	// Tokens outlive their creator, so only owners and admins manage them.
+	// API tokens outlive their creator, so only owners and admins manage them.
 	const allowed = (item: View) =>
-		user.role !== "member" ||
-		(item !== "api-tokens" && item !== "agent-tokens");
+		user.role !== "member" || item !== "api-tokens";
 	const shown = allowed(route.view) ? route.view : "dashboard";
 	const openWorkspaces = workspaces.filter(
 		(workspace) => !workspace.archivedAt,
@@ -603,14 +657,15 @@ export function App() {
 						)}
 						{shown === "api-tokens" ? (
 							<ApiTokensView workspace={selected} />
-						) : shown === "agent-tokens" ? (
-							<AgentTokensView workspace={selected} />
 						) : shown === "models" ? (
 							<ModelsView workspace={selected} />
 						) : shown === "synapse" ? (
 							<SynapseView user={user} workspace={selected} />
-						) : shown === "bots" ? (
-							<BotsView workspace={selected} channels={channelList.channels} />
+						) : shown === "agents" ? (
+							<AgentsView
+								workspace={selected}
+								channels={channelList.channels}
+							/>
 						) : shown === "channels" ? (
 							<ChannelsView
 								user={user}

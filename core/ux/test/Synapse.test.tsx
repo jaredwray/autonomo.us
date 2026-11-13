@@ -744,7 +744,7 @@ it("shows members the proposals read-only", async () => {
 	});
 	await screen.findByRole("button", { name: "New note" });
 	expect(screen.getByRole("link", { name: "Synapse" })).toBeDefined();
-	expect(screen.queryByRole("link", { name: "Agent Tokens" })).toBeNull();
+	expect(screen.queryByRole("link", { name: "API Tokens" })).toBeNull();
 });
 
 it("shows global notes in Shared as read-only until the workspace overrides them", async () => {

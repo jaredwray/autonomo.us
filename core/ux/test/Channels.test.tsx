@@ -894,16 +894,16 @@ it("stops following while the tab is hidden and recovers from a lost connection"
 
 it("offers the channel grants on agent and API tokens", async () => {
 	await boot();
-	renderAt("#/agent-tokens");
-	await screen.findByText(/No agent tokens yet/);
-	fireEvent.click(screen.getByRole("button", { name: "Create token" }));
+	renderAt("#/agents");
+	fireEvent.click(await screen.findByRole("button", { name: "New agent" }));
+	fireEvent.click(screen.getByRole("button", { name: /^Token/ }));
 	const manage = screen.getByRole("checkbox", {
 		name: "Channels: Manage",
 	}) as HTMLInputElement;
 	expect(manage.checked).toBe(false);
 	expect(
 		screen.getByText(
-			"Lets this bot create and manage channels, which opens every channel in the workspace to it.",
+			"Lets this agent create and manage channels, which opens every channel in the workspace to it.",
 		),
 	).toBeDefined();
 	type(screen.getByLabelText("Name"), "Channel keeper");
@@ -914,10 +914,10 @@ it("offers the channel grants on agent and API tokens", async () => {
 		).getByRole("button", { name: "Create token" }),
 	);
 	await screen.findByLabelText("New agent token");
-	// The list is read again after the token is made.
+	// The agent is read again after its token is made.
 	expect(
 		await within(
-			await screen.findByRole("region", { name: "Your tokens" }),
+			await screen.findByRole("complementary", { name: "Agent list" }),
 		).findByText("Channels: Manage"),
 	).toBeDefined();
 

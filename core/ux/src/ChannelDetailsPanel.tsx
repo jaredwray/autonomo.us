@@ -350,7 +350,7 @@ export function ChannelDetailsPanel({
 					)}
 					<p className="card-note">
 						{options !== null && !options.length
-							? "This workspace has no agents yet. An owner or admin creates an agent token under Agent Tokens; a workspace admin creates a gateway bot under Bots. "
+							? "This workspace has no agents yet. A workspace admin creates one under Agents. "
 							: options !== null && !available.length
 								? "Every agent in this workspace is already in this channel. "
 								: ""}
