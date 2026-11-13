@@ -1,5 +1,5 @@
 import { SYNAPSE_ATTACHMENT_EXTENSIONS } from "@autonomo.us/common";
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 
 /**
  * A small, safe Markdown renderer for Synapse notes. It builds React elements
@@ -52,6 +52,11 @@ export type InlineOptions = {
 	/** Hash link for a wikilink target. */
 	hrefFor(title: string): string;
 	onNavigate(title: string): void;
+	/**
+	 * Renders a run of plain text, for a caller with inline syntax of its own
+	 * (channels turn mentions into chips). It must stay linear in the text.
+	 */
+	text?(text: string): ReactNode;
 };
 
 // Every alternative stays linear on long runs, since agents write bodies up
@@ -71,11 +76,19 @@ export function renderInline(
 	options: InlineOptions,
 ): ReactNode[] {
 	const nodes: ReactNode[] = [];
+	const plain = (run: string) =>
+		nodes.push(
+			options.text ? (
+				<Fragment key={`text${nodes.length}`}>{options.text(run)}</Fragment>
+			) : (
+				run
+			),
+		);
 	let last = 0;
 	let key = 0;
 	for (const match of text.matchAll(INLINE)) {
 		const index = match.index ?? 0;
-		if (index > last) nodes.push(text.slice(last, index));
+		if (index > last) plain(text.slice(last, index));
 		last = index + match[0].length;
 		const [
 			,
@@ -122,7 +135,7 @@ export function renderInline(
 				</a>,
 			);
 	}
-	if (last < text.length) nodes.push(text.slice(last));
+	if (last < text.length) plain(text.slice(last));
 	return nodes;
 }
 

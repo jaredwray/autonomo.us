@@ -20,6 +20,8 @@ import {
 	setCurrentWorkspace,
 	signOut,
 } from "./api.js";
+import { ChannelsView } from "./ChannelsView.js";
+import { channelAttention, useChannelList } from "./channels-list.js";
 import { Dashboard } from "./Dashboard.js";
 import { Icon } from "./Icons.js";
 import { ModelsView } from "./ModelsView.js";
@@ -37,6 +39,7 @@ const workspaceViews = {
 	models: "Models",
 	routing: "Routing",
 	synapse: "Synapse",
+	channels: "Channels",
 	"api-tokens": "API Tokens",
 	"agent-tokens": "Agent Tokens",
 };
@@ -45,7 +48,7 @@ const instanceViews = { workspaces: "Workspaces", team: "Team" };
 const viewLabels = { ...workspaceViews, ...instanceViews };
 type WorkspaceView = keyof typeof workspaceViews;
 type View = keyof typeof viewLabels | "profile";
-/** `rest` is a view's own state after its name, such as Synapse's /<space>/<note>. */
+/** `rest` is a view's own state after its name: Synapse's /<space>/<note>, a channel's /<name>. */
 type Route = { view: View; workspaceId: string | null; rest: string };
 const isWorkspaceView = (view: View): view is WorkspaceView =>
 	Object.hasOwn(workspaceViews, view);
@@ -258,6 +261,12 @@ export function App() {
 	const wrongWorkspace = Boolean(
 		route.workspaceId && selected && route.workspaceId !== selected.id,
 	);
+	// Read here, not in the Channels view, so the sidebar shows unread channels
+	// and mentions from every view.
+	const channelList = useChannelList(
+		gate.state === "ready" && !invite ? (selected?.id ?? null) : null,
+	);
+	const attention = channelAttention(channelList.channels);
 	useEffect(() => {
 		if (gate.state !== "ready" || !selected) return;
 		rememberWorkspace(selected.id);
@@ -446,6 +455,11 @@ export function App() {
 								className={`nav-item ${shown === item ? "active" : ""}`}
 								aria-current={shown === item ? "page" : undefined}
 								aria-label={viewLabels[item]}
+								aria-describedby={
+									item === "channels" && attention.unread
+										? "channels-attention"
+										: undefined
+								}
 								title={collapsed ? viewLabels[item] : undefined}
 								onClick={() =>
 									setRoute({
@@ -457,6 +471,22 @@ export function App() {
 							>
 								<Icon name={item} />
 								<span className="sidebar-label">{viewLabels[item]}</span>
+								{item === "channels" && attention.unread && (
+									<span
+										id="channels-attention"
+										className={`nav-attention${attention.mentions ? "" : " dot"}`}
+									>
+										{attention.mentions > 0 &&
+											(attention.mentions > 99 ? "99+" : attention.mentions)}
+										<span className="visually-hidden">
+											{attention.mentions > 0
+												? attention.mentions === 1
+													? " unread mention"
+													: " unread mentions"
+												: "Unread messages"}
+										</span>
+									</span>
+								)}
 							</a>
 						))}
 				</nav>
@@ -552,6 +582,12 @@ export function App() {
 							<ModelsView workspace={selected} />
 						) : shown === "synapse" ? (
 							<SynapseView user={user} workspace={selected} />
+						) : shown === "channels" ? (
+							<ChannelsView
+								user={user}
+								workspace={selected}
+								list={channelList}
+							/>
 						) : shown === "routing" ? (
 							<RoutingView />
 						) : (

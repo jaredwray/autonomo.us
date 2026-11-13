@@ -12,8 +12,16 @@ import type {
 	ApiTokenSettings,
 	AuthSession,
 	AuthStatus,
+	ChannelAgentAccess,
+	ChannelAgentOption,
+	ChannelDetails,
+	ChannelEntryList,
+	ChannelList,
+	ChannelMembers,
+	ChannelMessage,
 	CreateAgentTokenRequest,
 	CreateApiTokenRequest,
+	CreateChannelRequest,
 	CreateSynapseNoteRequest,
 	CreateTeamInviteRequest,
 	CreateWorkspaceRequest,
@@ -51,6 +59,7 @@ import type {
 	TeamSettings,
 	UpdateAgentTokenRequest,
 	UpdateApiTokenRequest,
+	UpdateChannelRequest,
 	UpdateSynapseNoteRequest,
 	UpdateTeamMemberRequest,
 	UpdateWorkspaceRequest,
@@ -537,9 +546,13 @@ export class ApiError extends Error {
 		this.status = status;
 	}
 }
-async function synapseRequest<T>(
+async function apiRequest<T>(
 	path: string,
-	{ method = "GET", body }: { method?: string; body?: unknown } = {},
+	{
+		method = "GET",
+		body,
+		signal,
+	}: { method?: string; body?: unknown; signal?: AbortSignal } = {},
 ): Promise<T> {
 	const headers = new Headers({ accept: "application/json" });
 	if (body !== undefined) headers.set("content-type", "application/json");
@@ -547,6 +560,7 @@ async function synapseRequest<T>(
 		method,
 		headers,
 		body: body === undefined ? undefined : JSON.stringify(body),
+		signal,
 	});
 	if (!response.ok)
 		throw new ApiError(
@@ -561,12 +575,12 @@ const notePath = (space: string, title: string) =>
 	`${spacePath(space)}/notes/${encodeURIComponent(title)}`;
 
 export function fetchSynapseSpaces(): Promise<SynapseSpaceList> {
-	return synapseRequest(ws("/synapse/spaces"));
+	return apiRequest(ws("/synapse/spaces"));
 }
 export function fetchSynapseTemplates(): Promise<{
 	templates: SynapseTemplate[];
 }> {
-	return synapseRequest(ws("/synapse/templates"));
+	return apiRequest(ws("/synapse/templates"));
 }
 export function fetchSynapseNotes(
 	space: string,
@@ -579,15 +593,13 @@ export function fetchSynapseNotes(
 	for (const [key, value] of Object.entries(where ?? {}))
 		params.set(`where.${key}`, String(value));
 	const search = params.toString();
-	return synapseRequest(
-		`${spacePath(space)}/notes${search ? `?${search}` : ""}`,
-	);
+	return apiRequest(`${spacePath(space)}/notes${search ? `?${search}` : ""}`);
 }
 export function createSynapseNote(
 	space: string,
 	input: CreateSynapseNoteRequest,
 ): Promise<SynapseNote> {
-	return synapseRequest(`${spacePath(space)}/notes`, {
+	return apiRequest(`${spacePath(space)}/notes`, {
 		method: "POST",
 		body: input,
 	});
@@ -596,14 +608,14 @@ export function fetchSynapseNote(
 	space: string,
 	title: string,
 ): Promise<SynapseNoteView> {
-	return synapseRequest(notePath(space, title));
+	return apiRequest(notePath(space, title));
 }
 export function updateSynapseNote(
 	space: string,
 	title: string,
 	input: UpdateSynapseNoteRequest,
 ): Promise<SynapseNote> {
-	return synapseRequest(notePath(space, title), {
+	return apiRequest(notePath(space, title), {
 		method: "PATCH",
 		body: input,
 	});
@@ -614,7 +626,7 @@ export function appendSynapseNote(
 	text: string,
 	template?: string,
 ): Promise<SynapseNote> {
-	return synapseRequest(`${notePath(space, title)}/append`, {
+	return apiRequest(`${notePath(space, title)}/append`, {
 		method: "POST",
 		body: { text, template },
 	});
@@ -626,30 +638,28 @@ export function deleteSynapseNote(
 	revision?: number,
 ): Promise<void> {
 	const query = revision === undefined ? "" : `?revision=${revision}`;
-	return synapseRequest(`${notePath(space, title)}${query}`, {
+	return apiRequest(`${notePath(space, title)}${query}`, {
 		method: "DELETE",
 	});
 }
 export function fetchSynapseUnresolved(
 	space: string,
 ): Promise<{ links: SynapseUnresolvedLink[] }> {
-	return synapseRequest(`${spacePath(space)}/unresolved`);
+	return apiRequest(`${spacePath(space)}/unresolved`);
 }
 export function fetchSynapseCategories(
 	space: string,
 ): Promise<{ categories: SynapseCategory[] }> {
-	return synapseRequest(`${spacePath(space)}/categories`);
+	return apiRequest(`${spacePath(space)}/categories`);
 }
 export function fetchSynapseDaily(
 	space: string,
 	date: string,
 ): Promise<SynapseDaily> {
-	return synapseRequest(
-		`${spacePath(space)}/daily/${encodeURIComponent(date)}`,
-	);
+	return apiRequest(`${spacePath(space)}/daily/${encodeURIComponent(date)}`);
 }
 export function fetchSynapseExport(space: string): Promise<SynapseExport> {
-	return synapseRequest(`${spacePath(space)}/export`);
+	return apiRequest(`${spacePath(space)}/export`);
 }
 /** The space as an Obsidian-compatible zip, fetched with the session credential. */
 export async function fetchSynapseExportZip(space: string): Promise<Blob> {
@@ -670,7 +680,7 @@ export function importSynapseNotes(
 	space: string,
 	input: SynapseImportRequest,
 ): Promise<SynapseImportResult> {
-	return synapseRequest(`${spacePath(space)}/import`, {
+	return apiRequest(`${spacePath(space)}/import`, {
 		method: "POST",
 		body: input,
 	});
@@ -678,7 +688,7 @@ export function importSynapseNotes(
 export function fetchSynapseProposals(
 	status?: SynapseProposalStatus,
 ): Promise<SynapseProposalList> {
-	return synapseRequest(
+	return apiRequest(
 		ws(
 			`/synapse/proposals${status ? `?status=${encodeURIComponent(status)}` : ""}`,
 		),
@@ -688,11 +698,129 @@ export function decideSynapseProposal(
 	id: string,
 	input: DecideSynapseProposalRequest,
 ): Promise<SynapseProposal> {
-	return synapseRequest(
-		ws(`/synapse/proposals/${encodeURIComponent(id)}/decide`),
-		{
-			method: "POST",
-			body: input,
-		},
+	return apiRequest(ws(`/synapse/proposals/${encodeURIComponent(id)}/decide`), {
+		method: "POST",
+		body: input,
+	});
+}
+
+const channelPath = (id?: string, rest = "") =>
+	ws(`/channels${id ? `/${encodeURIComponent(id)}` : ""}${rest}`);
+const channelMessagePath = (id: string, messageId: string) =>
+	channelPath(id, `/messages/${encodeURIComponent(messageId)}`);
+
+export function fetchChannels(
+	archived = false,
+	signal?: AbortSignal,
+): Promise<ChannelList> {
+	return apiRequest(channelPath(undefined, archived ? "?archived=true" : ""), {
+		signal,
+	});
+}
+export function createChannel(
+	input: CreateChannelRequest,
+): Promise<ChannelDetails> {
+	return apiRequest(channelPath(), { method: "POST", body: input });
+}
+export function fetchChannel(
+	id: string,
+	signal?: AbortSignal,
+): Promise<ChannelDetails> {
+	return apiRequest(channelPath(id), { signal });
+}
+export function updateChannel(
+	id: string,
+	input: UpdateChannelRequest,
+): Promise<ChannelDetails> {
+	return apiRequest(channelPath(id), { method: "PATCH", body: input });
+}
+export function setChannelArchived(
+	id: string,
+	archived: boolean,
+): Promise<ChannelDetails> {
+	return apiRequest(channelPath(id, archived ? "/archive" : "/unarchive"), {
+		method: "POST",
+	});
+}
+/** The workspace's agents, for the picker that adds one to a channel. */
+export function fetchChannelAgentOptions(): Promise<{
+	agents: ChannelAgentOption[];
+}> {
+	return apiRequest(ws("/channels/agents"));
+}
+export function fetchChannelMembers(
+	id: string,
+	signal?: AbortSignal,
+): Promise<ChannelMembers> {
+	return apiRequest(channelPath(id, "/members"), { signal });
+}
+/** Adds the agent or changes its access; `null` removes it. */
+export function setChannelAgent(
+	id: string,
+	agentTokenId: string,
+	access: ChannelAgentAccess | null,
+): Promise<ChannelDetails> {
+	return apiRequest(
+		channelPath(id, `/agents/${encodeURIComponent(agentTokenId)}`),
+		access ? { method: "PUT", body: { access } } : { method: "DELETE" },
 	);
+}
+/**
+ * A channel's entries. With no query, the latest page; `before` pages back;
+ * `after` follows, holding the request open for `wait` seconds while nothing
+ * is new; `thread` is a root message with its replies.
+ */
+export function fetchChannelEntries(
+	id: string,
+	query: {
+		after?: number;
+		before?: number;
+		thread?: string;
+		limit?: number;
+		wait?: number;
+	} = {},
+	signal?: AbortSignal,
+): Promise<ChannelEntryList> {
+	const params = new URLSearchParams();
+	for (const [key, value] of Object.entries(query))
+		if (value !== undefined) params.set(key, String(value));
+	const search = params.toString();
+	return apiRequest(channelPath(id, `/messages${search ? `?${search}` : ""}`), {
+		signal,
+	});
+}
+/** A retry with the same nonce returns the first message instead of posting twice. */
+export function postChannelMessage(
+	id: string,
+	input: { body: string; threadId?: string; nonce: string },
+): Promise<ChannelMessage> {
+	return apiRequest(channelPath(id, "/messages"), {
+		method: "POST",
+		body: input,
+	});
+}
+export function editChannelMessage(
+	id: string,
+	messageId: string,
+	body: string,
+): Promise<ChannelMessage> {
+	return apiRequest(channelMessagePath(id, messageId), {
+		method: "PATCH",
+		body: { body },
+	});
+}
+export function deleteChannelMessage(
+	id: string,
+	messageId: string,
+): Promise<void> {
+	return apiRequest(channelMessagePath(id, messageId), { method: "DELETE" });
+}
+export function markChannelRead(
+	id: string,
+	seq: number,
+): Promise<{ readSeq: number }> {
+	return apiRequest(channelPath(id, "/read"), {
+		method: "PUT",
+		body: { seq },
+	});
 }
