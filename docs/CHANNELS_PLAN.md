@@ -1,10 +1,11 @@
 # Channels plan
 
-*Status: v0.2, November 2026. Proposal; nothing here is built. Owner decisions D2, D3, and D5 are recorded in [section 14](#14-decisions); the rest are recommendations waiting for a decision. Owner: Jared Wray.*
+*Status: v1.0, November 2026. Implemented (C0–C6 and the gateway-run bots B1–B4) in the same pull request as this plan. Owner decisions are recorded in [section 14](#14-decisions); where the build differs from the text below, [section 17](#17-what-was-built) says how. Owner: Jared Wray.*
 
-Nothing in this document is code. It proposes chat channels inside a
-workspace, where team members and bots (agents) talk to each other, and orders
-the work into reviewable PRs.
+This document proposes chat channels inside a workspace, where team members
+and bots (agents) talk to each other, and orders the work into steps. The
+owner asked for all of it in one pull request, so the steps in
+[section 13](#13-pr-sequence) are its commits.
 
 ## Contents
 
@@ -24,6 +25,7 @@ the work into reviewable PRs.
 14. [Decisions](#14-decisions)
 15. [Out of scope and follow-ups](#15-out-of-scope-and-follow-ups)
 16. [Gateway-run bots](#16-gateway-run-bots)
+17. [What was built](#17-what-was-built)
 
 ## 1. What exists today
 
@@ -83,9 +85,6 @@ Non-goals for this plan:
 
 - Direct messages, private channels, file attachments, reactions, search, and
   retention policies ([section 15](#15-out-of-scope-and-follow-ups)).
-- Bots run by the gateway. A bot here is an external runtime holding an
-  agent token. [Section 16](#16-gateway-run-bots) lists what it takes for the
-  gateway to answer as a bot itself.
 - Push to people outside the dashboard (Slack, email, mobile).
 - Channel messages as approvals. Typing "approved" in a channel approves
   nothing; approvals keep their own routes, which need a person.
@@ -609,8 +608,9 @@ Decided by the owner on 2026-11-13. The plan follows these.
 | D3 | Who creates and manages channels? | **Any workspace member, and a bot that has been given permission.** Members create, rename, archive, and change agent lists. A bot does the same only with the `channels:manage` grant on its agent token, which org owners and admins control. Deleting someone else's message stays with workspace admins (an assumption of this plan, not part of the decision). | Sections 4.1, 6, 8; C3 |
 | D5 | Does reading move an agent's read mark? | **No, the agent acknowledges with `channels_mark_read`.** A crash between reading and acting repeats messages instead of losing them. | C3 |
 
-Still open. Each has a recommended position, which the rest of this plan
-assumes.
+On 2026-11-13 the owner asked for the whole plan, gateway-run bots included,
+in this pull request. The remaining questions were therefore built as
+recommended; each can still be changed.
 
 | # | Question | Recommendation | Affects |
 | --- | --- | --- | --- |
@@ -620,12 +620,11 @@ assumes.
 | D7 | Threads? | **`threadId` is in the data model from C1; the UI and tool argument ship in C6.** | C1, C6 |
 | D8 | Can messages be edited and deleted? | **Delete from C1** (a pasted secret has to be removable), **edit in C6.** Both leave a `change` entry, so there is a record that something changed and by whom. | C1, C6 |
 | D9 | Retention? | **Keep everything for now.** Per-channel retention is a follow-up; the rule it must keep is in section 15. | Section 15 |
-| D10 | Should the gateway run bots itself? | **Open.** [Section 16](#16-gateway-run-bots) lists what it needs and the four choices to make first. | Section 16 |
+| D10 | Should the gateway run bots itself? | **Yes, in this pull request.** [Section 16](#16-gateway-run-bots) lists what it needed; [section 17](#17-what-was-built) says how G1–G4 were settled. | Sections 16, 17 |
 
 ## 15. Out of scope and follow-ups
 
 - **Direct messages** (D6). Private channels are decided against (D2).
-- **Gateway-run bots** (D10, [section 16](#16-gateway-run-bots)).
 - **Triggers.** The design doc lists "a message from another agent" as a
   trigger. Once the orchestrator exists, a mention can start an agent's run
   instead of waiting for it to poll. Outbound webhooks on new messages are the
@@ -692,3 +691,67 @@ As PRs, after C4:
   Workers, reply-only, with the brakes.
 - **B3:** the Bots view and the "is replying…" indicator.
 - **B4:** the tool loop.
+
+## 17. What was built
+
+Everything in sections 3–13 and 16 is implemented. The README's **Channels**
+and **Bots** sections are the reference for what runs; this section records
+where the build differs from the text above, and how the open choices were
+settled.
+
+**Gateway-run bots (G1–G4).** The owner asked for all of it without answering
+the four questions, so each follows its recommendation, with one addition:
+
+| # | Built |
+| --- | --- |
+| G1 | A mention by a person starts a reply. A bot answers other bots only when its `agentHops` setting (0–3, default 0) allows a chain that long. |
+| G2 | Reply-only and tools were both built. Tools are off for a new bot and switched on per bot. |
+| G3 | One model, pool, or `auto` per bot, resolved by the workspace's routing when the reply runs. An unknown model fails the run with a message. |
+| G4 | In this pull request, after mentions. |
+
+**Differences from the plan text.**
+
+- **Bots are managed by workspace admins** (`bots:manage`), not by every
+  member, because a bot spends the workspace's provider keys. Members see
+  them (`bots:read`). Adding a bot to a channel is still any member's call.
+- **A failed model call posts one short notice** as the bot, so the person
+  who asked is not left waiting. The provider's error text stays on the run.
+- **A bot's tools are a fixed subset:** all `synapse_*` tools plus
+  `channels_list`, `channels_read`, and `channels_members`. It answers with
+  its text, so it has no tool that posts or manages.
+- **A bot is paused, not removed from channels, when it is disabled.** A
+  deleted bot stays in a channel's agent list until someone removes it; it
+  answers nothing.
+- **The Worker needs a Cron Trigger** (`triggers.crons` in
+  `core/server/wrangler.jsonc`, every minute) for the sweep. Cloudflare gives
+  a Worker 30 seconds after a response; a reply slower than that is cancelled
+  there and retried once by the sweep. Queues remain the answer if that proves
+  too tight.
+- **`channels:create` does not exist.** With D3, creating a channel is part
+  of `channels:manage`.
+- **Mentions are checked when a message is posted.** A mention of someone
+  who cannot see the channel is refused with 400, which tells a bot at once
+  that its mention text was wrong.
+- **History leaves thread replies out.** `before=` pages return messages
+  outside threads and system notes; `thread=` returns a thread; `after=`
+  returns everything.
+- **Posting moves the author's read mark** only when they had read every
+  message before their own. An author with older unread messages keeps them
+  unread, so a bot's post never acknowledges something it has not seen.
+- **Two routes were added:** `GET /channels/:channel/members` (the people and
+  bots that can be mentioned) and `PATCH /channels/:channel/messages/:message`
+  (edit), and `GET /channels/agents` lists gateway-run bots beside agent
+  tokens.
+- **Indexes are created on first use,** not in `initialize()`, so `/healthz`
+  keeps its meaning.
+- **A writer that loses the race for a number takes the next one** instead
+  of re-reading the top of the log: the duplicate-key error already proves the
+  number exists. The invariant in 4.3 is unchanged.
+
+**Tested as planned** (section 12): the repository contracts for channels and
+bots against memory and MongoDB; one gapless order with two servers posting
+and a follower reading by cursor; workspace isolation; the authorization
+matrix over REST and MCP; limits; crash recovery of bot runs across two
+servers; the dashboard against the real server; and, in workerd, a long poll
+answered by another request, a bot reply finished after its response, and the
+scheduled sweep.
