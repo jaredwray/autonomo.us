@@ -315,8 +315,6 @@ export async function chatRoutes(
 	server: FastifyInstance,
 	options: ChatRouteOptions,
 ) {
-	const { telemetry } = options;
-
 	server.post(
 		"/chat",
 		{ schema: { body: chatBodySchema } },

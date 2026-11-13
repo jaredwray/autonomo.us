@@ -68,8 +68,11 @@ export type ChannelServiceOptions = {
 	now?: () => number;
 	/** How often a long poll looks for something new. */
 	pollIntervalMs?: number;
-	/** Called after a message is appended; failures are the callee's to handle. */
-	onMessage?: (channel: Channel, message: ChannelMessage) => void;
+	/**
+	 * Called after a message is appended, before the post returns. A failure
+	 * here never fails the post.
+	 */
+	onMessage?: (channel: Channel, message: ChannelMessage) => unknown;
 };
 
 export type ReadOptions = {
@@ -824,7 +827,11 @@ export class ChannelService {
 			threadId ? this.repository.addReply(channel.id, threadId) : undefined,
 			this.keepUp(workspaceId, channel.id, authorKey, entry.seq),
 		]);
-		this.options.onMessage?.(publicChannel(channel), message);
+		try {
+			await this.options.onMessage?.(publicChannel(channel), message);
+		} catch {
+			// The message is posted; whoever listens handles its own trouble.
+		}
 		return { message, created: true };
 	}
 	/**

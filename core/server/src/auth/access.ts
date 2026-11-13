@@ -52,7 +52,9 @@ export type WorkspaceAction =
 	| "tokens:manage"
 	| "synapse:decide"
 	| "channels:manage"
-	| "channels:moderate";
+	| "channels:moderate"
+	| "bots:read"
+	| "bots:manage";
 
 type RouteRule =
 	| { scope: "public" }
@@ -175,6 +177,13 @@ export const ROUTE_RULES = new Map<string, RouteRule>([
 	// to `global` also need an org owner or admin (routes/synapse.ts).
 	...synapseRoutes("/v1/:workspace/synapse"),
 	...channelRoutes("/v1/:workspace/channels"),
+	// Bots the gateway runs. Dashboard only: no token holds these actions.
+	["GET /v1/:workspace/bots", workspace("bots:read")],
+	["POST /v1/:workspace/bots", workspace("bots:manage")],
+	["GET /v1/:workspace/bots/activity", workspace("bots:read")],
+	["GET /v1/:workspace/bots/:bot", workspace("bots:read")],
+	["PATCH /v1/:workspace/bots/:bot", workspace("bots:manage")],
+	["DELETE /v1/:workspace/bots/:bot", workspace("bots:manage")],
 ]);
 
 /** What each workspace role may do, as a signed-in member. */
@@ -191,6 +200,7 @@ const MEMBER_ACTIONS = new Set<WorkspaceAction>([
 	"channels:edit",
 	// Any member creates and manages channels and their agents.
 	"channels:manage",
+	"bots:read",
 ]);
 const ADMIN_ACTIONS = new Set<WorkspaceAction>([
 	...MEMBER_ACTIONS,
@@ -202,6 +212,8 @@ const ADMIN_ACTIONS = new Set<WorkspaceAction>([
 	"synapse:decide",
 	// Deleting someone else's message.
 	"channels:moderate",
+	// A bot spends the workspace's provider keys, like adding a connection.
+	"bots:manage",
 ]);
 /** Org owners and admins only (D3: tokens outlive the member who made them). */
 const ORG_ACTIONS = new Set<WorkspaceAction>([
@@ -234,6 +246,8 @@ const ACTION_LABELS: Record<WorkspaceAction, string> = {
 	"synapse:decide": "Synapse: Decide proposals",
 	"channels:manage": "Channels: Manage",
 	"channels:moderate": "Channels: Moderate",
+	"bots:read": "Bots: Read",
+	"bots:manage": "Bots: Manage",
 };
 
 /** The signed-in member for team and account routes. */

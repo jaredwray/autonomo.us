@@ -62,7 +62,11 @@ export type McpToolDefinition = {
 export type McpArgs = Record<string, unknown>;
 /** The agent a request authenticated as, in its workspace. */
 export type McpAgent = {
-	token: AuthenticatedToken<AgentTokenPermission>;
+	/** An agent token, or the identity of a bot the gateway runs. */
+	token: Pick<
+		AuthenticatedToken<AgentTokenPermission>,
+		"id" | "name" | "permissions"
+	>;
 	actor: { kind: "agent"; id: string; name: string };
 	workspace: Workspace;
 };

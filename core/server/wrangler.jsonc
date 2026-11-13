@@ -25,6 +25,11 @@
 	"vars": {
 		"CORS_ORIGIN": "https://dev.autonomo.us"
 	},
+	// Every minute the Worker's scheduled handler restarts bot replies that an
+	// evicted isolate left unfinished. It does nothing when there are none.
+	"triggers": {
+		"crons": ["* * * * *"]
+	},
 	"routes": [
 		{
 			"pattern": "dev.autonomo.us",

@@ -1,5 +1,6 @@
 import type { SetupInventory } from "@autonomo.us/common";
 import { MongoClient } from "mongodb";
+import { BOT_RUNS_COLLECTION, BOTS_COLLECTION } from "./bots/repository.js";
 import {
 	CHANNEL_MESSAGES_COLLECTION,
 	CHANNEL_READS_COLLECTION,
@@ -33,6 +34,8 @@ export const GATEWAY_COLLECTIONS = [
 	CHANNELS_COLLECTION,
 	CHANNEL_MESSAGES_COLLECTION,
 	CHANNEL_READS_COLLECTION,
+	BOTS_COLLECTION,
+	BOT_RUNS_COLLECTION,
 	TELEMETRY_COLLECTION,
 ] as const;
 

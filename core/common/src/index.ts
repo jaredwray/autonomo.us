@@ -35,6 +35,20 @@ export {
 	type UpdateApiTokenRequest,
 } from "./api-tokens.js";
 export {
+	BOT_LIMITS,
+	type Bot,
+	type BotActivity,
+	type BotDetails,
+	type BotLimits,
+	type BotList,
+	type BotRun,
+	type BotRunStatus,
+	type BotSummary,
+	type CreateBotRequest,
+	DEFAULT_BOT_LIMITS,
+	type UpdateBotRequest,
+} from "./bots.js";
+export {
 	CHANNEL_LIMITS,
 	CHANNEL_NAME_PATTERN,
 	type Channel,

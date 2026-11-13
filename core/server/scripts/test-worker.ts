@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { MongoClient } from "mongodb";
+import { startOpenAIStub } from "../test/openai-stub.js";
 
 // Run the production entry in workerd. Node tests and Wrangler dry-runs do not
 // enforce Workers' restrictions on code generation or request-owned sockets.
@@ -58,7 +59,13 @@ async function withWorker(
 		JSON.stringify({
 			...config,
 			main: join(root, "core/server/src/worker.ts"),
-			assets: { ...config.assets, directory: assets },
+			assets: {
+				...config.assets,
+				directory: assets,
+				// `--test-scheduled` serves the Cron Trigger at /__scheduled, which
+				// must reach the Worker here. Production has no such path.
+				run_worker_first: [...config.assets.run_worker_first, "/__scheduled"],
+			},
 			routes: [],
 			vars: {
 				...config.vars,
@@ -73,6 +80,8 @@ async function withWorker(
 			join(root, "node_modules/wrangler/bin/wrangler.js"),
 			"dev",
 			"--local",
+			// Exposes /__scheduled, which runs the Cron Trigger's handler.
+			"--test-scheduled",
 			"--port",
 			String(port),
 			"--inspector-port",
@@ -237,7 +246,7 @@ const client = new MongoClient(url.toString(), {
 try {
 	await client.connect(); // Required: this regression check must not silently skip MongoDB.
 	assert.deepEqual(await client.db().listCollections().toArray(), []);
-	await withWorker(url.toString(), async (request, logs) => {
+	await withWorker(url.toString(), async (request, logs, base) => {
 		// Concurrent cold requests must also complete the same initialization.
 		await Promise.all(
 			Array.from({ length: 4 }, async () => {
@@ -322,6 +331,158 @@ try {
 			members: unknown[];
 		};
 		assert.equal(team.members.length, 2);
+
+		// Channels: a person posts, a follower reads by cursor, and a long poll
+		// held by one request is answered by a post from another.
+		type Entry = { id: string; seq: number; type: string; body?: string };
+		type Page = { entries: Entry[]; cursor: number };
+		const send = (
+			path: string,
+			body: unknown,
+			expected = 201,
+			method = "POST",
+		) =>
+			request(`${workspace}${path}`, expected, {
+				method,
+				headers: { ...json, ...auth },
+				body: JSON.stringify(body),
+			});
+		const channel = (await send("/channels", { name: "general" })) as {
+			id: string;
+		};
+		const messages = `/channels/${channel.id}/messages`;
+		const hello = (await send(messages, {
+			body: "hello",
+			nonce: "n1",
+		})) as Entry;
+		assert.equal(hello.seq, 2);
+		// A retried post with the same nonce returns the first message.
+		assert.equal(
+			((await send(messages, { body: "hello", nonce: "n1" }, 200)) as Entry).id,
+			hello.id,
+		);
+		const waiting = request(`${workspace}${messages}?after=2&wait=10`, 200, {
+			headers: auth,
+		}) as Promise<Page>;
+		await delay(300);
+		await send(messages, { body: "second" });
+		assert.deepEqual(
+			(await waiting).entries.map((entry) => entry.seq),
+			[3],
+		);
+
+		// An agent reads and posts over MCP in the channel it was added to.
+		const agent = (await send("/agent-tokens", {
+			name: "Worker agent",
+			description: "",
+			ttlDays: 1,
+			permissions: ["mcp:read", "mcp:call"],
+		})) as { token: { id: string }; secret: string };
+		await send(
+			`/channels/${channel.id}/agents/${agent.token.id}`,
+			{ access: "post" },
+			200,
+			"PUT",
+		);
+		const tool = (await request("/mcp", 200, {
+			method: "POST",
+			headers: { ...json, authorization: `Bearer ${agent.secret}` },
+			body: JSON.stringify({
+				jsonrpc: "2.0",
+				id: 1,
+				method: "tools/call",
+				params: {
+					name: "channels_post",
+					arguments: { channel: "general", text: "from the agent" },
+				},
+			}),
+		})) as { result: { isError?: boolean; structuredContent: Entry } };
+		assert.equal(tool.result.isError, undefined);
+		assert.equal(tool.result.structuredContent.seq, 5);
+
+		// A bot the gateway runs: the model call and the reply happen after the
+		// post has returned, on the posting request's sockets.
+		let modelCalls = 0;
+		const stub = await startOpenAIStub({ onRequest: () => modelCalls++ });
+		try {
+			// A connection with a custom base URL is configured server-side.
+			await client
+				.db()
+				.collection<{ _id: string }>("gateway_providers")
+				.insertOne({
+					_id: "stub",
+					config: {
+						name: "stub",
+						kind: "openai-compatible",
+						baseURL: stub.url,
+						models: ["chat-model"],
+					},
+				} as { _id: string });
+			const bot = (await send("/bots", {
+				name: "Helper",
+				instructions: "",
+				model: "stub/chat-model",
+			})) as { id: string };
+			await send(
+				`/channels/${channel.id}/agents/${bot.id}`,
+				{ access: "post" },
+				200,
+				"PUT",
+			);
+			const asked = (await send(messages, {
+				body: `<@agent:${bot.id}> are you there?`,
+			})) as Entry;
+			const nextMessage = async (after: number) => {
+				for (let cursor = after; ; ) {
+					const page = (await request(
+						`${workspace}${messages}?after=${cursor}&wait=10`,
+						200,
+						{ headers: auth },
+					)) as Page;
+					const found = page.entries.find((entry) => entry.type === "message");
+					if (found) return found;
+					assert(page.cursor > cursor, "The bot did not reply");
+					cursor = page.cursor;
+				}
+			};
+			assert.equal((await nextMessage(asked.seq)).body, "Hello there");
+			assert.equal(modelCalls, 1);
+
+			// A run an evicted isolate left behind is finished by the Cron Trigger.
+			const orphan = (await send(messages, { body: "left behind" })) as Entry;
+			await client
+				.db()
+				.collection<{ _id: string }>("channel_bot_runs")
+				.insertOne({
+					_id: `${bot.id}:${channel.id}:${orphan.seq}`,
+					botId: bot.id,
+					workspaceId: workspace.slice(4),
+					channelId: channel.id,
+					triggerSeq: orphan.seq,
+					triggerMessageId: orphan.id,
+					depth: 0,
+					status: "pending",
+					attempts: 0,
+					createdAt: new Date(Date.now() - 60_000).toISOString(),
+					startedAt: null,
+					finishedAt: null,
+					detail: null,
+					model: null,
+					usage: null,
+					replyMessageId: null,
+					leaseId: null,
+					leaseUntil: null,
+				} as { _id: string });
+			const swept = await fetch(`${base}/__scheduled?cron=*+*+*+*+*`, {
+				signal: AbortSignal.timeout(20_000),
+			});
+			assert.equal(swept.status, 200, `scheduled: HTTP ${swept.status}`);
+			assert.doesNotMatch(await swept.text(), /dashboard stub/);
+			assert.equal((await nextMessage(orphan.seq)).body, "Hello there");
+			assert.equal(modelCalls, 2);
+		} finally {
+			await stub.close();
+		}
 		for (const secret of [
 			ownerAuth.authorization.slice(7),
 			signedIn.token,
@@ -331,7 +492,7 @@ try {
 			assert(!logs().includes(secret));
 	});
 	console.log(
-		"Worker: fresh database, concurrent requests, durable writes, parameter routes, and team sign-in passed",
+		"Worker: fresh database, concurrent requests, durable writes, parameter routes, team sign-in, channels, and bots passed",
 	);
 
 	await client.db().dropDatabase();
