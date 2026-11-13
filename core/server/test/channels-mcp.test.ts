@@ -311,6 +311,34 @@ describe("channels for agents over MCP", () => {
 		);
 		expect(updated.data).toMatchObject({ name: "launch-week" });
 		expect(updated.data.archivedAt).not.toBeNull();
+		// An archived channel is unarchived with nothing else to change, and
+		// can be renamed in the same call.
+		const reopened = await tool<ChannelDetails>(
+			manager.secret,
+			"channels_update",
+			{
+				channel: "launch-week",
+				archived: false,
+			},
+		);
+		expect(reopened).toMatchObject({
+			isError: false,
+			data: { archivedAt: null },
+		});
+		await tool(manager.secret, "channels_update", {
+			channel: "launch-week",
+			archived: true,
+		});
+		const renamed = await tool<ChannelDetails>(
+			manager.secret,
+			"channels_update",
+			{
+				channel: "launch-week",
+				name: "launch",
+				archived: false,
+			},
+		);
+		expect(renamed.data).toMatchObject({ name: "launch", archivedAt: null });
 		await tool(manager.secret, "channels_set_agent", {
 			channel: "general",
 			agent: plain.id,

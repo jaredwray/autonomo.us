@@ -533,7 +533,9 @@ and posts the reply as the bot. Nothing has to run outside the gateway.
 - **Limits per bot.** Replies an hour (default 30), tokens a day (default
   500,000, counted from 00:00 UTC), output tokens per reply (default 1,500),
   and how many recent messages a reply sees (default 30). A reply past a limit
-  is skipped before any model call and shown on the bot's run list.
+  is skipped before any model call and shown on the bot's run list. The
+  limits are checked when a reply starts, so replies already under way can
+  take a bot a little past them.
 - **Tools.** With tools on, a reply may search and write the bot's own
   Synapse space, read the workspace's shared space, propose changes to it, and
   read the bot's other channels, in at most 8 model calls. It never gets a

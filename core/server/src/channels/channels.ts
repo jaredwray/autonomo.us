@@ -771,7 +771,7 @@ export class ChannelService {
 				authorKey,
 				input.nonce,
 			);
-			if (first) return { message: publicMessage(first), created: false };
+			if (first) return this.replayed(channel, first);
 		}
 		const mentions = await this.mentionsIn(channel, body);
 		let threadId: string | null = null;
@@ -791,7 +791,7 @@ export class ChannelService {
 				? CHANNEL_LIMITS.personPostsPerMinute
 				: CHANNEL_LIMITS.agentPostsPerMinute;
 		if (
-			(await this.repository.countAuthorEntries(
+			(await this.repository.countAuthorMessages(
 				channel.id,
 				authorKey,
 				this.at(-MINUTE_MS),
@@ -814,25 +814,39 @@ export class ChannelService {
 			revision: 1,
 			...(input.nonce === undefined ? {} : { nonce: input.nonce }),
 		});
-		const message = publicMessage(entry);
-		if (replay) return { message, created: false };
-		// The summary and the reply count follow the entry. A crash here leaves
-		// them one message behind until the next post; the entry is safe.
+		if (replay) return this.replayed(channel, entry);
+		// The reply count follows the entry. A crash here leaves it one behind.
+		if (threadId) await this.repository.addReply(channel.id, threadId);
+		await this.settle(channel, entry);
+		return { message: publicMessage(entry), created: true };
+	}
+	/**
+	 * What follows a message once it is in the log: the channel's summary, the
+	 * author's read mark, and whoever listens for messages. Each step can be
+	 * repeated safely, so a retried post repairs any that a crash skipped.
+	 */
+	private async settle(channel: StoredChannel, entry: StoredMessage) {
 		await Promise.all([
-			this.repository.touchChannel(workspaceId, channel.id, {
+			this.repository.touchChannel(channel.workspaceId, channel.id, {
 				lastSeq: entry.seq,
 				lastMessageSeq: entry.seq,
 				lastMessageAt: entry.createdAt,
 			}),
-			threadId ? this.repository.addReply(channel.id, threadId) : undefined,
-			this.keepUp(workspaceId, channel.id, authorKey, entry.seq),
+			this.keepUp(channel.workspaceId, channel.id, entry.authorKey, entry.seq),
 		]);
 		try {
-			await this.options.onMessage?.(publicChannel(channel), message);
+			await this.options.onMessage?.(
+				publicChannel(channel),
+				publicMessage(entry),
+			);
 		} catch {
 			// The message is posted; whoever listens handles its own trouble.
 		}
-		return { message, created: true };
+	}
+	/** A retry of a post that already landed: the first message, settled again. */
+	private async replayed(channel: StoredChannel, first: StoredMessage) {
+		await this.settle(channel, first);
+		return { message: publicMessage(first), created: false };
 	}
 	/**
 	 * An author who had read every message before their own has read that too.

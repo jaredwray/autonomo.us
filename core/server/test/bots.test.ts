@@ -331,6 +331,33 @@ describe("bots the gateway runs", () => {
 		]);
 	});
 
+	it("starts the reply when a post is retried after its trigger was missed", async () => {
+		const { ok, call, createChannel, addAgent, bot, details, next } =
+			await start();
+		const channel = await createChannel("general");
+		const helper = await bot({ name: "Helper", enabled: false });
+		await addAgent(channel.id, helper.id);
+		const path = `/v1/channels/${channel.id}/messages`;
+		const body = { body: `<@agent:${helper.id}> hello?`, nonce: "ask-1" };
+		// The first attempt posts the message but starts nothing.
+		const first = await call("POST", path, { body });
+		expect(first.status).toBe(201);
+		const asked = (await first.json()) as ChannelMessage;
+		expect((await details(helper.id)).runs).toEqual([]);
+
+		// The retry returns the same message and settles what was skipped.
+		await ok("PATCH", `/v1/bots/${helper.id}`, { body: { enabled: true } });
+		const retry = await call("POST", path, { body });
+		expect(retry.status).toBe(200);
+		expect(((await retry.json()) as ChannelMessage).id).toBe(asked.id);
+		expect(await next(channel.id, asked.seq)).toMatchObject({
+			author: { id: helper.id },
+		});
+		// Retrying again starts nothing more.
+		await call("POST", path, { body });
+		expect((await details(helper.id)).runs).toHaveLength(1);
+	});
+
 	it("stops a chain of bots at each bot's hop limit", async () => {
 		const { createChannel, post, addAgent, bot, settled } = await start();
 		const channel = await createChannel("general");

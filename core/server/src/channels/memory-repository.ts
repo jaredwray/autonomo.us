@@ -229,13 +229,16 @@ export class MemoryChannelRepository implements ChannelRepository {
 		const entry = this.log(channelId).find((item) => item.id === messageId);
 		if (entry?.type === "message") entry.replyCount += 1;
 	}
-	async countAuthorEntries(
+	async countAuthorMessages(
 		channelId: string,
 		authorKey: string,
 		since: string,
 	) {
 		return this.log(channelId).filter(
-			(item) => item.authorKey === authorKey && item.createdAt >= since,
+			(item) =>
+				item.type === "message" &&
+				item.authorKey === authorKey &&
+				item.createdAt >= since,
 		).length;
 	}
 	async countMentions(channelId: string, mentionKey: string, afterSeq: number) {

@@ -338,12 +338,13 @@ export class MongoChannelRepository implements ChannelRepository {
 			),
 		);
 	}
-	countAuthorEntries(channelId: string, authorKey: string, since: string) {
+	countAuthorMessages(channelId: string, authorKey: string, since: string) {
 		return this.storage(() =>
 			this.entries().countDocuments({
 				channelId,
 				authorKey,
 				createdAt: { $gte: since },
+				type: "message",
 			}),
 		);
 	}

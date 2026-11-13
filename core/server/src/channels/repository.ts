@@ -151,8 +151,8 @@ export interface ChannelRepository {
 		expectedRevision: number,
 	): Promise<boolean>;
 	addReply(channelId: string, messageId: string): Promise<void>;
-	/** Entries the author appended to the channel since `since`. */
-	countAuthorEntries(
+	/** Messages the author posted to the channel since `since`; notes and changes do not count. */
+	countAuthorMessages(
 		channelId: string,
 		authorKey: string,
 		since: string,

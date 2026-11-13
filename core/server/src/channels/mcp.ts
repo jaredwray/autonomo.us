@@ -373,23 +373,30 @@ export function channelToolSet(channels: ChannelService): McpToolSet {
 				}),
 			channels_update: async (agent, args) => {
 				const caller = callerOf(agent);
-				let result = await channels.updateChannel(
-					ws(agent),
-					caller,
-					name(args),
-					{
-						name: args.name as string | undefined,
-						topic: args.topic as string | undefined,
-						description: args.description as string | undefined,
-					},
+				const fields = {
+					name: args.name as string | undefined,
+					topic: args.topic as string | undefined,
+					description: args.description as string | undefined,
+				};
+				const changes = Object.values(fields).some(
+					(value) => value !== undefined,
 				);
-				if (typeof args.archived === "boolean")
-					result = await channels.setArchived(
+				const archive = (reference: string, archived: boolean) =>
+					channels.setArchived(ws(agent), caller, reference, archived);
+				// An archived channel takes no other change, so unarchive first
+				// and archive last.
+				let result =
+					args.archived === false
+						? await archive(name(args), false)
+						: undefined;
+				if (changes || !result)
+					result = await channels.updateChannel(
 						ws(agent),
 						caller,
-						result.id,
-						args.archived,
+						result?.id ?? name(args),
+						fields,
 					);
+				if (args.archived === true) result = await archive(result.id, true);
 				return result;
 			},
 			channels_set_agent: async (agent, args) =>

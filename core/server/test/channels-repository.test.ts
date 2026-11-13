@@ -281,12 +281,20 @@ describe.each(implementations)("channel repository (%s)", (_name, create) => {
 			),
 		).toEqual(expect.arrayContaining([1, 5]));
 		expect(
-			await repository.countAuthorEntries(
+			await repository.countAuthorMessages(
 				target.id,
 				"user:u1",
 				"2026-11-13T11:00:00.000Z",
 			),
 		).toBe(1);
+		// Only messages count: the note and the change entry are the same author's.
+		expect(
+			await repository.countAuthorMessages(
+				target.id,
+				"user:u1",
+				"2026-11-13T09:00:00.000Z",
+			),
+		).toBe(3);
 		expect(await repository.countMentions(target.id, "agent:a", 0)).toBe(1);
 		expect(await repository.countMentions(target.id, "agent:a", 3)).toBe(0);
 	});

@@ -463,7 +463,7 @@ it down and anyone can release what it took.
 
 The rate limit is an indexed count of the author's entries in the last minute
 before the insert. Two simultaneous posts can both pass at the edge of the
-limit; it is a brake on runaway loops, not an exact quota. Exact per-agent
+limit; it is a brake on runaway loops, not an exact quota. The same is true of the channel creation limit and the 500 open channels: each is a count read before the insert, so requests sent at the same moment can pass together. Exact per-agent
 quotas belong to the MVP policy engine.
 
 ## 11. Security invariants
@@ -747,6 +747,25 @@ the four questions, so each follows its recommendation, with one addition:
 - **A writer that loses the race for a number takes the next one** instead
   of re-reading the top of the log: the duplicate-key error already proves the
   number exists. The invariant in 4.3 is unchanged.
+
+**Found in review of the code, and fixed.** A retried post now settles
+whatever a crash skipped the first time: the channel's summary and the trigger
+for a mentioned bot. A bot's failure notice has its own nonce, so it cannot
+stand in for the reply of a retry that succeeds. The post rate limit counts
+messages only, not system notes or change entries. `channels_update` can
+unarchive a channel.
+
+**Known and accepted.**
+
+- Limits that are counted before a write (posts a minute, channels an hour,
+  open channels, a bot's replies an hour and tokens a day) can be passed by
+  requests that arrive together. They are brakes, not exact quotas.
+- A request that was allowed when it started finishes, even if the channel is
+  archived or the bot removed a moment later. The gateway treats token
+  revocation and workspace archiving the same way.
+- An edit or delete is two writes. A crash between them changes the message
+  but not the log, so a dashboard that is open shows the old text until it
+  reloads. The text itself is gone from storage.
 
 **Tested as planned** (section 12): the repository contracts for channels and
 bots against memory and MongoDB; one gapless order with two servers posting

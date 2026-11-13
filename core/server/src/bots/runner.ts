@@ -355,6 +355,7 @@ export class BotRunner {
 				caller,
 				trigger,
 				"I could not reply: the model call failed. A workspace admin can see why under Bots.",
+				"notice",
 			).catch(() => {});
 			throw new Failure(
 				outcome.status === "unknown_model"
@@ -379,12 +380,17 @@ export class BotRunner {
 		};
 	}
 
-	/** Posts as the bot. The nonce is the run's, so a retried run posts once. */
+	/**
+	 * Posts as the bot. The nonce is the run's, so a retried run posts once.
+	 * A failure notice has its own, so it never stands in for the reply of a
+	 * retry that succeeds.
+	 */
 	private say(
 		run: StoredRun,
 		caller: ChannelCaller,
 		trigger: ChannelMessage,
 		body: string,
+		kind: "reply" | "notice" = "reply",
 	) {
 		return this.replying.run(run.depth, async () => {
 			const { message } = await this.options.channels.post(
@@ -395,7 +401,7 @@ export class BotRunner {
 					body,
 					// An answer to a threaded question stays in its thread.
 					threadId: trigger.threadId ?? undefined,
-					nonce: `run:${run.id}`,
+					nonce: kind === "reply" ? `run:${run.id}` : `run:${run.id}:notice`,
 				},
 			);
 			return message;
