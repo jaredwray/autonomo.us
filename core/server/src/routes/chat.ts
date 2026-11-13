@@ -3,6 +3,7 @@ import type {
 	FailoverAttempt,
 	GatewayRequest,
 	GatewayResponse,
+	TelemetryCaller,
 	TokenUsage,
 } from "@autonomo.us/common";
 import { generateText, type LanguageModelUsage, streamText } from "ai";
@@ -14,6 +15,7 @@ import type { ProviderSettingsStore } from "../providers/settings.js";
 import type { ModelRouter, RoutingPlan } from "../routing/router.js";
 import type { RoutingSettingsStore } from "../routing/settings.js";
 import type { TelemetryService } from "../telemetry/telemetry.js";
+import type { WorkspaceRef } from "../workspaces/store.js";
 
 export type ChatRouteOptions = {
 	providers: ProviderSettingsStore;
@@ -121,6 +123,193 @@ function startAttemptTimeout(timeoutMs: number): AttemptTimeout {
 	};
 }
 
+export type ChatDependencies = Pick<
+	ChatRouteOptions,
+	"providers" | "routing" | "router" | "telemetry"
+>;
+/** Extra `generateText` settings for callers that run tools, such as bots. */
+export type ChatExtras = Pick<
+	Parameters<typeof generateText>[0],
+	"tools" | "stopWhen"
+>;
+export type ChatOutcome =
+	| { status: "ok"; response: GatewayResponse }
+	/** The caller's signal fired; nothing was returned. */
+	| { status: "aborted" }
+	| { status: "unknown_model"; message: string }
+	| { status: "provider_error"; message: string; attempts: FailoverAttempt[] };
+
+type AttemptInput = {
+	workspaceId: string;
+	body: GatewayRequest & { model: string };
+	plan: RoutingPlan;
+	signal: AbortSignal;
+	caller?: TelemetryCaller;
+	extras?: ChatExtras;
+	onAttemptError?: (error: unknown, model: string) => void;
+};
+
+/**
+ * The non-streaming attempt loop: the requested model, then each failover
+ * target, one attempt each with the plan's timeout, recording telemetry per
+ * attempt. Used by POST /chat and by anything in the gateway that needs a
+ * completion outside a request, such as a bot's reply.
+ */
+export async function runAttempts(
+	options: Pick<ChatDependencies, "router" | "telemetry">,
+	{
+		workspaceId,
+		body,
+		plan,
+		signal,
+		caller,
+		extras,
+		onAttemptError,
+	}: AttemptInput,
+): Promise<Exclude<ChatOutcome, { status: "unknown_model" }>> {
+	const { telemetry } = options;
+	const requested = plan.candidates[0];
+	const attemptTimeoutMs = plan.timeoutMs;
+	const attempts: FailoverAttempt[] = [];
+	for (const candidate of plan.candidates) {
+		if (signal.aborted) return { status: "aborted" };
+		const release =
+			candidate === requested
+				? plan.release
+				: options.router.acquire(workspaceId, candidate.id);
+		const started = performance.now();
+		const timeout = startAttemptTimeout(attemptTimeoutMs);
+		try {
+			const result = await generateText({
+				model: candidate.model,
+				...chatPrompt(body),
+				...extras,
+				temperature: body.temperature,
+				maxOutputTokens: body.maxTokens,
+				abortSignal: timeout.signal
+					? AbortSignal.any([signal, timeout.signal])
+					: signal,
+				// Surface provider failures immediately — retry policy lives in
+				// the gateway's failover loop, not hidden inside the SDK.
+				maxRetries: 0,
+			});
+
+			// With tools a call runs several steps; bill all of them.
+			const usage = toTokenUsage(result.totalUsage ?? result.usage);
+			telemetry.recordChat({
+				workspaceId,
+				model: candidate.id,
+				provider: candidate.provider.name,
+				providerKind: candidate.provider.kind,
+				agentId: body.agentId,
+				caller,
+				usage,
+				latencyMs: Math.round(performance.now() - started),
+				...(candidate.id !== requested.id
+					? { requestedModel: requested.id }
+					: {}),
+			});
+			if (signal.aborted) return { status: "aborted" };
+
+			return {
+				status: "ok",
+				response: {
+					id: randomUUID(),
+					model: candidate.id,
+					agentId: body.agentId,
+					message: { role: "assistant", content: result.text },
+					usage,
+					finishReason: result.finishReason,
+					createdAt: new Date().toISOString(),
+					...(plan.decision ? { routing: plan.decision } : {}),
+					...(attempts.length > 0
+						? { failover: { requestedModel: requested.id, attempts } }
+						: {}),
+				},
+			};
+		} catch (error) {
+			const message = timeout.timedOut()
+				? timeoutMessage(attemptTimeoutMs)
+				: errorMessage(error);
+			telemetry.recordChat({
+				workspaceId,
+				model: candidate.id,
+				provider: candidate.provider.name,
+				providerKind: candidate.provider.kind,
+				agentId: body.agentId,
+				caller,
+				usage: EMPTY_USAGE,
+				latencyMs: Math.round(performance.now() - started),
+				error: message,
+				...(candidate.id !== requested.id
+					? { requestedModel: requested.id }
+					: {}),
+			});
+			onAttemptError?.(error, candidate.id);
+			if (signal.aborted) return { status: "aborted" };
+			attempts.push({ model: candidate.id, error: message });
+		} finally {
+			timeout.clear();
+			release?.();
+		}
+	}
+	return {
+		status: "provider_error",
+		message: attempts[attempts.length - 1].error,
+		attempts,
+	};
+}
+
+/**
+ * A completion in a workspace, from its own connections and routing: plans
+ * the request the way POST /chat does, then runs the attempt loop.
+ */
+export async function completeChat(
+	options: ChatDependencies,
+	input: {
+		workspace: WorkspaceRef;
+		body: GatewayRequest & { model: string };
+		signal: AbortSignal;
+		caller?: TelemetryCaller;
+		extras?: ChatExtras;
+		onAttemptError?: (error: unknown, model: string) => void;
+	},
+): Promise<ChatOutcome> {
+	const { workspace, body, signal, caller } = input;
+	const [registry, config] = await Promise.all([
+		options.providers.registry(workspace),
+		options.routing.config(workspace),
+	]);
+	let plan: RoutingPlan | undefined;
+	try {
+		try {
+			plan = await options.router.plan(
+				{ workspaceId: workspace.id, registry, config },
+				body,
+				signal,
+				caller,
+			);
+		} catch (error) {
+			if (signal.aborted) return { status: "aborted" };
+			if (error instanceof UnknownProviderError)
+				return { status: "unknown_model", message: error.message };
+			throw error;
+		}
+		if (signal.aborted) return { status: "aborted" };
+		return await runAttempts(options, {
+			workspaceId: workspace.id,
+			body,
+			plan,
+			signal,
+			caller,
+			extras: input.extras,
+			onAttemptError: input.onAttemptError,
+		});
+	} finally {
+		plan?.release();
+	}
+}
+
 /** Registered under `/v1/:workspace`: every candidate resolves in that workspace. */
 export async function chatRoutes(
 	server: FastifyInstance,
@@ -146,7 +335,6 @@ export async function chatRoutes(
 			reply.raw.once("close", disconnected);
 			if (reply.raw.destroyed) client.abort();
 
-			let requested: ResolvedModel;
 			let plan: RoutingPlan | undefined;
 			try {
 				try {
@@ -157,7 +345,6 @@ export async function chatRoutes(
 						request.telemetryCaller,
 					);
 					client.signal.throwIfAborted();
-					requested = plan.candidates[0];
 				} catch (error) {
 					if (client.signal.aborted) return reply.hijack();
 					if (error instanceof UnknownProviderError) {
@@ -191,95 +378,27 @@ export async function chatRoutes(
 					);
 				}
 
-				const attempts: FailoverAttempt[] = [];
-				for (const candidate of candidates) {
-					if (client.signal.aborted) return reply.hijack();
-					const release =
-						candidate === requested
-							? plan.release
-							: options.router.acquire(workspace.id, candidate.id);
-					const started = performance.now();
-					const timeout = startAttemptTimeout(attemptTimeoutMs);
-					try {
-						const result = await generateText({
-							model: candidate.model,
-							...chatPrompt(body),
-							temperature: body.temperature,
-							maxOutputTokens: body.maxTokens,
-							abortSignal: timeout.signal
-								? AbortSignal.any([client.signal, timeout.signal])
-								: client.signal,
-							// Surface provider failures immediately — retry policy lives in
-							// the gateway's failover loop, not hidden inside the SDK.
-							maxRetries: 0,
-						});
-
-						const usage = toTokenUsage(result.usage);
-						telemetry.recordChat({
-							workspaceId: workspace.id,
-							model: candidate.id,
-							provider: candidate.provider.name,
-							providerKind: candidate.provider.kind,
-							agentId: body.agentId,
-							caller: request.telemetryCaller,
-							usage,
-							latencyMs: Math.round(performance.now() - started),
-							...(candidate.id !== requested.id
-								? { requestedModel: requested.id }
-								: {}),
-						});
-						if (client.signal.aborted) return reply.hijack();
-
-						const response: GatewayResponse = {
-							id: randomUUID(),
-							model: candidate.id,
-							agentId: body.agentId,
-							message: { role: "assistant", content: result.text },
-							usage,
-							finishReason: result.finishReason,
-							createdAt: new Date().toISOString(),
-							...(plan.decision ? { routing: plan.decision } : {}),
-							...(attempts.length > 0
-								? { failover: { requestedModel: requested.id, attempts } }
-								: {}),
-						};
-						return response;
-					} catch (error) {
-						const message = timeout.timedOut()
-							? timeoutMessage(attemptTimeoutMs)
-							: errorMessage(error);
-						telemetry.recordChat({
-							workspaceId: workspace.id,
-							model: candidate.id,
-							provider: candidate.provider.name,
-							providerKind: candidate.provider.kind,
-							agentId: body.agentId,
-							caller: request.telemetryCaller,
-							usage: EMPTY_USAGE,
-							latencyMs: Math.round(performance.now() - started),
-							error: message,
-							...(candidate.id !== requested.id
-								? { requestedModel: requested.id }
-								: {}),
-						});
+				const outcome = await runAttempts(options, {
+					workspaceId: workspace.id,
+					body,
+					plan,
+					signal: client.signal,
+					caller: request.telemetryCaller,
+					onAttemptError: (error, model) =>
 						request.log.error(
-							{ err: error, model: candidate.id },
+							{ err: error, model },
 							"gateway chat attempt failed",
-						);
-						if (client.signal.aborted) return reply.hijack();
-						attempts.push({ model: candidate.id, error: message });
-					} finally {
-						timeout.clear();
-						release?.();
-					}
-				}
-
-				const last = attempts[attempts.length - 1];
+						),
+				});
+				if (outcome.status === "aborted") return reply.hijack();
+				if (outcome.status === "ok") return outcome.response;
 				return reply.status(502).send({
 					error: {
 						type: "provider_error",
-						message: last.error,
-						...(attempts.length > 1 ? { attempts } : {}),
+						message: outcome.message,
+						...(outcome.attempts.length > 1
+							? { attempts: outcome.attempts }
+							: {}),
 					},
 				});
 			} finally {
