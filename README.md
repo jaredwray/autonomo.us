@@ -259,7 +259,7 @@ through environment variables:
 - `GET /health` and `GET /healthz` — API liveness (`status`, `timestamp`) plus `mongodb`, containing `configured`, `connected`, and `initialized`. The last field confirms saved settings loaded and the default routing document exists. A configured database is probed with a bounded timeout; an unavailable database reports `connected: false` while liveness remains HTTP 200. Set `MONGODB_URI` to enable the check.
 
 - `GET /v1/auth/status` — public: `{ setupComplete, setupTokenRequired, persistence }`. The dashboard reads it to choose setup or sign-in. `setupComplete` is false while setup is open: on first run, and while an unspent `SETUP_TOKEN` is configured.
-- `POST /v1/setup` — while setup is open: `{ email, name, password, data? }` creates an owner and returns `{ token, expiresAt, user }`. Requires `Authorization: Bearer <SETUP_TOKEN>` when it is set; returns 409 once setup is complete and the token is spent. `data` is `keep` (default) or `clear`; with the setup token, `keep` recovers an existing account with that email, and `clear` deletes the gateway's data first (403 without `SETUP_TOKEN`, 409 without MongoDB). `GET /v1/setup/token` checks a setup token before the form is shown and returns `{ existing, canClear }`: counts of `accounts`, `invites`, `connections`, `tokens`, `workspaces` (besides Default), `notes`, and `usageEvents`.
+- `POST /v1/setup` — while setup is open: `{ email, name, password, data? }` creates an owner and returns `{ token, expiresAt, user }`. Requires `Authorization: Bearer <SETUP_TOKEN>` when it is set; returns 409 once setup is complete and the token is spent. `data` is `keep` (default) or `clear`; with the setup token, `keep` recovers an existing account with that email, and `clear` deletes the gateway's data first (403 without `SETUP_TOKEN`, 409 without MongoDB). `GET /v1/setup/token` checks a setup token before the form is shown and returns `{ existing, canClear }`: counts of `accounts`, `invites`, `connections`, `tokens`, `workspaces` (besides Default), `notes`, `messages` (channel log entries), and `usageEvents`.
 - `POST /v1/auth/session` — public sign-in with `{ email, password }`; returns `{ token, expiresAt, user }`. Send `Authorization: Bearer <token>` on later requests. `GET` returns the current identity; `DELETE` signs out that session.
 - `PUT /v1/auth/password` — signed-in member: `{ currentPassword, newPassword }`.
 - `GET /v1/workspaces` — signed-in members: the workspaces you can open, with your role in each, `isDefault`, and whether you can create workspaces.
@@ -296,7 +296,9 @@ through environment variables:
 - `GET /v1/:workspace/telemetry/analytics?from=<ISO timestamp>&to=<ISO timestamp>` — date-filtered model, connection, caller, and time-series analytics. Optional `model`, `provider` (connection ID), and `caller` filters apply to the entire report. Ranges are start-inclusive, end-exclusive, and limited to 90 days. Requires `telemetry:read` when API authentication is enabled.
 
 - `/v1/:workspace/synapse/...` — Synapse's notes, spaces, export/import, and proposals; see [Synapse](#synapse).
-- `POST /mcp` — the MCP endpoint for agent tokens; see [Synapse](#synapse).
+- `/v1/:workspace/channels/...` — channels, their messages, agents, and read marks; see [Channels](#channels).
+- `/v1/:workspace/bots/...` — bots the gateway runs and their runs; see [Bots](#bots).
+- `POST /mcp` — the MCP endpoint for agent tokens; see [Synapse](#synapse) and [Channels](#channels).
 
 ```bash
 # Host-run API against the compose services
@@ -334,14 +336,15 @@ within that workspace:
 | Inference | None, Run | Run sends chat and decisions requests, including Auto, pools, and failover. |
 | Telemetry | None, Read | Read views usage and events. |
 | Synapse | None, Read, Edit | Read lists spaces, templates, notes, categories, unresolved links, daily views, and proposals. Edit also creates, changes, appends to, deletes, imports, and exports notes. Neither decides proposals or changes the global space. |
+| Channels | None, Read, Post | Read lists channels and reads messages. Post also posts, edits and deletes the token's own messages. Neither creates or changes a channel or its agents. |
 
 Edit includes Read for that resource, but never Run. API token management and
 action history remain owner-only. Requests without the required permission
 return 403 before any provider call. There is no per-model or per-pool scope yet.
 
 The API accepts permission IDs `models:read`, `models:edit`, `routing:read`,
-`routing:edit`, `inference:run`, `telemetry:read`, `synapse:read`, and
-`synapse:edit`. For example, an observer
+`routing:edit`, `inference:run`, `telemetry:read`, `synapse:read`,
+`synapse:edit`, `channels:read`, and `channels:edit`. For example, an observer
 can use `["models:read", "routing:read", "telemetry:read"]`. The dashboard starts
 new tokens with every permission unchecked; select the access each token needs.
 API clients that omit permissions default to Models Read + Inference Run. Older stored tokens
@@ -366,7 +369,8 @@ delegated token management, and a permanent audit log are covered in the
 ### Agent tokens
 
 Open **Agent Tokens** to issue credentials for agents that connect over MCP.
-The MCP server at `POST /mcp` serves the [Synapse](#synapse) tools; an agent sends
+The MCP server at `POST /mcp` serves the [Synapse](#synapse) and
+[Channels](#channels) tools; an agent sends
 its token as `Authorization: Bearer agt_…`. Each token supports the same name,
 description, TTL, one-time secret display, rolling with overlap, revocation, and
 action log as API Tokens.
@@ -380,7 +384,10 @@ a signed-in owner or admin.
 
 New agent tokens start with no permissions, both in the dashboard and through the
 API. The MCP grants are `mcp:read` (`tools/list`) and `mcp:call` (`tools/call`).
-They are independent; an agent that uses Synapse needs both. These grants do
+They are independent; an agent that uses Synapse or Channels needs both. A third
+grant, `channels:manage`, lets an agent create, rename, and archive channels and
+change which agents are in them. That includes adding itself, so it opens every
+channel in the workspace to that agent. These grants do
 not authorize any REST endpoint: an agent token on `/v1/*` gets 401. Permission
 edits apply to all overlapping values, and rolling preserves grants. An agent's
 token ID names its private Synapse space (`agent-<id>`), so rolling a credential
@@ -453,6 +460,109 @@ With `MONGODB_URI`, notes live in `synapse_notes`, space records in
 `synapse_spaces`, and proposals in `synapse_proposals`; without it Synapse lasts
 until restart. `SYNAPSE_TIME_ZONE` sets the time zone for `{{date}}`, daily
 notes, and the log.
+
+### Channels
+
+Channels are chat rooms inside a workspace where the team and bots talk. Open
+**Channels** in the dashboard to create a channel, post, reply in threads,
+mention people and bots with `@`, and add bots from the channel's details.
+The design and its invariants are in [docs/CHANNELS_PLAN.md](docs/CHANNELS_PLAN.md).
+
+- **Who is in a channel.** Every channel is open to everyone with access to
+  the workspace. Bots are listed per channel with `read` or `post` access; a
+  channel a bot is not in does not exist for it. Any workspace member creates,
+  renames, and archives channels and changes their bots. Deleting someone
+  else's message needs a workspace admin.
+- **One order, followed by cursor.** A channel is an append-only log. Each
+  entry has a `seq` that starts at 1 and has no gaps. `after=<seq>` returns
+  everything above it, oldest first, with the `cursor` to send next; add
+  `wait=<seconds, at most 25>` to hold the request until something arrives.
+  The log also carries system notes (a bot added, the channel renamed) and
+  `change` entries that say an earlier message was edited or deleted.
+- **Retries are safe.** Post with a `nonce`; posting again with the same one
+  returns the first message (HTTP 200 instead of 201).
+- **Deleting removes the text.** A deleted message keeps its place with an
+  empty body, and no entry stores any earlier version of it.
+- **Mentions** are written `<@user:ID>` or `<@agent:ID>`; the composer's `@`
+  picker and `GET .../members` give the exact text. A plain `@name` notifies
+  nobody.
+- **Limits.** A message is at most 16,000 characters. Scripts and bots post
+  at most 30 messages a minute per channel, people 120 (HTTP 429 with
+  `retry-after`). One person or bot creates at most 20 channels an hour, and
+  a workspace holds 500 open channels.
+
+REST routes under `/v1/<workspace id>/channels`: `GET /` (`?archived=true`)
+and `POST /` (`{ name, topic?, description? }`); `GET /agents` (the
+workspace's bots, for the picker); `GET|PATCH /:channel`,
+`POST /:channel/archive` and `/unarchive`; `GET /:channel/members`;
+`PUT|DELETE /:channel/agents/:agentTokenId` (`{ access: "read" | "post" }`);
+`GET /:channel/messages` (the latest page, `?before=<seq>` for older ones,
+`?after=<seq>&wait=` to follow, `?thread=<message id>` for a thread and
+`?thread=<message id>&after=<seq>` for its further replies);
+`POST /:channel/messages` (`{ body, threadId?, nonce? }`);
+`PATCH|DELETE /:channel/messages/:message`; `PUT /:channel/read`
+(`{ seq }`). API tokens use `channels:read` and `channels:edit`; creating and
+changing channels is for signed-in members.
+
+Agents use these tools on `POST /mcp`, in the channels they were added to:
+`channels_list`, `channels_read` (what is new since the agent's read mark;
+reading does not mark anything read), `channels_post` (`replyTo` a message
+number, `nonce`), `channels_mark_read`, `channels_members`, and
+`channels_wait` (a long poll across the agent's channels). With the
+`channels:manage` grant an agent also has `channels_create`,
+`channels_update`, `channels_set_agent`, and `channels_agents`.
+
+With `MONGODB_URI`, channels live in `channels`, their logs in
+`channel_messages`, and read marks in `channel_reads`; without it they last
+until restart.
+
+### Bots
+
+A bot is a participant the gateway answers for. Open **Bots** to create one
+with a name, instructions, and a model (a model, a pool, or `auto` from the
+workspace's routing), then add it to a channel from the channel's details.
+When a person mentions it there, the gateway builds a prompt from the recent
+conversation, calls the model through the workspace's routing and failover,
+and posts the reply as the bot. Nothing has to run outside the gateway.
+
+- **Who manages bots.** Workspace admins create, change, pause, and delete
+  bots, because a bot spends the workspace's provider keys. Members see them.
+- **What starts a reply.** A mention by a person, in a channel where the bot
+  has `post` access. Other bots and tokens are ignored unless the bot's
+  **bot-to-bot replies** setting (`agentHops`, 0–3) allows a chain of that
+  length; the default is 0.
+- **Limits per bot.** Replies an hour (default 30), tokens a day (default
+  500,000, counted from 00:00 UTC), output tokens per reply (default 1,500),
+  and how many recent messages a reply sees (default 30). A reply past a limit
+  is skipped before any model call and shown on the bot's run list. The
+  token budget counts each reply still under way at its full output cap, so
+  replies that start together cannot all pass on the same remaining budget.
+  Input tokens are only known afterwards, so a bot can still end a day a
+  little over.
+- **Tools.** With tools on, a reply may search and write the bot's own
+  Synapse space, read the workspace's shared space, propose changes to it, and
+  read the bot's other channels, in at most 8 model calls. It never gets a
+  tool that posts elsewhere or manages channels.
+- **Failures.** A failed model call posts one short notice in the channel and
+  keeps the provider's error on the run, where a workspace admin can read it.
+- **Cost.** Each call is recorded in telemetry under the bot's name, so its
+  usage shows in the dashboard's analytics by caller.
+
+Each mention becomes one run record, written before the post returns. A
+runner claims the run for 2 minutes and works inside a 90-second budget, so a
+retry after a crash can never overlap a runner that is still going. On Node a
+timer picks up interrupted runs every 30 seconds. On the Worker the reply
+finishes after the response on the same request. Cloudflare gives a Worker 30
+seconds after a response, and nothing there retries a reply: one that takes
+longer, or whose isolate is evicted, is not answered, and the person mentions
+the bot again.
+
+REST routes under `/v1/<workspace id>/bots` (signed-in members only):
+`GET /` and `POST /` (`{ name, instructions, model, enabled?, agentHops?,
+tools?, limits? }`); `GET|PATCH|DELETE /:bot` (`GET` includes the latest 50
+runs with status, model, tokens, and the reason for a failure or skip);
+`GET /activity?channel=<id>` (bots replying in a channel right now). Bots
+live in `gateway_bots` and runs in `channel_bot_runs`.
 
 ### Jev decisions
 

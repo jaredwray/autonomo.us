@@ -157,7 +157,7 @@ Read (import and the `markdown` field): a leading byte-order mark is ignored; a 
 
 ## 9. MCP endpoint for agents
 
-`POST /mcp` speaks the [Model Context Protocol](https://modelcontextprotocol.io) over Streamable HTTP in stateless mode: each request carries one JSON-RPC message and gets a JSON response (`application/json`). No session IDs, no server-initiated stream. It is implemented directly on Fastify with no SDK dependency.
+`POST /mcp` speaks the [Model Context Protocol](https://modelcontextprotocol.io) over Streamable HTTP in stateless mode: each request carries one JSON-RPC message and gets a JSON response (`application/json`). No session IDs, no server-initiated stream. It is implemented directly on Fastify with no SDK dependency. The transport lives in `core/server/src/mcp/server.ts` and serves one tool set per feature: Synapse's tools below, and the `channels_*` tools described in [CHANNELS_PLAN.md](./CHANNELS_PLAN.md) section 8. `initialize` returns both sets' instructions and `tools/list` both sets' tools.
 
 - **Auth**: `Authorization: Bearer agt_…` via `AgentTokenStore`. Missing, unknown, expired, or revoked tokens get HTTP 401 with `WWW-Authenticate: Bearer`. Session tokens, API tokens, and the setup token are not accepted.
 - **Origin**: a request with an `Origin` header not allowed by `CORS_ORIGIN` gets 403 (DNS-rebinding protection required by the MCP spec).

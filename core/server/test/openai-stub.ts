@@ -9,7 +9,10 @@ import type { AddressInfo } from "node:net";
  * LM Studio, and vLLM speak). Failure modes are real too: models named
  * `broken-*` respond with a 500, `slow-model` stalls before answering (for
  * timeout/failover tests), and `broken-stream-model` drops the connection
- * mid-stream after emitting output.
+ * mid-stream after emitting output. Three models answer from the request, for
+ * tests that care what the gateway sent: `echo-model` repeats the last user
+ * message, `mention-model` pings the first agent mention in the system
+ * prompt, and `tool-model` calls the `synapse_log` tool once and then answers.
  */
 
 export const STUB_USAGE = {
@@ -17,6 +20,16 @@ export const STUB_USAGE = {
 	completion_tokens: 5,
 	total_tokens: 15,
 };
+
+type StubMessage = { role: string; content?: unknown };
+const textOf = (message: StubMessage | undefined) =>
+	typeof message?.content === "string"
+		? message.content
+		: Array.isArray(message?.content)
+			? message.content
+					.map((part: { text?: string }) => part.text ?? "")
+					.join("")
+			: "";
 
 export type OpenAIStub = {
 	/** Base URL ending in /v1, ready for OPENAI_COMPAT_BASE_URL/config. */
@@ -27,7 +40,12 @@ export type OpenAIStub = {
 export async function startOpenAIStub(
 	options: {
 		onRequest?: (
-			body: { model?: string; stream?: boolean },
+			body: {
+				model?: string;
+				stream?: boolean;
+				messages?: StubMessage[];
+				tools?: unknown[];
+			},
 			headers: http.IncomingHttpHeaders,
 		) => void;
 	} = {},
@@ -46,6 +64,8 @@ export async function startOpenAIStub(
 			const parsed = JSON.parse(body || "{}") as {
 				model?: string;
 				stream?: boolean;
+				messages?: StubMessage[];
+				tools?: unknown[];
 			};
 			options.onRequest?.(parsed, req.headers);
 			if (
@@ -112,6 +132,60 @@ export async function startOpenAIStub(
 					);
 				}, 1500);
 				res.on("close", () => clearTimeout(slowTimer));
+				return;
+			}
+			const messages = parsed.messages ?? [];
+			const answer = (message: Record<string, unknown>, finish = "stop") => {
+				res.writeHead(200, { "content-type": "application/json" });
+				res.end(
+					JSON.stringify({
+						...base,
+						object: "chat.completion",
+						choices: [{ index: 0, message, finish_reason: finish }],
+						usage: STUB_USAGE,
+					}),
+				);
+			};
+			if (parsed.model === "echo-model") {
+				const last = messages.findLast((message) => message.role === "user");
+				answer({ role: "assistant", content: `Echo: ${textOf(last)}` });
+				return;
+			}
+			if (parsed.model === "mention-model") {
+				const system = textOf(
+					messages.find((message) => message.role === "system"),
+				);
+				const mention = /<@agent:[0-9a-f-]+>/.exec(system)?.[0];
+				answer({
+					role: "assistant",
+					content: mention ? `ping ${mention}` : "nobody to ping",
+				});
+				return;
+			}
+			if (parsed.model === "tool-model") {
+				if (messages.some((message) => message.role === "tool"))
+					answer({ role: "assistant", content: "Logged it." });
+				else if (parsed.tools?.length)
+					answer(
+						{
+							role: "assistant",
+							content: null,
+							tool_calls: [
+								{
+									id: "call_1",
+									type: "function",
+									function: {
+										name: "synapse_log",
+										arguments: JSON.stringify({
+											text: "Answered a question in a channel",
+										}),
+									},
+								},
+							],
+						},
+						"tool_calls",
+					);
+				else answer({ role: "assistant", content: "No tools offered." });
 				return;
 			}
 			if (parsed.stream) {

@@ -210,6 +210,7 @@ const INVENTORY: Array<[keyof SetupInventory, string, string]> = [
 	["tokens", "API or agent token", "API and agent tokens"],
 	["workspaces", "workspace besides Default", "workspaces besides Default"],
 	["notes", "Synapse note", "Synapse notes"],
+	["messages", "channel message", "channel messages"],
 	["usageEvents", "recorded request", "recorded requests"],
 ];
 

@@ -3,7 +3,13 @@ import type {
 	CurrentSession,
 	WorkspaceAccess,
 } from "@autonomo.us/common";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+	useCallback,
+	useEffect,
+	useLayoutEffect,
+	useRef,
+	useState,
+} from "react";
 import { AgentTokensView } from "./AgentTokensView.js";
 import { ApiTokensView } from "./ApiTokensView.js";
 import {
@@ -20,6 +26,9 @@ import {
 	setCurrentWorkspace,
 	signOut,
 } from "./api.js";
+import { BotsView } from "./BotsView.js";
+import { ChannelsView } from "./ChannelsView.js";
+import { channelAttention, useChannelList } from "./channels-list.js";
 import { Dashboard } from "./Dashboard.js";
 import { Icon } from "./Icons.js";
 import { ModelsView } from "./ModelsView.js";
@@ -37,6 +46,8 @@ const workspaceViews = {
 	models: "Models",
 	routing: "Routing",
 	synapse: "Synapse",
+	channels: "Channels",
+	bots: "Bots",
 	"api-tokens": "API Tokens",
 	"agent-tokens": "Agent Tokens",
 };
@@ -45,7 +56,7 @@ const instanceViews = { workspaces: "Workspaces", team: "Team" };
 const viewLabels = { ...workspaceViews, ...instanceViews };
 type WorkspaceView = keyof typeof workspaceViews;
 type View = keyof typeof viewLabels | "profile";
-/** `rest` is a view's own state after its name, such as Synapse's /<space>/<note>. */
+/** `rest` is a view's own state after its name: Synapse's /<space>/<note>, a channel's /<name>, a bot's /<id>. */
 type Route = { view: View; workspaceId: string | null; rest: string };
 const isWorkspaceView = (view: View): view is WorkspaceView =>
 	Object.hasOwn(workspaceViews, view);
@@ -200,6 +211,8 @@ export function App() {
 		};
 	}, []);
 	const [route, setRoute] = useState(currentRoute);
+	/** Counts landings in another workspace than a link named; see below. */
+	const [landed, setLanded] = useState(0);
 	const [switcherOpen, setSwitcherOpen] = useState(false);
 	const switcherRef = useRef<HTMLDivElement>(null);
 	useEffect(() => {
@@ -258,16 +271,36 @@ export function App() {
 	const wrongWorkspace = Boolean(
 		route.workspaceId && selected && route.workspaceId !== selected.id,
 	);
-	useEffect(() => {
+	// Read here, not in the Channels view, so the sidebar shows unread channels
+	// and mentions from every view.
+	const channelList = useChannelList(
+		gate.state === "ready" && !invite ? (selected?.id ?? null) : null,
+	);
+	const attention = channelAttention(channelList.channels);
+	// A layout effect, so the address is right by the time the view is seen.
+	useLayoutEffect(() => {
 		if (gate.state !== "ready" || !selected) return;
 		rememberWorkspace(selected.id);
 		// Canonical URL: a workspace view always names its workspace.
-		if (isWorkspaceView(route.view) && route.workspaceId !== selected.id)
+		if (isWorkspaceView(route.view) && route.workspaceId !== selected.id) {
+			// A link into a workspace that cannot be opened lands in this one.
+			// What followed the view (a note, a channel, a bot) named something
+			// there, so it is dropped. A link from before workspaces keeps it.
+			const rest = route.workspaceId === null ? route.rest : "";
 			window.history.replaceState(
 				null,
 				"",
-				href(route.view, selected.id, route.rest),
+				href(route.view, selected.id, rest),
 			);
+			// The view on screen was mounted from the old address. Mount it
+			// again, so it reads the one it has now. The route keeps the
+			// workspace the link named, so the notice that it is not
+			// available stays until the person goes somewhere.
+			if (rest !== route.rest) {
+				setRoute({ ...route, rest });
+				setLanded((count) => count + 1);
+			}
+		}
 	}, [gate.state, selected, route]);
 	const toggle = () => {
 		const next = !collapsed;
@@ -446,6 +479,11 @@ export function App() {
 								className={`nav-item ${shown === item ? "active" : ""}`}
 								aria-current={shown === item ? "page" : undefined}
 								aria-label={viewLabels[item]}
+								aria-describedby={
+									item === "channels" && attention.unread
+										? "channels-attention"
+										: undefined
+								}
 								title={collapsed ? viewLabels[item] : undefined}
 								onClick={() =>
 									setRoute({
@@ -457,6 +495,22 @@ export function App() {
 							>
 								<Icon name={item} />
 								<span className="sidebar-label">{viewLabels[item]}</span>
+								{item === "channels" && attention.unread && (
+									<span
+										id="channels-attention"
+										className={`nav-attention${attention.mentions ? "" : " dot"}`}
+									>
+										{attention.mentions > 0 &&
+											(attention.mentions > 99 ? "99+" : attention.mentions)}
+										<span className="visually-hidden">
+											{attention.mentions > 0
+												? attention.mentions === 1
+													? " unread mention"
+													: " unread mentions"
+												: "Unread messages"}
+										</span>
+									</span>
+								)}
 							</a>
 						))}
 				</nav>
@@ -538,7 +592,10 @@ export function App() {
 				) : (
 					// Keyed by workspace: switching unmounts the old view, so a
 					// response for the previous workspace can never land here.
-					<div key={selected.id} className="workspace-scope-root">
+					<div
+						key={`${selected.id}:${landed}`}
+						className="workspace-scope-root"
+					>
 						{wrongWorkspace && (
 							<p className="banner-warning workspace-fallback" role="status">
 								That workspace isn't available. Showing {selected.name}.
@@ -552,6 +609,14 @@ export function App() {
 							<ModelsView workspace={selected} />
 						) : shown === "synapse" ? (
 							<SynapseView user={user} workspace={selected} />
+						) : shown === "bots" ? (
+							<BotsView workspace={selected} channels={channelList.channels} />
+						) : shown === "channels" ? (
+							<ChannelsView
+								user={user}
+								workspace={selected}
+								list={channelList}
+							/>
 						) : shown === "routing" ? (
 							<RoutingView />
 						) : (

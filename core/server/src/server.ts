@@ -5,10 +5,18 @@ import { registerApiAccess, requireRouteScopes } from "./auth/access.js";
 import { AccountStore } from "./auth/accounts.js";
 import { AgentTokenStore } from "./auth/agent-tokens.js";
 import { ApiTokenStore } from "./auth/tokens.js";
+import { BotService } from "./bots/bots.js";
+import { MemoryBotRepository, MongoBotRepository } from "./bots/repository.js";
+import { BotRunner } from "./bots/runner.js";
+import { ChannelService } from "./channels/channels.js";
+import { channelToolSet } from "./channels/mcp.js";
+import { MemoryChannelRepository } from "./channels/memory-repository.js";
+import { MongoChannelRepository } from "./channels/mongo-repository.js";
 import { type ApiConfig, configFromEnv } from "./config.js";
 import { registerDashboard } from "./dashboard.js";
 import { FailoverPolicyStore } from "./failover.js";
 import { GatewayData } from "./gateway-data.js";
+import { mcpRoutes } from "./mcp/server.js";
 import { ModelCatalogService } from "./model-catalog-service.js";
 import { controlPlaneConnection, mongoErrorDetails } from "./mongo.js";
 import {
@@ -19,6 +27,8 @@ import { ProviderSettingsStore } from "./providers/settings.js";
 import { agentTokenRoutes } from "./routes/agent-tokens.js";
 import { apiTokenRoutes } from "./routes/api-tokens.js";
 import { authRoutes } from "./routes/auth.js";
+import { botRoutes } from "./routes/bots.js";
+import { channelRoutes } from "./routes/channels.js";
 import { chatRoutes } from "./routes/chat.js";
 import { decisionsRoutes } from "./routes/decisions.js";
 import { failoverRoutes } from "./routes/failover.js";
@@ -31,7 +41,7 @@ import { telemetryRoutes } from "./routes/telemetry.js";
 import { memberRoutes, workspaceRoutes } from "./routes/workspaces.js";
 import { ModelRouter } from "./routing/router.js";
 import { RoutingSettingsStore } from "./routing/settings.js";
-import { mcpRoutes } from "./synapse/mcp.js";
+import { synapseToolSet } from "./synapse/mcp.js";
 import { MemorySynapseRepository } from "./synapse/memory-repository.js";
 import { MongoSynapseRepository } from "./synapse/mongo-repository.js";
 import { SynapseService } from "./synapse/synapse.js";
@@ -40,6 +50,11 @@ import { TelemetryService } from "./telemetry/telemetry.js";
 import { type WorkspaceRef, WorkspaceStore } from "./workspaces/store.js";
 
 const releases = new WeakMap<ReturnType<typeof Fastify>, () => Promise<void>>();
+const backgrounds = new WeakMap<
+	ReturnType<typeof Fastify>,
+	{ settle(): Promise<void>; sweep(): Promise<void> }
+>();
+const BOT_SWEEP_INTERVAL_MS = 30_000;
 type PersistenceErrorHandler = (
 	store: "providers" | "routing",
 	error: unknown,
@@ -130,6 +145,69 @@ export function createServer(options: CreateServerOptions = {}) {
 	const synapse = new SynapseService(synapseRepository, {
 		timeZone: config.synapseTimeZone ?? "UTC",
 	});
+	// Channels share the control-plane client, so a Worker request that
+	// authenticates and posts stays on one MongoDB connection.
+	const channelRepository = mongo
+		? new MongoChannelRepository(mongo)
+		: new MemoryChannelRepository();
+	const botRepository = mongo
+		? new MongoBotRepository(mongo)
+		: new MemoryBotRepository();
+	const bots = new BotService(botRepository);
+	const channels: ChannelService = new ChannelService(channelRepository, {
+		// A message that mentions one of the gateway's own bots starts its reply.
+		onMessage: (channel, message) => botRunner.onMessage(channel, message),
+		directory: {
+			// A channel's agents are agent tokens and the bots the gateway runs.
+			agents: async (workspaceId) => {
+				const workspace = await workspaces.get(workspaceId);
+				if (!workspace) return [];
+				const [tokens, hosted] = await Promise.all([
+					agentTokens.settings(workspace, true),
+					bots.bots(workspaceId),
+				]);
+				return [
+					...tokens.tokens.map((token) => ({
+						agentTokenId: token.id,
+						name: token.name,
+						status: token.status,
+						hosted: false,
+					})),
+					...hosted.map((bot) => ({
+						agentTokenId: bot.id,
+						name: bot.name,
+						// A paused bot can be in a channel; it answers nothing.
+						status: bot.enabled ? ("active" as const) : ("revoked" as const),
+						hosted: true,
+					})),
+				];
+			},
+			people: async (workspaceId) => {
+				const workspace = await workspaces.get(workspaceId);
+				if (!workspace) return [];
+				return (await accounts.workspaceMembers(workspace)).members.map(
+					(member) => ({ id: member.id, name: member.name || member.email }),
+				);
+			},
+		},
+	});
+	const toolSets = [synapseToolSet(synapse), channelToolSet(channels)];
+	const botRunner: BotRunner = new BotRunner({
+		bots: botRepository,
+		channels,
+		chat: { providers, routing, router, telemetry },
+		workspaces,
+		toolSets,
+		log: (message, details) => server.log.error(details, message),
+	});
+	/** A bot has a Synapse space of its own, like an agent token. */
+	const agentIds = {
+		ids: async (workspace: WorkspaceRef) =>
+			new Set([
+				...(await agentTokens.ids(workspace)),
+				...(await bots.bots(workspace.id)).map((bot) => bot.id),
+			]),
+	};
 	let persistenceInitialized = false;
 	const server = Fastify({
 		pluginTimeout: options.pluginTimeout,
@@ -194,13 +272,15 @@ export function createServer(options: CreateServerOptions = {}) {
 			scoped.register(apiTokenRoutes, { tokens });
 			scoped.register(agentTokenRoutes, { tokens: agentTokens });
 			scoped.register(memberRoutes, { accounts });
-			scoped.register(synapseRoutes, { synapse, agentTokens });
+			scoped.register(synapseRoutes, { synapse, agentTokens: agentIds });
+			scoped.register(channelRoutes, { channels });
+			scoped.register(botRoutes, { bots });
 		},
 		{ prefix: "/v1/:workspace" },
 	);
-	// Agents reach their workspace's Synapse through their token.
+	// Agents reach their workspace through their token: one tool set per feature.
 	server.register(mcpRoutes, {
-		synapse,
+		toolSets,
 		agentTokens,
 		workspaces,
 		corsOrigins: config.corsOrigins,
@@ -262,13 +342,33 @@ export function createServer(options: CreateServerOptions = {}) {
 			workspaces.close(),
 			gatewayData.close(),
 			synapseRepository.close(),
+			channelRepository.close(),
+			botRepository.close(),
 		]);
 		const failed = results.find(
 			(result): result is PromiseRejectedResult => result.status === "rejected",
 		);
 		if (failed) throw failed.reason;
 	};
+	// A crashed or restarted run is picked up here. Workers have no timers
+	// between requests, so a reply interrupted there is not retried.
+	let sweeper: ReturnType<typeof setInterval> | undefined;
+	if (!options.deferPersistence)
+		server.addHook("onReady", async () => {
+			sweeper = setInterval(() => {
+				botRunner.sweep().catch(() => {});
+			}, BOT_SWEEP_INTERVAL_MS);
+			sweeper.unref();
+		});
+	backgrounds.set(server, {
+		settle: () => botRunner.idle(),
+		sweep: () => botRunner.sweep(),
+	});
 	server.addHook("onClose", async () => {
+		clearInterval(sweeper);
+		// Replies in progress stop before their database client closes; one
+		// that was waiting on a model is retried by the next sweep.
+		await botRunner.close();
 		modelCatalog.stop();
 		await closeAll();
 	});
@@ -283,6 +383,26 @@ export async function releaseRequestResources(
 	server: ReturnType<typeof Fastify>,
 ): Promise<void> {
 	await releases.get(server)?.();
+}
+
+/**
+ * Settles once work started by requests but finished after them is done:
+ * a bot's reply to a message. The Worker entry keeps a request's database
+ * clients until then.
+ */
+export async function settleBackgroundWork(
+	server: ReturnType<typeof Fastify>,
+): Promise<void> {
+	await backgrounds.get(server)?.settle();
+}
+
+/** Starts bot runs that nobody is working on, then waits for them. */
+export async function sweepBackgroundWork(
+	server: ReturnType<typeof Fastify>,
+): Promise<void> {
+	const background = backgrounds.get(server);
+	await background?.sweep();
+	await background?.settle();
 }
 
 /** Loads durable settings inside a Worker request, after routes are compiled. */

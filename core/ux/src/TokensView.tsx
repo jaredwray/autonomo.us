@@ -32,6 +32,8 @@ export type TokenViewConfig<Permission extends string> = {
 		resource: string;
 		label: string;
 		choices: readonly Permission[];
+		/** One line shown under the resource, for a grant that needs explaining. */
+		hint?: string;
 	}[];
 	api: {
 		list(): Promise<ApiTokenSettings<Permission>>;
@@ -70,7 +72,14 @@ function PermissionFields<Permission extends string>({
 					const editing = Boolean(edit && value.includes(edit));
 					return (
 						<li key={group.resource}>
-							<span className="token-permission-resource">{group.label}</span>
+							<span className="token-permission-resource">
+								{group.label}
+								{group.hint && (
+									<span className="field-hint token-permission-hint">
+										{group.hint}
+									</span>
+								)}
+							</span>
 							<div className="token-permission-options">
 								{group.choices.map((permission) => (
 									<label className="token-permission-choice" key={permission}>

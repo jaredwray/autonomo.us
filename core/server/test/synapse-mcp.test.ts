@@ -312,7 +312,12 @@ describe("MCP endpoint", () => {
 		const listed = await rpc(reader.secret, "tools/list");
 		expect(listed.status).toBe(200);
 		const tools = (listed.body?.result as { tools: typeof MCP_TOOLS }).tools;
-		expect(tools.map((tool) => tool.name)).toEqual([
+		// Channels add their own tools after Synapse's (channels-mcp.test.ts).
+		expect(
+			tools
+				.map((tool) => tool.name)
+				.filter((name) => name.startsWith("synapse_")),
+		).toEqual([
 			"synapse_search",
 			"synapse_read",
 			"synapse_create",

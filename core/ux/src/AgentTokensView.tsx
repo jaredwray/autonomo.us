@@ -19,12 +19,18 @@ const config: TokenViewConfig<AgentTokenPermission> = {
 	emptyMessage:
 		"No agent tokens yet. Create a token for an agent’s MCP connection.",
 	connectionNote:
-		"Agents connect to the MCP endpoint at /mcp (Streamable HTTP) with an agent token as the bearer credential. It serves Synapse tools: the agent's private space, the shared space, and proposals.",
+		"Agents connect to the MCP endpoint at /mcp (Streamable HTTP) with an agent token as the bearer credential. It serves Synapse tools (the agent's private space, the shared space, and proposals) and channel tools for the channels the agent has been added to.",
 	permissionHint:
-		"MCP Read lists the available tools. MCP Call runs them, which is how an agent reads and writes its Synapse. Select both for a working agent. Agent tokens grant no REST API access. Only owners and admins can manage agent tokens.",
+		"MCP Read lists the available tools. MCP Call runs them, which is how an agent reads and writes its Synapse and talks in its channels. Select both for a working agent. Agent tokens grant no REST API access. Only owners and admins can manage agent tokens.",
 	permissions: AGENT_TOKEN_PERMISSIONS,
 	permissionGroups: [
 		{ resource: "mcp", label: "MCP", choices: ["mcp:read", "mcp:call"] },
+		{
+			resource: "channels",
+			label: "Channels",
+			choices: ["channels:manage"],
+			hint: "Lets this bot create and manage channels, which opens every channel in the workspace to it.",
+		},
 	],
 	api: {
 		list: fetchAgentTokens,

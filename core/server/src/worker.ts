@@ -7,6 +7,7 @@ import {
 	createServer,
 	initializePersistence,
 	releaseRequestResources,
+	settleBackgroundWork,
 } from "./server.js";
 import {
 	releaseAfterResponse,
@@ -55,9 +56,15 @@ export default {
 			const started = Date.now();
 			const end = async () => {
 				try {
-					await releaseRequestResources(server);
+					// A bot's reply to a message this request posted is still
+					// running: it uses this request's sockets, so keep them.
+					await settleBackgroundWork(server);
 				} finally {
-					await close();
+					try {
+						await releaseRequestResources(server);
+					} finally {
+						await close();
+					}
 				}
 			};
 			let response: Response;

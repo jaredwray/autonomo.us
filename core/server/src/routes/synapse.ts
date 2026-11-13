@@ -97,7 +97,11 @@ export async function synapseRoutes(
 	{
 		synapse,
 		agentTokens,
-	}: { synapse: SynapseService; agentTokens: AgentTokenStore },
+	}: {
+		synapse: SynapseService;
+		/** Who has an agent space here: agent tokens and the gateway's bots. */
+		agentTokens: Pick<AgentTokenStore, "ids">;
+	},
 ) {
 	server.addHook("onRequest", async (request, reply) => {
 		reply.header("cache-control", "no-store");

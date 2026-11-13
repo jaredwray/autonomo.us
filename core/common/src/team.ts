@@ -127,6 +127,8 @@ export type SetupInventory = {
 	workspaces: number;
 	/** Synapse notes. */
 	notes: number;
+	/** Channel messages and other entries in channel logs. */
+	messages: number;
 	/** Recorded usage events. */
 	usageEvents: number;
 };

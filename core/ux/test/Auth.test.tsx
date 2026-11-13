@@ -155,6 +155,7 @@ function gatewayWithData(canClear: boolean) {
 					tokens: 0,
 					workspaces: 0,
 					notes: 1,
+					messages: 0,
 					usageEvents: 1200,
 				},
 				canClear,
