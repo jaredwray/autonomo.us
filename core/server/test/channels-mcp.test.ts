@@ -339,6 +339,41 @@ describe("channels for agents over MCP", () => {
 			},
 		);
 		expect(renamed.data).toMatchObject({ name: "launch", archivedAt: null });
+		// Archiving an archived channel changes nothing and is not an error.
+		await tool(manager.secret, "channels_update", {
+			channel: "launch",
+			archived: true,
+		});
+		const again = await tool<ChannelDetails>(
+			manager.secret,
+			"channels_update",
+			{
+				channel: "launch",
+				archived: true,
+			},
+		);
+		expect(again.isError).toBe(false);
+		// An unarchive whose rename fails leaves the channel archived.
+		const clash = await tool(manager.secret, "channels_update", {
+			channel: "launch",
+			name: "general",
+			archived: false,
+		});
+		expect(clash).toMatchObject({
+			isError: true,
+			text: "A channel named #general already exists.",
+		});
+		expect(
+			(await ok<ChannelDetails>("GET", `/v1/channels/${again.data.id}`))
+				.archivedAt,
+		).not.toBeNull();
+		// An archived channel still refuses a change on its own.
+		expect(
+			await tool(manager.secret, "channels_update", {
+				channel: "launch",
+				topic: "x",
+			}),
+		).toMatchObject({ isError: true, text: "This channel is archived." });
 		await tool(manager.secret, "channels_set_agent", {
 			channel: "general",
 			agent: plain.id,

@@ -412,11 +412,16 @@ export class ChannelService {
 		);
 	}
 
+	/**
+	 * Changes a channel's name, topic, description, or archive state in one
+	 * write, so a call that asks for several either applies all of them or none.
+	 * An archived channel takes other changes only when it is unarchived too.
+	 */
 	updateChannel(
 		workspaceId: string,
 		caller: ChannelCaller,
 		reference: string,
-		input: UpdateChannelRequest,
+		input: UpdateChannelRequest & { archived?: boolean },
 	): Promise<ChannelDetails> {
 		const name =
 			input.name === undefined ? undefined : this.validName(input.name);
@@ -427,8 +432,19 @@ export class ChannelService {
 			reference,
 			input.revision,
 			async (channel) => {
-				this.requireOpen(channel);
 				const notes: string[] = [];
+				let lifecycle: "archived" | "unarchived" | undefined;
+				if (input.archived === false && channel.archivedAt) {
+					if (
+						(await this.repository.countOpenChannels(workspaceId)) >=
+						CHANNEL_LIMITS.openChannels
+					)
+						throw new ChannelError(
+							`A workspace holds at most ${CHANNEL_LIMITS.openChannels} open channels. Archive one first.`,
+						);
+					channel.archivedAt = null;
+					lifecycle = "unarchived";
+				}
 				if (name !== undefined && name !== channel.name) {
 					notes.push(`renamed the channel from #${channel.name} to #${name}`);
 					channel.name = name;
@@ -446,9 +462,23 @@ export class ChannelService {
 					notes.push("changed the description");
 					channel.description = input.description;
 				}
+				// Checked after unarchiving, before archiving.
+				if (notes.length) this.requireOpen(channel);
+				if (input.archived === true && !channel.archivedAt) {
+					channel.archivedAt = this.at();
+					lifecycle = "archived";
+				}
+				if (lifecycle) notes.unshift(`${lifecycle} this channel`);
 				if (!notes.length) return null;
 				const note = notes.join(" and ");
-				return { action: "updated", detail: `${note}.`, note };
+				// A change of archive state alone keeps its own action.
+				return lifecycle && notes.length === 1
+					? {
+							action: lifecycle,
+							detail: `${lifecycle === "archived" ? "Archived" : "Unarchived"} #${channel.name}.`,
+							note,
+						}
+					: { action: "updated", detail: `${note}.`, note };
 			},
 		);
 	}
@@ -459,32 +489,7 @@ export class ChannelService {
 		reference: string,
 		archived: boolean,
 	): Promise<ChannelDetails> {
-		return this.change(
-			workspaceId,
-			caller,
-			reference,
-			undefined,
-			async (channel) => {
-				if (Boolean(channel.archivedAt) === archived) return null;
-				if (
-					!archived &&
-					(await this.repository.countOpenChannels(workspaceId)) >=
-						CHANNEL_LIMITS.openChannels
-				)
-					throw new ChannelError(
-						`A workspace holds at most ${CHANNEL_LIMITS.openChannels} open channels. Archive one first.`,
-					);
-				channel.archivedAt = archived ? this.at() : null;
-				const note = archived
-					? "archived this channel"
-					: "unarchived this channel";
-				return {
-					action: archived ? "archived" : "unarchived",
-					detail: `${archived ? "Archived" : "Unarchived"} #${channel.name}.`,
-					note,
-				};
-			},
-		);
+		return this.updateChannel(workspaceId, caller, reference, { archived });
 	}
 
 	/** Adds an agent, changes its access, or removes it (`access` null). */
