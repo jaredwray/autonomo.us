@@ -994,7 +994,6 @@ export class ChannelService {
 			const root = named.threadId
 				? await this.message(channel, named.threadId)
 				: named;
-			const top = await this.repository.topSeq(channel.id);
 			const replies = await this.repository.threadReplies(
 				channel.id,
 				root.id,
@@ -1002,13 +1001,15 @@ export class ChannelService {
 				options.after,
 			);
 			// The first page starts with the root; `after` pages on through the
-			// replies, for a thread longer than one page.
+			// replies, for a thread longer than one page. The cursor is the last
+			// reply returned, not the end of the channel, so paging with it
+			// never steps over a reply.
 			return {
 				entries: await this.hydrate(
 					channel.id,
 					options.after === undefined ? [root, ...replies] : replies,
 				),
-				cursor: top,
+				cursor: replies.at(-1)?.seq ?? options.after ?? root.seq,
 			};
 		}
 		if (options.after !== undefined || options.unread || options.mentionsOnly) {

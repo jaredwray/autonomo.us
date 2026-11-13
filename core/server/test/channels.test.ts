@@ -281,6 +281,12 @@ describe("channels over REST", () => {
 			root.id,
 			reply.id,
 		]);
+		// Its cursor is the last reply returned, though the channel has moved on.
+		expect(firstPage.cursor).toBe(reply.seq);
+		expect(
+			(await read(channel.id, `?thread=${root.id}&after=${firstPage.cursor}`))
+				.cursor,
+		).toBe(second.seq);
 		expect(
 			(
 				await read(channel.id, `?thread=${root.id}&after=${reply.seq}`)
