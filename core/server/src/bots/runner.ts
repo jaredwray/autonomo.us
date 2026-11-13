@@ -103,6 +103,9 @@ export class BotRunner {
 	private readonly budgetMs: number;
 	private readonly maxAttempts: number;
 	private readonly working = new Set<Promise<void>>();
+	/** The time budgets of runs in progress, so `close` can end them. */
+	private readonly budgets = new Set<AbortController>();
+	private closing = false;
 	/** The depth of the run whose reply is being posted, seen by `onMessage`. */
 	private readonly replying = new AsyncLocalStorage<number>();
 	constructor(private readonly options: BotRunnerOptions) {
@@ -128,6 +131,15 @@ export class BotRunner {
 	/** Settles when no run started by this process is still working. */
 	async idle(): Promise<void> {
 		while (this.working.size) await Promise.all([...this.working]);
+	}
+	/**
+	 * Stops for shutdown. A run that is waiting on a model is interrupted and
+	 * handed back, so the sweep of this or another server retries it.
+	 */
+	async close(): Promise<void> {
+		this.closing = true;
+		for (const budget of this.budgets) budget.abort();
+		await this.idle();
 	}
 
 	/**
@@ -176,7 +188,8 @@ export class BotRunner {
 				leaseId: null,
 				leaseUntil: null,
 			};
-			if (await this.options.bots.insertRun(run))
+			// While shutting down the run is only recorded; the sweep starts it.
+			if ((await this.options.bots.insertRun(run)) && !this.closing)
 				this.track(this.execute(run.id));
 		}
 	}
@@ -223,6 +236,7 @@ export class BotRunner {
 		if (!run) return;
 		const deadline = this.now() + this.budgetMs;
 		const budget = new AbortController();
+		this.budgets.add(budget);
 		const timer = setTimeout(() => budget.abort(), this.budgetMs);
 		/** Refuses to start a step once the run is out of time. */
 		const fence = () => {
@@ -255,6 +269,13 @@ export class BotRunner {
 			}
 		} finally {
 			clearTimeout(timer);
+			this.budgets.delete(budget);
+		}
+		// Interrupted by shutdown: this runner has stopped, so hand the run
+		// back for the sweep to retry instead of recording a failure.
+		if (this.closing && result.status === "failed" && budget.signal.aborted) {
+			await this.options.bots.releaseRun(id, lease.id, this.at());
+			return;
 		}
 		result.finishedAt = this.at();
 		await this.options.bots.finishRun(id, lease.id, result);

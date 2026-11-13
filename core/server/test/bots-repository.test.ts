@@ -174,6 +174,15 @@ describe.each(implementations)("bot repository (%s)", (_name, create) => {
 		expect(await repository.finishRun(pending.id, "lease-2", done())).toBe(
 			true,
 		);
+		// A runner that stops early hands its run back at once.
+		const handed = run(owner, 7);
+		await repository.insertRun(handed);
+		await repository.claimRun(handed.id, { id: "lease-5", until: T3 }, T1, 2);
+		expect(await repository.releaseRun(handed.id, "other", T1)).toBe(false);
+		expect(await repository.releaseRun(handed.id, "lease-5", T1)).toBe(true);
+		expect(
+			await repository.claimRun(handed.id, { id: "lease-6", until: T3 }, T1, 2),
+		).toMatchObject({ attempts: 2, leaseId: "lease-6" });
 		// A finished run is never started again, and neither is one out of attempts.
 		expect(
 			await repository.claimRun(

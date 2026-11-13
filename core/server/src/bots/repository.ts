@@ -52,6 +52,11 @@ export interface BotRepository {
 	): Promise<StoredRun | null>;
 	/** Records the outcome, only for the runner that still holds the lease. */
 	finishRun(id: string, leaseId: string, result: RunResult): Promise<boolean>;
+	/**
+	 * Ends a lease early without an outcome: the runner has stopped working
+	 * and another may take the run at once.
+	 */
+	releaseRun(id: string, leaseId: string, now: string): Promise<boolean>;
 	/** Runs nobody is working on: pending since before `pendingBefore`, or with an expired lease. */
 	staleRuns(
 		now: string,
@@ -146,6 +151,12 @@ export class MemoryBotRepository implements BotRepository {
 		const run = this.runs.get(id);
 		if (run?.status !== "running" || run.leaseId !== leaseId) return false;
 		Object.assign(run, result, { leaseId: null, leaseUntil: null });
+		return true;
+	}
+	async releaseRun(id: string, leaseId: string, now: string) {
+		const run = this.runs.get(id);
+		if (run?.status !== "running" || run.leaseId !== leaseId) return false;
+		run.leaseUntil = now;
 		return true;
 	}
 	async staleRuns(now: string, pendingBefore: string, limit: number) {
@@ -326,6 +337,15 @@ export class MongoBotRepository implements BotRepository {
 			const updated = await this.runs().updateOne(
 				{ _id: id, status: "running", leaseId },
 				{ $set: { ...result, leaseId: null, leaseUntil: null } },
+			);
+			return updated.matchedCount > 0;
+		});
+	}
+	releaseRun(id: string, leaseId: string, now: string) {
+		return this.storage(async () => {
+			const updated = await this.runs().updateOne(
+				{ _id: id, status: "running", leaseId },
+				{ $set: { leaseUntil: now } },
 			);
 			return updated.matchedCount > 0;
 		});

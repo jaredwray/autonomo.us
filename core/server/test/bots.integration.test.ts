@@ -15,6 +15,67 @@ afterEach(async () => {
 });
 
 describe.skipIf(!available)("bots with MongoDB", () => {
+	it("hands a reply interrupted by shutdown to another server", async () => {
+		const url = uniqueMongoUrl("botstop");
+		const client = new MongoClient(url);
+		cleanups.push(async () => {
+			await client.db().dropDatabase();
+			await client.close();
+		});
+		const models: Array<string | undefined> = [];
+		const stub = await startOpenAIStub({
+			onRequest: (body) => models.push(body.model),
+		});
+		cleanups.push(stub.close);
+		const config = {
+			mongodbUrl: url,
+			providers: [
+				{
+					name: "stub",
+					kind: "openai-compatible" as const,
+					baseURL: stub.url,
+					// slow-model stalls 1.5 s before answering.
+					models: ["slow-model"],
+				},
+			],
+		};
+		const one = await startChannels(cleanups, config);
+		const two = await startChannels(cleanups, config);
+		const channel = await one.createChannel("general");
+		const bot = await one.ok<BotDetails>(
+			"POST",
+			"/v1/bots",
+			{ body: { name: "Slow", instructions: "", model: "stub/slow-model" } },
+			201,
+		);
+		await one.addAgent(channel.id, bot.id);
+		const asked = await one.post(channel.id, `<@agent:${bot.id}> hello?`);
+		// The first server stops while its reply waits on the model.
+		while (!models.length)
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		await one.server.close();
+		const runs = client.db().collection("channel_bot_runs");
+		expect(await runs.findOne()).toMatchObject({
+			status: "running",
+			attempts: 1,
+			replyMessageId: null,
+		});
+
+		// The second server's sweep takes the run over and answers once.
+		await sweepBackgroundWork(two.server);
+		const replies = (
+			await two.read(channel.id, `?after=${asked.seq}`)
+		).entries.filter((entry) => entry.type === "message");
+		expect(replies).toMatchObject([
+			{ author: { id: bot.id }, body: "Slow reply" },
+		]);
+		expect(await runs.findOne()).toMatchObject({
+			status: "succeeded",
+			attempts: 2,
+		});
+		expect(models).toHaveLength(2);
+	}, 30_000);
+
 	it("finishes interrupted runs once, across servers, and gives up on repeated crashes", async () => {
 		const url = uniqueMongoUrl("bots");
 		const client = new MongoClient(url);

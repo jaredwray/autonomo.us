@@ -366,8 +366,9 @@ export function createServer(options: CreateServerOptions = {}) {
 	});
 	server.addHook("onClose", async () => {
 		clearInterval(sweeper);
-		// Replies in progress finish before their database client closes.
-		await botRunner.idle();
+		// Replies in progress stop before their database client closes; one
+		// that was waiting on a model is retried by the next sweep.
+		await botRunner.close();
 		modelCatalog.stop();
 		await closeAll();
 	});
