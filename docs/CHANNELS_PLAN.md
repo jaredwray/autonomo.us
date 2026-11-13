@@ -187,7 +187,7 @@ export type ChannelEntry = {
 	  }
 	/** A note the server writes: an agent added, the channel renamed or archived. */
 	| { type: "system"; text: string }
-	/** Says an earlier message changed. `message` is its state now. */
+	/** Says an earlier message changed. Stored as a reference; `message` is read when the response is built and is its state now. */
 	| { type: "change"; change: "deleted" | "edited"; message: ChannelEntry }
 );
 
@@ -266,6 +266,11 @@ true: a delete clears the message's `body` in place, sets `deletedAt`, and
 appends a `change` entry. It does not move or drop the original. (A design
 that re-stamped an edited message with a fresh number would free its old
 number for a slow writer to reuse behind every cursor.)
+
+A stored `change` entry holds only the id of the message it points at, never
+its text. The `message` in a response is read when the response is built. An
+edit (C6) overwrites the body in place and keeps no earlier version. So once a
+message is deleted, no document holds any version of its body.
 
 Deleting is two writes, the message first and the `change` entry second. A
 crash between them leaves the body gone, which is the part that matters when
@@ -358,6 +363,7 @@ constrained in the route definition. Errors use `{ error: { message } }`.
 | `GET /channels/:channel` | `channels:read` | `ChannelSummary` with its `actions`. |
 | `PATCH /channels/:channel` | `channels:manage` | `{ name?, topic?, description?, revision }`. A stale `revision` is 409. |
 | `POST /channels/:channel/archive`, `/unarchive` | `channels:manage` | Soft archive. |
+| `GET /channels/agents` | `channels:manage` | This workspace's agents as `{ agentTokenId, name, status }` and nothing else, for the agent picker. The token list itself (`/agent-tokens`) is `tokens:manage`, which only org owners and admins hold. |
 | `PUT /channels/:channel/agents/:agentTokenId` | `channels:manage` | `{ access }`. Adds the agent or changes its access. |
 | `DELETE /channels/:channel/agents/:agentTokenId` | `channels:manage` | Removes the agent. |
 | `GET /channels/:channel/messages` | `channels:read` | `?after=<seq>&limit=` follows (oldest first, `wait=` from C5). `?before=<seq>&limit=` pages back through messages and system notes (newest first). With neither, the latest page. `limit` defaults to 50, at most 100. |
@@ -387,8 +393,9 @@ to. Behavior does not change, and `synapse-mcp.test.ts` passes untouched.
 | `channels_create` | `name`, `topic?`, `description?` | The new channel, with the agent in it as `post`. Needs `channels:manage`. |
 | `channels_update` | `channel`, `name?`, `topic?`, `description?`, `archived?` | The channel. Needs `channels:manage`. |
 | `channels_set_agent` | `channel`, `agent`, `access` (`read`, `post`, or `none` to remove) | The channel's agents. Needs `channels:manage`. |
+| `channels_agents` | none | The workspace's agents by name and id, to pick one to add. Needs `channels:manage`. |
 
-- The three management tools are listed for every agent and refuse a caller
+- The four management tools are listed for every agent and refuse a caller
   without the grant, naming it, as `tools/call` does for `mcp:call` today.
   With the grant, `channel` may name any channel in the workspace.
 - `channel` is a name (`general`) or an id. Agents handle names better than
@@ -449,6 +456,11 @@ part of the first PR, not a follow-up.
 | Agents per channel | 100 | 400 |
 | Mentions per message | 20 | 400 |
 | Posts per author per channel | 30 a minute for agents and API tokens, 120 for people | 429 with `retry-after` |
+| Channels created per person or agent | 20 an hour | 429 with `retry-after` |
+
+Archived channels do not count toward the 500, and any member can archive
+(decision D3), so one account cannot hold the quota: the creation limit slows
+it down and anyone can release what it took.
 
 The rate limit is an indexed count of the author's entries in the last minute
 before the insert. Two simultaneous posts can both pass at the edge of the
@@ -460,8 +472,9 @@ quotas belong to the MVP policy engine.
 Each is a test, not a review note:
 
 1. Every channel, entry, and read mark carries `workspaceId`, and every by-id
-   operation filters on it. Workspace A's credentials naming B's channel or
-   message get the same 404 as a missing one.
+   operation filters on it. A request under workspace A's path that names B's
+   channel or message gets the same 404 as a missing one, whoever sends it. An
+   org owner or admin reaches B's channels under B's path.
 2. `author`, `seq`, `createdAt`, and `workspaceId` come only from the
    credential, the server, and the path. No request field sets them.
 3. An agent reads, lists, and posts only in channels whose `agents` list
@@ -475,7 +488,8 @@ Each is a test, not a review note:
    polling during concurrent posts from two servers receives every entry once,
    in order.
 8. A post retried with the same nonce creates one message.
-9. Deleting a message removes its body from storage.
+9. Deleting a message removes its body from storage, earlier versions
+   included: no `change` entry stores message text.
 10. An archived channel refuses posts; an archived workspace refuses
     everything, for sessions, API tokens, and agent tokens.
 11. Message bodies reach the page only through the React Markdown renderer.
@@ -547,7 +561,8 @@ screenshots in the PR.
 - Agents on the channel document with `actions`; the agent routes; system
   notes; `channels_list`, `channels_read`, `channels_post`,
   `channels_mark_read`, `channels_members`; the `channels:manage` agent grant
-  with `channels_create`, `channels_update`, and `channels_set_agent`; the new
+  with `channels_create`, `channels_update`, `channels_set_agent`, and
+  `channels_agents`; the agent listing route for the picker; the new
   instructions; the agents panel in the dashboard.
 
 **Accept:** the MCP and authorization tests; invariants 3, 4, 6. A real MCP
