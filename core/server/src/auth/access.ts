@@ -202,6 +202,12 @@ export const ROUTE_RULES = new Map<string, RouteRule>([
 	["GET /v1/:workspace/bots/:bot", workspace("agents:read")],
 	["PATCH /v1/:workspace/bots/:bot", workspace("agents:manage")],
 	["DELETE /v1/:workspace/bots/:bot", workspace("agents:manage")],
+	// Sites a bot asked for outside its web scope: members look, admins decide.
+	["GET /v1/:workspace/bots/:bot/web-requests", workspace("agents:read")],
+	[
+		"POST /v1/:workspace/bots/:bot/web-requests/:request/decide",
+		workspace("agents:manage"),
+	],
 	// Proxies hold keys and spend money: members look, admins change them.
 	["GET /v1/:workspace/proxies", workspace("proxies:read")],
 	["POST /v1/:workspace/proxies", workspace("proxies:edit")],

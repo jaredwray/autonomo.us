@@ -52,6 +52,8 @@ export {
 } from "./api-tokens.js";
 export {
 	BOT_LIMITS,
+	BOT_WEB_FOLLOW_UPS,
+	BOT_WEB_SCOPES,
 	type Bot,
 	type BotActivity,
 	type BotDetails,
@@ -60,8 +62,13 @@ export {
 	type BotRun,
 	type BotRunStatus,
 	type BotSummary,
+	type BotWebFollowUps,
+	type BotWebRequest,
+	type BotWebRequestList,
+	type BotWebScope,
 	type CreateBotRequest,
 	DEFAULT_BOT_LIMITS,
+	type DecideBotWebRequest,
 	type UpdateBotRequest,
 } from "./bots.js";
 export {

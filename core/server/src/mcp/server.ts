@@ -74,6 +74,8 @@ export type McpCallContext = {
 	minProxyMs?: number;
 	/** A bot's own daily limit on proxied requests. */
 	proxyRequestsPerDay?: number;
+	/** A bot's web scope: a reason to refuse a host, or null. */
+	allowHost?: (host: string) => string | null;
 };
 /** The agent a request authenticated as, in its workspace. */
 export type McpAgent = {

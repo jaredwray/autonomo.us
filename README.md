@@ -638,6 +638,17 @@ and posts the reply as the bot. Nothing has to run outside the gateway.
   of the reply left. Once a reply has read a page, it can no longer use its
   Synapse or channel tools, so a page cannot steer the bot into reading or
   changing the workspace's notes and channels.
+- **Web scope.** Each bot with web access has a scope. **Any page** allows
+  whatever the workspace's rules allow. **Only links people post** (the
+  default) allows sites people linked in the messages the reply sees, plus
+  the bot's approved sites. **Only approved sites** allows the approved list
+  alone. A second setting limits **follow-up fetches** within one reply: any
+  in scope, only sites the reply already fetched (the default), or none. The
+  scope also applies to redirects and to the page a proxy lands on. A fetch
+  outside the scope is refused and becomes a request on the bot's page, where
+  a workspace admin approves it (adding the site to the approved list) or
+  denies it. Routes: `GET /bots/:bot/web-requests` and
+  `POST /bots/:bot/web-requests/:request/decide` (`{ approve }`).
 - **Failures.** A failed model call posts one short notice in the channel and
   keeps the provider's error on the run, where a workspace admin can read it.
 - **Cost.** Each call is recorded in telemetry under the bot's name, so its
@@ -695,8 +706,12 @@ HTTPS API, so all of them work on Node and on the Worker:
   caller's **daily limit** (default 100 for each person, token, and agent;
   bots use their own limit) before it is sent. A connection can also have a
   monthly request cap. What the provider did not bill is given back, and the
-  rest is settled at what it reported. Plain requests are free and limited
-  to 60 a minute per caller.
+  rest is settled at what it reported. With MongoDB each hold also gets a
+  record in `gateway_web_reservations`: the outcome is written there first,
+  each counter takes a settlement once (it remembers the reservations it
+  took), and a settlement left part-way is finished on a later request. A
+  hold whose call never reported back stays counted as spent. Plain
+  requests are free and limited to 60 a minute per caller.
 - **Who may do what.** Members see proxies, their usage, and the policy.
   Workspace admins add proxies, change keys, save the policy, and use
   **Try a URL** and a proxy's **Test**, which are real, billable calls. API

@@ -1,5 +1,7 @@
 import type {
 	BotDetails,
+	BotWebRequest,
+	BotWebRequestList,
 	ChannelEntryList,
 	ChannelMessage,
 	ProxyConnection,
@@ -403,7 +405,7 @@ describe("bots with web access", () => {
 		};
 		const asked = await api.post(
 			channel.id,
-			`<@agent:${reader.id}> what does it cost?`,
+			`<@agent:${reader.id}> what does https://example.com/pricing cost?`,
 		);
 		expect((await next(asked.seq)).body).toMatch(
 			/^Read: Fetched https:\/\/example\.com\/pricing .* via zr:auto/,
@@ -411,5 +413,169 @@ describe("bots with web access", () => {
 		expect(api.calls).toEqual(["https://example.com/pricing"]);
 		const other = await api.post(channel.id, `<@agent:${plain.id}> and you?`);
 		expect((await next(other.seq)).body).toBe("No web access.");
+	});
+});
+
+describe("a bot's web scope", () => {
+	/** A gateway with a stub model, ZenRows in the ladder, and one channel. */
+	async function withBot(models: string[]) {
+		const stub = await startOpenAIStub();
+		cleanups.push(stub.close);
+		const api = await start({
+			providers: [
+				{ name: "stub", kind: "openai-compatible", baseURL: stub.url, models },
+			],
+		});
+		await api.addZenrows();
+		const channel = await api.createChannel("general");
+		const bot = async (body: Record<string, unknown>) => {
+			const made = await api.ok<BotDetails>(
+				"POST",
+				"/v1/bots",
+				{ body: { instructions: "", web: true, ...body } },
+				201,
+			);
+			await api.addAgent(channel.id, made.id);
+			return made;
+		};
+		const ask = async (botId: string, text: string) => {
+			const asked = await api.post(channel.id, `<@agent:${botId}> ${text}`);
+			for (let cursor = asked.seq; ; ) {
+				const page = await api.ok<ChannelEntryList>(
+					"GET",
+					`/v1/channels/${channel.id}/messages?after=${cursor}&wait=10`,
+				);
+				const reply = page.entries.find(
+					(entry): entry is ChannelMessage => entry.type === "message",
+				);
+				if (reply) return reply.body;
+				if (page.cursor === cursor) throw new Error("No reply arrived.");
+				cursor = page.cursor;
+			}
+		};
+		return { ...api, channel, bot, ask };
+	}
+
+	it("starts new bots on linked sites, then same-site follow-ups", async () => {
+		const api = await withBot(["web-model"]);
+		const made = await api.bot({ name: "Reader", model: "stub/web-model" });
+		expect(made).toMatchObject({
+			webScope: "mentioned",
+			webFollowUps: "same-site",
+			webHosts: [],
+		});
+	});
+
+	it("asks an admin to approve a site outside the scope, and uses it once approved", async () => {
+		const api = await withBot(["web-model"]);
+		const reader = await api.bot({ name: "Reader", model: "stub/web-model" });
+		// Nobody linked example.com, so the fetch is refused and a request filed.
+		expect(await api.ask(reader.id, "what does it cost?")).toMatch(
+			/^Read: Refused: example\.com is not a site anyone linked.*A workspace admin has been asked to approve example\.com/,
+		);
+		expect(api.calls).toEqual([]);
+		await api.ask(reader.id, "and now?");
+		const { requests } = await api.ok<BotWebRequestList>(
+			"GET",
+			`/v1/bots/${reader.id}/web-requests`,
+		);
+		expect(requests).toMatchObject([
+			{
+				host: "example.com",
+				url: "https://example.com/pricing",
+				status: "pending",
+				count: 2,
+			},
+		]);
+		// Members look; only admins decide.
+		const member = await api.join("member@example.com");
+		await api.ok("GET", `/v1/bots/${reader.id}/web-requests`, {
+			token: member.token,
+		});
+		expect(
+			(
+				await api.refused(
+					"POST",
+					`/v1/bots/${reader.id}/web-requests/${requests[0].id}/decide`,
+					{ token: member.token, body: { approve: true } },
+				)
+			).status,
+		).toBe(403);
+		const decided = await api.ok<BotWebRequest>(
+			"POST",
+			`/v1/bots/${reader.id}/web-requests/${requests[0].id}/decide`,
+			{ body: { approve: true } },
+		);
+		expect(decided).toMatchObject({ status: "approved", decidedBy: "Founder" });
+		expect(
+			(await api.ok<BotDetails>("GET", `/v1/bots/${reader.id}`)).webHosts,
+		).toEqual(["example.com"]);
+		expect(
+			(
+				await api.refused(
+					"POST",
+					`/v1/bots/${reader.id}/web-requests/${requests[0].id}/decide`,
+					{ body: { approve: false } },
+				)
+			).status,
+		).toBe(409);
+		expect(await api.ask(reader.id, "what does it cost now?")).toMatch(
+			/^Read: Fetched https:\/\/example\.com\/pricing/,
+		);
+	});
+
+	it("keeps follow-up fetches to the same site, or to one fetch", async () => {
+		const api = await withBot(["web-twice-model"]);
+		const same = await api.bot({
+			name: "Same",
+			model: "stub/web-twice-model",
+			webScope: "any",
+		});
+		expect(await api.ask(same.id, "look around")).toBe(
+			"Then: Refused: this reply may only fetch more pages from example.com. Answer with what you have.",
+		);
+		const once = await api.bot({
+			name: "Once",
+			model: "stub/web-twice-model",
+			webScope: "any",
+			webFollowUps: "none",
+		});
+		expect(await api.ask(once.id, "look around")).toBe(
+			"Then: Refused: this bot fetches one page per reply. Answer with what you have.",
+		);
+		const free = await api.bot({
+			name: "Free",
+			model: "stub/web-twice-model",
+			webScope: "any",
+			webFollowUps: "any",
+		});
+		// Allowed and tried: the fake site has no page there.
+		expect(await api.ask(free.id, "look around")).toMatch(
+			/^Then: Could not fetch https:\/\/other\.example\.org\/next/,
+		);
+	});
+
+	it("refuses invalid approved sites", async () => {
+		const api = await withBot(["web-model"]);
+		expect(
+			await api.refused("POST", "/v1/bots", {
+				body: {
+					name: "Bad",
+					instructions: "",
+					model: "stub/web-model",
+					webHosts: ["https://example.com/path"],
+				},
+			}),
+		).toMatchObject({
+			status: 400,
+			message: expect.stringContaining("not a host"),
+		});
+		const made = await api.bot({
+			name: "Good",
+			model: "stub/web-model",
+			webScope: "approved",
+			webHosts: ["Example.COM.", "docs.example.org", "example.com"],
+		});
+		expect(made.webHosts).toEqual(["example.com", "docs.example.org"]);
 	});
 });

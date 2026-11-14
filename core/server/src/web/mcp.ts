@@ -123,6 +123,7 @@ export function webToolSet(web: WebService): McpToolSet {
 						...(context?.minProxyMs !== undefined
 							? { minProxyMs: context.minProxyMs }
 							: {}),
+						...(context?.allowHost ? { allowHost: context.allowHost } : {}),
 					},
 				);
 			},

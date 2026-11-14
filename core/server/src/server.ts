@@ -8,6 +8,7 @@ import { ApiTokenStore } from "./auth/tokens.js";
 import { BotService } from "./bots/bots.js";
 import { MemoryBotRepository, MongoBotRepository } from "./bots/repository.js";
 import { BotRunner } from "./bots/runner.js";
+import { BotWebRequestStore } from "./bots/web-requests.js";
 import { ChannelService } from "./channels/channels.js";
 import { channelToolSet } from "./channels/mcp.js";
 import { MemoryChannelRepository } from "./channels/memory-repository.js";
@@ -187,6 +188,7 @@ export function createServer(options: CreateServerOptions = {}) {
 		? new MongoBotRepository(mongo)
 		: new MemoryBotRepository();
 	const bots = new BotService(botRepository);
+	const botWebRequests = new BotWebRequestStore(mongo);
 	const channels: ChannelService = new ChannelService(channelRepository, {
 		// A message that mentions one of the gateway's own bots starts its reply.
 		onMessage: (channel, message) => botRunner.onMessage(channel, message),
@@ -273,6 +275,7 @@ export function createServer(options: CreateServerOptions = {}) {
 		chat: { providers, routing, router, telemetry },
 		workspaces,
 		toolSets,
+		webRequests: botWebRequests,
 		// A Worker reply has about 30 seconds after its response; a proxy can take most of that.
 		minProxyMs: options.webTransport === "fetch" ? 20_000 : 5_000,
 		log: (message, details) => server.log.error(details, message),
@@ -353,7 +356,7 @@ export function createServer(options: CreateServerOptions = {}) {
 			scoped.register(memberRoutes, { accounts });
 			scoped.register(synapseRoutes, { synapse, agentTokens: agentIds });
 			scoped.register(channelRoutes, { channels });
-			scoped.register(botRoutes, { bots });
+			scoped.register(botRoutes, { bots, webRequests: botWebRequests });
 			scoped.register(webRoutes, { store: proxies, web });
 		},
 		{ prefix: "/v1/:workspace" },

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
 	COUNTRY_PATTERN,
 	type CreateProxyRequest,
@@ -43,6 +44,8 @@ type UsageDocument = {
 	/** Millionths of a US dollar, so sums stay exact. */
 	costMicros: number;
 	expiresAt: Date;
+	/** The latest reservations settled into this counter, so none applies twice. */
+	settled?: string[];
 };
 type Counter = { requests: number; costMicros: number };
 
@@ -65,10 +68,37 @@ export type ReservationRefusal = "caller" | "connection" | "budget";
 
 /** Units held against the caps before a provider call. */
 export type Reservation = {
+	/** The durable record of this hold, with MongoDB; settling retries by it. */
+	id: string;
 	workspaceId: string;
 	keys: { budget: string; caller: string; connection: string };
 	costMicros: number;
 };
+
+type CounterName = keyof Reservation["keys"];
+
+/**
+ * A hold written before the provider call. Settling records the outcome,
+ * then applies each counter's adjustment once (the counter remembers the
+ * reservations settled into it) and deletes the record. A record left
+ * behind is finished by `reconcile`.
+ */
+type ReservationDocument = {
+	_id: string;
+	workspaceId: string;
+	keys: Reservation["keys"];
+	costMicros: number;
+	createdAt: Date;
+	outcome?: { billed: boolean; costMicros: number };
+	/** Counters whose adjustment is still to apply. */
+	pending?: CounterName[];
+	expiresAt: Date;
+};
+
+/** A call outlives this only by crashing; its hold then stays as spent. */
+const STALE_HOLD_MS = 10 * 60_000;
+/** How many settled reservations a counter remembers, so retries apply once. */
+const SETTLED_MEMORY = 1000;
 
 /**
  * Proxy connections, the web policy, and spend counters, per workspace.
@@ -120,6 +150,11 @@ export class ProxyStore {
 			"gateway_web_usage",
 		);
 	}
+	private reservations() {
+		return (this.mongo as MongoConnection).collection<ReservationDocument>(
+			"gateway_web_reservations",
+		);
+	}
 
 	async ensureIndexes(): Promise<void> {
 		if (!this.mongo || this.indexed) return;
@@ -127,6 +162,11 @@ export class ProxyStore {
 			this.proxies().createIndex({ workspaceId: 1 }),
 			// Day and month counters delete themselves once nobody reads them.
 			this.usage().createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
+			this.reservations().createIndex({ workspaceId: 1, createdAt: 1 }),
+			this.reservations().createIndex(
+				{ expiresAt: 1 },
+				{ expireAfterSeconds: 0 },
+			),
 		]);
 		this.indexed = true;
 	}
@@ -715,6 +755,8 @@ export class ProxyStore {
 			maxCostUsd: number;
 		},
 	): Promise<Reservation | { refused: ReservationRefusal }> {
+		// Finish what earlier calls left behind before taking a new hold.
+		await this.reconcile(workspace).catch(() => {});
 		const now = this.now();
 		const { month, day } = usagePeriods(now);
 		const keys = {
@@ -771,24 +813,25 @@ export class ProxyStore {
 			]);
 			return { refused: "connection" };
 		}
-		return { workspaceId: workspace.id, keys, costMicros };
-	}
-
-	/**
-	 * Settles a reservation once the provider has answered: gives everything
-	 * back when nothing was billed, otherwise replaces the held cost with the
-	 * actual one. False when a counter could not be updated; the hold then
-	 * stays, so the counts read high until they expire, never low.
-	 */
-	async settle(
-		reservation: Reservation,
-		outcome: { billed: boolean; costUsd: number },
-	): Promise<boolean> {
-		const { keys, costMicros } = reservation;
-		const applied = (results: PromiseSettledResult<void>[]) =>
-			results.every((result) => result.status === "fulfilled");
-		if (!outcome.billed)
-			return applied(
+		const reservation: Reservation = {
+			id: randomUUID(),
+			workspaceId: workspace.id,
+			keys,
+			costMicros,
+		};
+		if (this.mongo)
+			try {
+				await this.reservations().insertOne({
+					_id: reservation.id,
+					workspaceId: workspace.id,
+					keys,
+					costMicros,
+					createdAt: now,
+					expiresAt: new Date(now.getTime() + 60 * DAY_MS),
+				});
+			} catch (error) {
+				// Without its record the hold could not be settled reliably, so
+				// nothing is sent: give the hold back and refuse the call.
 				await Promise.allSettled([
 					this.adjust(keys.budget, { requests: -1, costMicros: -costMicros }),
 					this.adjust(keys.caller, { requests: -1, costMicros: 0 }),
@@ -796,18 +839,143 @@ export class ProxyStore {
 						requests: -1,
 						costMicros: -costMicros,
 					}),
-				]),
-			);
+				]);
+				this.unavailable(error);
+			}
+		return reservation;
+	}
+
+	/** What settling a reservation changes on each counter. */
+	private adjustments(
+		costMicros: number,
+		outcome: { billed: boolean; costMicros: number },
+	): Partial<Record<CounterName, Counter>> {
+		if (!outcome.billed)
+			return {
+				budget: { requests: -1, costMicros: -costMicros },
+				caller: { requests: -1, costMicros: 0 },
+				connection: { requests: -1, costMicros: -costMicros },
+			};
 		// The budget was checked against the held amount, so a charge reported
 		// above it settles at the hold: spend never passes the budget this way.
-		const difference =
-			Math.min(toMicros(outcome.costUsd), costMicros) - costMicros;
-		return applied(
-			await Promise.allSettled([
-				this.adjust(keys.budget, { requests: 0, costMicros: difference }),
-				this.adjust(keys.connection, { requests: 0, costMicros: difference }),
-			]),
-		);
+		const difference = Math.min(outcome.costMicros, costMicros) - costMicros;
+		return difference
+			? {
+					budget: { requests: 0, costMicros: difference },
+					connection: { requests: 0, costMicros: difference },
+				}
+			: {};
+	}
+
+	/**
+	 * Settles a reservation once the provider has answered: gives everything
+	 * back when nothing was billed, otherwise replaces the held cost with the
+	 * actual one. With MongoDB the outcome is written to the reservation's
+	 * record first and each counter is adjusted at most once, so a settlement
+	 * that fails part-way is finished later by `reconcile` without counting
+	 * anything twice. False when it could not finish now.
+	 */
+	async settle(
+		reservation: Reservation,
+		outcome: { billed: boolean; costUsd: number },
+	): Promise<boolean> {
+		const result = {
+			billed: outcome.billed,
+			costMicros: toMicros(outcome.costUsd),
+		};
+		const changes = this.adjustments(reservation.costMicros, result);
+		if (!this.mongo) {
+			for (const [name, amount] of Object.entries(changes) as Array<
+				[CounterName, Counter]
+			>)
+				await this.adjust(reservation.keys[name], amount);
+			return true;
+		}
+		try {
+			// The first outcome recorded wins; a retry reuses it.
+			await this.reservations().updateOne(
+				{ _id: { $eq: reservation.id }, outcome: { $exists: false } },
+				{
+					$set: {
+						outcome: result,
+						pending: Object.keys(changes) as CounterName[],
+					},
+				},
+			);
+			return await this.finish(reservation.id);
+		} catch {
+			return false;
+		}
+	}
+
+	/**
+	 * Applies a recorded outcome's remaining counter adjustments, each once,
+	 * then deletes the record. True when nothing is left to do.
+	 */
+	private async finish(id: string): Promise<boolean> {
+		const record = await this.reservations().findOne({ _id: { $eq: id } });
+		if (!record) return true;
+		if (!record.outcome) return false;
+		const changes = this.adjustments(record.costMicros, record.outcome);
+		for (const name of record.pending ?? []) {
+			const amount = changes[name];
+			if (amount) await this.adjustOnce(record.keys[name], amount, id);
+			await this.reservations().updateOne(
+				{ _id: { $eq: id } },
+				{ $pull: { pending: name } },
+			);
+		}
+		await this.reservations().deleteOne({ _id: { $eq: id } });
+		return true;
+	}
+
+	/**
+	 * Adjusts a counter unless this reservation was already settled into it.
+	 * The counter keeps the ids of the last reservations it took, so a retry
+	 * after a lost reply changes nothing. A decrement never goes below zero.
+	 */
+	private async adjustOnce(key: string, amount: Counter, id: string) {
+		const filter: Record<string, unknown> = {
+			_id: { $eq: key },
+			settled: { $ne: id },
+		};
+		if (amount.requests < 0) filter.requests = { $gte: -amount.requests };
+		if (amount.costMicros < 0) filter.costMicros = { $gte: -amount.costMicros };
+		await this.usage().updateOne(filter, {
+			$inc: { requests: amount.requests, costMicros: amount.costMicros },
+			$push: { settled: { $each: [id], $slice: -SETTLED_MEMORY } },
+		});
+	}
+
+	/**
+	 * Finishes settlements an earlier call left part-way, and closes holds
+	 * whose call never reported back (a crash): those stay counted as spent,
+	 * which reads high, never low. Bounded, so it can run on any request.
+	 */
+	async reconcile(workspace: WorkspaceRef, limit = 20): Promise<number> {
+		if (!this.mongo) return 0;
+		const now = this.now().getTime();
+		const records = await this.reservations()
+			.find({
+				workspaceId: { $eq: workspace.id },
+				createdAt: { $lt: new Date(now - 60_000) },
+			})
+			.sort({ createdAt: 1 })
+			.limit(limit)
+			.toArray();
+		let finished = 0;
+		for (const record of records) {
+			if (record.outcome) {
+				if (await this.finish(record._id).catch(() => false)) finished += 1;
+			} else if (record.createdAt.getTime() < now - STALE_HOLD_MS) {
+				await this.reservations().deleteOne({
+					_id: { $eq: record._id },
+					outcome: { $exists: false },
+				});
+				finished += 1;
+			}
+		}
+		return finished;
 	}
 
 	async close(): Promise<void> {

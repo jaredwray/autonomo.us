@@ -18,6 +18,8 @@ import type {
 	BotActivity,
 	BotDetails,
 	BotList,
+	BotWebRequest,
+	BotWebRequestList,
 	ChannelAgentAccess,
 	ChannelAgentOption,
 	ChannelDetails,
@@ -35,6 +37,7 @@ import type {
 	CreateTeamInviteRequest,
 	CreateWorkspaceRequest,
 	CurrentSession,
+	DecideBotWebRequest,
 	DecideSynapseProposalRequest,
 	FailoverPolicy,
 	GatewayResponse,
@@ -875,6 +878,21 @@ export function updateBot(
 }
 export function deleteBot(id: string): Promise<void> {
 	return apiRequest(botPath(id), { method: "DELETE" });
+}
+/** Sites a bot tried to fetch outside its web scope, and what was decided. */
+export function fetchBotWebRequests(id: string): Promise<BotWebRequestList> {
+	return apiRequest(`${botPath(id)}/web-requests`);
+}
+/** Approving also adds the site to the bot's approved sites. */
+export function decideBotWebRequest(
+	botId: string,
+	requestId: string,
+	approve: boolean,
+): Promise<BotWebRequest> {
+	return apiRequest(
+		`${botPath(botId)}/web-requests/${encodeURIComponent(requestId)}/decide`,
+		{ method: "POST", body: { approve } satisfies DecideBotWebRequest },
+	);
 }
 /** The bots working on a reply in a channel right now. */
 export function fetchBotActivity(

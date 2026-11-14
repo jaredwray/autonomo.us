@@ -25,6 +25,7 @@ import {
 	completeChat,
 } from "../routes/chat.js";
 import { ServiceError } from "../service-error.js";
+import { canonicalHost, WebScopeError } from "../web/service.js";
 import type { WorkspaceStore } from "../workspaces/store.js";
 import { startOfDay } from "./bots.js";
 import {
@@ -33,6 +34,7 @@ import {
 	runId,
 	type StoredRun,
 } from "./repository.js";
+import type { BotWebRequestStore } from "./web-requests.js";
 
 const HOUR_MS = 3_600_000;
 /** What a hosted bot may call during a reply. It answers with its text, not a tool. */
@@ -78,6 +80,8 @@ export type BotRunnerOptions = {
 	 * sets more, since a reply there has about 30 seconds after its response.
 	 */
 	minProxyMs?: number;
+	/** Where a fetch outside a bot's web scope becomes a request for approval. */
+	webRequests?: Pick<BotWebRequestStore, "record">;
 	now?: () => number;
 	/**
 	 * How long a runner owns a run. A crashed run is retried only after this
@@ -382,7 +386,12 @@ export class BotRunner {
 			caller: { id: `agent:${bot.id}`, name: bot.name, kind: "agent" },
 			extras:
 				bot.tools || bot.web
-					? this.tools(bot, workspace, fence, progress, { signal, deadline })
+					? this.tools(bot, workspace, fence, progress, {
+							signal,
+							deadline,
+							channelId: run.channelId,
+							mentioned: linkedHosts(context),
+						})
 					: undefined,
 		});
 		if (outcome.status === "aborted")
@@ -547,13 +556,48 @@ export class BotRunner {
 			.slice(0, CHANNEL_LIMITS.bodyLength);
 	}
 
+	/**
+	 * Files a request for a workspace admin to approve a host outside the
+	 * bot's web scope, and tells the model what to say.
+	 */
+	private async askForHost(
+		bot: Bot,
+		channelId: string,
+		error: WebScopeError,
+		input: unknown,
+	): Promise<string> {
+		let url = `https://${error.host}/`;
+		try {
+			const asked = new URL(String((input as { url?: unknown }).url));
+			url = `${asked.origin}${asked.pathname}`;
+		} catch {}
+		const recorded = await this.options.webRequests
+			?.record({
+				workspaceId: bot.workspaceId,
+				botId: bot.id,
+				host: error.host,
+				url,
+				channelId,
+			})
+			.catch(() => false);
+		return recorded
+			? `Refused: ${error.message} A workspace admin has been asked to approve ${error.host}. Say so, and that they can ask again once it is approved.`
+			: `Refused: ${error.message} Ask a workspace admin to approve ${error.host} for ${bot.name}.`;
+	}
+
 	/** The tool sets' handlers as model tools, run as the bot. */
 	private tools(
 		bot: Bot,
 		workspace: McpAgent["workspace"],
 		fence: () => void,
 		progress: { wrote: boolean },
-		run: { signal: AbortSignal; deadline: number },
+		run: {
+			signal: AbortSignal;
+			deadline: number;
+			channelId: string;
+			/** Hosts of links people posted in the messages this reply sees. */
+			mentioned: string[];
+		},
 	): ChatExtras {
 		const agent: McpAgent = {
 			token: {
@@ -575,6 +619,9 @@ export class BotRunner {
 		 * change the workspace's notes or channels on a page's say-so.
 		 */
 		const untrusted = { web: false };
+		/** Hosts this reply has fetched, for the follow-up limit. */
+		const fetched: string[] = [];
+		const allowHost = webScope(bot, run.mentioned);
 		for (const set of this.options.toolSets)
 			for (const definition of set.tools) {
 				const allowed =
@@ -592,6 +639,15 @@ export class BotRunner {
 						const web = WEB_TOOLS.has(definition.name);
 						if (!web && untrusted.web)
 							return "Refused: this reply has read a web page, so it can no longer use Synapse or channel tools. Answer with what you have.";
+						const host = web
+							? hostOf((input as { url?: unknown } | undefined)?.url)
+							: null;
+						if (web && host && fetched.length) {
+							if (bot.webFollowUps === "none")
+								return "Refused: this bot fetches one page per reply. Answer with what you have.";
+							if (bot.webFollowUps === "same-site" && !inHosts(host, fetched))
+								return `Refused: this reply may only fetch more pages from ${fetched.join(", ")}. Answer with what you have.`;
+						}
 						if (web) untrusted.web = true;
 						if (WRITING_TOOLS.has(definition.name)) progress.wrote = true;
 						try {
@@ -603,12 +659,17 @@ export class BotRunner {
 									deadline: run.deadline,
 									minProxyMs: this.options.minProxyMs,
 									proxyRequestsPerDay: bot.limits.proxyRequestsPerDay,
+									...(web ? { allowHost } : {}),
 								},
 							);
+							if (web && host && !fetched.includes(host)) fetched.push(host);
 							return (
 								set.text?.(definition.name, result) ?? JSON.stringify(result)
 							);
 						} catch (error) {
+							if (error instanceof WebScopeError)
+								return this.askForHost(bot, run.channelId, error, input);
+							if (web && host && !fetched.includes(host)) fetched.push(host);
 							if (error instanceof ServiceError)
 								return `Error: ${error.message}`;
 							throw error;
@@ -618,4 +679,48 @@ export class BotRunner {
 			}
 		return { tools, stopWhen: stepCountIs(BOT_LIMITS.maxToolSteps) };
 	}
+}
+
+/** Whether a host is one of `hosts` or under one of them. */
+function inHosts(host: string, hosts: readonly string[]): boolean {
+	return hosts.some((item) => host === item || host.endsWith(`.${item}`));
+}
+
+/** The host of a URL as rules match it, or null when it is not a URL. */
+function hostOf(value: unknown): string | null {
+	try {
+		const url = new URL(String(value));
+		return /^https?:$/.test(url.protocol) && url.hostname
+			? canonicalHost(url.hostname)
+			: null;
+	} catch {
+		return null;
+	}
+}
+
+/** Hosts of the links people posted in these messages. Agents' links do not count. */
+export function linkedHosts(messages: ChannelMessage[]): string[] {
+	const hosts = new Set<string>();
+	for (const message of messages) {
+		if (message.author.kind !== "user" || message.deletedAt) continue;
+		for (const match of message.body.matchAll(/https?:\/\/[^\s<>()[\]"'`]+/g)) {
+			const host = hostOf(match[0]);
+			if (host) hosts.add(host);
+		}
+	}
+	return [...hosts];
+}
+
+/** A bot's web scope as a host check: a reason to refuse, or null. */
+export function webScope(
+	bot: Pick<Bot, "name" | "webScope" | "webHosts">,
+	mentioned: readonly string[],
+): (host: string) => string | null {
+	return (host) => {
+		if (bot.webScope === "any" || inHosts(host, bot.webHosts)) return null;
+		if (bot.webScope === "mentioned" && inHosts(host, mentioned)) return null;
+		return bot.webScope === "mentioned"
+			? `${host} is not a site anyone linked in this conversation, nor one approved for ${bot.name}.`
+			: `${host} is not one of the sites approved for ${bot.name}.`;
+	};
 }

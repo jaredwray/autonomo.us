@@ -20,7 +20,26 @@ export const BOT_LIMITS = {
 	/** Model calls in one reply when the bot uses tools. */
 	maxToolSteps: 8,
 	maxProxyRequestsPerDay: 10_000,
+	/** Sites on one bot's approved list. */
+	maxWebHosts: 100,
+	/** Approval requests a bot may have waiting at once. */
+	maxPendingWebRequests: 50,
 } as const;
+
+/**
+ * What a bot with web access may fetch. `any`: any page the workspace's
+ * rules allow. `mentioned`: pages on sites people linked in the messages the
+ * reply sees, or on approved sites. `approved`: only approved sites.
+ */
+export const BOT_WEB_SCOPES = ["any", "mentioned", "approved"] as const;
+export type BotWebScope = (typeof BOT_WEB_SCOPES)[number];
+
+/**
+ * Fetches after the first in one reply. `any`: anything in scope.
+ * `same-site`: only sites the reply already fetched. `none`: one fetch a reply.
+ */
+export const BOT_WEB_FOLLOW_UPS = ["any", "same-site", "none"] as const;
+export type BotWebFollowUps = (typeof BOT_WEB_FOLLOW_UPS)[number];
 
 export const DEFAULT_BOT_LIMITS: BotLimits = {
 	repliesPerHour: 30,
@@ -63,6 +82,12 @@ export type Bot = {
 	tools: boolean;
 	/** Whether a reply may read web pages with `web_fetch`, through the workspace's proxies when needed. */
 	web: boolean;
+	/** What the bot may fetch; see `BOT_WEB_SCOPES`. */
+	webScope: BotWebScope;
+	/** Fetches after the first in one reply; see `BOT_WEB_FOLLOW_UPS`. */
+	webFollowUps: BotWebFollowUps;
+	/** Sites approved for this bot. Each matches the host and its subdomains. */
+	webHosts: string[];
 	limits: BotLimits;
 	createdAt: string;
 	createdBy: string;
@@ -124,8 +149,33 @@ export type CreateBotRequest = {
 	agentHops?: number;
 	tools?: boolean;
 	web?: boolean;
+	webScope?: BotWebScope;
+	webFollowUps?: BotWebFollowUps;
+	webHosts?: string[];
 	limits?: Partial<BotLimits>;
 };
+
+/**
+ * A site a bot tried to fetch outside its scope, waiting for a workspace
+ * admin. Approving adds the host to the bot's approved sites.
+ */
+export type BotWebRequest = {
+	id: string;
+	botId: string;
+	workspaceId: string;
+	host: string;
+	/** The page asked for, without its query string or fragment. */
+	url: string;
+	channelId: string | null;
+	status: "pending" | "approved" | "denied";
+	/** Times the bot asked while the request was pending. */
+	count: number;
+	requestedAt: string;
+	decidedAt: string | null;
+	decidedBy: string | null;
+};
+export type BotWebRequestList = { requests: BotWebRequest[] };
+export type DecideBotWebRequest = { approve: boolean };
 export type UpdateBotRequest = Partial<CreateBotRequest> & {
 	/** The revision the caller read; a stale one is refused. */
 	revision?: number;

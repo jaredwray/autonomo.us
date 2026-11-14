@@ -46,7 +46,23 @@ export type WebFetchContext = {
 	signal?: AbortSignal;
 	/** A proxy step starts only with at least this much time left. */
 	minProxyMs?: number;
+	/**
+	 * The caller's own limit on hosts, on top of the workspace's rules: a
+	 * reason to refuse a host, or null. A bot's web scope is one. It applies
+	 * to the URL asked for, every redirect, a proxy's landing, and the cache.
+	 */
+	allowHost?: (host: string) => string | null;
 };
+
+/** The URL asked for is outside the caller's own scope. */
+export class WebScopeError extends ServiceError {
+	constructor(
+		readonly host: string,
+		message: string,
+	) {
+		super(message, 403);
+	}
+}
 
 export type WebServiceOptions = {
 	store: ProxyStore;
@@ -147,6 +163,8 @@ export class WebService {
 		const rule = domainRule(policy, host);
 		const refused = hostRefusal(policy, host, false);
 		if (refused) throw new ServiceError(refused, 403);
+		const outOfScope = context.allowHost?.(host);
+		if (outOfScope) throw new WebScopeError(host, outOfScope);
 
 		const cacheKey = `${workspace.id}\n${format}\n${url.href}`;
 		const cached = this.cache.get(cacheKey);
@@ -159,6 +177,7 @@ export class WebService {
 				policy,
 				cached.result.finalUrl,
 				cached.result.via !== "direct",
+				context.allowHost,
 			)
 		) {
 			const result: WebFetchResult = {
@@ -178,7 +197,14 @@ export class WebService {
 			return result;
 		}
 
-		const steps = await this.plan(workspace, policy, host, request, rule?.rule);
+		const steps = await this.plan(
+			workspace,
+			policy,
+			host,
+			request,
+			rule?.rule,
+			Boolean(context.allowHost),
+		);
 		const attempts: WebFetchAttempt[] = [];
 		let success: { step: WebStep; result: StepSuccess } | undefined;
 		let failure: StepFailure | undefined;
@@ -347,6 +373,8 @@ export class WebService {
 		host: string,
 		request: WebFetchRequest,
 		rule: string | undefined,
+		/** The caller limits hosts too, so landings must be checkable. */
+		scoped = false,
 	): Promise<PlannedStep[]> {
 		const connections = new Map(
 			(await this.options.store.entries(workspace)).map((entry) => [
@@ -365,7 +393,7 @@ export class WebService {
 			// Domain rules check where a proxy landed; one that does not say
 			// cannot be held to them, so a workspace with rules leaves it out.
 			if (
-				restrictsHosts(policy) &&
+				(scoped || restrictsHosts(policy)) &&
 				!this.adapters[entry.config.kind]?.reportsFinalUrl
 			)
 				continue;
@@ -448,8 +476,14 @@ export class WebService {
 					resolver: this.options.resolver,
 					hopTimeoutMs: Math.min(DIRECT_HOP_MS, remaining),
 					// A redirect is held to the same workspace rules as the URL asked for.
-					allowHop: (next) =>
-						hostRefusal(policy, canonicalHost(next.hostname), false),
+					allowHop: (next) => {
+						const nextHost = canonicalHost(next.hostname);
+						return (
+							hostRefusal(policy, nextHost, false) ??
+							context.allowHost?.(nextHost) ??
+							null
+						);
+					},
 					// A host the workspace reaches through a proxy is not contacted directly.
 					proxyOnlyHop: (next) => {
 						const host = canonicalHost(next.hostname);
@@ -529,7 +563,12 @@ export class WebService {
 		// A provider follows redirects itself: the page it landed on must pass
 		// the workspace's rules too, or its content is not returned.
 		if (result.outcome === "ok") {
-			const landed = refusedLanding(policy, result.finalUrl);
+			const landed = refusedLanding(
+				policy,
+				result.finalUrl,
+				true,
+				context.allowHost,
+			);
 			if (landed)
 				result = {
 					outcome: "target-error",
@@ -725,6 +764,7 @@ function refusedLanding(
 	policy: Pick<WebPolicy, "domains" | "allowOnly">,
 	finalUrl: string,
 	viaProxy = true,
+	allowHost?: (host: string) => string | null,
 ): string | null {
 	let landed: URL | null = null;
 	try {
@@ -732,11 +772,12 @@ function refusedLanding(
 	} catch {}
 	if (!landed || !/^https?:$/.test(landed.protocol) || !landed.hostname)
 		// A landing that cannot be read cannot be checked: refused when rules apply.
-		return restrictsHosts(policy)
+		return restrictsHosts(policy) || allowHost
 			? "The proxy reported a landing URL that cannot be checked against this workspace's rules."
 			: null;
 	const host = canonicalHost(landed.hostname);
-	const refused = hostRefusal(policy, host, viaProxy);
+	const refused =
+		hostRefusal(policy, host, viaProxy) ?? allowHost?.(host) ?? null;
 	return refused ? `The site redirected to ${host}. ${refused}` : null;
 }
 

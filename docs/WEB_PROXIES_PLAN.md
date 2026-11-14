@@ -627,6 +627,8 @@ changed. D10 came from the security review of the plan.
 | D7 | Bots on the Worker? | **Allow `web_fetch`, but start a proxy step only with at least 20 s left in the run.** Otherwise the tool says it ran out of time. Moving bot runs to Queues or Durable Objects is a separate decision (Channels plan, section 16). | P1, 10 |
 | D8 | Why not point agents at ZenRows' hosted MCP server? | **Use the gateway.** Connecting an app to `mcp.zenrows.com` works today with no code, and is a fine stopgap for one person. But each app holds the key, nothing caps spend, gateway bots cannot use it, nothing is recorded per agent, and every page costs credits, even pages a plain request would load. | 4.1 |
 | D9 | Respect `robots.txt`? | **An optional per-workspace switch, off by default,** plus domain deny rules. An agent fetching one page for a person is closer to a browser than a crawler. The switch is there for workspaces that want it. *Not built yet; domain rules are.* | P4 |
+| D11 | Limit what a bot fetches after reading a page? | **Yes, decided by the owner on 2026-11-14:** a web scope per bot (any page, only links people post plus approved sites, or only approved sites), a follow-up limit within one reply (any, same site, none), and approval requests a workspace admin decides. Defaults: links people post, same site. | 7, 16 |
+| D12 | Durable records for spend holds? | **Yes, decided by the owner on 2026-11-14:** each hold is written to `gateway_web_reservations`, settlement records the outcome first and applies each counter once, and a later request finishes what was left part-way. | 10, 16 |
 | D10 | May ordinary members run paid fetches? | **No.** Members see proxies, usage, and the policy. Among people, only workspace admins call `POST /web/fetch` and a proxy's test; API tokens need `web:fetch`. Every caller (person, token, agent, or bot) has its own daily limit on proxied requests, and every proxy together has a monthly dollar budget, so neither a member nor a copied token can spend without bound or use up what agents need. | 8, 10 |
 
 ## 14. PR sequence
@@ -759,6 +761,23 @@ from the text above.
 - **A skipped plain request starts at an unblocker.** `skipDirect` and a
   `start-at-proxy` rule mean the site blocks bots, so the ladder treats the
   fetch as already blocked and skips render-only steps.
+- **Bots have a web scope (D11).** `Bot.webScope` is `any`, `mentioned`
+  (hosts of links people posted in the messages the reply sees, plus
+  approved sites; the default), or `approved`; `Bot.webFollowUps` is `any`,
+  `same-site` (the default), or `none`; `Bot.webHosts` lists approved sites.
+  The runner passes the scope to the ladder as a host check, so it covers
+  the URL asked for, redirects, a proxy's landing, and the cache, and a
+  provider that cannot report its landing is left out. A fetch refused by
+  scope files a `BotWebRequest` in `gateway_bot_web_requests` (one waiting
+  per bot and host, at most 50 a bot); approving adds the host to
+  `webHosts`.
+- **Spend holds are durable (D12).** A hold's record is written before the
+  call. Settling writes the outcome to it, then adjusts each counter with a
+  filter that skips a counter which already took this reservation (counters
+  keep the last 1,000 reservation ids), then deletes the record. `reconcile`
+  runs before each new hold and finishes records left part-way; a record
+  with no outcome after 10 minutes is a call that crashed, and its hold
+  stays counted.
 - **Content that is a challenge page counts as blocked,** even when a proxy
   returned it with a 200, so the ladder moves on.
 - **Telemetry** records a `gateway.web` event per fetch (caller, host, steps,

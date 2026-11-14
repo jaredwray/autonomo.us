@@ -14,7 +14,8 @@ import type { AddressInfo } from "node:net";
  * message, `mention-model` pings the first agent mention in the system
  * prompt, `tool-model` calls the `synapse_log` tool once and then answers, and
  * `web-model` fetches https://example.com/pricing with `web_fetch` when offered,
- * and `web-tool-model` fetches it and then tries `synapse_log`.
+ * `web-tool-model` fetches it and then tries `synapse_log`, and
+ * `web-twice-model` fetches it and then a page on another site.
  */
 
 export const STUB_USAGE = {
@@ -162,6 +163,38 @@ export async function startOpenAIStub(
 					role: "assistant",
 					content: mention ? `ping ${mention}` : "nobody to ping",
 				});
+				return;
+			}
+			if (parsed.model === "web-twice-model") {
+				// Fetches two pages on different sites, then reports the second.
+				const results = messages.filter((message) => message.role === "tool");
+				const urls = [
+					"https://example.com/pricing",
+					"https://other.example.org/next",
+				];
+				if (results.length < urls.length)
+					answer(
+						{
+							role: "assistant",
+							content: null,
+							tool_calls: [
+								{
+									id: `call_${results.length}`,
+									type: "function",
+									function: {
+										name: "web_fetch",
+										arguments: JSON.stringify({ url: urls[results.length] }),
+									},
+								},
+							],
+						},
+						"tool_calls",
+					);
+				else
+					answer({
+						role: "assistant",
+						content: `Then: ${textOf(results.at(-1)).split("\n")[0]}`,
+					});
 				return;
 			}
 			if (parsed.model === "web-tool-model") {

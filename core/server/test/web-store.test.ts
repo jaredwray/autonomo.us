@@ -381,3 +381,132 @@ describe("web policy validation", () => {
 		expect(domainRule(policy, "notexample.com")).toBeUndefined();
 	});
 });
+
+describe.skipIf(!available)("durable spend holds (MongoDB)", () => {
+	const connection: ProxyConfig = {
+		name: "zr",
+		kind: "zenrows",
+		apiKey: "k",
+		enabled: true,
+		monthlyRequestCap: null,
+	};
+
+	async function durable() {
+		const url = uniqueMongoUrl("webholds");
+		const store = new ProxyStore([], url);
+		const client = new MongoClient(url);
+		cleanups.push(async () => {
+			await client.db().dropDatabase();
+			await client.close();
+			await store.close();
+		});
+		const db = client.db();
+		const counters = async () =>
+			Object.fromEntries(
+				(await db.collection("gateway_web_usage").find().toArray()).map(
+					(document) => [
+						String(document._id).split(":")[1],
+						{ requests: document.requests, costMicros: document.costMicros },
+					],
+				),
+			);
+		const reserve = async () => {
+			const held = await store.reserve(OTHER, {
+				connection,
+				callerId: "agent:a",
+				callerCap: 10,
+				budgetUsd: 1,
+				maxCostUsd: 0.025,
+			});
+			if ("refused" in held) throw new Error("refused");
+			return held;
+		};
+		return { store, db, counters, reserve };
+	}
+
+	it("writes a record for every hold and removes it once settled", async () => {
+		const { store, db, reserve } = await durable();
+		const held = await reserve();
+		expect(
+			await db.collection("gateway_web_reservations").countDocuments(),
+		).toBe(1);
+		expect(await store.settle(held, { billed: true, costUsd: 0.01 })).toBe(
+			true,
+		);
+		expect(
+			await db.collection("gateway_web_reservations").countDocuments(),
+		).toBe(0);
+		expect(
+			(await store.budget(OTHER, await store.policy(OTHER))).spentUsd,
+		).toBe(0.01);
+	});
+
+	it("never applies a settlement twice", async () => {
+		const { store, counters, reserve } = await durable();
+		const held = await reserve();
+		await store.settle(held, { billed: false, costUsd: 0 });
+		await store.settle(held, { billed: false, costUsd: 0 });
+		expect(await counters()).toMatchObject({
+			budget: { requests: 0, costMicros: 0 },
+			caller: { requests: 0 },
+			connection: { requests: 0, costMicros: 0 },
+		});
+	});
+
+	it("finishes a settlement left part-way, once", async () => {
+		const { store, db, counters, reserve } = await durable();
+		const held = await reserve();
+		// As if the server stopped after recording the outcome.
+		await db.collection("gateway_web_reservations").updateOne(
+			{ _id: held.id as never },
+			{
+				$set: {
+					outcome: { billed: false, costMicros: 0 },
+					pending: ["budget", "caller", "connection"],
+					createdAt: new Date(Date.now() - 120_000),
+				},
+			},
+		);
+		expect(await store.reconcile(OTHER)).toBe(1);
+		expect(await counters()).toMatchObject({
+			budget: { requests: 0, costMicros: 0 },
+			caller: { requests: 0 },
+			connection: { requests: 0, costMicros: 0 },
+		});
+		// The same record again, as if its deletion had been lost.
+		await db.collection("gateway_web_reservations").insertOne({
+			_id: held.id as never,
+			workspaceId: OTHER.id,
+			keys: held.keys,
+			costMicros: held.costMicros,
+			createdAt: new Date(Date.now() - 120_000),
+			outcome: { billed: false, costMicros: 0 },
+			pending: ["budget", "caller", "connection"],
+			expiresAt: new Date(Date.now() + 86_400_000),
+		});
+		await store.reconcile(OTHER);
+		expect(await counters()).toMatchObject({
+			budget: { requests: 0, costMicros: 0 },
+			caller: { requests: 0 },
+		});
+	});
+
+	it("keeps the hold of a call that never reported back", async () => {
+		const { store, db, counters, reserve } = await durable();
+		const held = await reserve();
+		await db
+			.collection("gateway_web_reservations")
+			.updateOne(
+				{ _id: held.id as never },
+				{ $set: { createdAt: new Date(Date.now() - 11 * 60_000) } },
+			);
+		expect(await store.reconcile(OTHER)).toBe(1);
+		expect(
+			await db.collection("gateway_web_reservations").countDocuments(),
+		).toBe(0);
+		expect(await counters()).toMatchObject({
+			budget: { requests: 1, costMicros: 25_000 },
+			caller: { requests: 1 },
+		});
+	});
+});

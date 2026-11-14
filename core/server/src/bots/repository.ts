@@ -235,6 +235,9 @@ const toBot = ({ _id, ...rest }: BotDocument): Bot => ({
 	id: _id,
 	...rest,
 	web: rest.web === true,
+	webScope: rest.webScope ?? "mentioned",
+	webFollowUps: rest.webFollowUps ?? "same-site",
+	webHosts: rest.webHosts ?? [],
 	limits: {
 		...rest.limits,
 		proxyRequestsPerDay:

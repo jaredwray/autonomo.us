@@ -1246,3 +1246,23 @@ a.button { text-decoration: none; }
 	.proxy-rules li { flex-wrap: wrap; }
 	.proxy-actions { justify-content: flex-start; }
 }
+.bot-web-scope { margin: 18px 0 0; }
+.bot-web-choices { margin: 8px 0 4px; padding: 0; border: 0; }
+.bot-web-choices legend, .bot-web-label { display: block; margin-bottom: 6px; color: var(--text-primary); font-size: 13px; font-weight: 600; }
+.bot-web-choice { display: flex; align-items: flex-start; gap: 8px; margin: 6px 0; font-size: 13px; }
+.bot-web-choice input { margin-top: 3px; }
+.bot-web-choice .field-hint { display: block; margin-top: 2px; }
+.bot-web-add { display: flex; gap: 8px; margin: 8px 0 4px; }
+.bot-web-add input { flex: 1; min-width: 0; }
+.bot-web-problem { color: var(--status-critical); }
+.bot-web-requests { margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--hairline); }
+.bot-web-requests h3 { margin: 0; }
+.bot-web-requests > .card-note { margin: 4px 0 12px; }
+.bot-web-url { overflow-wrap: anywhere; color: var(--text-secondary); }
+.bot-web-actions { display: flex; gap: 8px; white-space: nowrap; }
+.bot-web-history-heading { margin: 16px 0 4px; font-size: 13px; }
+.bot-web-history .card-note { margin: 0; }
+@media (max-width: 640px) {
+	.bot-web-add { flex-wrap: wrap; }
+	.bot-web-actions { flex-wrap: wrap; }
+}
