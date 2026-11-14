@@ -95,10 +95,20 @@ function failure(
  * a charge, so a hold is kept whenever money may have been spent.
  */
 function oversizedError(response: Response, level: ProxyLevel): StepFailure {
+	const detail = `an error answer larger than 5 MB (HTTP ${response.status})`;
 	if (response.status === 404)
 		return failure("not-found", "the page does not exist", {
 			billed: true,
 			costUsd: costOf(response, level),
+		});
+	// The same signals the error codes carry, read from the status.
+	if (response.status === 401)
+		return failure("provider-error", detail, { problem: "key" });
+	if (response.status === 402)
+		return failure("provider-error", detail, { problem: "credits" });
+	if (response.status === 429 || response.status === 503)
+		return failure("provider-error", detail, {
+			retryAfterMs: retryAfterMs(response),
 		});
 	const charged = Number.parseFloat(
 		response.headers.get("x-request-cost") ?? "",
@@ -106,7 +116,7 @@ function oversizedError(response: Response, level: ProxyLevel): StepFailure {
 	const billed = Number.isFinite(charged) && charged > 0;
 	return failure(
 		"provider-error",
-		`an error answer larger than 5 MB (HTTP ${response.status})`,
+		detail,
 		billed ? { billed, costUsd: charged } : {},
 	);
 }

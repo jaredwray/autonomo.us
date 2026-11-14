@@ -890,10 +890,15 @@ describe("error answers too large to read", () => {
 		const bd = await brightdataAdapter.fetch(
 			brightdata,
 			call("unlock"),
-			fake(() => hugeError(200, { "x-brd-error-code": "reject_block" }))
-				.fetchImpl,
+			fake(() =>
+				hugeError(200, {
+					"x-brd-error": "unlock failed",
+					"x-brd-error-code": "reject_block",
+				}),
+			).fetchImpl,
 		);
-		expect(bd).toMatchObject({ outcome: "provider-error", billed: false });
+		// Judged from its headers as any answer is: a block, unbilled.
+		expect(bd).toMatchObject({ outcome: "blocked", billed: false });
 		const cf = await cloudflareAdapter.fetch(
 			cloudflare,
 			call("render"),
@@ -929,5 +934,32 @@ describe("error answers too large to read", () => {
 			fake(() => hugeError(200, { "x-brd-status-code": "403" })).fetchImpl,
 		);
 		expect(blocked).toMatchObject({ outcome: "blocked", billed: false });
+	});
+
+	it("still backs off and flags the connection", async () => {
+		for (const [adapter, config, level] of [
+			[zenrowsAdapter, zenrows, "auto"],
+			[cloudflareAdapter, cloudflare, "render"],
+			[brightdataAdapter, brightdata, "unlock"],
+		] as const) {
+			const limited = await adapter.fetch(
+				config,
+				call(level),
+				fake(() => hugeError(429, { "retry-after": "7" })).fetchImpl,
+			);
+			expect(limited).toMatchObject({
+				outcome: "provider-error",
+				retryAfterMs: 7000,
+			});
+			const refused = await adapter.fetch(
+				config,
+				call(level),
+				fake(() => hugeError(401)).fetchImpl,
+			);
+			expect(refused).toMatchObject({
+				outcome: "provider-error",
+				problem: "key",
+			});
+		}
 	});
 });

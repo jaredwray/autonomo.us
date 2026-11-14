@@ -103,45 +103,27 @@ export const brightdataAdapter: ProxyAdapter = {
 			});
 			text = await readLimited(response);
 		} catch (error) {
-			if (error instanceof ResponseTooLarge && response) {
-				// The body cannot be read, but the status and Bright Data's headers
-				// say what happened, the same way as for an answer that fits.
-				const failed =
-					!response.ok ||
-					response.headers.get("x-brd-error") ||
-					response.headers.get("x-brd-error-code") ||
-					response.headers.get("x-brd-err-code");
-				if (failed)
-					return failure(
-						"provider-error",
-						`an error answer larger than 5 MB (HTTP ${response.status})`,
-					);
-				const site = Number.parseInt(
-					response.headers.get("x-brd-status-code") ?? "200",
-					10,
-				);
-				if (site === 404 || site === 410)
-					return failure("not-found", `the site answered ${site}`, {
-						status: site,
-						billed: true,
-						costUsd: pricePerRequest(config),
-					});
-				if (site === 403 || site === 429 || site === 503)
-					return failure("blocked", `the site blocked the request (${site})`, {
-						status: site,
-					});
-				if (!(site >= 200 && site < 300))
-					return failure("target-error", `the site answered ${site}`, {
-						status: site,
-					});
+			if (!(error instanceof ResponseTooLarge && response))
+				return call.signal.aborted
+					? failure("timeout", "the request ran out of time")
+					: failure("provider-error", "Bright Data could not be reached");
+			// Only a delivered page is too large. Anything else is judged below
+			// from its status and Bright Data's headers alone, as any answer is.
+			const site = Number.parseInt(
+				response.headers.get("x-brd-status-code") ?? "200",
+				10,
+			);
+			if (
+				response.ok &&
+				!response.headers.get("x-brd-error") &&
+				site >= 200 &&
+				site < 300
+			)
 				return failure("target-error", "the page is larger than 5 MB", {
 					billed: true,
 					costUsd: pricePerRequest(config),
 				});
-			}
-			return call.signal.aborted
-				? failure("timeout", "the request ran out of time")
-				: failure("provider-error", "Bright Data could not be reached");
+			text = "";
 		}
 		// Refused before an unlock was tried: the key, the zone, or the account.
 		if (response.status === 401)
