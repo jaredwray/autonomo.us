@@ -569,6 +569,12 @@ export class BotRunner {
 			workspace,
 		};
 		const tools: NonNullable<ChatExtras["tools"]> = {};
+		/**
+		 * Whether a web page has entered this reply. A page can say anything,
+		 * so from then on the reply keeps only web_fetch: it cannot read or
+		 * change the workspace's notes or channels on a page's say-so.
+		 */
+		const untrusted = { web: false };
 		for (const set of this.options.toolSets)
 			for (const definition of set.tools) {
 				const allowed =
@@ -583,6 +589,10 @@ export class BotRunner {
 						fence();
 						const problem = argumentProblem(definition.inputSchema, input);
 						if (problem) return `Invalid arguments: ${problem}`;
+						const web = WEB_TOOLS.has(definition.name);
+						if (!web && untrusted.web)
+							return "Refused: this reply has read a web page, so it can no longer use Synapse or channel tools. Answer with what you have.";
+						if (web) untrusted.web = true;
 						if (WRITING_TOOLS.has(definition.name)) progress.wrote = true;
 						try {
 							const result = await set.handlers[definition.name](

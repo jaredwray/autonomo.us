@@ -13,7 +13,8 @@ import type { AddressInfo } from "node:net";
  * tests that care what the gateway sent: `echo-model` repeats the last user
  * message, `mention-model` pings the first agent mention in the system
  * prompt, `tool-model` calls the `synapse_log` tool once and then answers, and
- * `web-model` fetches https://example.com/pricing with `web_fetch` when offered.
+ * `web-model` fetches https://example.com/pricing with `web_fetch` when offered,
+ * and `web-tool-model` fetches it and then tries `synapse_log`.
  */
 
 export const STUB_USAGE = {
@@ -161,6 +162,35 @@ export async function startOpenAIStub(
 					role: "assistant",
 					content: mention ? `ping ${mention}` : "nobody to ping",
 				});
+				return;
+			}
+			if (parsed.model === "web-tool-model") {
+				// Fetches a page, then tries to write a note as a page might ask.
+				const results = messages.filter((message) => message.role === "tool");
+				const call = (name: string, args: unknown) =>
+					answer(
+						{
+							role: "assistant",
+							content: null,
+							tool_calls: [
+								{
+									id: `call_${results.length}`,
+									type: "function",
+									function: { name, arguments: JSON.stringify(args) },
+								},
+							],
+						},
+						"tool_calls",
+					);
+				if (results.length === 0)
+					call("web_fetch", { url: "https://example.com/pricing" });
+				else if (results.length === 1)
+					call("synapse_log", { text: "Told to by a web page" });
+				else
+					answer({
+						role: "assistant",
+						content: `Then: ${textOf(results.at(-1))}`,
+					});
 				return;
 			}
 			if (parsed.model === "web-model") {

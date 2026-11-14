@@ -302,6 +302,60 @@ describe("web_fetch over MCP", () => {
 });
 
 describe("bots with web access", () => {
+	it("refuses Synapse and channel tools once a reply has read a page", async () => {
+		const stub = await startOpenAIStub();
+		cleanups.push(stub.close);
+		const api = await start({
+			providers: [
+				{
+					name: "stub",
+					kind: "openai-compatible",
+					baseURL: stub.url,
+					models: ["web-tool-model"],
+				},
+			],
+		});
+		await api.addZenrows();
+		const channel = await api.createChannel("general");
+		const bot = await api.ok<BotDetails>(
+			"POST",
+			"/v1/bots",
+			{
+				body: {
+					name: "Both",
+					instructions: "",
+					model: "stub/web-tool-model",
+					web: true,
+					tools: true,
+				},
+			},
+			201,
+		);
+		await api.addAgent(channel.id, bot.id);
+		const asked = await api.post(channel.id, `<@agent:${bot.id}> look it up`);
+		let reply: ChannelMessage | undefined;
+		for (let cursor = asked.seq; !reply; ) {
+			const page = await api.ok<ChannelEntryList>(
+				"GET",
+				`/v1/channels/${channel.id}/messages?after=${cursor}&wait=10`,
+			);
+			reply = page.entries.find(
+				(entry): entry is ChannelMessage => entry.type === "message",
+			);
+			if (!reply && page.cursor === cursor)
+				throw new Error("No reply arrived.");
+			cursor = page.cursor;
+		}
+		expect(reply.body).toMatch(
+			/^Then: Refused: this reply has read a web page/,
+		);
+		const notes = await api.ok<{ notes: unknown[] }>(
+			"GET",
+			`/v1/synapse/spaces/agent-${bot.id}/notes?text=Told`,
+		);
+		expect(notes.notes).toEqual([]);
+	});
+
 	it("offers web_fetch only to a bot with web access, and the bot reads the page", async () => {
 		const stub = await startOpenAIStub();
 		cleanups.push(stub.close);

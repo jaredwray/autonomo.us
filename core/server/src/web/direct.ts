@@ -57,6 +57,11 @@ export type DirectOptions = {
 	hopTimeoutMs?: number;
 	maxRedirects?: number;
 	userAgent?: string;
+	/**
+	 * The workspace's own rules for a redirect target: a reason to refuse it,
+	 * or null. The URL rules in `checkTargetUrl` apply first, whatever this says.
+	 */
+	allowHop?: (url: URL) => string | null;
 };
 
 export const DIRECT_DEFAULTS = {
@@ -241,8 +246,21 @@ export async function directFetch(
 		let address: ResolvedAddress | null = null;
 		if (transport.pinsAddress) {
 			try {
-				address = await resolvePublicAddress(current.hostname, resolver);
+				// A lookup cannot be cancelled, so the fetch stops waiting for it
+				// at the hop's time limit or the fetch's deadline instead.
+				address = await withinTime(
+					resolvePublicAddress(current.hostname, resolver),
+					signal,
+					hopTimeoutMs,
+				);
 			} catch (error) {
+				if (error instanceof LookupTimeout)
+					return signal.aborted
+						? failure("timeout", "the fetch ran out of time")
+						: failure(
+								"blocked",
+								`looking up ${current.hostname} timed out after ${Math.round(hopTimeoutMs / 1000)} s`,
+							);
 				if (error instanceof TargetNotFoundError)
 					return failure("not-found", error.message);
 				if (error instanceof ServiceError && error.statusCode === 400)
@@ -279,6 +297,8 @@ export async function directFetch(
 						status,
 					);
 				}
+				const refused = options.allowHop?.(next);
+				if (refused) return failure("target-error", refused, status);
 				redirects++;
 				current = next;
 				continue;
@@ -315,6 +335,38 @@ export async function directFetch(
 		}
 		return failure(classification.outcome, classification.detail, status);
 	}
+}
+
+class LookupTimeout extends Error {}
+
+/** Settles with `work`, or rejects with `LookupTimeout` after `ms` or on abort. */
+function withinTime<T>(
+	work: Promise<T>,
+	signal: AbortSignal,
+	ms: number,
+): Promise<T> {
+	return new Promise<T>((resolve, reject) => {
+		const stop = () => {
+			clearTimeout(timer);
+			signal.removeEventListener("abort", stop);
+			reject(new LookupTimeout());
+		};
+		const timer = setTimeout(stop, Math.max(0, ms));
+		signal.addEventListener("abort", stop, { once: true });
+		if (signal.aborted) stop();
+		work.then(
+			(value) => {
+				clearTimeout(timer);
+				signal.removeEventListener("abort", stop);
+				resolve(value);
+			},
+			(error) => {
+				clearTimeout(timer);
+				signal.removeEventListener("abort", stop);
+				reject(error);
+			},
+		);
+	});
 }
 
 type Hop =

@@ -299,6 +299,10 @@ describe("web fetch ladder", () => {
 		await expect(fetchPage("https://www.blocked.test/")).rejects.toMatchObject({
 			statusCode: 403,
 		});
+		// A trailing dot names the same host.
+		await expect(fetchPage("https://blocked.test./")).rejects.toMatchObject({
+			statusCode: 403,
+		});
 		const direct = await fetchPage("https://docs.example.com/");
 		expect(direct.ok).toBe(false);
 		expect(calls).toEqual([]);
@@ -487,6 +491,38 @@ describe("web fetch ladder", () => {
 		expect(
 			(await asked.fetchPage("https://example.com/a?page=2")).finalUrl,
 		).toBe("https://example.com/a?page=2");
+	});
+
+	it("holds redirects and a proxy's landing page to the domain rules", async () => {
+		const { store, fetchPage, requests } = await setup({
+			pages: {
+				"https://example.com/go": {
+					status: 302,
+					headers: { location: "https://denied.example.org/page" },
+					body: "",
+				},
+				"https://example.com/proxied": { status: 403, body: CHALLENGE },
+			},
+			answer: () =>
+				new Response("# Landed\n\nSecret page.", {
+					headers: {
+						"content-type": "text/markdown",
+						"x-request-cost": "0.025",
+						"zr-final-url": "https://denied.example.org/landing",
+					},
+				}),
+		});
+		await store.updatePolicy(WORKSPACE, {
+			...(await store.policy(WORKSPACE)),
+			domains: [{ match: "denied.example.org", rule: "deny" }],
+		});
+		const redirected = await fetchPage("https://example.com/go");
+		expect(redirected.ok).toBe(false);
+		expect(redirected.reason).toContain("denied.example.org");
+		expect(requests).toEqual(["https://example.com/go"]);
+		const landed = await fetchPage("https://example.com/proxied");
+		expect(landed).toMatchObject({ ok: false, content: "" });
+		expect(landed.reason).toContain("redirected to denied.example.org");
 	});
 
 	it("keeps at most the largest content any caller may ask for in the cache", async () => {

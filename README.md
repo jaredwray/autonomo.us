@@ -635,7 +635,9 @@ and posts the reply as the bot. Nothing has to run outside the gateway.
   read a page someone links. Its proxied requests count against its own
   **Proxied requests a day** limit (default 20) and the workspace's monthly
   proxy budget. On the Worker a proxy is tried only with at least 20 seconds
-  of the reply left.
+  of the reply left. Once a reply has read a page, it can no longer use its
+  Synapse or channel tools, so a page cannot steer the bot into reading or
+  changing the workspace's notes and channels.
 - **Failures.** A failed model call posts one short notice in the channel and
   keeps the provider's error on the run, where a workspace admin can read it.
 - **Cost.** Each call is recorded in telemetry under the bot's name, so its
@@ -684,7 +686,10 @@ HTTPS API, so all of them work on Node and on the Worker:
   comes back as Markdown (or HTML), cut to `maxChars` (default 20,000), with
   a header saying how it was fetched and that its content is information,
   not instructions. Domain rules can deny a host, skip the plain request,
-  keep a host off every proxy, or allow only listed hosts.
+  keep a host off every proxy, or allow only listed hosts. They apply to the
+  host as written (a trailing dot changes nothing), to every redirect, and to
+  the page a proxy lands on. A redirect target is shown without its query
+  string, which can hold a signed URL's credentials.
 - **Spend.** Every proxied request holds its most possible cost against the
   workspace's **monthly budget** (default $25) and one request against the
   caller's **daily limit** (default 100 for each person, token, and agent;

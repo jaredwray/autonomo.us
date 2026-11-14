@@ -729,6 +729,19 @@ from the text above.
 - **A redirect target loses its query string in results.** A site can
   redirect to a signed URL whose query is a credential, so `finalUrl` shows
   only the origin and path when it differs from the URL asked for.
+- **Domain rules hold for redirects.** Hosts are matched without a trailing
+  dot, every redirect of a plain request is checked before it is followed,
+  and a page a proxy landed on is not returned when its host is refused.
+- **A bot that has read a page keeps only `web_fetch`** for the rest of that
+  reply: its Synapse and channel tools are refused, so a page cannot drive
+  them. A page can still ask the bot to fetch another URL; that risk is
+  bounded by the bot's tool steps and proxy limit, and by domain rules.
+- **Settling never passes the budget.** A charge a provider reports above
+  the amount held settles at the hold. A counter that cannot be updated
+  after three tries leaves the hold in place (counts read high, never low)
+  and the attempt says so.
+- **A DNS lookup counts against the hop's time limit,** since a lookup
+  cannot be cancelled; the fetch stops waiting for it.
 - **Content that is a challenge page counts as blocked,** even when a proxy
   returned it with a 200, so the ladder moves on.
 - **Telemetry** records a `gateway.web` event per fetch (caller, host, steps,

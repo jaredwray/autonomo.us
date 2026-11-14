@@ -242,6 +242,28 @@ describe.each(stores())("proxy store (%s)", (_mode, make) => {
 		expect(budget.spentUsd).toBeCloseTo(0.007, 6);
 	});
 
+	it("never settles a charge above what was held against the budget", async () => {
+		const store = await make();
+		const connection: ProxyConfig = {
+			name: "zr",
+			kind: "zenrows",
+			apiKey: "k",
+			enabled: true,
+			monthlyRequestCap: null,
+		};
+		const held = await store.reserve(OTHER, {
+			connection,
+			callerId: "agent:a",
+			callerCap: 10,
+			budgetUsd: 1,
+			maxCostUsd: 0.025,
+		});
+		if ("refused" in held) throw new Error("unreachable");
+		expect(await store.settle(held, { billed: true, costUsd: 5 })).toBe(true);
+		const policy = await store.policy(OTHER);
+		expect((await store.budget(OTHER, policy)).spentUsd).toBe(0.025);
+	});
+
 	it("never lets concurrent calls take more than the cap", async () => {
 		const store = await make();
 		const connection: ProxyConfig = {

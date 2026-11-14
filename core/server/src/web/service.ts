@@ -143,18 +143,10 @@ export class WebService {
 			WEB_LIMITS.maxChars,
 		);
 		const policy = await this.options.store.policy(workspace);
-		const host = url.hostname;
+		const host = canonicalHost(url.hostname);
 		const rule = domainRule(policy, host);
-		if (rule?.rule === "deny")
-			throw new ServiceError(
-				`${host} is blocked by this workspace's web rules.`,
-				403,
-			);
-		if (policy.allowOnly && !rule)
-			throw new ServiceError(
-				`This workspace fetches only the domains it lists, and ${host} is not one of them.`,
-				403,
-			);
+		const refused = hostRefusal(policy, host, false);
+		if (refused) throw new ServiceError(refused, 403);
 
 		const cacheKey = `${workspace.id}\n${format}\n${url.href}`;
 		const cached = this.cache.get(cacheKey);
@@ -418,6 +410,9 @@ export class WebService {
 					transport: this.options.transport,
 					resolver: this.options.resolver,
 					hopTimeoutMs: Math.min(DIRECT_HOP_MS, remaining),
+					// A redirect is held to the same workspace rules as the URL asked for.
+					allowHop: (next) =>
+						hostRefusal(policy, canonicalHost(next.hostname), false),
 				});
 			} finally {
 				timer.clear();
@@ -481,12 +476,25 @@ export class WebService {
 		} finally {
 			timer.clear();
 		}
-		await this.options.store
+		const recorded = await this.options.store
 			.settle(reservation, {
 				billed: result.outcome === "ok" || result.billed,
 				costUsd: result.costUsd,
 			})
-			.catch(() => {});
+			.catch(() => false);
+		// A provider follows redirects itself: the page it landed on must pass
+		// the workspace's rules too, or its content is not returned.
+		if (result.outcome === "ok") {
+			const landed = refusedLanding(policy, result.finalUrl);
+			if (landed)
+				result = {
+					outcome: "target-error",
+					status: result.status,
+					costUsd: result.costUsd,
+					detail: landed,
+					billed: true,
+				};
+		}
 		// A provider can return a challenge page as content.
 		if (result.outcome === "ok") {
 			const verdict = classifyResponse({
@@ -521,7 +529,10 @@ export class WebService {
 			await this.options.store
 				.setProblem(workspace, config.name, null)
 				.catch(() => {});
-		attempts.push(attempt(step, result, this.now() - started));
+		const record = attempt(step, result, this.now() - started);
+		if (!recorded)
+			record.detail = `${record.detail ? `${record.detail} ` : ""}The gateway could not update its spend counters, so they read high until they expire.`;
+		attempts.push(record);
 		return result;
 	}
 
@@ -619,6 +630,45 @@ export class WebService {
 			})),
 		});
 	}
+}
+
+/** A host as rules match it: lower case, without a trailing dot. */
+export function canonicalHost(hostname: string): string {
+	return hostname.toLowerCase().replace(/\.+$/, "");
+}
+
+/**
+ * Why the workspace's rules refuse a host, or null. A proxy may not carry a
+ * `direct-only` host.
+ */
+export function hostRefusal(
+	policy: Pick<WebPolicy, "domains" | "allowOnly">,
+	host: string,
+	viaProxy: boolean,
+): string | null {
+	const rule = domainRule(policy, host);
+	if (rule?.rule === "deny")
+		return `${host} is blocked by this workspace's web rules.`;
+	if (policy.allowOnly && !rule)
+		return `This workspace fetches only the domains it lists, and ${host} is not one of them.`;
+	if (viaProxy && rule?.rule === "direct-only")
+		return `${host} may not be fetched through a proxy under this workspace's web rules.`;
+	return null;
+}
+
+/** Why the page a proxy landed on breaks the rules, or null. */
+function refusedLanding(
+	policy: Pick<WebPolicy, "domains" | "allowOnly">,
+	finalUrl: string,
+): string | null {
+	let host: string;
+	try {
+		host = canonicalHost(new URL(finalUrl).hostname);
+	} catch {
+		return null;
+	}
+	const refused = hostRefusal(policy, host, true);
+	return refused ? `The site redirected to ${host}. ${refused}` : null;
 }
 
 /**

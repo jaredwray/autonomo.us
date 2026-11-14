@@ -687,12 +687,25 @@ export class ProxyStore {
 			current.costMicros = Math.max(0, current.costMicros + amount.costMicros);
 			return;
 		}
-		await this.usage()
-			.updateOne(
-				{ _id: { $eq: key } },
-				{ $inc: { requests: amount.requests, costMicros: amount.costMicros } },
-			)
-			.catch(() => {});
+		// A counter left unadjusted keeps a hold in place: the budget then
+		// reads as more spent than it is, never less. A few retries keep a
+		// passing database error from doing even that.
+		for (let attempt = 0; ; attempt++) {
+			try {
+				await this.usage().updateOne(
+					{ _id: { $eq: key } },
+					{
+						$inc: { requests: amount.requests, costMicros: amount.costMicros },
+					},
+				);
+				return;
+			} catch (error) {
+				if (attempt >= 2) throw error;
+				await new Promise((resolve) =>
+					setTimeout(resolve, 100 * (attempt + 1)),
+				);
+			}
+		}
 	}
 
 	/**
@@ -742,7 +755,11 @@ export class ProxyStore {
 				dayExpiry,
 			))
 		) {
-			await this.adjust(keys.budget, { requests: -1, costMicros: -costMicros });
+			// An undo that fails leaves the hold in place, which only overcounts.
+			await this.adjust(keys.budget, {
+				requests: -1,
+				costMicros: -costMicros,
+			}).catch(() => {});
 			return { refused: "caller" };
 		}
 		if (
@@ -756,8 +773,10 @@ export class ProxyStore {
 				monthExpiry,
 			))
 		) {
-			await this.adjust(keys.budget, { requests: -1, costMicros: -costMicros });
-			await this.adjust(keys.caller, { requests: -1, costMicros: 0 });
+			await Promise.allSettled([
+				this.adjust(keys.budget, { requests: -1, costMicros: -costMicros }),
+				this.adjust(keys.caller, { requests: -1, costMicros: 0 }),
+			]);
 			return { refused: "connection" };
 		}
 		return { workspaceId: workspace.id, keys, costMicros };
@@ -766,26 +785,37 @@ export class ProxyStore {
 	/**
 	 * Settles a reservation once the provider has answered: gives everything
 	 * back when nothing was billed, otherwise replaces the held cost with the
-	 * actual one.
+	 * actual one. False when a counter could not be updated; the hold then
+	 * stays, so the counts read high until they expire, never low.
 	 */
 	async settle(
 		reservation: Reservation,
 		outcome: { billed: boolean; costUsd: number },
-	): Promise<void> {
+	): Promise<boolean> {
 		const { keys, costMicros } = reservation;
-		if (!outcome.billed) {
-			await Promise.all([
-				this.adjust(keys.budget, { requests: -1, costMicros: -costMicros }),
-				this.adjust(keys.caller, { requests: -1, costMicros: 0 }),
-				this.adjust(keys.connection, { requests: -1, costMicros: -costMicros }),
-			]);
-			return;
-		}
-		const difference = toMicros(outcome.costUsd) - costMicros;
-		await Promise.all([
-			this.adjust(keys.budget, { requests: 0, costMicros: difference }),
-			this.adjust(keys.connection, { requests: 0, costMicros: difference }),
-		]);
+		const applied = (results: PromiseSettledResult<void>[]) =>
+			results.every((result) => result.status === "fulfilled");
+		if (!outcome.billed)
+			return applied(
+				await Promise.allSettled([
+					this.adjust(keys.budget, { requests: -1, costMicros: -costMicros }),
+					this.adjust(keys.caller, { requests: -1, costMicros: 0 }),
+					this.adjust(keys.connection, {
+						requests: -1,
+						costMicros: -costMicros,
+					}),
+				]),
+			);
+		// The budget was checked against the held amount, so a charge reported
+		// above it settles at the hold: spend never passes the budget this way.
+		const difference =
+			Math.min(toMicros(outcome.costUsd), costMicros) - costMicros;
+		return applied(
+			await Promise.allSettled([
+				this.adjust(keys.budget, { requests: 0, costMicros: difference }),
+				this.adjust(keys.connection, { requests: 0, costMicros: difference }),
+			]),
+		);
 	}
 
 	async close(): Promise<void> {

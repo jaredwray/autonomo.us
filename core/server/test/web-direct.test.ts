@@ -462,3 +462,62 @@ describe("transports", () => {
 		response.cancel();
 	});
 });
+
+describe("direct fetch time and redirect rules", () => {
+	it("stops waiting for a lookup that never answers", async () => {
+		const { transport, requests } = fakeTransport({
+			"https://slow.example/": { status: 200, body: page },
+		});
+		const stalled: Resolver = () => new Promise(() => {});
+		const started = Date.now();
+		const result = await directFetch(new URL("https://slow.example/"), {
+			signal: new AbortController().signal,
+			transport,
+			resolver: stalled,
+			hopTimeoutMs: 50,
+		});
+		expect(result).toMatchObject({ outcome: "blocked" });
+		expect(result.outcome === "ok" ? "" : result.detail).toContain("timed out");
+		expect(Date.now() - started).toBeLessThan(2000);
+		expect(requests).toEqual([]);
+	});
+
+	it("reports the deadline when the fetch is cancelled during a lookup", async () => {
+		const { transport } = fakeTransport({});
+		const controller = new AbortController();
+		setTimeout(() => controller.abort(), 20);
+		const result = await directFetch(new URL("https://slow.example/"), {
+			signal: controller.signal,
+			transport,
+			resolver: () => new Promise(() => {}),
+			hopTimeoutMs: 10_000,
+		});
+		expect(result.outcome).toBe("timeout");
+	});
+
+	it("refuses a redirect the workspace's rules refuse, before requesting it", async () => {
+		const { transport, requests } = fakeTransport({
+			"https://allowed.example/": {
+				status: 302,
+				headers: { location: "https://denied.example/secret" },
+			},
+			"https://denied.example/secret": { status: 200, body: page },
+		});
+		const result = await directFetch(new URL("https://allowed.example/"), {
+			signal: new AbortController().signal,
+			transport,
+			resolver: publicResolver,
+			allowHop: (next) =>
+				next.hostname === "denied.example"
+					? "denied.example is blocked."
+					: null,
+		});
+		expect(result).toMatchObject({
+			outcome: "target-error",
+			detail: "denied.example is blocked.",
+		});
+		expect(requests.map((request) => request.url.href)).toEqual([
+			"https://allowed.example/",
+		]);
+	});
+});
