@@ -687,25 +687,17 @@ export class ProxyStore {
 			current.costMicros = Math.max(0, current.costMicros + amount.costMicros);
 			return;
 		}
-		// A counter left unadjusted keeps a hold in place: the budget then
-		// reads as more spent than it is, never less. A few retries keep a
-		// passing database error from doing even that.
-		for (let attempt = 0; ; attempt++) {
-			try {
-				await this.usage().updateOne(
-					{ _id: { $eq: key } },
-					{
-						$inc: { requests: amount.requests, costMicros: amount.costMicros },
-					},
-				);
-				return;
-			} catch (error) {
-				if (attempt >= 2) throw error;
-				await new Promise((resolve) =>
-					setTimeout(resolve, 100 * (attempt + 1)),
-				);
-			}
-		}
+		// Sent once, never retried: an increment whose reply was lost may have
+		// applied, and applying it twice could take a counter below what was
+		// spent and let calls past a cap. A counter left unadjusted instead
+		// keeps a hold in place, so it reads high, never low. For the same
+		// reason a decrement never takes a counter below zero.
+		const filter: Record<string, unknown> = { _id: { $eq: key } };
+		if (amount.requests < 0) filter.requests = { $gte: -amount.requests };
+		if (amount.costMicros < 0) filter.costMicros = { $gte: -amount.costMicros };
+		await this.usage().updateOne(filter, {
+			$inc: { requests: amount.requests, costMicros: amount.costMicros },
+		});
 	}
 
 	/**

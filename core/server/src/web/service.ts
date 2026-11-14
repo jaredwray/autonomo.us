@@ -150,7 +150,17 @@ export class WebService {
 
 		const cacheKey = `${workspace.id}\n${format}\n${url.href}`;
 		const cached = this.cache.get(cacheKey);
-		if (cached && cached.until > started) {
+		// Rules may have changed since the page was cached: where it landed
+		// must still pass them.
+		if (
+			cached &&
+			cached.until > started &&
+			!refusedLanding(
+				policy,
+				cached.result.finalUrl,
+				cached.result.via !== "direct",
+			)
+		) {
 			const result: WebFetchResult = {
 				...cached.result,
 				...(() => {
@@ -684,14 +694,19 @@ function restrictsHosts(policy: Pick<WebPolicy, "domains" | "allowOnly">) {
 function refusedLanding(
 	policy: Pick<WebPolicy, "domains" | "allowOnly">,
 	finalUrl: string,
+	viaProxy = true,
 ): string | null {
-	let host: string;
+	let landed: URL | null = null;
 	try {
-		host = canonicalHost(new URL(finalUrl).hostname);
-	} catch {
-		return null;
-	}
-	const refused = hostRefusal(policy, host, true);
+		landed = new URL(finalUrl);
+	} catch {}
+	if (!landed || !/^https?:$/.test(landed.protocol) || !landed.hostname)
+		// A landing that cannot be read cannot be checked: refused when rules apply.
+		return restrictsHosts(policy)
+			? "The proxy reported a landing URL that cannot be checked against this workspace's rules."
+			: null;
+	const host = canonicalHost(landed.hostname);
+	const refused = hostRefusal(policy, host, viaProxy);
 	return refused ? `The site redirected to ${host}. ${refused}` : null;
 }
 

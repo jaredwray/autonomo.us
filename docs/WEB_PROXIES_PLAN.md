@@ -742,9 +742,13 @@ from the text above.
   them. A page can still ask the bot to fetch another URL; that risk is
   bounded by the bot's tool steps and proxy limit, and by domain rules.
 - **Settling never passes the budget.** A charge a provider reports above
-  the amount held settles at the hold. A counter that cannot be updated
-  after three tries leaves the hold in place (counts read high, never low)
-  and the attempt says so.
+  the amount held settles at the hold. Counter updates are sent once and
+  never retried, since an increment whose reply was lost may have applied,
+  and a decrement never takes a counter below zero. A counter that cannot be
+  updated leaves the hold in place (counts read high, never low) and the
+  attempt says so. A cached page's landing host is checked against the
+  current rules before it is served, and a landing URL that cannot be read
+  is refused when rules apply.
 - **A DNS lookup counts against the hop's time limit,** since a lookup
   cannot be cancelled; the fetch stops waiting for it.
 - **Content that is a challenge page counts as blocked,** even when a proxy

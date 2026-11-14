@@ -525,6 +525,49 @@ describe("web fetch ladder", () => {
 		expect(landed.reason).toContain("redirected to denied.example.org");
 	});
 
+	it("checks a cached page's landing against rules changed since", async () => {
+		const { store, fetchPage, calls } = await setup({
+			pages: { "https://example.com/p": { status: 403, body: CHALLENGE } },
+			answer: () =>
+				new Response("# Landed", {
+					headers: {
+						"content-type": "text/markdown",
+						"x-request-cost": "0.025",
+						"zr-final-url": "https://landing.example.org/p",
+					},
+				}),
+		});
+		expect((await fetchPage("https://example.com/p")).ok).toBe(true);
+		await store.updatePolicy(WORKSPACE, {
+			...(await store.policy(WORKSPACE)),
+			domains: [{ match: "landing.example.org", rule: "deny" }],
+		});
+		const again = await fetchPage("https://example.com/p");
+		expect(again).toMatchObject({ ok: false, cached: false });
+		expect(calls).toHaveLength(2);
+	});
+
+	it("refuses a landing URL it cannot read when rules apply", async () => {
+		const { store, fetchPage } = await setup({
+			pages: { "https://example.com/q": { status: 403, body: CHALLENGE } },
+			answer: () =>
+				new Response("# Landed", {
+					headers: {
+						"content-type": "text/markdown",
+						"x-request-cost": "0.025",
+						"zr-final-url": "not a url",
+					},
+				}),
+		});
+		await store.updatePolicy(WORKSPACE, {
+			...(await store.policy(WORKSPACE)),
+			domains: [{ match: "denied.example.org", rule: "deny" }],
+		});
+		const result = await fetchPage("https://example.com/q");
+		expect(result.ok).toBe(false);
+		expect(result.reason).toContain("cannot be checked");
+	});
+
 	it("hands a redirect to a start-at-proxy host over to the proxies", async () => {
 		const { store, fetchPage, requests, calls } = await setup({
 			pages: {
