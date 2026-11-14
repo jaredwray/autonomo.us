@@ -457,6 +457,54 @@ describe("web fetch ladder", () => {
 		expect(JSON.stringify(events)).not.toContain("/x");
 	});
 
+	it("drops the query string of a URL the site redirected to", async () => {
+		const { fetchPage } = await setup({
+			pages: {
+				"https://example.com/report": {
+					status: 302,
+					headers: {
+						location:
+							"https://files.example.com/report.html?X-Amz-Signature=s3cr3t",
+					},
+					body: "",
+				},
+				"https://files.example.com/report.html?X-Amz-Signature=s3cr3t": {
+					status: 200,
+					body: ARTICLE,
+				},
+			},
+		});
+		const result = await fetchPage("https://example.com/report");
+		expect(result).toMatchObject({
+			ok: true,
+			finalUrl: "https://files.example.com/report.html",
+		});
+		expect(webFetchText(result)).not.toContain("s3cr3t");
+		// The URL the caller asked for keeps its query.
+		const asked = await setup({
+			pages: { "https://example.com/a?page=2": { status: 200, body: ARTICLE } },
+		});
+		expect(
+			(await asked.fetchPage("https://example.com/a?page=2")).finalUrl,
+		).toBe("https://example.com/a?page=2");
+	});
+
+	it("keeps at most the largest content any caller may ask for in the cache", async () => {
+		const long = `<html><body><main>${"<p>A paragraph of text that goes on.</p>".repeat(5000)}</main></body></html>`;
+		const { fetchPage } = await setup({
+			pages: { "https://example.com/long": { status: 200, body: long } },
+		});
+		const first = await fetchPage("https://example.com/long", {
+			maxChars: 100_000,
+		});
+		expect(first.truncated).toBe(true);
+		const again = await fetchPage("https://example.com/long", {
+			maxChars: 100_000,
+		});
+		expect(again).toMatchObject({ cached: true, truncated: true });
+		expect(again.content.length).toBeLessThanOrEqual(100_000);
+	});
+
 	it("describes how a page was fetched before its content", async () => {
 		const { fetchPage } = await setup({
 			pages: { "https://example.com/": { status: 403, body: CHALLENGE } },

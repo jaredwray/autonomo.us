@@ -161,7 +161,13 @@ export class WebService {
 		if (cached && cached.until > started) {
 			const result: WebFetchResult = {
 				...cached.result,
-				...truncateText(cached.result.content, maxChars),
+				...(() => {
+					const cut = truncateText(cached.result.content, maxChars);
+					return {
+						content: cut.content,
+						truncated: cut.truncated || cached.result.truncated,
+					};
+				})(),
 				attempts: [],
 				cached: true,
 				costUsd: 0,
@@ -222,7 +228,7 @@ export class WebService {
 					: page.content;
 			result = {
 				url: url.href,
-				finalUrl: page.finalUrl,
+				finalUrl: visibleUrl(page.finalUrl, url),
 				status: page.status,
 				ok: true,
 				contentType: page.contentType,
@@ -234,7 +240,12 @@ export class WebService {
 				costUsd,
 			};
 			this.remember(workspace, host, step);
-			this.store(cacheKey, { ...result, content }, started);
+			// Kept at most as long as any caller may ask for, not the whole page.
+			this.store(
+				cacheKey,
+				{ ...result, ...truncateText(content, WEB_LIMITS.maxChars) },
+				started,
+			);
 		} else
 			result = {
 				url: url.href,
@@ -302,7 +313,7 @@ export class WebService {
 					: "";
 		const result: WebFetchResult = {
 			url: url.href,
-			finalUrl: ok ? page.finalUrl : url.href,
+			finalUrl: ok ? visibleUrl(page.finalUrl, url) : url.href,
 			status: page?.status ?? 0,
 			ok,
 			contentType: ok ? page.contentType : "",
@@ -608,6 +619,23 @@ export class WebService {
 			})),
 		});
 	}
+}
+
+/**
+ * The final URL as results show it. A redirect can land on a signed URL whose
+ * query string is a credential, so a URL other than the one asked for loses
+ * its query and fragment.
+ */
+export function visibleUrl(finalUrl: string, requested: URL): string {
+	let final: URL;
+	try {
+		final = new URL(finalUrl);
+	} catch {
+		return requested.href;
+	}
+	final.hash = "";
+	if (final.href === requested.href) return final.href;
+	return `${final.origin}${final.pathname}`;
 }
 
 function defaultLevel(config: ProxyConfig) {

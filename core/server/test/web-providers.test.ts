@@ -821,3 +821,54 @@ describe("every adapter", () => {
 		}
 	});
 });
+
+describe("answers too large to read", () => {
+	/** A body streamed in 1 MB chunks, with no length declared up front. */
+	const huge = (megabytes: number, headers: Record<string, string> = {}) => {
+		let sent = 0;
+		const chunk = new Uint8Array(1024 * 1024).fill(97);
+		return new Response(
+			new ReadableStream<Uint8Array>({
+				pull(controller) {
+					if (sent++ < megabytes) controller.enqueue(chunk);
+					else controller.close();
+				},
+			}),
+			{ status: 200, headers: { "content-type": "text/markdown", ...headers } },
+		);
+	};
+
+	it("stops reading past 5 MB and reports the page as too large", async () => {
+		for (const [adapter, config, extra] of [
+			[zenrowsAdapter, zenrows, { "x-request-cost": "0.025" }],
+			[cloudflareAdapter, cloudflare, { "x-browser-ms-used": "4000" }],
+			[brightdataAdapter, brightdata, {}],
+		] as const) {
+			const { fetchImpl } = fake(() => huge(8, extra));
+			const result = await adapter.fetch(config, call("auto"), fetchImpl);
+			expect(result).toMatchObject({ outcome: "target-error", billed: true });
+			expect(result.outcome === "ok" ? "" : result.detail).toContain("5 MB");
+			expect(result.costUsd).toBeGreaterThan(0);
+		}
+	});
+
+	it("refuses an answer whose declared length is too large without reading it", async () => {
+		let pulled = 0;
+		const response = new Response(
+			new ReadableStream<Uint8Array>({
+				pull(controller) {
+					pulled += 1;
+					controller.enqueue(new Uint8Array(16));
+				},
+			}),
+			{ headers: { "content-length": String(50 * 1024 * 1024) } },
+		);
+		const result = await zenrowsAdapter.fetch(
+			zenrows,
+			call("auto"),
+			async () => response,
+		);
+		expect(result.outcome).toBe("target-error");
+		expect(pulled).toBeLessThanOrEqual(1);
+	});
+});

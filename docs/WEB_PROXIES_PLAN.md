@@ -723,6 +723,12 @@ from the text above.
   its `Retry-After` passes (10 s by default). ZenRows' `Concurrency-Remaining`
   header on a successful answer is not read yet, so only a 429 or `RESP009`
   backs a connection off.
+- **Provider answers are read up to 5 MB,** like a plain request; a larger
+  one is cut off and reported as too large. The cache keeps at most
+  `WEB_LIMITS.maxChars` of a page, never the whole of it.
+- **A redirect target loses its query string in results.** A site can
+  redirect to a signed URL whose query is a credential, so `finalUrl` shows
+  only the origin and path when it differs from the URL asked for.
 - **Content that is a challenge page counts as blocked,** even when a proxy
   returned it with a 200, so the ladder moves on.
 - **Telemetry** records a `gateway.web` event per fetch (caller, host, steps,

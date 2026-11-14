@@ -7,6 +7,7 @@ import type {
 	StepFailure,
 	StepResult,
 } from "../types.js";
+import { ResponseTooLarge, readLimited } from "./read.js";
 
 const ENDPOINT = "https://api.brightdata.com";
 /** Bright Data's list price for 1,000 successful Web Unlocker requests. */
@@ -80,7 +81,7 @@ export const brightdataAdapter: ProxyAdapter = {
 			return failure("provider-error", "no API key is set", { problem: "key" });
 		if (!config.zone) return failure("provider-error", "no zone set");
 		const base = (config.baseUrl ?? ENDPOINT).replace(/\/+$/, "");
-		let response: Response;
+		let response: Response | undefined;
 		let text: string;
 		try {
 			response = await fetchImpl(`${base}/request`, {
@@ -98,8 +99,13 @@ export const brightdataAdapter: ProxyAdapter = {
 				}),
 				signal: call.signal,
 			});
-			text = await response.text();
-		} catch {
+			text = await readLimited(response);
+		} catch (error) {
+			if (error instanceof ResponseTooLarge && response)
+				return failure("target-error", "the page is larger than 5 MB", {
+					billed: response.ok,
+					costUsd: response.ok ? pricePerRequest(config) : 0,
+				});
 			return call.signal.aborted
 				? failure("timeout", "the request ran out of time")
 				: failure("provider-error", "Bright Data could not be reached");

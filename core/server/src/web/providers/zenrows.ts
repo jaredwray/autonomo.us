@@ -7,6 +7,7 @@ import type {
 	StepFailure,
 	StepResult,
 } from "../types.js";
+import { ResponseTooLarge, readLimited } from "./read.js";
 
 const ENDPOINT = "https://api.zenrows.com";
 /** ZenRows bills in credits; `X-Request-Cost` reports the charge in USD at this rate. */
@@ -192,15 +193,21 @@ export const zenrowsAdapter: ProxyAdapter = {
 		if (config.country && COUNTRY_LEVELS.has(call.level))
 			query.set("proxy_country", config.country.toLowerCase());
 		const base = (config.baseUrl ?? ENDPOINT).replace(/\/+$/, "");
-		let response: Response;
+		let response: Response | undefined;
 		let body: string;
 		try {
 			response = await fetchImpl(`${base}/v1/?${query}`, {
 				method: "GET",
 				signal: call.signal,
 			});
-			body = await response.text();
-		} catch {
+			body = await readLimited(response);
+		} catch (error) {
+			// A page too large to read was still delivered, and billed.
+			if (error instanceof ResponseTooLarge && response)
+				return failure("target-error", "the page is larger than 5 MB", {
+					billed: true,
+					costUsd: costOf(response, call.level),
+				});
 			// The error may quote the request URL, and with it the key.
 			return call.signal.aborted
 				? failure("timeout", "the request ran out of time")

@@ -7,6 +7,7 @@ import type {
 	StepFailure,
 	StepResult,
 } from "../types.js";
+import { ResponseTooLarge, readLimited } from "./read.js";
 
 const ENDPOINT = "https://api.cloudflare.com/client/v4";
 /**
@@ -99,7 +100,7 @@ export const cloudflareAdapter: ProxyAdapter = {
 			return failure("provider-error", "no account ID", { problem: "key" });
 		const base = (config.baseUrl ?? ENDPOINT).replace(/\/+$/, "");
 		const action = call.format === "markdown" ? "markdown" : "content";
-		let response: Response;
+		let response: Response | undefined;
 		let text: string;
 		try {
 			response = await fetchImpl(
@@ -121,8 +122,15 @@ export const cloudflareAdapter: ProxyAdapter = {
 					signal: call.signal,
 				},
 			);
-			text = await response.text();
-		} catch {
+			text = await readLimited(response);
+		} catch (error) {
+			if (error instanceof ResponseTooLarge && response) {
+				const ms = browserMs(response);
+				return failure("target-error", "the page is larger than 5 MB", {
+					costUsd: ms * USD_PER_MS,
+					billed: ms > 0,
+				});
+			}
 			return call.signal.aborted
 				? failure("timeout", "the request ran out of time")
 				: failure("provider-error", "Cloudflare could not be reached");
