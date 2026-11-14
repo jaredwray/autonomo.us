@@ -736,7 +736,12 @@ from the text above.
   workspace with deny, direct-only, or allow-only rules leaves Bright Data
   steps out of its ladder. A plain request redirected to a `start-at-proxy`
   host stops there as blocked, so the ladder hands the URL to a proxy
-  instead of contacting that host directly.
+  instead of contacting that host directly. **Known limit:** a provider
+  follows redirects on its own network, so a proxied URL that redirects
+  through a `direct-only` or denied host reaches that host before the
+  gateway sees the landing URL. The page is then refused and not cached, but
+  the provider has already contacted the host. Closing this needs providers
+  that can be told not to follow redirects.
 - **A bot that has read a page keeps only `web_fetch`** for the rest of that
   reply: its Synapse and channel tools are refused, so a page cannot drive
   them. A page can still ask the bot to fetch another URL; that risk is
