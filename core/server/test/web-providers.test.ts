@@ -936,6 +936,17 @@ describe("error answers too large to read", () => {
 		expect(blocked).toMatchObject({ outcome: "blocked", billed: false });
 	});
 
+	it("keeps a charge ZenRows reported on any oversized error", async () => {
+		for (const status of [401, 402, 429, 503]) {
+			const result = await zenrowsAdapter.fetch(
+				zenrows,
+				call("auto"),
+				fake(() => hugeError(status, { "x-request-cost": "0.002" })).fetchImpl,
+			);
+			expect(result).toMatchObject({ billed: true, costUsd: 0.002 });
+		}
+	});
+
 	it("still backs off and flags the connection", async () => {
 		for (const [adapter, config, level] of [
 			[zenrowsAdapter, zenrows, "auto"],

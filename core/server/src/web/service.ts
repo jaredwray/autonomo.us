@@ -242,12 +242,14 @@ export class WebService {
 				costUsd,
 			};
 			this.remember(workspace, host, step);
-			// Kept at most as long as any caller may ask for, not the whole page.
-			this.store(
-				cacheKey,
-				{ ...result, ...truncateText(content, WEB_LIMITS.maxChars) },
-				started,
-			);
+			// Kept at most as long as any caller may ask for, not the whole page,
+			// and only when where it landed can be checked again on a later hit.
+			if (readableUrl(page.finalUrl))
+				this.store(
+					cacheKey,
+					{ ...result, ...truncateText(content, WEB_LIMITS.maxChars) },
+					started,
+				);
 		} else
 			result = {
 				url: url.href,
@@ -678,6 +680,16 @@ export function hostRefusal(
 	if (viaProxy && rule?.rule === "direct-only")
 		return `${host} may not be fetched through a proxy under this workspace's web rules.`;
 	return null;
+}
+
+/** Whether a URL is an http(s) URL with a host. */
+function readableUrl(value: string): boolean {
+	try {
+		const url = new URL(value);
+		return /^https?:$/.test(url.protocol) && Boolean(url.hostname);
+	} catch {
+		return false;
+	}
 }
 
 /** Whether a redirect could break the workspace's domain rules. */

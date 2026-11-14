@@ -568,6 +568,23 @@ describe("web fetch ladder", () => {
 		expect(result.reason).toContain("cannot be checked");
 	});
 
+	it("never caches a page whose landing URL cannot be read", async () => {
+		const { fetchPage, calls } = await setup({
+			pages: { "https://example.com/r": { status: 403, body: CHALLENGE } },
+			answer: () =>
+				new Response("# Landed", {
+					headers: {
+						"content-type": "text/markdown",
+						"x-request-cost": "0.025",
+						"zr-final-url": "not a url",
+					},
+				}),
+		});
+		expect((await fetchPage("https://example.com/r")).ok).toBe(true);
+		expect((await fetchPage("https://example.com/r")).cached).toBe(false);
+		expect(calls).toHaveLength(2);
+	});
+
 	it("hands a redirect to a start-at-proxy host over to the proxies", async () => {
 		const { store, fetchPage, requests, calls } = await setup({
 			pages: {

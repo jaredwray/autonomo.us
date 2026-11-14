@@ -101,24 +101,28 @@ function oversizedError(response: Response, level: ProxyLevel): StepFailure {
 			billed: true,
 			costUsd: costOf(response, level),
 		});
-	// The same signals the error codes carry, read from the status.
-	if (response.status === 401)
-		return failure("provider-error", detail, { problem: "key" });
-	if (response.status === 402)
-		return failure("provider-error", detail, { problem: "credits" });
-	if (response.status === 429 || response.status === 503)
-		return failure("provider-error", detail, {
-			retryAfterMs: retryAfterMs(response),
-		});
+	// Billed exactly when ZenRows reported a charge, whatever the status.
 	const charged = Number.parseFloat(
 		response.headers.get("x-request-cost") ?? "",
 	);
-	const billed = Number.isFinite(charged) && charged > 0;
-	return failure(
-		"provider-error",
-		detail,
-		billed ? { billed, costUsd: charged } : {},
-	);
+	const charge =
+		Number.isFinite(charged) && charged > 0
+			? { billed: true, costUsd: charged }
+			: {};
+	// The same signals the error codes carry, read from the status.
+	if (response.status === 401)
+		return failure("provider-error", detail, { problem: "key", ...charge });
+	if (response.status === 402)
+		return failure("provider-error", detail, {
+			problem: "credits",
+			...charge,
+		});
+	if (response.status === 429 || response.status === 503)
+		return failure("provider-error", detail, {
+			retryAfterMs: retryAfterMs(response),
+			...charge,
+		});
+	return failure("provider-error", detail, charge);
 }
 
 /** What a ZenRows error means for the ladder, from its `code`, never from the status alone. */
