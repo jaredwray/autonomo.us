@@ -1,6 +1,6 @@
 # Web proxies plan
 
-*Status: v0.1, November 2026. Proposal only; nothing here is built yet. The questions for the owner are in [section 13](#13-decisions), each with a recommendation. Owner: Jared Wray.*
+*Status: v1.0, November 2026. Implemented (P0–P5) in the same pull request as this plan. The open questions were built as recommended ([section 13](#13-decisions)); where the build differs from the text below, [section 16](#16-what-was-built) says how. Owner: Jared Wray.*
 
 This document proposes a way for a workspace to add **web proxies** that its
 agents use when a page will not load for them. The page might block bots
@@ -34,6 +34,7 @@ Data is the second unblocker.
 13. [Decisions](#13-decisions)
 14. [PR sequence](#14-pr-sequence)
 15. [Out of scope and follow-ups](#15-out-of-scope-and-follow-ups)
+16. [What was built](#16-what-was-built)
 
 ## 1. What exists today
 
@@ -611,8 +612,9 @@ shows whether a connection is worth its price.
 
 ## 13. Decisions
 
-Open for the owner. Each has a recommendation, and the plan above follows
-the recommendations.
+On 2026-11-14 the owner asked for the plan to be built in this pull request.
+The questions below were therefore built as recommended; each can still be
+changed. D10 came from the security review of the plan.
 
 | # | Question | Recommendation | Affects |
 | --- | --- | --- | --- |
@@ -624,7 +626,8 @@ the recommendations.
 | D6 | How does a direct fetch become Markdown? | **A small in-house converter**, linear-time like the Synapse renderer. Providers already return Markdown, so this handles only direct fetches, and it adds no dependency to review under the 7-day cooldown policy. If its quality is poor, use a maintained library. | P0, 5 |
 | D7 | Bots on the Worker? | **Allow `web_fetch`, but start a proxy step only with at least 20 s left in the run.** Otherwise the tool says it ran out of time. Moving bot runs to Queues or Durable Objects is a separate decision (Channels plan, section 16). | P1, 10 |
 | D8 | Why not point agents at ZenRows' hosted MCP server? | **Use the gateway.** Connecting an app to `mcp.zenrows.com` works today with no code, and is a fine stopgap for one person. But each app holds the key, nothing caps spend, gateway bots cannot use it, nothing is recorded per agent, and every page costs credits, even pages a plain request would load. | 4.1 |
-| D9 | Respect `robots.txt`? | **An optional per-workspace switch, off by default,** plus domain deny rules. An agent fetching one page for a person is closer to a browser than a crawler. The switch is there for workspaces that want it. | P4 |
+| D9 | Respect `robots.txt`? | **An optional per-workspace switch, off by default,** plus domain deny rules. An agent fetching one page for a person is closer to a browser than a crawler. The switch is there for workspaces that want it. *Not built yet; domain rules are.* | P4 |
+| D10 | May ordinary members run paid fetches? | **No.** Members see proxies, usage, and the policy. Among people, only workspace admins call `POST /web/fetch` and a proxy's test; API tokens need `web:fetch`. Every caller (person, token, agent, or bot) has its own daily limit on proxied requests, and every proxy together has a monthly dollar budget, so neither a member nor a copied token can spend without bound or use up what agents need. | 8, 10 |
 
 ## 14. PR sequence
 
@@ -688,3 +691,54 @@ it. The environment variables join the provider table and
   Run `/json`) as a second tool, once agents show they need more than
   Markdown.
 - **Per-domain country choice** for sites that answer differently by region.
+
+## 16. What was built
+
+Everything in sections 4–14 is implemented, Bright Data included, except the
+`robots.txt` switch (D9). The README's **Web access and proxies** section is
+the reference for what runs; this section records where the build differs
+from the text above.
+
+- **Spend limits apply to every caller (D10).** Instead of a per-agent cap on
+  agent tokens, the web policy has `callerProxyRequestsPerDay` (default 100),
+  counted per caller identity (`user:<id>`, `api-token:<id>`, `agent:<id>`),
+  and `monthlyBudgetUsd` (default $25) for all proxies together. A bot uses
+  its own `proxyRequestsPerDay` (default 20) instead of the policy's. Each
+  proxied attempt holds its most possible cost against the budget and one
+  request against the caller and the connection, in one conditional
+  increment each, before the call; settling gives back what the provider did
+  not bill and replaces the hold with the reported cost. Counters are kept in
+  millionths of a dollar so sums stay exact.
+- **`format` is `markdown` or `html`.** A `text` format was dropped: Markdown
+  is already plain enough, and non-HTML text types come back as they are.
+- **Environment proxies are read-only.** Every replica reads the same
+  environment, so a switch flipped in one could not reach the others. Taking
+  an environment proxy out of the ladder stops its use.
+- **Domain rules gained `allow`,** for `allowOnly` workspaces, beside `deny`,
+  `start-at-proxy`, and `direct-only`.
+- **A connection with a problem is held back.** A refused key, exhausted
+  credits, or ZenRows blocking the key is recorded on the connection, shown
+  in **Proxies**, and skips that connection for 15 minutes or until a new key
+  is saved. A provider that asks the gateway to slow down is skipped until
+  its `Retry-After` passes (10 s by default). ZenRows' `Concurrency-Remaining`
+  header on a successful answer is not read yet, so only a 429 or `RESP009`
+  backs a connection off.
+- **Content that is a challenge page counts as blocked,** even when a proxy
+  returned it with a 200, so the ladder moves on.
+- **Telemetry** records a `gateway.web` event per fetch (caller, host, steps,
+  outcomes, cost) in the recent-events feed and the MongoDB sink, outside the
+  model analytics. The dashboard shows spend per connection and the month's
+  budget in **Proxies**; a web section in the analytics view is a follow-up.
+- **`tools/list` lists `web_fetch` to every agent;** calling it needs the
+  `web:fetch` grant, as `channels_create` needs `channels:manage`. With
+  `WEB_FETCH_DISABLED` the tool is not served at all.
+- **Tool handlers take a call context** (`signal`, `deadline`, `minProxyMs`,
+  `proxyRequestsPerDay`). The MCP route aborts the signal when the client
+  hangs up; a bot passes its run budget.
+- **Not covered by the Worker test.** The Worker build includes the fetch
+  transport and the adapters, and the Node suites test them with a fake
+  transport and fake providers, but `scripts/test-worker.ts` does not yet run
+  a fetch inside workerd.
+- **Clearing the gateway's data** with a setup token also deletes
+  `gateway_proxies`, `gateway_web_policy`, and `gateway_web_usage`.
+

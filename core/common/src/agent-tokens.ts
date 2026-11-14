@@ -14,11 +14,14 @@ export { API_TOKEN_TTLS as AGENT_TOKEN_TTLS } from "./api-tokens.js";
  * Reserved for the MCP gateway; these grants never authorize REST API access.
  * `channels:manage` lets an agent create, rename, and archive channels and
  * change which agents are in them, so it opens every channel in its workspace.
+ * `web:fetch` lets an agent read web pages through the gateway, including
+ * through the workspace's paid proxies, within the workspace's limits.
  */
 export const AGENT_TOKEN_PERMISSIONS = {
 	"mcp:read": "MCP: Read",
 	"mcp:call": "MCP: Call",
 	"channels:manage": "Channels: Manage",
+	"web:fetch": "Web: Fetch",
 } as const;
 export type AgentTokenPermission = keyof typeof AGENT_TOKEN_PERMISSIONS;
 export const DEFAULT_AGENT_TOKEN_PERMISSIONS: readonly AgentTokenPermission[] =

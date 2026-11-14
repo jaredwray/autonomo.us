@@ -12,7 +12,8 @@ import type { AddressInfo } from "node:net";
  * mid-stream after emitting output. Three models answer from the request, for
  * tests that care what the gateway sent: `echo-model` repeats the last user
  * message, `mention-model` pings the first agent mention in the system
- * prompt, and `tool-model` calls the `synapse_log` tool once and then answers.
+ * prompt, `tool-model` calls the `synapse_log` tool once and then answers, and
+ * `web-model` fetches https://example.com/pricing with `web_fetch` when offered.
  */
 
 export const STUB_USAGE = {
@@ -160,6 +161,39 @@ export async function startOpenAIStub(
 					role: "assistant",
 					content: mention ? `ping ${mention}` : "nobody to ping",
 				});
+				return;
+			}
+			if (parsed.model === "web-model") {
+				const result = messages.find((message) => message.role === "tool");
+				const offered = (
+					(parsed.tools ?? []) as Array<{ function?: { name?: string } }>
+				).some((tool) => tool.function?.name === "web_fetch");
+				if (result)
+					answer({
+						role: "assistant",
+						content: `Read: ${textOf(result).split("\n")[0]}`,
+					});
+				else if (offered)
+					answer(
+						{
+							role: "assistant",
+							content: null,
+							tool_calls: [
+								{
+									id: "call_web",
+									type: "function",
+									function: {
+										name: "web_fetch",
+										arguments: JSON.stringify({
+											url: "https://example.com/pricing",
+										}),
+									},
+								},
+							],
+						},
+						"tool_calls",
+					);
+				else answer({ role: "assistant", content: "No web access." });
 				return;
 			}
 			if (parsed.model === "tool-model") {

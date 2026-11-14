@@ -34,6 +34,7 @@ import { Dashboard } from "./Dashboard.js";
 import { Icon } from "./Icons.js";
 import { ModelsView } from "./ModelsView.js";
 import { ProfileView } from "./ProfileView.js";
+import { ProxiesView } from "./ProxiesView.js";
 import { RoutingView } from "./RoutingView.js";
 import { SynapseView } from "./SynapseView.js";
 import { TeamView } from "./TeamView.js";
@@ -45,6 +46,7 @@ const logoMark = new URL("./assets/logo-mark.svg", import.meta.url).href;
 const workspaceViews = {
 	dashboard: "Dashboard",
 	models: "Models",
+	proxies: "Proxies",
 	routing: "Routing",
 	synapse: "Synapse",
 	channels: "Channels",
@@ -659,6 +661,8 @@ export function App() {
 							<ApiTokensView workspace={selected} />
 						) : shown === "models" ? (
 							<ModelsView workspace={selected} />
+						) : shown === "proxies" ? (
+							<ProxiesView workspace={selected} />
 						) : shown === "synapse" ? (
 							<SynapseView user={user} workspace={selected} />
 						) : shown === "agents" ? (

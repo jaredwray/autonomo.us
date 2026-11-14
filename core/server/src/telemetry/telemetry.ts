@@ -37,6 +37,24 @@ export type ChatTelemetry = {
 	requestedModel?: string;
 };
 
+export type WebFetchTelemetry = {
+	workspaceId: string;
+	caller: TelemetryCaller;
+	host: string;
+	ok: boolean;
+	via: string;
+	cached: boolean;
+	costUsd: number;
+	latencyMs: number;
+	attempts: Array<{
+		step: string;
+		outcome: string;
+		status: number | null;
+		latencyMs: number;
+		costUsd: number;
+	}>;
+};
+
 export type TelemetryServiceOptions = {
 	sink?: MongoTelemetrySink;
 	/** How many events to keep in the in-memory ring buffer. */
@@ -194,6 +212,38 @@ export class TelemetryService {
 
 		this.aggregate(this.all, chat);
 		this.aggregate(this.partition(chat.workspaceId ?? NO_WORKSPACE), chat);
+		this.record(event);
+		return event;
+	}
+
+	/**
+	 * Records one web fetch: which steps ran, what each cost, and how it
+	 * ended. Only the target's host is kept, since paths and query strings
+	 * carry tokens. Web events stay out of model analytics.
+	 */
+	recordWebFetch(fetch: WebFetchTelemetry): TelemetryEvent {
+		const event: TelemetryEvent = {
+			id: randomUUID(),
+			type: "gateway.web",
+			workspaceId: fetch.workspaceId,
+			...(fetch.caller.kind === "agent"
+				? { agentId: fetch.caller.id.replace(/^agent:/, "") }
+				: {}),
+			data: {
+				operation: "web",
+				callerId: fetch.caller.id,
+				callerName: fetch.caller.name,
+				callerKind: fetch.caller.kind,
+				host: fetch.host,
+				ok: fetch.ok,
+				via: fetch.via,
+				cached: fetch.cached,
+				costUsd: fetch.costUsd,
+				latencyMs: fetch.latencyMs,
+				attempts: fetch.attempts,
+			},
+			timestamp: this.now().toISOString(),
+		};
 		this.record(event);
 		return event;
 	}

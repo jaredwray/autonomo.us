@@ -19,6 +19,7 @@ export const BOT_LIMITS = {
 	maxOutputTokens: 16_000,
 	/** Model calls in one reply when the bot uses tools. */
 	maxToolSteps: 8,
+	maxProxyRequestsPerDay: 10_000,
 } as const;
 
 export const DEFAULT_BOT_LIMITS: BotLimits = {
@@ -26,6 +27,7 @@ export const DEFAULT_BOT_LIMITS: BotLimits = {
 	tokensPerDay: 500_000,
 	maxOutputTokens: 1500,
 	contextMessages: 30,
+	proxyRequestsPerDay: 20,
 };
 
 export type BotLimits = {
@@ -37,6 +39,8 @@ export type BotLimits = {
 	maxOutputTokens: number;
 	/** How many recent messages a reply sees. */
 	contextMessages: number;
+	/** Requests through the workspace's paid proxies in a UTC day. */
+	proxyRequestsPerDay: number;
 };
 
 export type Bot = {
@@ -57,6 +61,8 @@ export type Bot = {
 	agentHops: number;
 	/** Whether a reply may use Synapse memory and read the bot's other channels. */
 	tools: boolean;
+	/** Whether a reply may read web pages with `web_fetch`, through the workspace's proxies when needed. */
+	web: boolean;
 	limits: BotLimits;
 	createdAt: string;
 	createdBy: string;
@@ -117,6 +123,7 @@ export type CreateBotRequest = {
 	enabled?: boolean;
 	agentHops?: number;
 	tools?: boolean;
+	web?: boolean;
 	limits?: Partial<BotLimits>;
 };
 export type UpdateBotRequest = Partial<CreateBotRequest> & {

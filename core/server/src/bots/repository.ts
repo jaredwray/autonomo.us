@@ -1,4 +1,9 @@
-import type { Bot, BotRun, TokenUsage } from "@autonomo.us/common";
+import {
+	type Bot,
+	type BotRun,
+	DEFAULT_BOT_LIMITS,
+	type TokenUsage,
+} from "@autonomo.us/common";
 import {
 	controlPlaneConnection,
 	isDuplicateKey,
@@ -225,7 +230,18 @@ export class MemoryBotRepository implements BotRepository {
 
 type BotDocument = Omit<Bot, "id"> & { _id: string };
 type RunDocument = Omit<StoredRun, "id"> & { _id: string };
-const toBot = ({ _id, ...rest }: BotDocument): Bot => ({ id: _id, ...rest });
+/** Bots saved before web access have no `web` switch or proxy limit. */
+const toBot = ({ _id, ...rest }: BotDocument): Bot => ({
+	id: _id,
+	...rest,
+	web: rest.web === true,
+	limits: {
+		...rest.limits,
+		proxyRequestsPerDay:
+			rest.limits?.proxyRequestsPerDay ??
+			DEFAULT_BOT_LIMITS.proxyRequestsPerDay,
+	},
+});
 const toRun = ({ _id, ...rest }: RunDocument): StoredRun => ({
 	id: _id,
 	...rest,

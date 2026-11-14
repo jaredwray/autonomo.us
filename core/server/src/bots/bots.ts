@@ -86,6 +86,12 @@ export class BotService {
 				BOT_LIMITS.maxContextMessages,
 				"Context messages",
 			),
+			proxyRequestsPerDay: whole(
+				merged.proxyRequestsPerDay ?? DEFAULT_BOT_LIMITS.proxyRequestsPerDay,
+				0,
+				BOT_LIMITS.maxProxyRequestsPerDay,
+				"Proxied requests a day",
+			),
 		};
 	}
 	/** Applies the fields of `input` that are present to `bot`, validated. */
@@ -116,6 +122,7 @@ export class BotService {
 		}
 		if (input.enabled !== undefined) bot.enabled = input.enabled === true;
 		if (input.tools !== undefined) bot.tools = input.tools === true;
+		if (input.web !== undefined) bot.web = input.web === true;
 		if (input.agentHops !== undefined)
 			bot.agentHops = whole(
 				input.agentHops,
@@ -185,6 +192,7 @@ export class BotService {
 			enabled: true,
 			agentHops: 0,
 			tools: false,
+			web: false,
 			limits: DEFAULT_BOT_LIMITS,
 			createdAt: at,
 			createdBy: actorName,

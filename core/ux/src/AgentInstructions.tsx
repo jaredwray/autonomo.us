@@ -63,6 +63,7 @@ export async function loadModelChoices(): Promise<ModelChoice[]> {
 const LIMIT_FIELDS: ReadonlyArray<{
 	key: keyof BotLimits;
 	label: string;
+	min?: number;
 	max: number;
 	hint: string;
 }> = [
@@ -89,6 +90,13 @@ const LIMIT_FIELDS: ReadonlyArray<{
 		label: "Context messages",
 		max: BOT_LIMITS.maxContextMessages,
 		hint: "How many recent messages a reply sees.",
+	},
+	{
+		key: "proxyRequestsPerDay",
+		label: "Proxied requests a day",
+		min: 0,
+		max: BOT_LIMITS.maxProxyRequestsPerDay,
+		hint: "Web fetches through the workspace's paid proxies, counted from 00:00 UTC. 0 allows plain requests only.",
 	},
 ];
 
@@ -123,6 +131,7 @@ export function InstructionsForm({
 	const [model, setModel] = useState(bot?.model ?? "");
 	const [enabled, setEnabled] = useState(bot?.enabled ?? true);
 	const [tools, setTools] = useState(bot?.tools ?? false);
+	const [web, setWeb] = useState(bot?.web ?? false);
 	const [agentHops, setAgentHops] = useState(bot?.agentHops ?? 0);
 	const [limits, setLimits] = useState<Record<keyof BotLimits, string>>(() => {
 		const from = bot?.limits ?? DEFAULT_BOT_LIMITS;
@@ -131,6 +140,9 @@ export function InstructionsForm({
 			tokensPerDay: String(from.tokensPerDay),
 			maxOutputTokens: String(from.maxOutputTokens),
 			contextMessages: String(from.contextMessages),
+			proxyRequestsPerDay: String(
+				from.proxyRequestsPerDay ?? DEFAULT_BOT_LIMITS.proxyRequestsPerDay,
+			),
 		};
 	});
 	const [busy, setBusy] = useState(false);
@@ -158,12 +170,14 @@ export function InstructionsForm({
 		model,
 		enabled,
 		tools,
+		web,
 		agentHops,
 		limits: {
 			repliesPerHour: Number(limits.repliesPerHour),
 			tokensPerDay: Number(limits.tokensPerDay),
 			maxOutputTokens: Number(limits.maxOutputTokens),
 			contextMessages: Number(limits.contextMessages),
+			proxyRequestsPerDay: Number(limits.proxyRequestsPerDay),
 		},
 	};
 	const unchanged =
@@ -175,12 +189,16 @@ export function InstructionsForm({
 				model: bot.model,
 				enabled: bot.enabled,
 				tools: bot.tools,
+				web: bot.web ?? false,
 				agentHops: bot.agentHops,
 				limits: {
 					repliesPerHour: bot.limits.repliesPerHour,
 					tokensPerDay: bot.limits.tokensPerDay,
 					maxOutputTokens: bot.limits.maxOutputTokens,
 					contextMessages: bot.limits.contextMessages,
+					proxyRequestsPerDay:
+						bot.limits.proxyRequestsPerDay ??
+						DEFAULT_BOT_LIMITS.proxyRequestsPerDay,
 				},
 			} satisfies CreateBotRequest);
 	return (
@@ -293,6 +311,19 @@ export function InstructionsForm({
 						Lets a reply search and write this agent's own Synapse space,
 						propose changes to the shared space, and read its other channels.
 					</span>
+					<label className="failover-enable">
+						<input
+							type="checkbox"
+							checked={web}
+							onChange={(event) => setWeb(event.target.checked)}
+						/>
+						Web access
+					</label>
+					<span className="field-hint">
+						Lets a reply read web pages with web_fetch: a plain request first,
+						then the workspace's proxies when a site blocks it or needs a
+						browser. Proxied requests are billed and limited below.
+					</span>
 				</div>
 				<div className="form-field bot-hops">
 					<label htmlFor={`${id}-hops`}>Agent-to-agent replies</label>
@@ -323,7 +354,7 @@ export function InstructionsForm({
 									id={`${id}-${field.key}`}
 									type="number"
 									required
-									min={1}
+									min={field.min ?? 1}
 									max={field.max}
 									step={1}
 									value={limits[field.key]}
@@ -370,12 +401,16 @@ function BotFacts({ bot }: { bot: BotDetails }) {
 			<dd>{bot.enabled ? "Active" : "Paused"}</dd>
 			<dt>Tools</dt>
 			<dd>{bot.tools ? "On" : "Off"}</dd>
+			<dt>Web access</dt>
+			<dd>{bot.web ? "On" : "Off"}</dd>
 			<dt>Agent-to-agent replies</dt>
 			<dd>{bot.agentHops}</dd>
 			{LIMIT_FIELDS.map((field) => (
 				<Fragment key={field.key}>
 					<dt>{field.label}</dt>
-					<dd>{count(bot.limits[field.key])}</dd>
+					<dd>
+						{count(bot.limits[field.key] ?? DEFAULT_BOT_LIMITS[field.key])}
+					</dd>
 				</Fragment>
 			))}
 			<dt>Instructions</dt>

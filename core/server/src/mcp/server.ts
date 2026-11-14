@@ -62,6 +62,19 @@ export type McpToolDefinition = {
 	inputSchema: JsonSchema;
 };
 export type McpArgs = Record<string, unknown>;
+/**
+ * What a call may take: a signal that ends it (the MCP request closing, or a
+ * bot's run budget) and a deadline. Tools that wait on the network use it.
+ */
+export type McpCallContext = {
+	signal?: AbortSignal;
+	/** Epoch milliseconds. */
+	deadline?: number;
+	/** A paid proxy step starts only with at least this much time left. */
+	minProxyMs?: number;
+	/** A bot's own daily limit on proxied requests. */
+	proxyRequestsPerDay?: number;
+};
 /** The agent a request authenticated as, in its workspace. */
 export type McpAgent = {
 	/** An agent that uses MCP, or the identity of one the gateway runs. */
@@ -81,7 +94,11 @@ export type McpToolSet = {
 	tools: McpToolDefinition[];
 	handlers: Record<
 		string,
-		(agent: McpAgent, args: McpArgs) => Promise<unknown>
+		(
+			agent: McpAgent,
+			args: McpArgs,
+			context?: McpCallContext,
+		) => Promise<unknown>
 	>;
 	text?: (name: string, result: unknown) => string | undefined;
 };
@@ -201,7 +218,11 @@ export async function mcpRoutes(
 		(_request, payload, done) => done(null, payload),
 	);
 
-	const callTool = async (agent: McpAgent, params: unknown) => {
+	const callTool = async (
+		agent: McpAgent,
+		params: unknown,
+		context: McpCallContext,
+	) => {
 		const { name, arguments: args } = (params ?? {}) as {
 			name?: unknown;
 			arguments?: unknown;
@@ -220,6 +241,7 @@ export async function mcpRoutes(
 			const result = await set.handlers[definition.name](
 				agent,
 				(args ?? {}) as McpArgs,
+				context,
 			);
 			return {
 				content: [
@@ -240,7 +262,12 @@ export async function mcpRoutes(
 		}
 	};
 
-	const dispatch = async (agent: McpAgent, method: string, params: unknown) => {
+	const dispatch = async (
+		agent: McpAgent,
+		method: string,
+		params: unknown,
+		context: McpCallContext,
+	) => {
 		switch (method) {
 			case "initialize": {
 				const requested = (params as { protocolVersion?: unknown } | undefined)
@@ -263,7 +290,7 @@ export async function mcpRoutes(
 				return { tools: definitions };
 			case "tools/call":
 				requireGrant(agent, "mcp:call");
-				return callTool(agent, params);
+				return callTool(agent, params, context);
 			default:
 				throw new RpcError(RPC.methodNotFound, `Method not found: ${method}`);
 		}
@@ -438,8 +465,15 @@ export async function mcpRoutes(
 				RPC.invalidRequest,
 				"Invalid Request: bad id.",
 			);
+		// A client that hangs up stops a tool that is still waiting on the network.
+		const closed = new AbortController();
+		reply.raw.once("close", () => {
+			if (!reply.raw.writableFinished) closed.abort();
+		});
 		try {
-			const result = await dispatch(agent, method, params);
+			const result = await dispatch(agent, method, params, {
+				signal: closed.signal,
+			});
 			return reply.send({ jsonrpc: "2.0", id, result });
 		} catch (error) {
 			if (error instanceof RpcError)

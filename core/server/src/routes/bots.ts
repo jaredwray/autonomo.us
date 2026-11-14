@@ -19,6 +19,7 @@ const fields = {
 	model: string,
 	enabled: { type: "boolean" },
 	tools: { type: "boolean" },
+	web: { type: "boolean" },
 	agentHops: integer,
 	limits: {
 		type: "object",
@@ -28,6 +29,7 @@ const fields = {
 			tokensPerDay: integer,
 			maxOutputTokens: integer,
 			contextMessages: integer,
+			proxyRequestsPerDay: integer,
 		},
 	},
 };
