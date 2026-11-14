@@ -621,7 +621,21 @@ export class BotRunner {
 		const untrusted = { web: false };
 		/** Hosts this reply has fetched, for the follow-up limit. */
 		const fetched: string[] = [];
-		const allowHost = webScope(bot, run.mentioned);
+		const inScope = webScope(bot, run.mentioned);
+		/**
+		 * The scope, plus the follow-up limit once the reply has fetched a page.
+		 * The ladder applies it to redirects, a proxy's landing, and the cache
+		 * too, so a same-site follow-up cannot be redirected off the site.
+		 */
+		const allowHost = (candidate: string) => {
+			const scoped = inScope(candidate);
+			if (scoped || !fetched.length) return scoped;
+			if (bot.webFollowUps === "none")
+				return "This bot fetches one page per reply.";
+			if (bot.webFollowUps === "same-site" && !inHosts(candidate, fetched))
+				return `This reply may only fetch more pages from ${fetched.join(", ")}.`;
+			return null;
+		};
 		for (const set of this.options.toolSets)
 			for (const definition of set.tools) {
 				const allowed =
@@ -663,6 +677,11 @@ export class BotRunner {
 								},
 							);
 							if (web && host && !fetched.includes(host)) fetched.push(host);
+							// Where a page landed counts as fetched too, for same-site follow-ups.
+							const landed = web
+								? hostOf((result as { finalUrl?: unknown } | null)?.finalUrl)
+								: null;
+							if (landed && !fetched.includes(landed)) fetched.push(landed);
 							return (
 								set.text?.(definition.name, result) ?? JSON.stringify(result)
 							);

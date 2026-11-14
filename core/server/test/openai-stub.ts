@@ -15,7 +15,8 @@ import type { AddressInfo } from "node:net";
  * prompt, `tool-model` calls the `synapse_log` tool once and then answers, and
  * `web-model` fetches https://example.com/pricing with `web_fetch` when offered,
  * `web-tool-model` fetches it and then tries `synapse_log`, and
- * `web-twice-model` fetches it and then a page on another site.
+ * `web-twice-model` fetches it and then a page on another site, and
+ * `web-redirect-model` fetches it and then a page on the same site.
  */
 
 export const STUB_USAGE = {
@@ -165,13 +166,16 @@ export async function startOpenAIStub(
 				});
 				return;
 			}
-			if (parsed.model === "web-twice-model") {
+			if (
+				parsed.model === "web-twice-model" ||
+				parsed.model === "web-redirect-model"
+			) {
 				// Fetches two pages on different sites, then reports the second.
 				const results = messages.filter((message) => message.role === "tool");
-				const urls = [
-					"https://example.com/pricing",
-					"https://other.example.org/next",
-				];
+				const urls =
+					parsed.model === "web-redirect-model"
+						? ["https://example.com/pricing", "https://example.com/redirect-me"]
+						: ["https://example.com/pricing", "https://other.example.org/next"];
 				if (results.length < urls.length)
 					answer(
 						{

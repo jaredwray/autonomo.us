@@ -49,8 +49,16 @@ function zenrows() {
 	const fetchImpl: FetchLike = async (input) => {
 		const url = new URL(String(input));
 		calls.push(url.searchParams.get("url") ?? "");
-		return new Response(`# Unblocked\n\n${url.searchParams.get("url")}`, {
-			headers: { "content-type": "text/markdown", "x-request-cost": "0.025" },
+		const target = url.searchParams.get("url") ?? "";
+		return new Response(`# Unblocked\n\n${target}`, {
+			headers: {
+				"content-type": "text/markdown",
+				"x-request-cost": "0.025",
+				// A page that redirects off its site, as a provider reports it.
+				"zr-final-url": target.includes("redirect-me")
+					? "https://elsewhere.example.net/landed"
+					: target,
+			},
 		});
 	};
 	return { fetchImpl, calls };
@@ -552,6 +560,18 @@ describe("a bot's web scope", () => {
 		// Allowed and tried: the fake site has no page there.
 		expect(await api.ask(free.id, "look around")).toMatch(
 			/^Then: Could not fetch https:\/\/other\.example\.org\/next/,
+		);
+	});
+
+	it("holds a same-site follow-up to the site through redirects", async () => {
+		const api = await withBot(["web-redirect-model"]);
+		const same = await api.bot({
+			name: "Same",
+			model: "stub/web-redirect-model",
+			webScope: "any",
+		});
+		expect(await api.ask(same.id, "look around")).toBe(
+			"Then: Could not fetch https://example.com/redirect-me. The site redirected to elsewhere.example.net. This reply may only fetch more pages from example.com.",
 		);
 	});
 
