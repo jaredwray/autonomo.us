@@ -89,6 +89,28 @@ function failure(
 	};
 }
 
+/**
+ * An error answer too large to read for its `code`. A missing page (404,
+ * `RESP002`) is billed; otherwise it is billed only when ZenRows reported
+ * a charge, so a hold is kept whenever money may have been spent.
+ */
+function oversizedError(response: Response, level: ProxyLevel): StepFailure {
+	if (response.status === 404)
+		return failure("not-found", "the page does not exist", {
+			billed: true,
+			costUsd: costOf(response, level),
+		});
+	const charged = Number.parseFloat(
+		response.headers.get("x-request-cost") ?? "",
+	);
+	const billed = Number.isFinite(charged) && charged > 0;
+	return failure(
+		"provider-error",
+		`an error answer larger than 5 MB (HTTP ${response.status})`,
+		billed ? { billed, costUsd: charged } : {},
+	);
+}
+
 /** What a ZenRows error means for the ladder, from its `code`, never from the status alone. */
 function errorResult(
 	response: Response,
@@ -213,7 +235,7 @@ export const zenrowsAdapter: ProxyAdapter = {
 							billed: true,
 							costUsd: costOf(response, call.level),
 						})
-					: errorResult(response, null, call.level);
+					: oversizedError(response, call.level);
 			// The error may quote the request URL, and with it the key.
 			return call.signal.aborted
 				? failure("timeout", "the request ran out of time")

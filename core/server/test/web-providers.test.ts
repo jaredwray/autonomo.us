@@ -901,4 +901,33 @@ describe("error answers too large to read", () => {
 		);
 		expect(cf.outcome).toBe("provider-error");
 	});
+
+	it("keeps billing what may have been charged", async () => {
+		const missing = await zenrowsAdapter.fetch(
+			zenrows,
+			call("auto"),
+			fake(() => hugeError(404, { "x-request-cost": "0.001" })).fetchImpl,
+		);
+		expect(missing).toMatchObject({
+			outcome: "not-found",
+			billed: true,
+			costUsd: 0.001,
+		});
+		const charged = await zenrowsAdapter.fetch(
+			zenrows,
+			call("auto"),
+			fake(() => hugeError(500, { "x-request-cost": "0.005" })).fetchImpl,
+		);
+		expect(charged).toMatchObject({
+			outcome: "provider-error",
+			billed: true,
+			costUsd: 0.005,
+		});
+		const blocked = await brightdataAdapter.fetch(
+			brightdata,
+			call("unlock"),
+			fake(() => hugeError(200, { "x-brd-status-code": "403" })).fetchImpl,
+		);
+		expect(blocked).toMatchObject({ outcome: "blocked", billed: false });
+	});
 });
