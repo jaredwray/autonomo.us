@@ -154,7 +154,7 @@ export class ProxyStore {
 			);
 		try {
 			const documents = await this.proxies()
-				.find({ workspaceId: workspace.id })
+				.find({ workspaceId: { $eq: workspace.id } })
 				.toArray();
 			return new Map(
 				documents.map((document) => [
@@ -396,7 +396,7 @@ export class ProxyStore {
 		} else
 			try {
 				const result = await this.proxies().updateOne(
-					{ _id: this.documentId(workspace, name) },
+					{ _id: { $eq: this.documentId(workspace, name) } },
 					{ $set: { config: next, problem } },
 				);
 				if (!result.matchedCount)
@@ -425,7 +425,7 @@ export class ProxyStore {
 		else
 			try {
 				await this.proxies().deleteOne({
-					_id: this.documentId(workspace, name),
+					_id: { $eq: this.documentId(workspace, name) },
 				});
 			} catch (error) {
 				this.unavailable(error);
@@ -470,7 +470,7 @@ export class ProxyStore {
 		}
 		await this.proxies()
 			.updateOne(
-				{ _id: this.documentId(workspace, name) },
+				{ _id: { $eq: this.documentId(workspace, name) } },
 				{ $set: { problem } },
 			)
 			.catch(() => {});
@@ -507,7 +507,9 @@ export class ProxyStore {
 				this.memoryPolicies.get(workspace.id) ?? this.seedPolicy(workspace),
 			);
 		try {
-			const saved = await this.policies().findOne({ _id: workspace.id });
+			const saved = await this.policies().findOne({
+				_id: { $eq: workspace.id },
+			});
 			return saved
 				? { ...DEFAULT_WEB_POLICY, ...saved.policy, revision: saved.revision }
 				: this.seedPolicy(workspace);
@@ -565,7 +567,7 @@ export class ProxyStore {
 				});
 			} else {
 				const result = await this.policies().replaceOne(
-					{ _id: workspace.id, revision },
+					{ _id: { $eq: workspace.id }, revision: { $eq: revision } },
 					{ policy: stored, revision: revision + 1 },
 				);
 				if (!result.matchedCount) throw changed();
@@ -654,7 +656,7 @@ export class ProxyStore {
 			});
 			return true;
 		}
-		const filter: Record<string, unknown> = { _id: key };
+		const filter: Record<string, unknown> = { _id: { $eq: key } };
 		if (caps.requests !== undefined)
 			filter.requests = { $lte: caps.requests - amount.requests };
 		if (caps.costMicros !== undefined)
@@ -687,7 +689,7 @@ export class ProxyStore {
 		}
 		await this.usage()
 			.updateOne(
-				{ _id: key },
+				{ _id: { $eq: key } },
 				{ $inc: { requests: amount.requests, costMicros: amount.costMicros } },
 			)
 			.catch(() => {});
