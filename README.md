@@ -342,7 +342,7 @@ within that workspace:
 | Routing | None, Read, Edit | Read inspects routing and failover. Edit also saves those settings. |
 | Inference | None, Run | Run sends chat and decisions requests, including Auto, pools, and failover. |
 | Telemetry | None, Read | Read views usage and events. |
-| Synapse | None, Read, Edit | Read lists spaces, templates, notes, categories, unresolved links, daily views, and proposals. Edit also creates, changes, appends to, deletes, imports, and exports notes. Neither decides proposals or changes the global space. |
+| Synapse | None, Read, Edit | Read lists spaces, templates, notes, categories, unresolved links, the link graph, daily views, and proposals. Edit also creates, changes, appends to, deletes, imports, and exports notes. Neither decides proposals or changes the global space. |
 | Channels | None, Read, Post | Read lists channels and reads messages. Post also posts, edits and deletes the token's own messages. Neither creates or changes a channel or its agents. |
 
 Edit includes Read for that resource, but never Run. API token management and
@@ -475,8 +475,9 @@ knowledge graph of linked Markdown notes with properties, modelled on Steph
 Ango's (kepano) [Obsidian vault](https://github.com/kepano/kepano-obsidian).
 Notes have no folders; they are classified by a `categories` property, linked
 with `[[wikilinks]]`, and found through backlinks, related notes, unresolved
-links, and daily notes. Every space exports to Obsidian-compatible files, and
-an Obsidian vault imports back. The full behavior is in
+links, and daily notes. The **Synapse** view opens on a graph of the selected
+space, like Obsidian's graph view. Every space exports to Obsidian-compatible
+files, and an Obsidian vault imports back. The full behavior is in
 [docs/SYNAPSE.md](docs/SYNAPSE.md).
 
 Synapse has one global canon and one Synapse per workspace. `global` is the
@@ -527,8 +528,9 @@ REST routes under `/v1/<workspace id>/synapse`, where `:space` is `shared`,
 `linksTo`, `sort`, `direction`, `limit`, `offset`, `where.<property>=`);
 `GET|PATCH|DELETE /spaces/:space/notes/:title` and
 `POST .../notes/:title/append`; `GET /spaces/:space/unresolved`,
-`.../categories`, `.../daily/:date`; `GET /spaces/:space/export` (JSON, or a
-`.zip` with `?format=zip`) and `POST /spaces/:space/import` (up to 500 files,
+`.../categories`, `.../graph` (nodes and edges for the dashboard's graph view,
+capped at 1,000 nodes), `.../daily/:date`; `GET /spaces/:space/export` (JSON,
+or a `.zip` with `?format=zip`) and `POST /spaces/:space/import` (up to 500 files,
 5 MB); `GET /proposals` and `POST /proposals/:id/decide` (signed-in workspace
 admins only). Titles are URL-encoded; errors use `{ error: { message } }`.
 

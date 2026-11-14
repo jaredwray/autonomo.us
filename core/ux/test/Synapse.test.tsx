@@ -29,6 +29,7 @@ afterEach(async () => {
 	clearCredential();
 	for (const close of closers.splice(0)) await close();
 	vi.unstubAllEnvs();
+	vi.unstubAllGlobals();
 	vi.restoreAllMocks();
 	window.history.replaceState(null, "", "/");
 	window.localStorage.clear();
@@ -74,6 +75,13 @@ const expectHash = (path: string) =>
 const change = (label: string, value: string) =>
 	fireEvent.change(screen.getByLabelText(label), { target: { value } });
 const noteRegion = () => screen.getByRole("region", { name: "Note" });
+const graphRegion = () => screen.getByRole("region", { name: "Graph" });
+/** The graph's drawing; its name counts the notes and links it shows. */
+const graphCanvas = async (name: string | RegExp = /^Graph of/) =>
+	within(await screen.findByRole("region", { name: "Graph" })).findByRole(
+		"group",
+		{ name },
+	);
 const notesList = () => screen.findByRole("complementary", { name: "Notes" });
 const properties = () => screen.getByRole("table", { name: "Properties" });
 const today = () => new Date().toISOString().slice(0, 10);
@@ -541,7 +549,10 @@ it("searches, filters by category, renames with link rewriting, and deletes", as
 	await screen.findByText("Deleted “Ada King”.");
 	await list.findByText("1 note match");
 	expect(list.queryByRole("link", { name: /^Ada King/ })).toBeNull();
-	expect(within(noteRegion()).getByText("Pick a note")).toBeDefined();
+	// Back on the graph, where the deleted note is now an unresolved link.
+	await within(graphRegion()).findByRole("button", {
+		name: "Create note Ada King",
+	});
 	expectHash("synapse/shared");
 	expect((await readNote(running, "shared", "Ada King")).statusCode).toBe(404);
 	// The deleted note's title is now a breadcrumb from the project note.
@@ -707,6 +718,10 @@ it("shows members the proposals read-only", async () => {
 		},
 	});
 	expect(added.statusCode, added.body).toBe(201);
+	await createNote(running, "global", {
+		title: "Canon",
+		body: "See [[Missing]].",
+	});
 	const agent = await createAgent(running);
 	await mcpCall(url, agent.secret, "synapse_propose", {
 		action: "create",
@@ -740,6 +755,12 @@ it("shows members the proposals read-only", async () => {
 	await screen.findByText(/owners and admins change it/);
 	expect(screen.queryByRole("button", { name: "New note" })).toBeNull();
 	expect(screen.queryByRole("button", { name: "Import" })).toBeNull();
+	// Its graph shows unresolved links, but a member cannot create them.
+	const canvas = within(await graphCanvas("Graph of 1 note and 1 link"));
+	expect(canvas.getByRole("link", { name: "Canon" })).toBeDefined();
+	expect(canvas.queryByRole("button")).toBeNull();
+	fireEvent.click(canvas.getByText("Missing"));
+	expect(screen.queryByLabelText("Title")).toBeNull();
 	fireEvent.change(screen.getByLabelText("Space"), {
 		target: { value: "shared" },
 	});
@@ -887,3 +908,248 @@ it("imports Markdown files and a vault folder, then exports the space as a zip",
 	delete urlApi.createObjectURL;
 	delete urlApi.revokeObjectURL;
 });
+
+it("lands on the graph of the space, highlights neighbours, and opens notes from it", async () => {
+	const running = await boot();
+	await createNote(running, "shared", {
+		title: "Analytical Engine",
+		body: "Designed with [[Ada Lovelace]] and [[ada lovelace]]; see [[Difference Engine]].",
+	});
+	await createNote(running, "shared", {
+		title: "Ada Lovelace",
+		template: "People",
+		body: "Wrote about the [[Analytical Engine]].",
+	});
+	await createNote(running, "shared", { title: "Loner", body: "" });
+	renderAt("#/synapse");
+	// Four notes (People was created for the category) and one unresolved link.
+	const canvas = await graphCanvas("Graph of 4 notes and 3 links");
+	const graph = within(canvas);
+	const node = (name: string) => graph.getByRole("link", { name });
+	// The space's hint keeps the time zone dates use.
+	expect(
+		await screen.findByText(/Dates and daily notes use UTC\./),
+	).toBeDefined();
+	expect(
+		graph.getAllByRole("link").map((link) => link.getAttribute("aria-label")),
+	).toEqual(["Ada Lovelace", "Analytical Engine", "Loner", "People"]);
+	expect(node("Ada Lovelace").getAttribute("href")).toBe(
+		`${window.location.hash}/shared/Ada%20Lovelace`,
+	);
+	// Every node has been placed, and the two ends of a link are apart.
+	await waitFor(() =>
+		expect(node("Ada Lovelace").getAttribute("transform")).not.toBe(
+			node("Analytical Engine").getAttribute("transform"),
+		),
+	);
+	expect(canvas.querySelectorAll("[data-index]:not([transform])")).toHaveLength(
+		0,
+	);
+	// Better-linked notes are drawn bigger.
+	const radius = (name: string) =>
+		Number(node(name).querySelector("circle")?.getAttribute("r"));
+	expect(radius("Ada Lovelace")).toBeGreaterThan(radius("Loner"));
+	// Categories and unresolved links are drawn differently and explained.
+	expect(node("People").classList.contains("category")).toBe(true);
+	expect(node("Ada Lovelace").classList.contains("category")).toBe(false);
+	const ghost = graph.getByRole("button", {
+		name: "Create note Difference Engine",
+	});
+	expect(ghost.classList.contains("unresolved")).toBe(true);
+	expect(
+		within(screen.getByRole("list", { name: "Legend" }))
+			.getAllByRole("listitem")
+			.map((item) => item.textContent),
+	).toEqual(["Note", "Category", "Unresolved link"]);
+
+	// Hovering or focusing a note highlights it, its neighbours, and their links.
+	const near = () =>
+		Array.from(
+			canvas.querySelectorAll("[data-index].near"),
+			(item) => item.querySelector("text")?.textContent,
+		);
+	expect(canvas.hasAttribute("data-active")).toBe(false);
+	fireEvent.pointerOver(node("Ada Lovelace"));
+	expect(canvas.hasAttribute("data-active")).toBe(true);
+	expect(near()).toEqual(["Ada Lovelace", "Analytical Engine", "People"]);
+	expect(canvas.querySelectorAll("line")).toHaveLength(3);
+	expect(canvas.querySelectorAll("line.near")).toHaveLength(2);
+	fireEvent.pointerLeave(canvas);
+	expect(canvas.hasAttribute("data-active")).toBe(false);
+	expect(near()).toEqual([]);
+	fireEvent.focus(node("Loner"));
+	expect(near()).toEqual(["Loner"]);
+	fireEvent.blur(node("Loner"));
+	expect(near()).toEqual([]);
+
+	// The buttons zoom about the centre and fit the graph back into view.
+	const viewport = canvas.querySelector(
+		".synapse-graph-viewport",
+	) as SVGGElement;
+	const scale = () =>
+		Number(
+			/scale\(([\d.]+)\)/.exec(viewport.getAttribute("transform") ?? "")?.[1],
+		);
+	fireEvent.click(screen.getByRole("button", { name: "Fit graph to view" }));
+	const fitted = scale();
+	fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+	expect(scale()).toBeGreaterThan(fitted);
+	fireEvent.click(screen.getByRole("button", { name: "Zoom out" }));
+	fireEvent.click(screen.getByRole("button", { name: "Zoom out" }));
+	expect(scale()).toBeLessThan(fitted);
+	fireEvent.click(screen.getByRole("button", { name: "Fit graph to view" }));
+	expect(scale()).toBe(fitted);
+
+	// Hiding unresolved links removes the node and its link.
+	fireEvent.click(screen.getByRole("checkbox", { name: "Show unresolved" }));
+	await graphCanvas("Graph of 4 notes and 2 links");
+	expect(
+		screen.queryByRole("button", { name: "Create note Difference Engine" }),
+	).toBeNull();
+	fireEvent.click(screen.getByRole("checkbox", { name: "Show unresolved" }));
+	await graphCanvas("Graph of 4 notes and 3 links");
+
+	// Selecting a note opens it; the note links back to the graph.
+	fireEvent.click(
+		within(graphRegion()).getByRole("link", { name: "Ada Lovelace" }),
+	);
+	await screen.findByRole("heading", { name: "Ada Lovelace" });
+	expectHash("synapse/shared/Ada%20Lovelace");
+	expect(screen.queryByRole("region", { name: "Graph" })).toBeNull();
+	fireEvent.click(
+		within(noteRegion()).getByRole("link", { name: "Back to graph" }),
+	);
+	expectHash("synapse/shared");
+	const back = within(await graphCanvas("Graph of 4 notes and 3 links"));
+	// The note the viewer came from is marked.
+	expect(
+		back
+			.getByRole("link", { name: "Ada Lovelace" })
+			.classList.contains("current"),
+	).toBe(true);
+	expect(
+		back.getByRole("link", { name: "Loner" }).classList.contains("current"),
+	).toBe(false);
+
+	// An unresolved link opens the New note form with its title; creating
+	// the note resolves it in the graph.
+	fireEvent.click(
+		back.getByRole("button", { name: "Create note Difference Engine" }),
+	);
+	expect((screen.getByLabelText("Title") as HTMLInputElement).value).toBe(
+		"Difference Engine",
+	);
+	fireEvent.click(screen.getByRole("button", { name: "Create note" }));
+	await screen.findByRole("heading", { name: "Difference Engine" });
+	fireEvent.click(screen.getByRole("link", { name: "Back to graph" }));
+	const resolved = within(await graphCanvas("Graph of 5 notes and 3 links"));
+	expect(
+		resolved.getByRole("link", { name: "Difference Engine" }),
+	).toBeDefined();
+	expect(resolved.queryByRole("button")).toBeNull();
+	expect(
+		screen.queryByRole("checkbox", { name: "Show unresolved" }),
+	).toBeNull();
+});
+
+it("marks notes inherited from Global in the Shared graph and redraws per space", async () => {
+	const running = await boot();
+	await createNote(running, "global", {
+		title: "Brand voice",
+		body: "Plain words.",
+	});
+	await createNote(running, "shared", {
+		title: "Trailer plan",
+		body: "Follow the [[Brand voice]].",
+	});
+	renderAt("#/synapse");
+	const shared = within(await graphCanvas("Graph of 2 notes and 1 link"));
+	const inherited = shared.getByRole("link", { name: "Brand voice" });
+	expect(inherited.classList.contains("inherited")).toBe(true);
+	expect(inherited.querySelector("title")?.textContent).toBe(
+		"Brand voice · inherited from Global · 1 link",
+	);
+	expect(
+		shared
+			.getByRole("link", { name: "Trailer plan" })
+			.classList.contains("inherited"),
+	).toBe(false);
+	expect(
+		within(screen.getByRole("list", { name: "Legend" })).getByText(
+			"Inherited from Global",
+		),
+	).toBeDefined();
+	// In Global the note is simply a note.
+	change("Space", "global");
+	const global = within(await graphCanvas("Graph of 1 note and 0 links"));
+	expect(
+		global
+			.getByRole("link", { name: "Brand voice" })
+			.classList.contains("inherited"),
+	).toBe(false);
+	expect(global.queryByRole("link", { name: "Trailer plan" })).toBeNull();
+	expect(
+		within(screen.getByRole("list", { name: "Legend" })).queryByText(
+			"Inherited from Global",
+		),
+	).toBeNull();
+});
+
+it("says so when the graph is empty, capped, or cannot load, and settles at once for reduced motion", async () => {
+	const running = await start();
+	expect(await screen.findByText(/Nothing to draw yet/)).toBeDefined();
+	expect(screen.queryByRole("group", { name: /^Graph of/ })).toBeNull();
+	expect(screen.queryByRole("button", { name: "Zoom in" })).toBeNull();
+	// With reduced motion the layout is finished before the first paint.
+	vi.stubGlobal(
+		"matchMedia",
+		(query: string) =>
+			({ matches: query.includes("prefers-reduced-motion") }) as MediaQueryList,
+	);
+	const frames = vi.spyOn(window, "requestAnimationFrame");
+	// More notes than the graph draws: a hub and its leaves, in import-sized batches.
+	const titles = Array.from(
+		{ length: 1001 },
+		(_, index) => `Leaf ${String(index).padStart(4, "0")}`,
+	);
+	for (let at = 0; at < titles.length; at += 400) {
+		const response = await running.server.inject({
+			method: "POST",
+			url: "/v1/synapse/spaces/shared/import",
+			headers: running.owner,
+			payload: {
+				files: titles
+					.slice(at, at + 400)
+					.map((title) => ({ path: `${title}.md`, content: "[[Hub]]" })),
+			},
+		});
+		expect(response.statusCode, response.body).toBe(200);
+	}
+	await createNote(running, "shared", { title: "Hub", body: "" });
+	// Any change to the space redraws the graph.
+	change("Space", "global");
+	await screen.findByText(/owners and admins change it/);
+	change("Space", "shared");
+	const canvas = await graphCanvas("Graph of 1,000 notes and 999 links");
+	expect(
+		screen.getByText("Showing the 1,000 most-linked of 1,002 notes."),
+	).toBeDefined();
+	expect(canvas.querySelectorAll("[data-index]:not([transform])")).toHaveLength(
+		0,
+	);
+	expect(frames).not.toHaveBeenCalled();
+	// Zoomed out to fit, only the dozen best-linked notes are labelled.
+	expect(canvas.hasAttribute("data-zoomed")).toBe(false);
+	expect(canvas.querySelectorAll("[data-index].major")).toHaveLength(12);
+	expect(
+		within(canvas)
+			.getByRole("link", { name: "Hub" })
+			.classList.contains("major"),
+	).toBe(true);
+
+	// A graph that cannot load says what went wrong and offers a retry.
+	await running.server.close();
+	change("Space", "global");
+	const alert = await within(graphRegion()).findByRole("alert");
+	expect(within(alert).getByRole("button", { name: "Retry" })).toBeDefined();
+}, 30_000);

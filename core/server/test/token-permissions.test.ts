@@ -190,6 +190,12 @@ it.each(
 		},
 		{
 			method: "GET",
+			url: "/v1/synapse/spaces/shared/graph",
+			required: "synapse:read",
+			status: 200,
+		},
+		{
+			method: "GET",
 			url: "/v1/synapse/spaces/shared/daily/2026-11-08",
 			required: "synapse:read",
 			status: 200,

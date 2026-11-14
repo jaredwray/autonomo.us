@@ -233,6 +233,38 @@ describe("Synapse REST routes", () => {
 				{ title: "Analytical Engine", count: 1, sources: ["Ada Lovelace"] },
 			],
 		});
+		const graph = await call("GET", "/v1/synapse/spaces/shared/graph");
+		expect(graph.status).toBe(200);
+		expect(graph.headers.get("cache-control")).toBe("no-store");
+		expect(await graph.json()).toEqual({
+			nodes: [
+				expect.objectContaining({ title: "Ada Lovelace", degree: 3 }),
+				{
+					title: "Analytical Engine",
+					exists: false,
+					categories: [],
+					tags: [],
+					degree: 1,
+				},
+				{
+					title: "Charles Babbage",
+					exists: true,
+					space: "shared",
+					categories: ["People"],
+					tags: [],
+					degree: 2,
+				},
+				expect.objectContaining({ title: "People", degree: 2 }),
+			],
+			edges: [
+				{ source: "Ada Lovelace", target: "Analytical Engine" },
+				{ source: "Ada Lovelace", target: "Charles Babbage" },
+				{ source: "Ada Lovelace", target: "People" },
+				{ source: "Charles Babbage", target: "People" },
+			],
+			noteCount: 3,
+			truncated: false,
+		});
 		const categories = await call(
 			"GET",
 			"/v1/synapse/spaces/shared/categories",
@@ -266,6 +298,12 @@ describe("Synapse REST routes", () => {
 		});
 		expect(
 			(await call("GET", "/v1/synapse/spaces/agent-no%20body/notes")).status,
+		).toBe(400);
+		expect(
+			(await call("GET", "/v1/synapse/spaces/agent-nobody/graph")).status,
+		).toBe(404);
+		expect(
+			(await call("GET", "/v1/synapse/spaces/agent-no%20body/graph")).status,
 		).toBe(400);
 
 		const current = (await (
@@ -531,6 +569,26 @@ describe("Synapse REST routes", () => {
 		expect(
 			(await call("GET", `${defaults}/spaces/${space}/notes`)).status,
 		).toBe(404);
+		expect(
+			(await call("GET", `${defaults}/spaces/${space}/graph`)).status,
+		).toBe(404);
+		// Film's graph marks the notes it inherits; the default's has its own.
+		const graphTitles = async (base: string) =>
+			(
+				(await (await call("GET", `${base}/spaces/shared/graph`)).json()) as {
+					nodes: Array<{ title: string; space: string }>;
+				}
+			).nodes.map((node) => `${node.space}:${node.title}`);
+		expect(await graphTitles(filmBase)).toEqual([
+			"shared:Brand voice",
+			"global:Style guide",
+			"shared:Trailer plan",
+		]);
+		expect(await graphTitles(defaults)).toEqual([
+			"global:Brand voice",
+			"shared:Roadmap",
+			"global:Style guide",
+		]);
 		const listed = (await (await call("GET", `${filmBase}/spaces`)).json()) as {
 			spaces: Array<{ id: string; noteCount: number }>;
 		};
@@ -736,6 +794,9 @@ describe("Synapse REST routes", () => {
 			await forbidden(await call("GET", "/v1/synapse/spaces", { token }));
 			await forbidden(await call("GET", "/v1/synapse/proposals", { token }));
 			await forbidden(
+				await call("GET", "/v1/synapse/spaces/shared/graph", { token }),
+			);
+			await forbidden(
 				await call("POST", "/v1/synapse/spaces/shared/notes", {
 					token,
 					body: { title: "x" },
@@ -758,6 +819,10 @@ describe("Synapse REST routes", () => {
 					token: reader,
 				})
 			).status,
+		).toBe(200);
+		expect(
+			(await call("GET", "/v1/synapse/spaces/shared/graph", { token: reader }))
+				.status,
 		).toBe(200);
 		expect(
 			(await call("GET", "/v1/synapse/proposals", { token: reader })).status,

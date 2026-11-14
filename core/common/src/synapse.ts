@@ -210,6 +210,35 @@ export type SynapseUnresolvedLink = {
 	sources: string[];
 };
 
+/** A note, or a link target with no note yet, in a space's link graph. */
+export type SynapseGraphNode = {
+	/** The note's title, or the first-seen spelling of an unresolved target. */
+	title: string;
+	/** False for a link target with no note yet. */
+	exists: boolean;
+	/** The note's own space, so `shared` can tell the notes it inherits from `global`. Absent when `exists` is false. */
+	space?: SynapseSpaceId;
+	categories: string[];
+	tags: string[];
+	/** How many of the graph's edges touch this node. */
+	degree: number;
+};
+
+/** An undirected link between two nodes, by title. Each pair appears once. */
+export type SynapseGraphEdge = { source: string; target: string };
+
+/** How a space's notes link together, capped at 1,000 nodes so a large space stays drawable. */
+export type SynapseGraph = {
+	/** Sorted by title. */
+	nodes: SynapseGraphNode[];
+	/** Sorted by source, then target. */
+	edges: SynapseGraphEdge[];
+	/** Notes in the space, before any cap. */
+	noteCount: number;
+	/** True when notes or unresolved targets were left out to stay under the cap. */
+	truncated: boolean;
+};
+
 export type SynapseCategory = {
 	title: string;
 	count: number;

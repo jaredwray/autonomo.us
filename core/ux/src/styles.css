@@ -19,6 +19,19 @@
 	--status-good: #0ca30c;
 	--status-critical: #d03b3b;
 	--success-text: #006300;
+	/* Synapse graph: a night sky in both themes */
+	--graph-space: #060918;
+	--graph-nebula-indigo: rgba(79, 70, 229, 0.34);
+	--graph-nebula-violet: rgba(147, 51, 234, 0.26);
+	--graph-nebula-magenta: rgba(219, 39, 119, 0.14);
+	--graph-nebula-teal: rgba(20, 184, 166, 0.13);
+	--graph-star: #ffe9b8;
+	--graph-star-category: #6cc4ff;
+	--graph-star-inherited: #4fe3b5;
+	--graph-dust: #8d95bd;
+	--graph-filament: #a8c2ff;
+	--graph-glow: #5fe9ff;
+	--graph-label: #e7ecff;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -34,6 +47,18 @@
 		--series-1: #3987e5;
 		--series-2: #008300;
 		--success-text: #0ca30c;
+		--graph-space: #060918;
+		--graph-nebula-indigo: rgba(79, 70, 229, 0.34);
+		--graph-nebula-violet: rgba(147, 51, 234, 0.26);
+		--graph-nebula-magenta: rgba(219, 39, 119, 0.14);
+		--graph-nebula-teal: rgba(20, 184, 166, 0.13);
+		--graph-star: #ffe9b8;
+		--graph-star-category: #6cc4ff;
+		--graph-star-inherited: #4fe3b5;
+		--graph-dust: #8d95bd;
+		--graph-filament: #a8c2ff;
+		--graph-glow: #5fe9ff;
+		--graph-label: #e7ecff;
 	}
 }
 
@@ -49,6 +74,18 @@
 	--series-1: #3987e5;
 	--series-2: #008300;
 	--success-text: #0ca30c;
+	--graph-space: #060918;
+	--graph-nebula-indigo: rgba(79, 70, 229, 0.34);
+	--graph-nebula-violet: rgba(147, 51, 234, 0.26);
+	--graph-nebula-magenta: rgba(219, 39, 119, 0.14);
+	--graph-nebula-teal: rgba(20, 184, 166, 0.13);
+	--graph-star: #ffe9b8;
+	--graph-star-category: #6cc4ff;
+	--graph-star-inherited: #4fe3b5;
+	--graph-dust: #8d95bd;
+	--graph-filament: #a8c2ff;
+	--graph-glow: #5fe9ff;
+	--graph-label: #e7ecff;
 }
 
 body {
@@ -927,7 +964,48 @@ a.button { text-decoration: none; }
 .synapse-empty-list { padding: 16px 4px; font-size: 13px; }
 .synapse-empty-list button { padding: 0; border: 0; background: transparent; color: var(--series-1); font: inherit; text-decoration: underline; cursor: pointer; }
 .synapse-main { min-width: 0; padding: 24px; margin: 0; }
-.synapse-intro h2 { font-size: 18px; }
+.synapse-graph-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
+.synapse-graph-header h2 { margin: 0; font-size: 18px; }
+.synapse-graph-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.synapse-graph-controls .failover-enable { margin: 0 4px 0 0; font-size: 13px; }
+.synapse-graph .card-note { margin: 0 0 10px; }
+.synapse-graph-canvas { display: block; width: 100%; height: min(70vh, 640px); border: 1px solid var(--hairline); border-radius: 8px; background: radial-gradient(ellipse 70% 55% at 22% 28%, var(--graph-nebula-indigo), transparent 70%), radial-gradient(ellipse 60% 50% at 80% 68%, var(--graph-nebula-violet), transparent 70%), radial-gradient(ellipse 40% 34% at 68% 16%, var(--graph-nebula-magenta), transparent 72%), radial-gradient(ellipse 46% 38% at 16% 86%, var(--graph-nebula-teal), transparent 72%), var(--graph-space); cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
+.synapse-graph-canvas:active { cursor: grabbing; }
+.synapse-graph-sky { pointer-events: none; }
+.synapse-graph-canvas pattern circle, .synapse-graph-sky circle { fill: var(--graph-label); }
+.synapse-graph-sky g circle { animation: synapse-graph-twinkle 5s ease-in-out infinite; }
+@keyframes synapse-graph-twinkle { 0%, 100% { opacity: .9; } 50% { opacity: .15; } }
+@media (prefers-reduced-motion: reduce) {
+	.synapse-graph-sky g circle { animation: none; opacity: .7; }
+}
+.synapse-graph-canvas stop.hot, .synapse-graph-legend stop.hot { stop-color: #fff; }
+#synapse-graph-star stop.tint { stop-color: var(--graph-star); }
+#synapse-graph-star-category stop.tint { stop-color: var(--graph-star-category); }
+.synapse-graph-edges line { stroke: var(--graph-filament); stroke-opacity: .3; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.synapse-graph-node { cursor: pointer; outline: none; }
+.synapse-graph-node .halo { pointer-events: none; }
+.synapse-graph-node .core { fill: none; stroke: none; stroke-width: 1.5; vector-effect: non-scaling-stroke; pointer-events: all; }
+.synapse-graph-node.inherited .core { stroke: var(--graph-star-inherited); }
+.synapse-graph-node.unresolved .halo { display: none; }
+.synapse-graph-node.unresolved .core { fill: color-mix(in srgb, var(--graph-dust) 14%, transparent); stroke: var(--graph-dust); stroke-width: 1; stroke-dasharray: 2 2.5; }
+.synapse-graph-node.current .core { stroke: #fff; stroke-width: 2; }
+/* One node at a time, so a filter here costs nothing while the rest animate. */
+.synapse-graph-canvas .synapse-graph-node:hover, .synapse-graph-canvas .synapse-graph-node:focus-visible { filter: drop-shadow(0 0 6px var(--graph-glow)); }
+.synapse-graph-canvas .synapse-graph-node:hover .core, .synapse-graph-canvas .synapse-graph-node:focus-visible .core { stroke: var(--graph-glow); stroke-width: 2.5; stroke-dasharray: none; }
+/* Sized in screen pixels whatever the zoom. */
+.synapse-graph-node text { display: none; fill: var(--graph-label); fill-opacity: .82; font-size: calc(11px / var(--graph-zoom, 1)); paint-order: stroke; stroke: var(--graph-space); stroke-opacity: .85; stroke-width: calc(3px / var(--graph-zoom, 1)); stroke-linejoin: round; pointer-events: none; }
+.synapse-graph-node.unresolved text { fill: var(--graph-dust); }
+.synapse-graph-node.major text, .synapse-graph-node.current text, .synapse-graph-node:focus-visible text, .synapse-graph-canvas[data-zoomed] .synapse-graph-node text, .synapse-graph-canvas[data-active] .synapse-graph-node.near text { display: block; }
+.synapse-graph-canvas[data-active] .synapse-graph-node:not(.near), .synapse-graph-canvas[data-active] line:not(.near) { opacity: .16; }
+.synapse-graph-canvas[data-active] .synapse-graph-node.near .halo { opacity: 1; }
+.synapse-graph-canvas[data-active] .synapse-graph-node.near text { fill: #fff; fill-opacity: 1; }
+.synapse-graph-canvas[data-active] line.near { stroke: var(--graph-glow); stroke-opacity: .9; stroke-width: 1.5; }
+.synapse-graph-legend { display: inline-flex; flex-wrap: wrap; gap: 4px 16px; list-style: none; margin: 10px 0 0; padding: 6px 14px 6px 10px; border-radius: 16px; background: var(--graph-space); color: var(--graph-label); font-size: 12px; }
+.synapse-graph-legend li { display: flex; align-items: center; gap: 5px; }
+.synapse-graph-legend svg { width: 18px; height: 18px; }
+.synapse-graph-legend .synapse-graph-node { cursor: default; }
+.synapse-graph-back { display: inline-block; margin-bottom: 12px; color: var(--series-1); font-size: 12px; text-decoration: none; }
+.synapse-graph-back:hover { text-decoration: underline; }
 .synapse-note-header { display: flex; align-items: start; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 8px; }
 .synapse-note-header h2 { font-size: 22px; font-weight: 600; letter-spacing: -.4px; margin: 0 0 4px; overflow-wrap: anywhere; }
 .synapse-note-header h2:focus { outline: none; }
@@ -1001,6 +1079,9 @@ a.button { text-decoration: none; }
 	.synapse-sidebar { max-height: none; }
 	.synapse-note-list { max-height: 320px; }
 	.synapse-main { padding: 16px; }
+	.synapse-graph-canvas { height: auto; aspect-ratio: 1; max-height: 60vh; }
+	/* Little room: zoomed out, only the best-linked few keep a label. */
+	.synapse-graph-canvas:not([data-zoomed]) .synapse-graph-node.major:not(.lead, .near, .current, :focus-visible) text { display: none; }
 	.synapse-diff, .synapse-import-pickers { grid-template-columns: 1fr; }
 	.synapse-properties th { width: 110px; }
 }

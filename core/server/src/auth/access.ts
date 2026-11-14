@@ -81,6 +81,7 @@ const synapseRoutes = (base: string) =>
 		[`DELETE ${base}/spaces/:space/notes/:title`, workspace("synapse:edit")],
 		[`GET ${base}/spaces/:space/unresolved`, workspace("synapse:read")],
 		[`GET ${base}/spaces/:space/categories`, workspace("synapse:read")],
+		[`GET ${base}/spaces/:space/graph`, workspace("synapse:read")],
 		[`GET ${base}/spaces/:space/daily/:date`, workspace("synapse:read")],
 		// A whole space in one response, so it needs the write-level grant.
 		[`GET ${base}/spaces/:space/export`, workspace("synapse:edit")],
