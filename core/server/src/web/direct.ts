@@ -62,6 +62,11 @@ export type DirectOptions = {
 	 * or null. The URL rules in `checkTargetUrl` apply first, whatever this says.
 	 */
 	allowHop?: (url: URL) => string | null;
+	/**
+	 * A redirect target the workspace fetches only through a proxy: the plain
+	 * request stops there as `blocked`, so the ladder moves on to a proxy.
+	 */
+	proxyOnlyHop?: (url: URL) => string | null;
 };
 
 export const DIRECT_DEFAULTS = {
@@ -299,6 +304,8 @@ export async function directFetch(
 				}
 				const refused = options.allowHop?.(next);
 				if (refused) return failure("target-error", refused, status);
+				const handOff = options.proxyOnlyHop?.(next);
+				if (handOff) return failure("blocked", handOff, status);
 				redirects++;
 				current = next;
 				continue;

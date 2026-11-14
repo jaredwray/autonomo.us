@@ -420,6 +420,13 @@ export class WebService {
 					// A redirect is held to the same workspace rules as the URL asked for.
 					allowHop: (next) =>
 						hostRefusal(policy, canonicalHost(next.hostname), false),
+					// A host the workspace reaches through a proxy is not contacted directly.
+					proxyOnlyHop: (next) => {
+						const host = canonicalHost(next.hostname);
+						return domainRule(policy, host)?.rule === "start-at-proxy"
+							? `redirected to ${host}, which this workspace fetches through a proxy`
+							: null;
+					},
 				});
 			} finally {
 				timer.clear();

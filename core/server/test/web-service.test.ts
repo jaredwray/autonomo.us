@@ -525,6 +525,30 @@ describe("web fetch ladder", () => {
 		expect(landed.reason).toContain("redirected to denied.example.org");
 	});
 
+	it("hands a redirect to a start-at-proxy host over to the proxies", async () => {
+		const { store, fetchPage, requests, calls } = await setup({
+			pages: {
+				"https://example.com/go": {
+					status: 301,
+					headers: { location: "https://shop.example.org/item" },
+					body: "",
+				},
+				"https://shop.example.org/item": { status: 200, body: ARTICLE },
+			},
+		});
+		await store.updatePolicy(WORKSPACE, {
+			...(await store.policy(WORKSPACE)),
+			domains: [{ match: "shop.example.org", rule: "start-at-proxy" }],
+		});
+		const result = await fetchPage("https://example.com/go");
+		expect(result).toMatchObject({ ok: true, via: "zr:auto" });
+		expect(result.attempts[0]).toMatchObject({ outcome: "blocked" });
+		expect(requests).toEqual(["https://example.com/go"]);
+		expect(calls.map((call) => call.target)).toEqual([
+			"https://example.com/go",
+		]);
+	});
+
 	it("leaves out a proxy that cannot say where it landed when rules apply", async () => {
 		const brightdata: ProxyConfig = {
 			name: "bd",
