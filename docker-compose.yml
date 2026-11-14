@@ -32,6 +32,13 @@ services:
       CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:-}
       CLOUDFLARE_ACCOUNT_ID: ${CLOUDFLARE_ACCOUNT_ID:-}
       CLOUDFLARE_MODELS: ${CLOUDFLARE_MODELS:-}
+      # Web proxies for agents' web_fetch (default workspace); see README "Web access".
+      ZENROWS_API_KEY: ${ZENROWS_API_KEY:-}
+      CLOUDFLARE_BROWSER_API_TOKEN: ${CLOUDFLARE_BROWSER_API_TOKEN:-}
+      BRIGHTDATA_API_KEY: ${BRIGHTDATA_API_KEY:-}
+      BRIGHTDATA_ZONE: ${BRIGHTDATA_ZONE:-}
+      BRIGHTDATA_PRICE_PER_1000: ${BRIGHTDATA_PRICE_PER_1000:-}
+      WEB_FETCH_DISABLED: ${WEB_FETCH_DISABLED:-}
       # Defaults to the compose ollama service (start it with --profile llm).
       OPENAI_COMPAT_BASE_URL: ${OPENAI_COMPAT_BASE_URL:-http://ollama:11434/v1}
       OPENAI_COMPAT_NAME: ${OPENAI_COMPAT_NAME:-local}

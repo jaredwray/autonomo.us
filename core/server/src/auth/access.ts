@@ -203,6 +203,23 @@ export const ROUTE_RULES = new Map<string, RouteRule>([
 	["GET /v1/:workspace/bots/:bot", workspace("agents:read")],
 	["PATCH /v1/:workspace/bots/:bot", workspace("agents:manage")],
 	["DELETE /v1/:workspace/bots/:bot", workspace("agents:manage")],
+	// Sites a bot asked for outside its web scope: members look, admins decide.
+	["GET /v1/:workspace/bots/:bot/web-requests", workspace("agents:read")],
+	[
+		"POST /v1/:workspace/bots/:bot/web-requests/:request/decide",
+		workspace("agents:manage"),
+	],
+	// Proxies hold keys and spend money: members look, admins change them.
+	["GET /v1/:workspace/proxies", workspace("proxies:read")],
+	["POST /v1/:workspace/proxies", workspace("proxies:edit")],
+	["PATCH /v1/:workspace/proxies/:name", workspace("proxies:edit")],
+	["DELETE /v1/:workspace/proxies/:name", workspace("proxies:edit")],
+	// A real, billable call through one proxy.
+	["POST /v1/:workspace/proxies/:name/test", workspace("proxies:edit")],
+	["GET /v1/:workspace/web/policy", workspace("proxies:read")],
+	["PUT /v1/:workspace/web/policy", workspace("proxies:edit")],
+	// Can spend the workspace's proxy budget, so admins only among people.
+	["POST /v1/:workspace/web/fetch", workspace("web:fetch")],
 ]);
 
 /** What each workspace role may do, as a signed-in member. */
@@ -220,6 +237,7 @@ const MEMBER_ACTIONS = new Set<WorkspaceAction>([
 	// Any member creates and manages channels and their agents.
 	"channels:manage",
 	"agents:read",
+	"proxies:read",
 ]);
 const ADMIN_ACTIONS = new Set<WorkspaceAction>([
 	...MEMBER_ACTIONS,
@@ -235,6 +253,9 @@ const ADMIN_ACTIONS = new Set<WorkspaceAction>([
 	// OAuth sign-in. An agent acts in this workspace only; one with
 	// instructions spends its provider keys, like adding a connection.
 	"agents:manage",
+	// Proxy keys, the web policy, and fetches that spend the proxy budget.
+	"proxies:edit",
+	"web:fetch",
 ]);
 /** Org owners and admins only (D3: API tokens outlive the member who made them). */
 const ORG_ACTIONS = new Set<WorkspaceAction>([

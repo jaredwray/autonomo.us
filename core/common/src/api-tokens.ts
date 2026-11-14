@@ -12,6 +12,9 @@ export const API_TOKEN_PERMISSIONS = {
 	"synapse:edit": "Synapse: Edit",
 	"channels:read": "Channels: Read",
 	"channels:edit": "Channels: Post",
+	"proxies:read": "Proxies: Read",
+	"proxies:edit": "Proxies: Edit",
+	"web:fetch": "Web: Fetch",
 } as const;
 export type ApiTokenPermission = keyof typeof API_TOKEN_PERMISSIONS;
 export const DEFAULT_API_TOKEN_PERMISSIONS: readonly ApiTokenPermission[] = [

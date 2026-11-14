@@ -6,7 +6,7 @@ import type {
 } from "@autonomo.us/common";
 import { expect } from "vitest";
 import type { ApiConfig } from "../src/config.js";
-import { createServer } from "../src/server.js";
+import { type CreateServerOptions, createServer } from "../src/server.js";
 import {
 	completeSetup,
 	defaultWorkspaceId,
@@ -29,10 +29,12 @@ type CallOptions = { token?: string; body?: unknown };
 export async function startChannels(
 	cleanups: Array<() => Promise<unknown>>,
 	config: Partial<ApiConfig> = {},
+	options: Omit<CreateServerOptions, "config"> = {},
 ) {
 	const server = createServer({
 		config: { providers: [], corsOrigins: ["*"], ...config },
 		logger: false,
+		...options,
 	});
 	cleanups.push(() => server.close());
 	const origin = await server.listen({ port: 0, host: "127.0.0.1" });

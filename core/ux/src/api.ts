@@ -18,6 +18,8 @@ import type {
 	BotActivity,
 	BotDetails,
 	BotList,
+	BotWebRequest,
+	BotWebRequestList,
 	ChannelAgentAccess,
 	ChannelAgentOption,
 	ChannelDetails,
@@ -30,10 +32,12 @@ import type {
 	CreateBotRequest,
 	CreateChannelRequest,
 	CreateOAuthAgentRequest,
+	CreateProxyRequest,
 	CreateSynapseNoteRequest,
 	CreateTeamInviteRequest,
 	CreateWorkspaceRequest,
 	CurrentSession,
+	DecideBotWebRequest,
 	DecideSynapseProposalRequest,
 	FailoverPolicy,
 	GatewayResponse,
@@ -42,6 +46,9 @@ import type {
 	OAuthSignIn,
 	OAuthSignInDecision,
 	ProviderSettings,
+	ProxyConnection,
+	ProxyList,
+	ProxyTestRequest,
 	RollAgentTokenRequest,
 	RollApiTokenRequest,
 	RoutingConfig,
@@ -72,10 +79,15 @@ import type {
 	UpdateApiTokenRequest,
 	UpdateBotRequest,
 	UpdateChannelRequest,
+	UpdateProxyRequest,
 	UpdateSynapseNoteRequest,
 	UpdateTeamMemberRequest,
+	UpdateWebPolicyRequest,
 	UpdateWorkspaceRequest,
 	UsageAnalytics,
+	WebFetchRequest,
+	WebFetchResult,
+	WebPolicy,
 	WorkspaceDetails,
 	WorkspaceList,
 	WorkspaceMembers,
@@ -871,6 +883,21 @@ export function updateBot(
 export function deleteBot(id: string): Promise<void> {
 	return apiRequest(botPath(id), { method: "DELETE" });
 }
+/** Sites a bot tried to fetch outside its web scope, and what was decided. */
+export function fetchBotWebRequests(id: string): Promise<BotWebRequestList> {
+	return apiRequest(`${botPath(id)}/web-requests`);
+}
+/** Approving also adds the site to the bot's approved sites. */
+export function decideBotWebRequest(
+	botId: string,
+	requestId: string,
+	approve: boolean,
+): Promise<BotWebRequest> {
+	return apiRequest(
+		`${botPath(botId)}/web-requests/${encodeURIComponent(requestId)}/decide`,
+		{ method: "POST", body: { approve } satisfies DecideBotWebRequest },
+	);
+}
 /** The bots working on a reply in a channel right now. */
 export function fetchBotActivity(
 	channelId: string,
@@ -933,4 +960,47 @@ export function approveOAuthSignIn(
 }
 export function denyOAuthSignIn(id: string): Promise<OAuthSignInDecision> {
 	return apiRequest(`/v1${signInPath(id)}/deny`, { method: "POST" });
+}
+
+const proxyPath = (name?: string, rest = "") =>
+	ws(`/proxies${name ? `/${encodeURIComponent(name)}` : ""}${rest}`);
+
+/** The workspace's proxy connections, its web policy, and this month's spend. */
+export function fetchProxies(): Promise<ProxyList> {
+	return apiRequest(proxyPath());
+}
+export function createProxy(
+	input: CreateProxyRequest,
+): Promise<ProxyConnection> {
+	return apiRequest(proxyPath(), { method: "POST", body: input });
+}
+/** Omitting `apiKey` keeps the saved key. */
+export function updateProxy(
+	name: string,
+	input: UpdateProxyRequest,
+): Promise<ProxyConnection> {
+	return apiRequest(proxyPath(name), { method: "PATCH", body: input });
+}
+export function deleteProxy(name: string): Promise<void> {
+	return apiRequest(proxyPath(name), { method: "DELETE" });
+}
+/** A real, billable request through one connection only. */
+export function testProxy(
+	name: string,
+	input: ProxyTestRequest,
+): Promise<WebFetchResult> {
+	return apiRequest(proxyPath(name, "/test"), { method: "POST", body: input });
+}
+export function fetchWebPolicy(): Promise<WebPolicy> {
+	return apiRequest(ws("/web/policy"));
+}
+/** A stale `revision` is refused with 409. */
+export function updateWebPolicy(
+	input: UpdateWebPolicyRequest,
+): Promise<WebPolicy> {
+	return apiRequest(ws("/web/policy"), { method: "PUT", body: input });
+}
+/** The fetch an agent gets: plain request first, then the ladder. Billable. */
+export function webFetch(input: WebFetchRequest): Promise<WebFetchResult> {
+	return apiRequest(ws("/web/fetch"), { method: "POST", body: input });
 }

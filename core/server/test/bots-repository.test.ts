@@ -38,6 +38,7 @@ function bot(workspaceId: string, name: string): Bot {
 		enabled: true,
 		agentHops: 0,
 		tools: false,
+		web: false,
 		limits: DEFAULT_BOT_LIMITS,
 		createdAt: T0,
 		createdBy: "U",

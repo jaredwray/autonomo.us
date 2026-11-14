@@ -1,9 +1,14 @@
 import {
 	BOT_LIMITS,
+	BOT_WEB_FOLLOW_UPS,
+	BOT_WEB_SCOPES,
 	type BotDetails,
 	type BotLimits,
 	type BotRun,
 	type BotSummary,
+	type BotWebFollowUps,
+	type BotWebRequest,
+	type BotWebScope,
 	type CreateBotRequest,
 	DEFAULT_BOT_LIMITS,
 } from "@autonomo.us/common";
@@ -18,8 +23,10 @@ import {
 import {
 	ApiError,
 	createBot,
+	decideBotWebRequest,
 	deleteBot,
 	fetchBot,
+	fetchBotWebRequests,
 	fetchModels,
 	fetchRouting,
 	updateBot,
@@ -63,6 +70,7 @@ export async function loadModelChoices(): Promise<ModelChoice[]> {
 const LIMIT_FIELDS: ReadonlyArray<{
 	key: keyof BotLimits;
 	label: string;
+	min?: number;
 	max: number;
 	hint: string;
 }> = [
@@ -90,6 +98,13 @@ const LIMIT_FIELDS: ReadonlyArray<{
 		max: BOT_LIMITS.maxContextMessages,
 		hint: "How many recent messages a reply sees.",
 	},
+	{
+		key: "proxyRequestsPerDay",
+		label: "Proxied requests a day",
+		min: 0,
+		max: BOT_LIMITS.maxProxyRequestsPerDay,
+		hint: "Web fetches through the workspace's paid proxies, counted from 00:00 UTC. 0 allows plain requests only.",
+	},
 ];
 
 const RUN_STATUS: Record<BotRun["status"], string> = {
@@ -99,6 +114,202 @@ const RUN_STATUS: Record<BotRun["status"], string> = {
 	failed: "Failed",
 	skipped: "Skipped",
 };
+
+/** What a new agent may fetch, and an agent saved before web scopes. */
+const DEFAULT_WEB_SCOPE: BotWebScope = "mentioned";
+const DEFAULT_WEB_FOLLOW_UPS: BotWebFollowUps = "same-site";
+
+export const WEB_SCOPE_LABELS: Record<
+	BotWebScope,
+	{ label: string; hint: string }
+> = {
+	any: {
+		label: "Any page",
+		hint: "Whatever this workspace's domain rules allow.",
+	},
+	mentioned: {
+		label: "Only links people post in the conversation, plus approved sites",
+		hint: "Sites linked in the messages a reply sees. Any other site waits for a workspace admin to approve it.",
+	},
+	approved: {
+		label: "Only approved sites",
+		hint: "Every other site waits for a workspace admin to approve it.",
+	},
+};
+export const WEB_FOLLOW_UP_LABELS: Record<BotWebFollowUps, string> = {
+	any: "Any within scope",
+	"same-site": "Only the same site",
+	none: "None",
+};
+
+const HOST_PATTERN =
+	/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+
+/** A host as the gateway stores it: lower case, without a trailing dot. */
+export function cleanHost(value: string): string {
+	return value.trim().toLowerCase().replace(/\.+$/, "");
+}
+
+/** Why a site cannot be added to an agent's approved sites, or null. */
+export function approvedSiteProblem(
+	value: string,
+	hosts: readonly string[],
+): string | null {
+	const host = cleanHost(value);
+	if (!host) return "Enter a site such as example.com.";
+	if (/[/:?#@\s]/.test(host))
+		return "Enter only the site, such as example.com, without https:// or a path.";
+	if (!HOST_PATTERN.test(host))
+		return `${host} is not a site name. Enter one such as example.com.`;
+	if (hosts.includes(host)) return `${host} is already approved.`;
+	if (hosts.length >= BOT_LIMITS.maxWebHosts)
+		return `An agent has at most ${BOT_LIMITS.maxWebHosts} approved sites.`;
+	return null;
+}
+
+/** The web scope fields of a bot, with the defaults for one saved before them. */
+const webScopeOf = (bot?: Partial<BotDetails>) => ({
+	webScope: bot?.webScope ?? DEFAULT_WEB_SCOPE,
+	webFollowUps: bot?.webFollowUps ?? DEFAULT_WEB_FOLLOW_UPS,
+	webHosts: bot?.webHosts ?? [],
+});
+
+/**
+ * What an agent with web access may fetch: its scope, fetches after the
+ * first in a reply, and the sites approved for it.
+ */
+function WebScopeFields({
+	id,
+	scope,
+	followUps,
+	hosts,
+	onScope,
+	onFollowUps,
+	onHosts,
+}: {
+	id: string;
+	scope: BotWebScope;
+	followUps: BotWebFollowUps;
+	hosts: string[];
+	onScope(scope: BotWebScope): void;
+	onFollowUps(followUps: BotWebFollowUps): void;
+	onHosts(hosts: string[]): void;
+}) {
+	const [draft, setDraft] = useState("");
+	const [problem, setProblem] = useState("");
+	const add = () => {
+		const found = approvedSiteProblem(draft, hosts);
+		if (found) {
+			setProblem(found);
+			return;
+		}
+		onHosts([...hosts, cleanHost(draft)]);
+		setDraft("");
+		setProblem("");
+	};
+	return (
+		<fieldset className="token-permission-fields bot-web-scope">
+			<legend>Web scope</legend>
+			<fieldset className="bot-web-choices">
+				<legend>What it may fetch</legend>
+				{BOT_WEB_SCOPES.map((value) => (
+					<label className="bot-web-choice" key={value}>
+						<input
+							type="radio"
+							name={`${id}-web-scope`}
+							value={value}
+							checked={scope === value}
+							onChange={() => onScope(value)}
+						/>
+						<span>
+							{WEB_SCOPE_LABELS[value].label}
+							<span className="field-hint">{WEB_SCOPE_LABELS[value].hint}</span>
+						</span>
+					</label>
+				))}
+			</fieldset>
+			<div className="form-field bot-hops">
+				<label htmlFor={`${id}-follow-ups`}>
+					Follow-up fetches in one reply
+				</label>
+				<select
+					id={`${id}-follow-ups`}
+					value={followUps}
+					onChange={(event) =>
+						onFollowUps(event.target.value as BotWebFollowUps)
+					}
+				>
+					{BOT_WEB_FOLLOW_UPS.map((value) => (
+						<option key={value} value={value}>
+							{WEB_FOLLOW_UP_LABELS[value]}
+						</option>
+					))}
+				</select>
+				<span className="field-hint">
+					Fetches after a reply's first one. Limiting them keeps a page from
+					steering the agent to other sites.
+				</span>
+			</div>
+			<div className="form-field">
+				<span className="bot-web-label" id={`${id}-sites-label`}>
+					Approved sites
+				</span>
+				{hosts.length ? (
+					<ul className="proxy-rules" aria-labelledby={`${id}-sites-label`}>
+						{hosts.map((host) => (
+							<li key={host}>
+								<code>{host}</code>
+								<button
+									className="button"
+									type="button"
+									aria-label={`Remove ${host}`}
+									onClick={() => onHosts(hosts.filter((item) => item !== host))}
+								>
+									Remove
+								</button>
+							</li>
+						))}
+					</ul>
+				) : (
+					<p className="card-note">No approved sites yet.</p>
+				)}
+				<div className="bot-web-add">
+					<label className="visually-hidden" htmlFor={`${id}-site`}>
+						Site to approve
+					</label>
+					<input
+						id={`${id}-site`}
+						value={draft}
+						placeholder="example.com"
+						onChange={(event) => {
+							setDraft(event.target.value);
+							setProblem("");
+						}}
+						onKeyDown={(event) => {
+							if (event.key === "Enter") {
+								event.preventDefault();
+								add();
+							}
+						}}
+					/>
+					<button className="button" type="button" onClick={add}>
+						Add site
+					</button>
+				</div>
+				{problem ? (
+					<span className="field-hint bot-web-problem" role="alert">
+						{problem}
+					</span>
+				) : (
+					<span className="field-hint">
+						Each site also covers its subdomains. Approving a request below adds
+						its site here.
+					</span>
+				)}
+			</div>
+		</fieldset>
+	);
+}
 
 /**
  * Creates an agent the gateway runs, or edits one. Remounted when the
@@ -123,6 +334,12 @@ export function InstructionsForm({
 	const [model, setModel] = useState(bot?.model ?? "");
 	const [enabled, setEnabled] = useState(bot?.enabled ?? true);
 	const [tools, setTools] = useState(bot?.tools ?? false);
+	const [web, setWeb] = useState(bot?.web ?? false);
+	const [webScope, setWebScope] = useState(() => webScopeOf(bot).webScope);
+	const [webFollowUps, setWebFollowUps] = useState(
+		() => webScopeOf(bot).webFollowUps,
+	);
+	const [webHosts, setWebHosts] = useState(() => webScopeOf(bot).webHosts);
 	const [agentHops, setAgentHops] = useState(bot?.agentHops ?? 0);
 	const [limits, setLimits] = useState<Record<keyof BotLimits, string>>(() => {
 		const from = bot?.limits ?? DEFAULT_BOT_LIMITS;
@@ -131,6 +348,9 @@ export function InstructionsForm({
 			tokensPerDay: String(from.tokensPerDay),
 			maxOutputTokens: String(from.maxOutputTokens),
 			contextMessages: String(from.contextMessages),
+			proxyRequestsPerDay: String(
+				from.proxyRequestsPerDay ?? DEFAULT_BOT_LIMITS.proxyRequestsPerDay,
+			),
 		};
 	});
 	const [busy, setBusy] = useState(false);
@@ -158,12 +378,17 @@ export function InstructionsForm({
 		model,
 		enabled,
 		tools,
+		web,
+		webScope,
+		webFollowUps,
+		webHosts,
 		agentHops,
 		limits: {
 			repliesPerHour: Number(limits.repliesPerHour),
 			tokensPerDay: Number(limits.tokensPerDay),
 			maxOutputTokens: Number(limits.maxOutputTokens),
 			contextMessages: Number(limits.contextMessages),
+			proxyRequestsPerDay: Number(limits.proxyRequestsPerDay),
 		},
 	};
 	const unchanged =
@@ -175,12 +400,17 @@ export function InstructionsForm({
 				model: bot.model,
 				enabled: bot.enabled,
 				tools: bot.tools,
+				web: bot.web ?? false,
+				...webScopeOf(bot),
 				agentHops: bot.agentHops,
 				limits: {
 					repliesPerHour: bot.limits.repliesPerHour,
 					tokensPerDay: bot.limits.tokensPerDay,
 					maxOutputTokens: bot.limits.maxOutputTokens,
 					contextMessages: bot.limits.contextMessages,
+					proxyRequestsPerDay:
+						bot.limits.proxyRequestsPerDay ??
+						DEFAULT_BOT_LIMITS.proxyRequestsPerDay,
 				},
 			} satisfies CreateBotRequest);
 	return (
@@ -293,7 +523,31 @@ export function InstructionsForm({
 						Lets a reply search and write this agent's own Synapse space,
 						propose changes to the shared space, and read its other channels.
 					</span>
+					<label className="failover-enable">
+						<input
+							type="checkbox"
+							checked={web}
+							onChange={(event) => setWeb(event.target.checked)}
+						/>
+						Web access
+					</label>
+					<span className="field-hint">
+						Lets a reply read web pages with web_fetch: a plain request first,
+						then the workspace's proxies when a site blocks it or needs a
+						browser. Proxied requests are billed and limited below.
+					</span>
 				</div>
+				{web && (
+					<WebScopeFields
+						id={id}
+						scope={webScope}
+						followUps={webFollowUps}
+						hosts={webHosts}
+						onScope={setWebScope}
+						onFollowUps={setWebFollowUps}
+						onHosts={setWebHosts}
+					/>
+				)}
 				<div className="form-field bot-hops">
 					<label htmlFor={`${id}-hops`}>Agent-to-agent replies</label>
 					<select
@@ -323,7 +577,7 @@ export function InstructionsForm({
 									id={`${id}-${field.key}`}
 									type="number"
 									required
-									min={1}
+									min={field.min ?? 1}
 									max={field.max}
 									step={1}
 									value={limits[field.key]}
@@ -370,12 +624,30 @@ function BotFacts({ bot }: { bot: BotDetails }) {
 			<dd>{bot.enabled ? "Active" : "Paused"}</dd>
 			<dt>Tools</dt>
 			<dd>{bot.tools ? "On" : "Off"}</dd>
+			<dt>Web access</dt>
+			<dd>{bot.web ? "On" : "Off"}</dd>
+			{bot.web && (
+				<>
+					<dt>What it may fetch</dt>
+					<dd>{WEB_SCOPE_LABELS[webScopeOf(bot).webScope].label}</dd>
+					<dt>Follow-up fetches</dt>
+					<dd>{WEB_FOLLOW_UP_LABELS[webScopeOf(bot).webFollowUps]}</dd>
+					<dt>Approved sites</dt>
+					<dd>
+						{webScopeOf(bot).webHosts.length
+							? webScopeOf(bot).webHosts.join(", ")
+							: "None"}
+					</dd>
+				</>
+			)}
 			<dt>Agent-to-agent replies</dt>
 			<dd>{bot.agentHops}</dd>
 			{LIMIT_FIELDS.map((field) => (
 				<Fragment key={field.key}>
 					<dt>{field.label}</dt>
-					<dd>{count(bot.limits[field.key])}</dd>
+					<dd>
+						{count(bot.limits[field.key] ?? DEFAULT_BOT_LIMITS[field.key])}
+					</dd>
 				</Fragment>
 			))}
 			<dt>Instructions</dt>
@@ -383,6 +655,179 @@ function BotFacts({ bot }: { bot: BotDetails }) {
 				{bot.instructions || "No instructions."}
 			</dd>
 		</dl>
+	);
+}
+
+const REQUEST_STATUS: Record<BotWebRequest["status"], string> = {
+	pending: "Waiting",
+	approved: "Approved",
+	denied: "Denied",
+};
+
+/**
+ * Sites the agent tried to fetch outside its web scope. Workspace admins
+ * approve one, which adds its site to the agent's approved sites, or deny it.
+ */
+function WebRequests({
+	botId,
+	admin,
+	version,
+	onDecided,
+	onError,
+}: {
+	botId: string;
+	admin: boolean;
+	/** Changes when the agent is read again, so the requests are too. */
+	version: number;
+	onDecided(): void;
+	onError(message: string): void;
+}) {
+	const [requests, setRequests] = useState<BotWebRequest[] | null>(null);
+	const [deciding, setDeciding] = useState<string | null>(null);
+	const sequence = useRef(0);
+	const load = useCallback(async () => {
+		const request = ++sequence.current;
+		try {
+			const list = await fetchBotWebRequests(botId);
+			if (request === sequence.current) setRequests(list.requests);
+		} catch (cause) {
+			if (request === sequence.current)
+				onError(
+					errorText(cause, "Could not load the sites waiting for approval."),
+				);
+		}
+	}, [botId, onError]);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: version asks for a fresh read
+	useEffect(() => {
+		void load();
+		return () => {
+			sequence.current++;
+		};
+	}, [load, version]);
+	const decide = async (item: BotWebRequest, approve: boolean) => {
+		setDeciding(item.id);
+		try {
+			await decideBotWebRequest(botId, item.id, approve);
+			await load();
+			onDecided();
+		} catch (cause) {
+			onError(
+				errorText(
+					cause,
+					approve ? "Could not approve the site." : "Could not deny the site.",
+				),
+			);
+		} finally {
+			setDeciding(null);
+		}
+	};
+	const pending = (requests ?? [])
+		.filter((item) => item.status === "pending")
+		.sort((a, b) => b.requestedAt.localeCompare(a.requestedAt));
+	const decided = (requests ?? [])
+		.filter((item) => item.status !== "pending")
+		.sort((a, b) =>
+			(b.decidedAt ?? b.requestedAt).localeCompare(
+				a.decidedAt ?? a.requestedAt,
+			),
+		)
+		.slice(0, 5);
+	return (
+		<section
+			className="bot-web-requests"
+			aria-labelledby={`web-requests-${botId}`}
+		>
+			<h3 id={`web-requests-${botId}`}>Waiting for approval</h3>
+			<p className="card-note">
+				Sites this agent tried to fetch outside its web scope. The agent was
+				told an admin was asked; once a site is approved, ask it again.
+			</p>
+			{requests === null ? (
+				<p className="card-note" role="status">
+					Loading…
+				</p>
+			) : pending.length ? (
+				<div className="table-scroll">
+					<table className="token-log-table bot-web-table">
+						<thead>
+							<tr>
+								<th>Site</th>
+								<th>Page</th>
+								<th>Asked</th>
+								<th>Last asked</th>
+								{admin && <th>Decide</th>}
+							</tr>
+						</thead>
+						<tbody>
+							{pending.map((item) => (
+								<tr key={item.id}>
+									<td>
+										<code>{item.host}</code>
+									</td>
+									<td className="bot-web-url">{item.url}</td>
+									<td>
+										{item.count === 1 ? "Once" : `${count(item.count)} times`}
+									</td>
+									<td>
+										<time dateTime={item.requestedAt}>
+											{date(item.requestedAt)}
+										</time>
+									</td>
+									{admin && (
+										<td className="bot-web-actions">
+											<button
+												className="button primary"
+												type="button"
+												disabled={deciding !== null}
+												aria-label={`Approve ${item.host}`}
+												onClick={() => void decide(item, true)}
+											>
+												{deciding === item.id ? "Saving…" : "Approve"}
+											</button>
+											<button
+												className="button"
+												type="button"
+												disabled={deciding !== null}
+												aria-label={`Deny ${item.host}`}
+												onClick={() => void decide(item, false)}
+											>
+												Deny
+											</button>
+										</td>
+									)}
+								</tr>
+							))}
+						</tbody>
+					</table>
+				</div>
+			) : (
+				<p className="card-note">No sites waiting for approval.</p>
+			)}
+			{decided.length > 0 && (
+				<>
+					<h4 className="bot-web-history-heading">Recently decided</h4>
+					<ul
+						className="proxy-rules bot-web-history"
+						aria-label="Recently decided"
+					>
+						{decided.map((item) => (
+							<li key={item.id}>
+								<code>{item.host}</code>
+								<span
+									className={`bot-run-status ${item.status === "approved" ? "succeeded" : "failed"}`}
+								>
+									{REQUEST_STATUS[item.status]}
+								</span>
+								<span className="card-note">
+									{item.decidedBy ? `by ${item.decidedBy}` : ""}
+									{item.decidedAt ? ` · ${date(item.decidedAt)}` : ""}
+								</span>
+							</li>
+						))}
+					</ul>
+				</>
+			)}
+		</section>
 	);
 }
 
@@ -481,6 +926,8 @@ export function InstructionsAgent({
 	const [failed, setFailed] = useState(false);
 	const [confirming, setConfirming] = useState(false);
 	const [deleting, setDeleting] = useState(false);
+	/** Counts reads of the agent, so its web requests are read again with it. */
+	const [reads, setReads] = useState(0);
 	const sequence = useRef(0);
 	const refresh = useCallback(async () => {
 		const request = ++sequence.current;
@@ -494,6 +941,7 @@ export function InstructionsAgent({
 			setBot(found);
 			setMissing(!found);
 			setFailed(false);
+			setReads((value) => value + 1);
 		} catch (cause) {
 			if (request !== sequence.current) return;
 			setFailed(true);
@@ -561,6 +1009,15 @@ export function InstructionsAgent({
 				/>
 			) : (
 				<BotFacts bot={bot} />
+			)}
+			{bot.web && (
+				<WebRequests
+					botId={bot.id}
+					admin={admin}
+					version={reads}
+					onDecided={() => void refresh()}
+					onError={onError}
+				/>
 			)}
 			<div className="section-heading bot-runs-heading">
 				<div>

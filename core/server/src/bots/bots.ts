@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import {
 	BOT_LIMITS,
+	BOT_WEB_FOLLOW_UPS,
+	BOT_WEB_SCOPES,
 	type Bot,
 	type BotActivity,
 	type BotDetails,
@@ -19,6 +21,15 @@ const RUNS_SHOWN = 50;
 const BOT_ID =
 	/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const PENDING_SHOWN_MS = 120_000;
+const HOST_PATTERN =
+	/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+
+/** A host as a bot's approved sites hold it: lower case, no trailing dot. */
+export function normalizeHost(value: unknown): string | null {
+	if (typeof value !== "string") return null;
+	const host = value.trim().toLowerCase().replace(/\.+$/, "");
+	return HOST_PATTERN.test(host) ? host : null;
+}
 const MAX_MODEL_LENGTH = 200;
 
 /** The start of the current UTC day: token budgets reset there. */
@@ -86,6 +97,12 @@ export class BotService {
 				BOT_LIMITS.maxContextMessages,
 				"Context messages",
 			),
+			proxyRequestsPerDay: whole(
+				merged.proxyRequestsPerDay ?? DEFAULT_BOT_LIMITS.proxyRequestsPerDay,
+				0,
+				BOT_LIMITS.maxProxyRequestsPerDay,
+				"Proxied requests a day",
+			),
 		};
 	}
 	/** Applies the fields of `input` that are present to `bot`, validated. */
@@ -116,6 +133,41 @@ export class BotService {
 		}
 		if (input.enabled !== undefined) bot.enabled = input.enabled === true;
 		if (input.tools !== undefined) bot.tools = input.tools === true;
+		if (input.web !== undefined) bot.web = input.web === true;
+		if (input.webScope !== undefined) {
+			if (!(BOT_WEB_SCOPES as readonly string[]).includes(input.webScope))
+				throw new BotError(
+					`What a bot may fetch is one of ${BOT_WEB_SCOPES.join(", ")}.`,
+				);
+			bot.webScope = input.webScope;
+		}
+		if (input.webFollowUps !== undefined) {
+			if (
+				!(BOT_WEB_FOLLOW_UPS as readonly string[]).includes(input.webFollowUps)
+			)
+				throw new BotError(
+					`Follow-up fetches are one of ${BOT_WEB_FOLLOW_UPS.join(", ")}.`,
+				);
+			bot.webFollowUps = input.webFollowUps;
+		}
+		if (input.webHosts !== undefined) {
+			if (!Array.isArray(input.webHosts))
+				throw new BotError("Approved sites are a list of host names.");
+			const hosts: string[] = [];
+			for (const value of input.webHosts) {
+				const host = normalizeHost(value);
+				if (!host)
+					throw new BotError(
+						`${String(value)} is not a host name. Use a host such as example.com.`,
+					);
+				if (!hosts.includes(host)) hosts.push(host);
+			}
+			if (hosts.length > BOT_LIMITS.maxWebHosts)
+				throw new BotError(
+					`A bot has at most ${BOT_LIMITS.maxWebHosts} approved sites.`,
+				);
+			bot.webHosts = hosts;
+		}
 		if (input.agentHops !== undefined)
 			bot.agentHops = whole(
 				input.agentHops,
@@ -185,6 +237,11 @@ export class BotService {
 			enabled: true,
 			agentHops: 0,
 			tools: false,
+			web: false,
+			// Safe until an admin widens them: links people post, same site after.
+			webScope: "mentioned",
+			webFollowUps: "same-site",
+			webHosts: [],
 			limits: DEFAULT_BOT_LIMITS,
 			createdAt: at,
 			createdBy: actorName,
@@ -237,6 +294,35 @@ export class BotService {
 		bot.updatedAt = this.at();
 		if (!(await this.repository.replaceBot(bot, revision))) throw stale;
 		return this.get(workspaceId, id);
+	}
+
+	/**
+	 * Adds a host to a bot's approved sites, retrying on a concurrent edit so
+	 * an approval is never lost to another change.
+	 */
+	async approveHost(
+		workspaceId: string,
+		id: string,
+		host: string,
+	): Promise<void> {
+		for (let attempt = 0; attempt < 5; attempt++) {
+			const bot = await this.find(workspaceId, id);
+			if (bot.webHosts.includes(host)) return;
+			if (bot.webHosts.length >= BOT_LIMITS.maxWebHosts)
+				throw new BotError(
+					`A bot has at most ${BOT_LIMITS.maxWebHosts} approved sites. Remove one first.`,
+					409,
+				);
+			const revision = bot.revision;
+			bot.webHosts = [...bot.webHosts, host];
+			bot.revision = revision + 1;
+			bot.updatedAt = this.at();
+			if (await this.repository.replaceBot(bot, revision)) return;
+		}
+		throw new BotError(
+			"This bot changed during your request. Refresh and try again.",
+			409,
+		);
 	}
 
 	async remove(workspaceId: string, id: string): Promise<void> {

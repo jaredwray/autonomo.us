@@ -4,6 +4,7 @@ import {
 	MAX_FAILOVER_TIMEOUT_MS,
 } from "./failover.js";
 import { validTimeZone } from "./synapse/time.js";
+import type { ProxyConfig } from "./web/types.js";
 
 export type AnthropicProviderConfig = {
 	kind: "anthropic";
@@ -60,6 +61,15 @@ export type ApiConfig = {
 	publicUrl?: string;
 	/** Where the dashboard is served when that is not the gateway's own address. */
 	dashboardUrl?: string;
+	/** Web access for agents: proxies from the environment, and the off switch. */
+	web?: WebConfig;
+};
+
+export type WebConfig = {
+	/** `WEB_FETCH_DISABLED`: no workspace can fetch pages. */
+	disabled: boolean;
+	/** Proxy connections from the environment, for the default workspace. */
+	proxies: ProxyConfig[];
 };
 
 export const DEFAULT_CORS_ORIGINS = [
@@ -206,6 +216,58 @@ export function configFromEnv(
 		});
 	}
 
+	const proxies: ProxyConfig[] = [];
+	if (env.ZENROWS_API_KEY || env.ZENROWS_BASE_URL)
+		proxies.push({
+			name: "zenrows",
+			kind: "zenrows",
+			apiKey: env.ZENROWS_API_KEY,
+			baseUrl: env.ZENROWS_BASE_URL,
+			enabled: true,
+			monthlyRequestCap: null,
+		});
+	if (env.CLOUDFLARE_BROWSER_API_TOKEN || env.CLOUDFLARE_BROWSER_BASE_URL) {
+		if (
+			!env.CLOUDFLARE_BROWSER_BASE_URL &&
+			!/^[a-fA-F0-9]{32}$/.test(env.CLOUDFLARE_ACCOUNT_ID ?? "")
+		)
+			throw new Error(
+				"CLOUDFLARE_BROWSER_API_TOKEN needs CLOUDFLARE_ACCOUNT_ID, a 32-character hexadecimal account ID.",
+			);
+		proxies.push({
+			name: "cloudflare-browser",
+			kind: "cloudflare-browser",
+			apiKey: env.CLOUDFLARE_BROWSER_API_TOKEN,
+			accountId: env.CLOUDFLARE_ACCOUNT_ID,
+			baseUrl: env.CLOUDFLARE_BROWSER_BASE_URL,
+			enabled: true,
+			monthlyRequestCap: null,
+		});
+	}
+	if (env.BRIGHTDATA_API_KEY || env.BRIGHTDATA_BASE_URL) {
+		if (!env.BRIGHTDATA_ZONE)
+			throw new Error(
+				"BRIGHTDATA_API_KEY needs BRIGHTDATA_ZONE, the name of a Web Unlocker zone.",
+			);
+		const price = env.BRIGHTDATA_PRICE_PER_1000
+			? Number(env.BRIGHTDATA_PRICE_PER_1000)
+			: undefined;
+		if (price !== undefined && !(Number.isFinite(price) && price >= 0))
+			throw new Error(
+				"BRIGHTDATA_PRICE_PER_1000 is a price in dollars, such as 1.5.",
+			);
+		proxies.push({
+			name: "brightdata",
+			kind: "brightdata",
+			apiKey: env.BRIGHTDATA_API_KEY,
+			zone: env.BRIGHTDATA_ZONE,
+			baseUrl: env.BRIGHTDATA_BASE_URL,
+			...(price !== undefined ? { pricePer1000Usd: price } : {}),
+			enabled: true,
+			monthlyRequestCap: null,
+		});
+	}
+
 	const corsOrigins = env.CORS_ORIGIN
 		? env.CORS_ORIGIN.split(",")
 				.map((origin) => origin.trim())
@@ -242,5 +304,10 @@ export function configFromEnv(
 		synapseTimeZone,
 		publicUrl: webAddress("PUBLIC_URL", env.PUBLIC_URL),
 		dashboardUrl: webAddress("DASHBOARD_URL", env.DASHBOARD_URL),
+		web: {
+			disabled:
+				env.WEB_FETCH_DISABLED === "true" || env.WEB_FETCH_DISABLED === "1",
+			proxies,
+		},
 	};
 }
