@@ -8,6 +8,7 @@ import { ApiTokenStore } from "./auth/tokens.js";
 import { BotService } from "./bots/bots.js";
 import { MemoryBotRepository, MongoBotRepository } from "./bots/repository.js";
 import { BotRunner } from "./bots/runner.js";
+import { BotWebRequestStore } from "./bots/web-requests.js";
 import { ChannelService } from "./channels/channels.js";
 import { channelToolSet } from "./channels/mcp.js";
 import { MemoryChannelRepository } from "./channels/memory-repository.js";
@@ -46,6 +47,7 @@ import { routingRoutes } from "./routes/routing.js";
 import { synapseRoutes } from "./routes/synapse.js";
 import { teamRoutes } from "./routes/team.js";
 import { telemetryRoutes } from "./routes/telemetry.js";
+import { webRoutes } from "./routes/web.js";
 import { memberRoutes, workspaceRoutes } from "./routes/workspaces.js";
 import { ModelRouter } from "./routing/router.js";
 import { RoutingSettingsStore } from "./routing/settings.js";
@@ -55,6 +57,16 @@ import { MongoSynapseRepository } from "./synapse/mongo-repository.js";
 import { SynapseService } from "./synapse/synapse.js";
 import { MongoTelemetrySink } from "./telemetry/mongo.js";
 import { TelemetryService } from "./telemetry/telemetry.js";
+import {
+	type DirectTransport,
+	fetchTransport,
+	nodeTransport,
+} from "./web/direct.js";
+import { webToolSet } from "./web/mcp.js";
+import { WebService } from "./web/service.js";
+import { ProxyStore } from "./web/store.js";
+import type { FetchLike } from "./web/types.js";
+import type { Resolver } from "./web/url-guard.js";
 import { type WorkspaceRef, WorkspaceStore } from "./workspaces/store.js";
 
 const releases = new WeakMap<ReturnType<typeof Fastify>, () => Promise<void>>();
@@ -96,6 +108,15 @@ export type CreateServerOptions = {
 	pluginTimeout?: number;
 	/** Workers compile routes at module startup, before database I/O is allowed. */
 	deferPersistence?: boolean;
+	/**
+	 * How `web_fetch` makes a plain request. Node pins the address it checked;
+	 * the Worker uses `fetch`, which cannot, and gives bot replies less time.
+	 */
+	webTransport?: "node" | "fetch";
+	/** Replaces the transport and resolver, for tests. */
+	webDirect?: { transport: DirectTransport; resolver?: Resolver };
+	/** How provider APIs are called, for tests. */
+	webFetch?: FetchLike;
 	/**
 	 * The runtime ends TLS before the server sees a request, as Workers do, so
 	 * an address taken from a request is HTTPS unless it is on localhost.
@@ -167,6 +188,7 @@ export function createServer(options: CreateServerOptions = {}) {
 		? new MongoBotRepository(mongo)
 		: new MemoryBotRepository();
 	const bots = new BotService(botRepository);
+	const botWebRequests = new BotWebRequestStore(mongo);
 	const channels: ChannelService = new ChannelService(channelRepository, {
 		// A message that mentions one of the gateway's own bots starts its reply.
 		onMessage: (channel, message) => botRunner.onMessage(channel, message),
@@ -228,13 +250,34 @@ export function createServer(options: CreateServerOptions = {}) {
 			publicUrl: config.publicUrl,
 			assumeHttps: options.assumeHttps,
 		});
-	const toolSets = [synapseToolSet(synapse), channelToolSet(channels)];
+	const proxies = new ProxyStore(config.web?.proxies ?? [], mongo);
+	const web = new WebService({
+		store: proxies,
+		transport:
+			options.webDirect?.transport ??
+			(options.webTransport === "fetch" ? fetchTransport() : nodeTransport()),
+		...(options.webDirect?.resolver
+			? { resolver: options.webDirect.resolver }
+			: {}),
+		...(options.webFetch ? { fetchImpl: options.webFetch } : {}),
+		telemetry,
+		disabled: config.web?.disabled ?? false,
+	});
+	const toolSets = [
+		synapseToolSet(synapse),
+		channelToolSet(channels),
+		// The operator's off switch removes the tool, not just its answers.
+		...(web.available ? [webToolSet(web)] : []),
+	];
 	const botRunner: BotRunner = new BotRunner({
 		bots: botRepository,
 		channels,
 		chat: { providers, routing, router, telemetry },
 		workspaces,
 		toolSets,
+		webRequests: botWebRequests,
+		// A Worker reply has about 30 seconds after its response; a proxy can take most of that.
+		minProxyMs: options.webTransport === "fetch" ? 20_000 : 5_000,
 		log: (message, details) => server.log.error(details, message),
 	});
 	/** A bot has a Synapse space of its own, like an agent token. */
@@ -313,7 +356,8 @@ export function createServer(options: CreateServerOptions = {}) {
 			scoped.register(memberRoutes, { accounts });
 			scoped.register(synapseRoutes, { synapse, agentTokens: agentIds });
 			scoped.register(channelRoutes, { channels });
-			scoped.register(botRoutes, { bots });
+			scoped.register(botRoutes, { bots, webRequests: botWebRequests });
+			scoped.register(webRoutes, { store: proxies, web });
 		},
 		{ prefix: "/v1/:workspace" },
 	);
@@ -344,6 +388,7 @@ export function createServer(options: CreateServerOptions = {}) {
 				providers.ensureIndexes(),
 				tokens.ensureIndexes(),
 				agentTokens.ensureIndexes(),
+				proxies.ensureIndexes(),
 			]);
 			await providers.check(defaultWorkspace);
 		} catch (error) {
@@ -392,6 +437,7 @@ export function createServer(options: CreateServerOptions = {}) {
 			channelRepository.close(),
 			botRepository.close(),
 			oauthRepository.close(),
+			proxies.close(),
 		]);
 		const failed = results.find(
 			(result): result is PromiseRejectedResult => result.status === "rejected",

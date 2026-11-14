@@ -563,3 +563,49 @@ describe("bots the gateway runs", () => {
 		expect((await next(channel.id, second.seq)).body).toBe("No tools offered.");
 	});
 });
+
+describe("bot web scope helpers", () => {
+	it("collects hosts of links people posted, not agents", async () => {
+		const { linkedHosts } = await import("../src/bots/runner.js");
+		const message = (kind: "user" | "agent", body: string) =>
+			({
+				author: { kind, id: "x", name: "X" },
+				body,
+				deletedAt: null,
+			}) as never;
+		expect(
+			linkedHosts([
+				message(
+					"user",
+					"see https://Docs.Example.com/a?b=1 and http://example.org.",
+				),
+				message("agent", "try https://evil.example.net/"),
+				message("user", "not a link: example.io"),
+			]),
+		).toEqual(["docs.example.com", "example.org"]);
+	});
+
+	it("checks a host against a bot's scope", async () => {
+		const { webScope } = await import("../src/bots/runner.js");
+		const bot = { name: "B", webHosts: ["example.com"] };
+		const mentioned = ["news.example.org"];
+		expect(
+			webScope({ ...bot, webScope: "any" }, mentioned)("x.test"),
+		).toBeNull();
+		expect(
+			webScope({ ...bot, webScope: "approved" }, mentioned)("www.example.com"),
+		).toBeNull();
+		expect(
+			webScope({ ...bot, webScope: "approved" }, mentioned)("news.example.org"),
+		).toMatch(/not one of the sites approved/);
+		expect(
+			webScope(
+				{ ...bot, webScope: "mentioned" },
+				mentioned,
+			)("news.example.org"),
+		).toBeNull();
+		expect(
+			webScope({ ...bot, webScope: "mentioned" }, mentioned)("other.test"),
+		).toMatch(/not a site anyone linked/);
+	});
+});

@@ -400,10 +400,16 @@ it("creates an agent with instructions from the UI, edits and pauses it, and del
 			"Tokens a day",
 			"Output tokens per reply",
 			"Context messages",
+			"Proxied requests a day",
 		].map((label) => field(form, label).value),
-	).toEqual(["30", "500000", "1500", "30"]);
+	).toEqual(["30", "500000", "1500", "30", "20"]);
 	expect(field(form, "Active").checked).toBe(true);
 	expect(field(form, "Use tools").checked).toBe(false);
+	// Reading the web is its own switch: it can spend on the workspace's proxies.
+	expect(field(form, "Web access").checked).toBe(false);
+	expect(
+		form.getByText(/Lets a reply read web pages with web_fetch/),
+	).toBeDefined();
 	expect(
 		form.getByText(
 			"Lets a reply search and write this agent's own Synapse space, propose changes to the shared space, and read its other channels.",
@@ -420,6 +426,8 @@ it("creates an agent with instructions from the UI, edits and pauses it, and del
 		),
 	).toBeDefined();
 	fireEvent.click(field(form, "Use tools"));
+	fireEvent.click(field(form, "Web access"));
+	type(field(form, "Proxied requests a day"), "5");
 	type(field(form, "Agent-to-agent replies"), "1");
 	fireEvent.click(form.getByRole("button", { name: "Create agent" }));
 
@@ -431,8 +439,13 @@ it("creates an agent with instructions from the UI, edits and pauses it, and del
 		model: "stub/chat-model",
 		enabled: true,
 		tools: true,
+		web: true,
 		agentHops: 1,
-		limits: { repliesPerHour: 30, tokensPerDay: 500_000 },
+		limits: {
+			repliesPerHour: 30,
+			tokensPerDay: 500_000,
+			proxyRequestsPerDay: 5,
+		},
 		revision: 1,
 	});
 	expect(window.location.hash).toBe(

@@ -196,7 +196,7 @@ connections and accept every token gateway-wide.
 ## Gateway
 
 The dashboard has a collapsible sidebar with a workspace switcher and
-**Dashboard**, **Models**, **Routing**, **Synapse**, **Channels**,
+**Dashboard**, **Models**, **Proxies**, **Routing**, **Synapse**, **Channels**,
 **Agents**, **API Tokens**, **Workspaces**, and **Team** views. All but Workspaces and
 Team show the selected workspace, and their URLs name it
 (`#/w/<workspace id>/models`).
@@ -245,6 +245,10 @@ through environment variables:
 | `DEEPSEEK_API_KEY` / `OPENROUTER_API_KEY` | OpenAI-compatible adapters; `DEEPSEEK_MODELS` / `OPENROUTER_MODELS` override the lists |
 | `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` | Cloudflare Workers AI; `CLOUDFLARE_MODELS` contains native IDs such as `@cf/meta/llama-3.3-70b-instruct-fp8-fast` |
 | `TYPESAFE_API_KEY` | Jev decisions adapter; `TYPESAFE_MODELS` defaults to `jev-latest` |
+| `ZENROWS_API_KEY` | A ZenRows proxy named `zenrows` for [web access](#web-access-and-proxies), in the default workspace's ladder at `auto` |
+| `CLOUDFLARE_BROWSER_API_TOKEN` | A Cloudflare Browser Run proxy named `cloudflare-browser` on `CLOUDFLARE_ACCOUNT_ID`; the token needs the Browser Rendering Edit permission, which a Workers AI token should not carry |
+| `BRIGHTDATA_API_KEY` + `BRIGHTDATA_ZONE` | A Bright Data Web Unlocker proxy named `brightdata`; `BRIGHTDATA_PRICE_PER_1000` sets your plan's price (default 1.5) |
+| `WEB_FETCH_DISABLED` | `true` turns web access off in every workspace and removes the `web_fetch` tool |
 | `XAI_API_KEY` | Registers the native xAI Grok adapter as `xai`; `XAI_MODELS` overrides the advertised list (default `grok-4`) |
 | `OPENAI_COMPAT_BASE_URL` | Registers an OpenAI-compatible provider — Ollama, LM Studio, vLLM, llama.cpp (`OPENAI_COMPAT_NAME` defaults to `local`, plus optional `OPENAI_COMPAT_API_KEY` / `OPENAI_COMPAT_MODELS`) |
 | `MONGODB_URI` | Persists the setup marker, team accounts, invites, API tokens, agent tokens, provider settings, routing, Synapse notes, and telemetry. Compose uses `mongodb://autonomous:autonomous@mongo:27017/autonomous?authSource=admin` |
@@ -304,7 +308,8 @@ through environment variables:
 - `/v1/:workspace/synapse/...` — Synapse's notes, spaces, export/import, and proposals; see [Synapse](#synapse).
 - `/v1/:workspace/channels/...` — channels, their messages, agents, and read marks; see [Channels](#channels).
 - `/v1/:workspace/bots/...` — agents the gateway runs and their runs; see [Agents with instructions](#agents-with-instructions).
-- `POST /mcp` — the MCP endpoint for agents; see [Synapse](#synapse) and [Channels](#channels).
+- `/v1/:workspace/proxies/...` and `/v1/:workspace/web/...` — web proxies, the web policy, and fetching a page; see [Web access and proxies](#web-access-and-proxies).
+- `POST /mcp` — the MCP endpoint for agents; see [Synapse](#synapse), [Channels](#channels), and [Web access and proxies](#web-access-and-proxies).
 - `/.well-known/oauth-protected-resource`, `/.well-known/oauth-authorization-server`, `/oauth/register`, `/oauth/authorize`, `/oauth/token`, `/oauth/revoke` — OAuth sign-in for MCP apps; see [Agents that sign in with OAuth](#agents-that-sign-in-with-oauth).
 
 ```bash
@@ -344,6 +349,8 @@ within that workspace:
 | Telemetry | None, Read | Read views usage and events. |
 | Synapse | None, Read, Edit | Read lists spaces, templates, notes, categories, unresolved links, daily views, and proposals. Edit also creates, changes, appends to, deletes, imports, and exports notes. Neither decides proposals or changes the global space. |
 | Channels | None, Read, Post | Read lists channels and reads messages. Post also posts, edits and deletes the token's own messages. Neither creates or changes a channel or its agents. |
+| Proxies | None, Read, Edit | Read lists proxies, their usage, and the web policy. Edit also adds proxies, changes their keys, saves the policy, and runs a proxy's billable test. Keys are never returned. |
+| Web | None, Fetch | Fetch reads a page with `POST /v1/<workspace>/web/fetch`, through the workspace's proxies when needed, within its limits. |
 
 Edit includes Read for that resource, but never Run. API token management and
 action history remain owner-only. Requests without the required permission
@@ -351,7 +358,8 @@ return 403 before any provider call. There is no per-model or per-pool scope yet
 
 The API accepts permission IDs `models:read`, `models:edit`, `routing:read`,
 `routing:edit`, `inference:run`, `telemetry:read`, `synapse:read`,
-`synapse:edit`, `channels:read`, and `channels:edit`. For example, an observer
+`synapse:edit`, `channels:read`, `channels:edit`, `proxies:read`, `proxies:edit`,
+and `web:fetch`. For example, an observer
 can use `["models:read", "routing:read", "telemetry:read"]`. The dashboard starts
 new tokens with every permission unchecked; select the access each token needs.
 API clients that omit permissions default to Models Read + Inference Run. Older stored tokens
@@ -407,7 +415,10 @@ API credential cannot authenticate through `AgentTokenStore`.
 New agents start with no permissions, both in the dashboard and through the
 API. The MCP grants are `mcp:read` (`tools/list`) and `mcp:call` (`tools/call`).
 They are independent; an agent that uses Synapse or Channels needs both. A third
-grant, `channels:manage`, lets an agent create, rename, and archive channels and
+grant, `web:fetch`, lets an agent read web pages with `web_fetch`, through the
+workspace's proxies when a site blocks it; see
+[Web access and proxies](#web-access-and-proxies). Another grant,
+`channels:manage`, lets an agent create, rename, and archive channels and
 change which agents are in them. That includes adding itself, so it opens every
 channel in the workspace to that agent. These grants do
 not authorize any REST endpoint: an agent token on `/v1/*` gets 401. Permission
@@ -620,6 +631,24 @@ and posts the reply as the bot. Nothing has to run outside the gateway.
   Synapse space, read the workspace's shared space, propose changes to it, and
   read the bot's other channels, in at most 8 model calls. It never gets a
   tool that posts elsewhere or manages channels.
+- **Web access.** A separate switch gives a reply `web_fetch`, so the bot can
+  read a page someone links. Its proxied requests count against its own
+  **Proxied requests a day** limit (default 20) and the workspace's monthly
+  proxy budget. On the Worker a proxy is tried only with at least 20 seconds
+  of the reply left. Once a reply has read a page, it can no longer use its
+  Synapse or channel tools, so a page cannot steer the bot into reading or
+  changing the workspace's notes and channels.
+- **Web scope.** Each bot with web access has a scope. **Any page** allows
+  whatever the workspace's rules allow. **Only links people post** (the
+  default) allows sites people linked in the messages the reply sees, plus
+  the bot's approved sites. **Only approved sites** allows the approved list
+  alone. A second setting limits **follow-up fetches** within one reply: any
+  in scope, only sites the reply already fetched (the default), or none. The
+  scope also applies to redirects and to the page a proxy lands on. A fetch
+  outside the scope is refused and becomes a request on the bot's page, where
+  a workspace admin approves it (adding the site to the approved list) or
+  denies it. Routes: `GET /bots/:bot/web-requests` and
+  `POST /bots/:bot/web-requests/:request/decide` (`{ approve }`).
 - **Failures.** A failed model call posts one short notice in the channel and
   keeps the provider's error on the run, where a workspace admin can read it.
 - **Cost.** Each call is recorded in telemetry under the bot's name, so its
@@ -640,6 +669,82 @@ tools?, limits? }`); `GET|PATCH|DELETE /:bot` (`GET` includes the latest 50
 runs with status, model, tokens, and the reason for a failure or skip);
 `GET /activity?channel=<id>` (bots replying in a channel right now). Bots
 live in `gateway_bots` and runs in `channel_bot_runs`.
+
+### Web access and proxies
+
+Agents read web pages with one MCP tool, `web_fetch`. It tries a plain
+request first, which is free. Only when the site blocks it (a 403, a
+CAPTCHA, a Cloudflare or other bot challenge) or the page needs JavaScript
+does it retry through the workspace's **proxies**, climbing a ladder the
+workspace admins order, cheapest first. MCP apps such as Claude and Cursor
+can call it when their own browsing is blocked; gateway bots get it with
+their **Web access** switch. The design is in
+[docs/WEB_PROXIES_PLAN.md](docs/WEB_PROXIES_PLAN.md).
+
+Open **Proxies** to add one. Three providers are supported, each a plain
+HTTPS API, so all of them work on Node and on the Worker:
+
+| Provider | What it is for | Cost |
+| --- | --- | --- |
+| [ZenRows](https://www.zenrows.com) | The unblocker. At its default `auto` level ZenRows picks rendering and proxies itself. Fixed levels `basic`, `render`, `premium`, and `render-premium` give a predictable price. | 1, 5, 10, or 25 credits; billed only for content (a 404 is billed too). The gateway records what ZenRows reports. |
+| [Cloudflare Browser Run](https://developers.cloudflare.com/browser-rendering/) | Renders pages that need JavaScript. Cloudflare's own documentation says it does not get past CAPTCHAs, Turnstile, or other bot protection, so it is tried only for a page that loaded but showed an empty shell. | Browser time: 10 hours a month on Workers Paid, then $0.09 an hour; recorded as an estimate. |
+| [Bright Data Web Unlocker](https://brightdata.com/products/web-unlocker) | A second unblocker. Needs the name of a Web Unlocker zone. It does not say where a redirect landed, so a workspace with deny, direct-only, or allow-only rules does not use it. | Your plan's price per 1,000 successful requests (default $1.50). |
+
+- **The ladder.** Each workspace has an ordered list of steps: the plain
+  request, then a connection at a level. After a failure the ladder skips
+  steps that cannot fix it: a renderer for a blocked page, for example. A
+  missing page (404, 410) or a page that needs a login stops it. The page
+  comes back as Markdown (or HTML), cut to `maxChars` (default 20,000), with
+  a header saying how it was fetched and that its content is information,
+  not instructions. Domain rules can deny a host, skip the plain request,
+  keep a host off every proxy, or allow only listed hosts. They apply to the
+  host as written (a trailing dot changes nothing), to every redirect, and to
+  the page a proxy lands on. A redirect target is shown without its query
+  string, which can hold a signed URL's credentials.
+- **Spend.** Every proxied request holds its most possible cost against the
+  workspace's **monthly budget** (default $25) and one request against the
+  caller's **daily limit** (default 100 for each person, token, and agent;
+  bots use their own limit) before it is sent. A connection can also have a
+  monthly request cap. What the provider did not bill is given back, and the
+  rest is settled at what it reported. With MongoDB each hold also gets a
+  record in `gateway_web_reservations`: the outcome is written there first,
+  each counter takes a settlement once (it remembers the reservations it
+  took), and a settlement left part-way is finished on a later request. A
+  hold whose call never reported back stays counted as spent. Plain
+  requests are free and limited to 60 a minute per caller.
+- **Who may do what.** Members see proxies, their usage, and the policy.
+  Workspace admins add proxies, change keys, save the policy, and use
+  **Try a URL** and a proxy's **Test**, which are real, billable calls. API
+  tokens use `proxies:read`, `proxies:edit`, and `web:fetch`; agents need
+  the `web:fetch` grant as well as `mcp:call`.
+- **Safety.** A plain request accepts only `http` and `https` on ports 80,
+  443, 8080, and 8443, without a user name or password in the URL. It refuses
+  `localhost`, single-label names such as `mongo`, and every private,
+  loopback, link-local (cloud metadata), and reserved address in any
+  notation. On Node it resolves the host, refuses it if any answer is
+  private, and connects to the address it checked; every redirect (at most
+  5) is checked again. The Worker's `fetch` cannot pin an address, so there
+  the URL rules and Cloudflare's network, which cannot reach the deployment's
+  private network, do that job. Proxy keys are stored like model keys and
+  never returned or logged; telemetry keeps the target's host, not its path.
+- **What is remembered.** A fetched page is cached for 10 minutes per
+  workspace, and the step that worked for a host is tried first for 24 hours.
+  Both live in the process (or Worker isolate), not in MongoDB.
+
+Proxies added in the dashboard live in `gateway_proxies`, the policy in
+`gateway_web_policy`, and spend counters in `gateway_web_usage` (they expire
+on their own); without MongoDB they last until restart. Proxies from
+environment variables belong to the default workspace and cannot be changed
+in the dashboard; take one out of the ladder to stop using it.
+
+REST routes under `/v1/<workspace id>`: `GET /proxies` (connections with this
+month's usage, the policy, and the budget); `POST /proxies`
+(`{ name, kind, apiKey, accountId?, zone?, country?, pricePer1000Usd?, monthlyRequestCap? }`,
+`kind` is `zenrows`, `cloudflare-browser`, or `brightdata`);
+`PATCH|DELETE /proxies/:name`; `POST /proxies/:name/test` (`{ url?, level? }`);
+`GET|PUT /web/policy` (`PUT` sends the `revision` it read, 409 if stale); and
+`POST /web/fetch` (`{ url, format?, maxChars?, skipDirect?, render? }`). The MCP
+tool takes the same arguments as `/web/fetch`.
 
 ### Jev decisions
 

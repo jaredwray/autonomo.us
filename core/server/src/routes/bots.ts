@@ -1,7 +1,12 @@
-import type { CreateBotRequest, UpdateBotRequest } from "@autonomo.us/common";
+import type {
+	CreateBotRequest,
+	DecideBotWebRequest,
+	UpdateBotRequest,
+} from "@autonomo.us/common";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { requestWorkspace, signedInMember } from "../auth/access.js";
 import type { BotService } from "../bots/bots.js";
+import type { BotWebRequestStore } from "../bots/web-requests.js";
 import { mongoErrorDetails } from "../mongo.js";
 import { ServiceError } from "../service-error.js";
 
@@ -19,6 +24,14 @@ const fields = {
 	model: string,
 	enabled: { type: "boolean" },
 	tools: { type: "boolean" },
+	web: { type: "boolean" },
+	webScope: { enum: ["any", "mentioned", "approved"] },
+	webFollowUps: { enum: ["any", "same-site", "none"] },
+	webHosts: {
+		type: "array",
+		maxItems: 100,
+		items: { type: "string", maxLength: 253 },
+	},
 	agentHops: integer,
 	limits: {
 		type: "object",
@@ -28,6 +41,7 @@ const fields = {
 			tokensPerDay: integer,
 			maxOutputTokens: integer,
 			contextMessages: integer,
+			proxyRequestsPerDay: integer,
 		},
 	},
 };
@@ -39,7 +53,7 @@ const fields = {
  */
 export async function botRoutes(
 	server: FastifyInstance,
-	{ bots }: { bots: BotService },
+	{ bots, webRequests }: { bots: BotService; webRequests: BotWebRequestStore },
 ) {
 	server.addHook("onRequest", async (_request, reply) => {
 		reply.header("cache-control", "no-store");
@@ -127,6 +141,53 @@ export async function botRoutes(
 		},
 		(request) =>
 			bots.update(workspaceId(request), request.params.bot, request.body),
+	);
+	// Sites a bot asked for outside its web scope. Members look; workspace
+	// admins decide, and approving adds the site to the bot's approved sites.
+	server.get<{ Params: { bot: string } }>(
+		"/bots/:bot/web-requests",
+		{ schema: { params: botParams } },
+		async (request) => {
+			const workspace = workspaceId(request);
+			await bots.get(workspace, request.params.bot);
+			return {
+				requests: await webRequests.list(workspace, request.params.bot),
+			};
+		},
+	);
+	server.post<{
+		Params: { bot: string; request: string };
+		Body: DecideBotWebRequest;
+	}>(
+		"/bots/:bot/web-requests/:request/decide",
+		{
+			schema: {
+				params: {
+					type: "object",
+					required: ["bot", "request"],
+					properties: { bot: uuid, request: uuid },
+				},
+				body: {
+					type: "object",
+					additionalProperties: false,
+					required: ["approve"],
+					properties: { approve: { type: "boolean" } },
+				},
+			},
+		},
+		async (request) => {
+			const member = signedInMember(request);
+			const workspace = workspaceId(request);
+			await bots.get(workspace, request.params.bot);
+			return webRequests.decide(
+				workspace,
+				request.params.bot,
+				request.params.request,
+				request.body.approve,
+				member.name || member.email,
+				(host) => bots.approveHost(workspace, request.params.bot, host),
+			);
+		},
 	);
 	server.delete<{ Params: { bot: string } }>(
 		"/bots/:bot",

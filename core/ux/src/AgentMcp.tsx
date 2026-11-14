@@ -51,6 +51,12 @@ export const agentTokenConfig: TokenViewConfig<AgentTokenPermission> = {
 			choices: ["channels:manage"],
 			hint: "Lets this agent create and manage channels, which opens every channel in the workspace to it.",
 		},
+		{
+			resource: "web",
+			label: "Web",
+			choices: ["web:fetch"],
+			hint: "Lets this agent read web pages with web_fetch, through the workspace's paid proxies when a site blocks it, within the limits set in Proxies.",
+		},
 	],
 	api: {
 		list: fetchAgentTokens,

@@ -38,6 +38,7 @@ async function prepareServer() {
 			assumeHttps: true,
 			deferPersistence: true,
 			pluginTimeout: 0,
+			webTransport: "fetch",
 		});
 		await server.listen({ port: PORT, host: "127.0.0.1" });
 		return server;

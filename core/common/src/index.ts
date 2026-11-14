@@ -52,6 +52,8 @@ export {
 } from "./api-tokens.js";
 export {
 	BOT_LIMITS,
+	BOT_WEB_FOLLOW_UPS,
+	BOT_WEB_SCOPES,
 	type Bot,
 	type BotActivity,
 	type BotDetails,
@@ -60,8 +62,13 @@ export {
 	type BotRun,
 	type BotRunStatus,
 	type BotSummary,
+	type BotWebFollowUps,
+	type BotWebRequest,
+	type BotWebRequestList,
+	type BotWebScope,
 	type CreateBotRequest,
 	DEFAULT_BOT_LIMITS,
+	type DecideBotWebRequest,
 	type UpdateBotRequest,
 } from "./bots.js";
 export {
@@ -181,6 +188,36 @@ export type {
 	UsageSummary,
 } from "./types.js";
 export { PROVIDER_NAMES } from "./types.js";
+export {
+	COUNTRY_PATTERN,
+	type CreateProxyRequest,
+	DEFAULT_PROXY_LEVEL,
+	DEFAULT_WEB_POLICY,
+	levelFixes,
+	levelRenders,
+	PROXY_KIND_LABELS,
+	PROXY_KINDS,
+	PROXY_LEVELS,
+	PROXY_NAME_PATTERN,
+	type ProxyConnection,
+	type ProxyKind,
+	type ProxyLevel,
+	type ProxyList,
+	type ProxyProblem,
+	type ProxyTestRequest,
+	stepLabel,
+	type UpdateProxyRequest,
+	type UpdateWebPolicyRequest,
+	WEB_LIMITS,
+	type WebDomainRule,
+	type WebFetchAttempt,
+	type WebFetchFormat,
+	type WebFetchOutcome,
+	type WebFetchRequest,
+	type WebFetchResult,
+	type WebPolicy,
+	type WebStep,
+} from "./web.js";
 export {
 	type CreateWorkspaceRequest,
 	type MembershipAction,

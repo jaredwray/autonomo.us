@@ -12,7 +12,11 @@ import type { AddressInfo } from "node:net";
  * mid-stream after emitting output. Three models answer from the request, for
  * tests that care what the gateway sent: `echo-model` repeats the last user
  * message, `mention-model` pings the first agent mention in the system
- * prompt, and `tool-model` calls the `synapse_log` tool once and then answers.
+ * prompt, `tool-model` calls the `synapse_log` tool once and then answers, and
+ * `web-model` fetches https://example.com/pricing with `web_fetch` when offered,
+ * `web-tool-model` fetches it and then tries `synapse_log`, and
+ * `web-twice-model` fetches it and then a page on another site, and
+ * `web-redirect-model` fetches it and then a page on the same site.
  */
 
 export const STUB_USAGE = {
@@ -160,6 +164,103 @@ export async function startOpenAIStub(
 					role: "assistant",
 					content: mention ? `ping ${mention}` : "nobody to ping",
 				});
+				return;
+			}
+			if (
+				parsed.model === "web-twice-model" ||
+				parsed.model === "web-redirect-model"
+			) {
+				// Fetches two pages on different sites, then reports the second.
+				const results = messages.filter((message) => message.role === "tool");
+				const urls =
+					parsed.model === "web-redirect-model"
+						? ["https://example.com/pricing", "https://example.com/redirect-me"]
+						: ["https://example.com/pricing", "https://other.example.org/next"];
+				if (results.length < urls.length)
+					answer(
+						{
+							role: "assistant",
+							content: null,
+							tool_calls: [
+								{
+									id: `call_${results.length}`,
+									type: "function",
+									function: {
+										name: "web_fetch",
+										arguments: JSON.stringify({ url: urls[results.length] }),
+									},
+								},
+							],
+						},
+						"tool_calls",
+					);
+				else
+					answer({
+						role: "assistant",
+						content: `Then: ${textOf(results.at(-1)).split("\n")[0]}`,
+					});
+				return;
+			}
+			if (parsed.model === "web-tool-model") {
+				// Fetches a page, then tries to write a note as a page might ask.
+				const results = messages.filter((message) => message.role === "tool");
+				const call = (name: string, args: unknown) =>
+					answer(
+						{
+							role: "assistant",
+							content: null,
+							tool_calls: [
+								{
+									id: `call_${results.length}`,
+									type: "function",
+									function: { name, arguments: JSON.stringify(args) },
+								},
+							],
+						},
+						"tool_calls",
+					);
+				if (results.length === 0)
+					call("web_fetch", { url: "https://example.com/pricing" });
+				else if (results.length === 1)
+					call("synapse_log", { text: "Told to by a web page" });
+				else
+					answer({
+						role: "assistant",
+						content: `Then: ${textOf(results.at(-1))}`,
+					});
+				return;
+			}
+			if (parsed.model === "web-model") {
+				const result = messages.find((message) => message.role === "tool");
+				const offered = (
+					(parsed.tools ?? []) as Array<{ function?: { name?: string } }>
+				).some((tool) => tool.function?.name === "web_fetch");
+				if (result)
+					answer({
+						role: "assistant",
+						content: `Read: ${textOf(result).split("\n")[0]}`,
+					});
+				else if (offered)
+					answer(
+						{
+							role: "assistant",
+							content: null,
+							tool_calls: [
+								{
+									id: "call_web",
+									type: "function",
+									function: {
+										name: "web_fetch",
+										arguments: JSON.stringify({
+											url: "https://example.com/pricing",
+										}),
+									},
+								},
+							],
+						},
+						"tool_calls",
+					);
+				else answer({ role: "assistant", content: "No web access." });
 				return;
 			}
 			if (parsed.model === "tool-model") {
