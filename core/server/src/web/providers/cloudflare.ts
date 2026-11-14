@@ -82,6 +82,8 @@ function siteFailure(status: number, extra: Partial<StepFailure>): StepFailure {
  */
 export const cloudflareAdapter: ProxyAdapter = {
 	kind: "cloudflare-browser",
+	// `meta.finalUrl`.
+	reportsFinalUrl: true,
 
 	maxCostUsd(_config: ProxyConfig, _level: ProxyLevel): number {
 		return GOTO_TIMEOUT_MS * USD_PER_MS;

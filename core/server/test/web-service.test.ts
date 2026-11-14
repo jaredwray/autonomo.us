@@ -2,7 +2,7 @@ import type { WebFetchResult } from "@autonomo.us/common";
 import { describe, expect, it } from "vitest";
 import { ServiceError } from "../src/service-error.js";
 import type { WebFetchTelemetry } from "../src/telemetry/telemetry.js";
-import type { DirectTransport } from "../src/web/direct.js";
+import type { DirectTransport, TransportRequest } from "../src/web/direct.js";
 import { webFetchText } from "../src/web/mcp.js";
 import { type WebCaller, WebService } from "../src/web/service.js";
 import { ProxyStore } from "../src/web/store.js";
@@ -26,7 +26,7 @@ type Page = { status: number; headers?: Record<string, string>; body: string };
 /** A plain-request transport serving fixed pages, without DNS. */
 function site(pages: Record<string, Page>) {
 	const requests: string[] = [];
-	const transport = (async (request) => {
+	const transport = (async (request: TransportRequest) => {
 		requests.push(request.url.href);
 		const page = pages[request.url.href] ?? { status: 404, body: "Not found" };
 		const bytes = new TextEncoder().encode(page.body);
@@ -41,7 +41,7 @@ function site(pages: Record<string, Page>) {
 			})(),
 			cancel: () => {},
 		};
-	}) as DirectTransport;
+	}) as unknown as DirectTransport;
 	Object.defineProperty(transport, "pinsAddress", { value: false });
 	return { transport, requests };
 }
@@ -523,6 +523,72 @@ describe("web fetch ladder", () => {
 		const landed = await fetchPage("https://example.com/proxied");
 		expect(landed).toMatchObject({ ok: false, content: "" });
 		expect(landed.reason).toContain("redirected to denied.example.org");
+	});
+
+	it("leaves out a proxy that cannot say where it landed when rules apply", async () => {
+		const brightdata: ProxyConfig = {
+			name: "bd",
+			kind: "brightdata",
+			apiKey: "bd-key",
+			zone: "unlocker",
+			enabled: true,
+			monthlyRequestCap: null,
+		};
+		const store = new ProxyStore([]);
+		await store.create(WORKSPACE, {
+			name: "bd",
+			kind: "brightdata",
+			apiKey: "bd-key",
+			zone: "unlocker",
+		});
+		const policy = await store.policy(WORKSPACE);
+		await store.updatePolicy(WORKSPACE, {
+			...policy,
+			ladder: [
+				{ kind: "direct" },
+				{ kind: "proxy", connection: brightdata.name, level: "unlock" },
+			],
+		});
+		const { transport } = site({
+			"https://example.com/": { status: 403, body: CHALLENGE },
+		});
+		let calls = 0;
+		const web = new WebService({
+			store,
+			transport,
+			fetchImpl: async () => {
+				calls += 1;
+				return new Response("# Unlocked", {
+					headers: { "content-type": "text/markdown" },
+				});
+			},
+		});
+		const fetchPage = () =>
+			web.fetch(
+				WORKSPACE,
+				AGENT,
+				{ url: "https://example.com/" },
+				{
+					deadline: Date.now() + 10_000,
+				},
+			);
+		expect((await fetchPage()).via).toBe("bd:unlock");
+		expect(calls).toBe(1);
+		await store.updatePolicy(WORKSPACE, {
+			...(await store.policy(WORKSPACE)),
+			domains: [{ match: "denied.example.org", rule: "deny" }],
+		});
+		const ruled = await fetchPage();
+		// The cache answered first; a new URL shows the step is gone.
+		expect(ruled.cached).toBe(true);
+		const fresh = await web.fetch(
+			WORKSPACE,
+			AGENT,
+			{ url: "https://example.com/other" },
+			{ deadline: Date.now() + 10_000 },
+		);
+		expect(fresh.ok).toBe(false);
+		expect(calls).toBe(1);
 	});
 
 	it("keeps at most the largest content any caller may ask for in the cache", async () => {

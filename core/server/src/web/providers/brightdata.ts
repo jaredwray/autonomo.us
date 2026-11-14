@@ -67,6 +67,8 @@ function header(response: Response, name: string): string | null {
  */
 export const brightdataAdapter: ProxyAdapter = {
 	kind: "brightdata",
+	// Web Unlocker documents no header naming the page it landed on.
+	reportsFinalUrl: false,
 
 	maxCostUsd(config: ProxyConfig, _level: ProxyLevel): number {
 		return pricePerRequest(config);

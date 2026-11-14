@@ -345,6 +345,13 @@ export class WebService {
 			}
 			const entry = connections.get(step.connection);
 			if (!entry?.config.enabled || !this.adapters[entry.config.kind]) continue;
+			// Domain rules check where a proxy landed; one that does not say
+			// cannot be held to them, so a workspace with rules leaves it out.
+			if (
+				restrictsHosts(policy) &&
+				!this.adapters[entry.config.kind]?.reportsFinalUrl
+			)
+				continue;
 			steps.push({ step, config: entry.config, problem: entry.problem });
 		}
 		if (rule === "direct-only")
@@ -654,6 +661,16 @@ export function hostRefusal(
 	if (viaProxy && rule?.rule === "direct-only")
 		return `${host} may not be fetched through a proxy under this workspace's web rules.`;
 	return null;
+}
+
+/** Whether a redirect could break the workspace's domain rules. */
+function restrictsHosts(policy: Pick<WebPolicy, "domains" | "allowOnly">) {
+	return (
+		policy.allowOnly ||
+		policy.domains.some(
+			(rule) => rule.rule === "deny" || rule.rule === "direct-only",
+		)
+	);
 }
 
 /** Why the page a proxy landed on breaks the rules, or null. */

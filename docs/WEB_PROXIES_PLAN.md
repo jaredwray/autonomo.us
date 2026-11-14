@@ -732,6 +732,9 @@ from the text above.
 - **Domain rules hold for redirects.** Hosts are matched without a trailing
   dot, every redirect of a plain request is checked before it is followed,
   and a page a proxy landed on is not returned when its host is refused.
+  Bright Data documents no header naming the page it landed on, so a
+  workspace with deny, direct-only, or allow-only rules leaves Bright Data
+  steps out of its ladder.
 - **A bot that has read a page keeps only `web_fetch`** for the rest of that
   reply: its Synapse and channel tools are refused, so a page cannot drive
   them. A page can still ask the bot to fetch another URL; that risk is

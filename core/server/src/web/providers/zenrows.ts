@@ -172,6 +172,8 @@ function errorResult(
  */
 export const zenrowsAdapter: ProxyAdapter = {
 	kind: "zenrows",
+	// `Zr-Final-Url`.
+	reportsFinalUrl: true,
 
 	maxCostUsd(_config: ProxyConfig, level: ProxyLevel): number {
 		return (CREDITS[level] ?? 25) * USD_PER_CREDIT;

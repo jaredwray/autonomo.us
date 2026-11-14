@@ -10,7 +10,7 @@ import type {
 import { afterEach, describe, expect, it } from "vitest";
 import { ROUTE_RULES } from "../src/auth/access.js";
 import type { ApiConfig } from "../src/config.js";
-import type { DirectTransport } from "../src/web/direct.js";
+import type { DirectTransport, TransportRequest } from "../src/web/direct.js";
 import type { FetchLike } from "../src/web/types.js";
 import { startChannels } from "./channel-helpers.js";
 import { startOpenAIStub } from "./openai-stub.js";
@@ -25,7 +25,7 @@ afterEach(async () => {
 });
 
 /** Every page on example.com shows a Cloudflare challenge to a plain request. */
-const transport = (async (request) => {
+const transport = (async (request: TransportRequest) => {
 	const bytes = new TextEncoder().encode(CHALLENGE);
 	return {
 		status: request.url.hostname.endsWith("example.com") ? 403 : 404,
@@ -38,7 +38,7 @@ const transport = (async (request) => {
 		})(),
 		cancel: () => {},
 	};
-}) as DirectTransport;
+}) as unknown as DirectTransport;
 Object.defineProperty(transport, "pinsAddress", { value: false });
 
 /** ZenRows answers every page with Markdown naming it. */

@@ -677,7 +677,7 @@ HTTPS API, so all of them work on Node and on the Worker:
 | --- | --- | --- |
 | [ZenRows](https://www.zenrows.com) | The unblocker. At its default `auto` level ZenRows picks rendering and proxies itself. Fixed levels `basic`, `render`, `premium`, and `render-premium` give a predictable price. | 1, 5, 10, or 25 credits; billed only for content (a 404 is billed too). The gateway records what ZenRows reports. |
 | [Cloudflare Browser Run](https://developers.cloudflare.com/browser-rendering/) | Renders pages that need JavaScript. Cloudflare's own documentation says it does not get past CAPTCHAs, Turnstile, or other bot protection, so it is tried only for a page that loaded but showed an empty shell. | Browser time: 10 hours a month on Workers Paid, then $0.09 an hour; recorded as an estimate. |
-| [Bright Data Web Unlocker](https://brightdata.com/products/web-unlocker) | A second unblocker. Needs the name of a Web Unlocker zone. | Your plan's price per 1,000 successful requests (default $1.50). |
+| [Bright Data Web Unlocker](https://brightdata.com/products/web-unlocker) | A second unblocker. Needs the name of a Web Unlocker zone. It does not say where a redirect landed, so a workspace with deny, direct-only, or allow-only rules does not use it. | Your plan's price per 1,000 successful requests (default $1.50). |
 
 - **The ladder.** Each workspace has an ordered list of steps: the plain
   request, then a connection at a level. After a failure the ladder skips

@@ -71,6 +71,11 @@ export type FetchLike = (
 /** One provider kind: how to call it and how to read its answer. */
 export interface ProxyAdapter {
 	readonly kind: ProxyKind;
+	/**
+	 * Whether the provider says which URL it finally landed on after
+	 * redirects. One that does not cannot be held to domain rules.
+	 */
+	readonly reportsFinalUrl: boolean;
 	/** The most one call at `level` can cost, reserved against the budget before the call. */
 	maxCostUsd(config: ProxyConfig, level: ProxyLevel): number;
 	fetch(
