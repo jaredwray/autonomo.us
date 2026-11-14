@@ -629,7 +629,10 @@ export class BotRunner {
 		 */
 		const allowHost = (candidate: string) => {
 			const scoped = inScope(candidate);
-			if (scoped || !fetched.length) return scoped;
+			// Out of scope: refused, whatever was fetched before.
+			if (scoped) return scoped;
+			// The first page of a reply needs only the scope.
+			if (fetched.length === 0) return null;
 			if (bot.webFollowUps === "none")
 				return "This bot fetches one page per reply.";
 			if (bot.webFollowUps === "same-site" && !inHosts(candidate, fetched))
