@@ -126,10 +126,15 @@ export const cloudflareAdapter: ProxyAdapter = {
 		} catch (error) {
 			if (error instanceof ResponseTooLarge && response) {
 				const ms = browserMs(response);
-				return failure("target-error", "the page is larger than 5 MB", {
-					costUsd: ms * USD_PER_MS,
-					billed: ms > 0,
-				});
+				const spent = { costUsd: ms * USD_PER_MS, billed: ms > 0 };
+				// Browser time is billed either way; only a delivered page stops the ladder.
+				return response.ok
+					? failure("target-error", "the page is larger than 5 MB", spent)
+					: failure(
+							"provider-error",
+							`an error answer larger than 5 MB (HTTP ${response.status})`,
+							spent,
+						);
 			}
 			return call.signal.aborted
 				? failure("timeout", "the request ran out of time")

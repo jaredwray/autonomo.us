@@ -204,10 +204,14 @@ export const zenrowsAdapter: ProxyAdapter = {
 		} catch (error) {
 			// A page too large to read was still delivered, and billed.
 			if (error instanceof ResponseTooLarge && response)
-				return failure("target-error", "the page is larger than 5 MB", {
-					billed: true,
-					costUsd: costOf(response, call.level),
-				});
+				// Only a delivered page is billed; an error answer this large is
+				// still an error, read from its status alone, and the ladder moves on.
+				return response.ok
+					? failure("target-error", "the page is larger than 5 MB", {
+							billed: true,
+							costUsd: costOf(response, call.level),
+						})
+					: errorResult(response, null, call.level);
 			// The error may quote the request URL, and with it the key.
 			return call.signal.aborted
 				? failure("timeout", "the request ran out of time")

@@ -101,11 +101,23 @@ export const brightdataAdapter: ProxyAdapter = {
 			});
 			text = await readLimited(response);
 		} catch (error) {
-			if (error instanceof ResponseTooLarge && response)
-				return failure("target-error", "the page is larger than 5 MB", {
-					billed: response.ok,
-					costUsd: response.ok ? pricePerRequest(config) : 0,
-				});
+			if (error instanceof ResponseTooLarge && response) {
+				// Bright Data reports a failed unlock in headers on an outer 200.
+				const unlocked =
+					response.ok &&
+					!response.headers.get("x-brd-error") &&
+					!response.headers.get("x-brd-error-code") &&
+					!response.headers.get("x-brd-err-code");
+				return unlocked
+					? failure("target-error", "the page is larger than 5 MB", {
+							billed: true,
+							costUsd: pricePerRequest(config),
+						})
+					: failure(
+							"provider-error",
+							`an error answer larger than 5 MB (HTTP ${response.status})`,
+						);
+			}
 			return call.signal.aborted
 				? failure("timeout", "the request ran out of time")
 				: failure("provider-error", "Bright Data could not be reached");

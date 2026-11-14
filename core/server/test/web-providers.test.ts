@@ -872,3 +872,33 @@ describe("answers too large to read", () => {
 		expect(pulled).toBeLessThanOrEqual(1);
 	});
 });
+
+describe("error answers too large to read", () => {
+	const hugeError = (status: number, headers: Record<string, string> = {}) =>
+		new Response("x".repeat(6 * 1024 * 1024), {
+			status,
+			headers: { "content-type": "application/json", ...headers },
+		});
+
+	it("is a provider error, not a billed page, so the ladder moves on", async () => {
+		const zr = await zenrowsAdapter.fetch(
+			zenrows,
+			call("auto"),
+			fake(() => hugeError(422)).fetchImpl,
+		);
+		expect(zr).toMatchObject({ outcome: "provider-error", billed: false });
+		const bd = await brightdataAdapter.fetch(
+			brightdata,
+			call("unlock"),
+			fake(() => hugeError(200, { "x-brd-error-code": "reject_block" }))
+				.fetchImpl,
+		);
+		expect(bd).toMatchObject({ outcome: "provider-error", billed: false });
+		const cf = await cloudflareAdapter.fetch(
+			cloudflare,
+			call("render"),
+			fake(() => hugeError(500)).fetchImpl,
+		);
+		expect(cf.outcome).toBe("provider-error");
+	});
+});
