@@ -756,6 +756,9 @@ from the text above.
   is refused when rules apply.
 - **A DNS lookup counts against the hop's time limit,** since a lookup
   cannot be cancelled; the fetch stops waiting for it.
+- **A skipped plain request starts at an unblocker.** `skipDirect` and a
+  `start-at-proxy` rule mean the site blocks bots, so the ladder treats the
+  fetch as already blocked and skips render-only steps.
 - **Content that is a challenge page counts as blocked,** even when a proxy
   returned it with a 200, so the ladder moves on.
 - **Telemetry** records a `gateway.web` event per fetch (caller, host, steps,

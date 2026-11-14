@@ -101,14 +101,20 @@ function oversizedError(response: Response, level: ProxyLevel): StepFailure {
 			billed: true,
 			costUsd: costOf(response, level),
 		});
-	// Billed exactly when ZenRows reported a charge, whatever the status.
-	const charged = Number.parseFloat(
+	// Billed exactly when ZenRows reported a charge, whatever the status:
+	// X-Request-Cost in dollars, or else X-Request-Credits.
+	const dollars = Number.parseFloat(
 		response.headers.get("x-request-cost") ?? "",
 	);
-	const charge =
-		Number.isFinite(charged) && charged > 0
-			? { billed: true, costUsd: charged }
-			: {};
+	const credits = Number.parseFloat(
+		response.headers.get("x-request-credits") ?? "",
+	);
+	const charged = Number.isFinite(dollars)
+		? dollars
+		: Number.isFinite(credits)
+			? credits * USD_PER_CREDIT
+			: 0;
+	const charge = charged > 0 ? { billed: true, costUsd: charged } : {};
 	// The same signals the error codes carry, read from the status.
 	if (response.status === 401)
 		return failure("provider-error", detail, { problem: "key", ...charge });

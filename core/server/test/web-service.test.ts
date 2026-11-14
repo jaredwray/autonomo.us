@@ -260,6 +260,25 @@ describe("web fetch ladder", () => {
 		expect(result.attempts.at(-1)?.detail).toContain("challenge page");
 	});
 
+	it("goes straight to an unblocker when the plain request is skipped", async () => {
+		const { store, fetchPage, calls } = await setup({
+			connections: [cloudflare, zenrows],
+			answer: (provider) =>
+				provider === "cloudflare"
+					? rendered(`# Rendered\n\n${"Text. ".repeat(50)}`)
+					: markdown("# Unblocked"),
+		});
+		await store.updatePolicy(WORKSPACE, {
+			...(await store.policy(WORKSPACE)),
+			domains: [{ match: "shop.example.com", rule: "start-at-proxy" }],
+		});
+		expect((await fetchPage("https://shop.example.com/")).via).toBe("zr:auto");
+		expect(
+			(await fetchPage("https://example.com/s", { skipDirect: true })).via,
+		).toBe("zr:auto");
+		expect(calls.map((call) => call.provider)).toEqual(["zenrows", "zenrows"]);
+	});
+
 	it("skips the plain request when asked, and only renders when asked", async () => {
 		const { fetchPage, requests, calls } = await setup({
 			connections: [cloudflare, zenrows],
@@ -271,14 +290,18 @@ describe("web fetch ladder", () => {
 		const skipped = await fetchPage("https://example.com/a", {
 			skipDirect: true,
 		});
-		expect(skipped.via).toBe("cf:render");
+		// Skipping the plain request means a block: the renderer cannot help.
+		expect(skipped.via).toBe("zr:auto");
 		expect(requests).toEqual([]);
-		const render = await fetchPage("https://example.com/b", { render: true });
+		// Another host: example.com now starts at the step that worked there.
+		const render = await fetchPage("https://other.example.org/b", {
+			render: true,
+		});
 		expect(
 			render.attempts.every((attempt) => attempt.step.kind === "proxy"),
 		).toBe(true);
 		expect(calls.map((call) => call.provider)).toEqual([
-			"cloudflare",
+			"zenrows",
 			"cloudflare",
 		]);
 	});

@@ -947,6 +947,28 @@ describe("error answers too large to read", () => {
 		}
 	});
 
+	it("reads oversized Bright Data error codes and odd statuses", async () => {
+		const coded = await brightdataAdapter.fetch(
+			brightdata,
+			call("unlock"),
+			fake(() => hugeError(200, { "x-brd-error-code": "reject_block" }))
+				.fetchImpl,
+		);
+		expect(coded).toMatchObject({ outcome: "blocked", billed: false });
+		const odd = await brightdataAdapter.fetch(
+			brightdata,
+			call("unlock"),
+			fake(() => hugeError(200, { "x-brd-status-code": "abc" })).fetchImpl,
+		);
+		expect(odd).toMatchObject({ outcome: "target-error", billed: true });
+		const credits = await zenrowsAdapter.fetch(
+			zenrows,
+			call("auto"),
+			fake(() => hugeError(500, { "x-request-credits": "5" })).fetchImpl,
+		);
+		expect(credits).toMatchObject({ billed: true, costUsd: 0.005 });
+	});
+
 	it("still backs off and flags the connection", async () => {
 		for (const [adapter, config, level] of [
 			[zenrowsAdapter, zenrows, "auto"],

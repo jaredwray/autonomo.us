@@ -107,17 +107,28 @@ export const brightdataAdapter: ProxyAdapter = {
 				return call.signal.aborted
 					? failure("timeout", "the request ran out of time")
 					: failure("provider-error", "Bright Data could not be reached");
-			// Only a delivered page is too large. Anything else is judged below
-			// from its status and Bright Data's headers alone, as any answer is.
+			// No body to deliver, so any of Bright Data's error headers decides
+			// first: a block-like code is an unbilled block, anything else an
+			// unbilled error, and the ladder moves on either way.
+			const code =
+				header(response, "x-brd-error-code") ??
+				header(response, "x-brd-err-code");
+			if (response.ok && (header(response, "x-brd-error") || code))
+				return code && blockCode(code)
+					? failure("blocked", `the unlock attempt failed (${code})`)
+					: failure(
+							"provider-error",
+							`the unlock attempt failed${code ? ` (${code})` : ""}`,
+						);
+			// Only a delivered page is too large; a status that is not a number
+			// counts as one. Anything else is judged below from its status alone.
 			const site = Number.parseInt(
-				response.headers.get("x-brd-status-code") ?? "200",
+				header(response, "x-brd-status-code") ?? "200",
 				10,
 			);
 			if (
 				response.ok &&
-				!response.headers.get("x-brd-error") &&
-				site >= 200 &&
-				site < 300
+				(!Number.isFinite(site) || (site >= 200 && site < 300))
 			)
 				return failure("target-error", "the page is larger than 5 MB", {
 					billed: true,

@@ -183,9 +183,14 @@ export class WebService {
 		let success: { step: WebStep; result: StepSuccess } | undefined;
 		let failure: StepFailure | undefined;
 		/** What the next step has to fix. */
-		let needs: "blocked" | "needs-render" | null = request.render
-			? "needs-render"
-			: null;
+		// Skipping the plain request means the site blocks bots: a renderer
+		// cannot help there, so the ladder starts at an unblocker.
+		let needs: "blocked" | "needs-render" | null =
+			request.skipDirect === true || rule?.rule === "start-at-proxy"
+				? "blocked"
+				: request.render
+					? "needs-render"
+					: null;
 
 		for (const { step, config, problem } of steps) {
 			if (context.signal?.aborted || this.now() >= context.deadline) break;
