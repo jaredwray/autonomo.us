@@ -279,6 +279,41 @@ describe("web fetch ladder", () => {
 		expect(calls.map((call) => call.provider)).toEqual(["zenrows", "zenrows"]);
 	});
 
+	it("does not let a remembered renderer cut away the unblockers", async () => {
+		let zenrowsCalls = 0;
+		const { store, fetchPage, calls } = await setup({
+			pages: { "https://app.example.com/": { status: 200, body: SHELL } },
+			connections: [zenrows, cloudflare],
+			answer: (provider) => {
+				if (provider === "cloudflare")
+					return rendered(`# Rendered\n\n${"Text. ".repeat(50)}`);
+				zenrowsCalls += 1;
+				// ZenRows fails once, so the renderer is what worked for the host.
+				return zenrowsCalls === 1
+					? zenrowsError(500, "ERR0000")
+					: markdown("# Unblocked");
+			},
+		});
+		await store.updatePolicy(WORKSPACE, {
+			...(await store.policy(WORKSPACE)),
+			ladder: [
+				{ kind: "direct" },
+				{ kind: "proxy", connection: "zr", level: "auto" },
+				{ kind: "proxy", connection: "cf", level: "render" },
+			],
+		});
+		expect((await fetchPage("https://app.example.com/")).via).toBe("cf:render");
+		const skipped = await fetchPage("https://app.example.com/other", {
+			skipDirect: true,
+		});
+		expect(skipped).toMatchObject({ ok: true, via: "zr:auto" });
+		expect(calls.map((call) => call.provider)).toEqual([
+			"zenrows",
+			"cloudflare",
+			"zenrows",
+		]);
+	});
+
 	it("skips the plain request when asked, and only renders when asked", async () => {
 		const { fetchPage, requests, calls } = await setup({
 			connections: [cloudflare, zenrows],

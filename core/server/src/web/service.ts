@@ -382,13 +382,26 @@ export class WebService {
 					config &&
 					levelRenders(config.kind, step.level),
 			);
-		// Start where this host last needed to start, if that step still exists.
+		// Start where this host last needed to start, if that step still exists
+		// and can fix what this fetch starts out needing. A remembered renderer
+		// must not cut away the unblockers a skipped plain request needs.
+		const need = skipDirect
+			? "blocked"
+			: request.render
+				? "needs-render"
+				: null;
 		const remembered = this.domains.get(`${workspace.id}\n${host}`);
 		if (remembered && remembered.until > this.now()) {
 			const index = steps.findIndex(
 				({ step }) => stepLabel(step) === remembered.step,
 			);
-			if (index > 0) steps = steps.slice(index);
+			const target = steps[index];
+			const fits =
+				!need ||
+				(target?.config &&
+					target.step.kind === "proxy" &&
+					levelFixes(target.config.kind, target.step.level).includes(need));
+			if (index > 0 && fits) steps = steps.slice(index);
 		}
 		return steps;
 	}
