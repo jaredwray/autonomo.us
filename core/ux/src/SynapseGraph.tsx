@@ -63,10 +63,10 @@ const shortLabel = (title: string) =>
 
 /** The nodes on screen, with links and neighbours as indexes into them. */
 function arrange(graph: SynapseGraphData, showUnresolved: boolean) {
-	const nodes = graph.nodes.filter((node) => showUnresolved || node.exists);
-	const indexOf = new Map(nodes.map((node, index) => [node.title, index]));
+	const visible = graph.nodes.filter((node) => showUnresolved || node.exists);
+	const indexOf = new Map(visible.map((node, index) => [node.title, index]));
 	const links: Array<[number, number]> = [];
-	const neighbours = nodes.map(() => new Set<number>());
+	const neighbours = visible.map(() => new Set<number>());
 	for (const edge of graph.edges) {
 		const source = indexOf.get(edge.source);
 		const target = indexOf.get(edge.target);
@@ -75,6 +75,11 @@ function arrange(graph: SynapseGraphData, showUnresolved: boolean) {
 		neighbours[source].add(target);
 		neighbours[target].add(source);
 	}
+	// Counted again, so hidden unresolved links do not size, rank, or describe a note.
+	const nodes = visible.map((node, index) => ({
+		...node,
+		degree: neighbours[index].size,
+	}));
 	// A note is a category when another note's `categories` names it.
 	const categories = new Set(
 		graph.nodes.flatMap((node) =>

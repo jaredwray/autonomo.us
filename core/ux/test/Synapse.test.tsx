@@ -1000,12 +1000,19 @@ it("lands on the graph of the space, highlights neighbours, and opens notes from
 	fireEvent.click(screen.getByRole("button", { name: "Fit graph to view" }));
 	expect(scale()).toBe(fitted);
 
-	// Hiding unresolved links removes the node and its link.
+	// Hiding unresolved links removes the node and its link, and the notes
+	// that linked to it are counted without it.
+	const described = (name: string) =>
+		within(screen.getByRole("group", { name: /^Graph of/ }))
+			.getByRole("link", { name })
+			.querySelector("title")?.textContent;
+	expect(described("Analytical Engine")).toBe("Analytical Engine · 2 links");
 	fireEvent.click(screen.getByRole("checkbox", { name: "Show unresolved" }));
 	await graphCanvas("Graph of 4 notes and 2 links");
 	expect(
 		screen.queryByRole("button", { name: "Create note Difference Engine" }),
 	).toBeNull();
+	expect(described("Analytical Engine")).toBe("Analytical Engine · 1 link");
 	fireEvent.click(screen.getByRole("checkbox", { name: "Show unresolved" }));
 	await graphCanvas("Graph of 4 notes and 3 links");
 
