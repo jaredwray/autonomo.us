@@ -861,7 +861,7 @@ it("creates an agent with a token, shows the value once, and edits, rolls, and r
 		"MCP: Read",
 		"MCP: Call",
 		"Channels: Manage",
-		"Inference: Run",
+		"Models: Chat",
 	])
 		expect(checkbox(form, name).checked).toBe(false);
 	expect(

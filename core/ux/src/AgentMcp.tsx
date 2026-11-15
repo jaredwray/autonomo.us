@@ -52,9 +52,9 @@ export const agentTokenConfig: TokenViewConfig<AgentTokenPermission> = {
 			hint: "Lets this agent create and manage channels, which opens every channel in the workspace to it.",
 		},
 		{
-			resource: "inference",
-			label: "Inference",
-			choices: ["inference:run"],
+			resource: "models",
+			label: "Models",
+			choices: ["models:chat"],
 			hint: "Lets this agent call the workspace's models with models_chat, on the workspace's keys, routing, and failover. Its usage is recorded under its name.",
 		},
 		{

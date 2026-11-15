@@ -421,7 +421,7 @@ API. The MCP grants are `mcp:read` (`tools/list`) and `mcp:call` (`tools/call`).
 They are independent; an agent that uses Synapse or Channels needs both. A third
 grant, `web:fetch`, lets an agent read web pages with `web_fetch`, through the
 workspace's proxies when a site blocks it; see
-[Web access and proxies](#web-access-and-proxies). `inference:run` lets an
+[Web access and proxies](#web-access-and-proxies). `models:chat` lets an
 agent call the workspace's models with `models_chat`; see
 [Models for agents](#models-for-agents). Another grant, `channels:manage`, lets an agent create, rename, and archive channels and
 change which agents are in them. That includes adding itself, so it opens every
@@ -760,10 +760,11 @@ Agents reach the workspace's models over MCP with two tools:
 - `models_list` returns the workspace's chat models (`provider/model`), its
   routing pools (`pool/<id>`) and their members, and the targets auto routing
   picks from when it is on. It also says whether the agent holds
-  `inference:run`. It needs only `mcp:call`.
+  `models:chat`. It needs only `mcp:call`.
 - `models_chat` (`{ model, prompt, system?, temperature?, maxTokens? }`) sends
   one prompt to a model, a pool, or `auto`, and returns the answer. It needs
-  the `inference:run` grant as well as `mcp:call`.
+  the `models:chat` grant as well as `mcp:call`. It is an agent grant, separate
+  from the API token grant `inference:run`, which agents cannot hold.
 
 A `models_chat` call takes the same path as `POST /v1/<workspace id>/chat`: the
 workspace's own connections and keys, its pools, auto routing, and

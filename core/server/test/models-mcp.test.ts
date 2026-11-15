@@ -13,7 +13,7 @@ type StubRequest = Parameters<
 	NonNullable<Parameters<typeof startOpenAIStub>[0]>["onRequest"] & object
 >[0];
 
-const CHAT = ["mcp:read", "mcp:call", "inference:run"];
+const CHAT = ["mcp:read", "mcp:call", "models:chat"];
 
 /** A gateway whose workspace has one connection: a real stub provider. */
 async function start() {
@@ -65,7 +65,7 @@ describe("models for agents over MCP", () => {
 			}
 		).instructions;
 		expect(instructions).toContain("models_chat");
-		expect(instructions).toContain("inference:run");
+		expect(instructions).toContain("models:chat");
 	});
 
 	it("lists the workspace's chat models and pools, and says when the agent cannot call them", async () => {
@@ -104,15 +104,15 @@ describe("models for agents over MCP", () => {
 		expect(listed.text).toContain(
 			"- pool/fast: stub/chat-model, stub/echo-model",
 		);
-		expect(listed.text).toContain("inference:run");
+		expect(listed.text).toContain("models:chat");
 
 		const caller = await agent("Caller", CHAT);
 		const granted = await tool<ModelList>(caller.secret, "models_list");
 		expect(granted.data.canChat).toBe(true);
-		expect(granted.text).not.toContain("inference:run");
+		expect(granted.text).not.toContain("models:chat");
 	});
 
-	it("needs the inference:run grant to call a model", async () => {
+	it("needs the models:chat grant to call a model", async () => {
 		const { agent, rpc, requests } = await start();
 		const bot = await agent("Scout");
 		const refused = await rpc(bot.secret, "tools/call", {
@@ -120,7 +120,7 @@ describe("models for agents over MCP", () => {
 			arguments: { model: "stub/echo-model", prompt: "hi" },
 		});
 		expect(refused.error?.code).toBe(-32001);
-		expect(refused.error?.message).toContain("inference:run");
+		expect(refused.error?.message).toContain("models:chat");
 		expect(requests).toHaveLength(0);
 	});
 
