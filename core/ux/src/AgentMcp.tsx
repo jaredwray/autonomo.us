@@ -456,7 +456,9 @@ export function NewOAuthAgent({ onBack }: { onBack(): void }) {
 				approve it.
 			</p>
 			<div className="form-actions">
-				<button className="button" type="button" onClick={onBack}>Back</button>
+				<button className="button" type="button" onClick={onBack}>
+					Back
+				</button>
 			</div>
 		</>
 	);
