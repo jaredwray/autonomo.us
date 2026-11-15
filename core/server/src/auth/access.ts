@@ -183,6 +183,21 @@ export const ROUTE_RULES = new Map<string, RouteRule>([
 		"DELETE /v1/:workspace/agents/:agent/connections/:connection",
 		workspace("agents:manage"),
 	],
+	// The URL an agent's events are POSTed to. Its settings hold the
+	// receiver's credentials, so even reading them is for admins.
+	["GET /v1/:workspace/agents/:agent/webhook", workspace("agents:manage")],
+	["POST /v1/:workspace/agents/:agent/webhook", workspace("agents:manage")],
+	["PATCH /v1/:workspace/agents/:agent/webhook", workspace("agents:manage")],
+	["DELETE /v1/:workspace/agents/:agent/webhook", workspace("agents:manage")],
+	[
+		"POST /v1/:workspace/agents/:agent/webhook/secret",
+		workspace("agents:manage"),
+	],
+	// A real POST, which may start a paid run at the receiver.
+	[
+		"POST /v1/:workspace/agents/:agent/webhook/test",
+		workspace("agents:manage"),
+	],
 	// An app's OAuth sign-in to the MCP endpoint, decided in the dashboard.
 	// Approving names a workspace and one of its agents; looking and refusing
 	// grant nothing, so any signed-in person may.

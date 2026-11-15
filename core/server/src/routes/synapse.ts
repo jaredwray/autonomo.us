@@ -8,6 +8,7 @@ import {
 	type SynapseActor,
 	type SynapseImportRequest,
 	type SynapseNoteSort,
+	type SynapseProposal,
 	type SynapseProposalStatus,
 	type SynapseSpaceId,
 	type UpdateSynapseNoteRequest,
@@ -97,10 +98,19 @@ export async function synapseRoutes(
 	{
 		synapse,
 		agentTokens,
+		onProposalDecided,
 	}: {
 		synapse: SynapseService;
 		/** Who has an agent space here: agent tokens and the gateway's bots. */
 		agentTokens: Pick<AgentTokenStore, "ids">;
+		/**
+		 * Called once a proposal is decided, so its author can follow up. The
+		 * decision stands whatever this does.
+		 */
+		onProposalDecided?: (
+			workspaceId: string,
+			proposal: SynapseProposal,
+		) => Promise<unknown>;
 	},
 ) {
 	server.addHook("onRequest", async (request, reply) => {
@@ -423,14 +433,17 @@ export async function synapseRoutes(
 				),
 			},
 		},
-		(request) => {
+		async (request) => {
 			const member = signedInMember(request);
-			return synapse.decideProposal(
+			const workspace = requestWorkspace(request);
+			const decided = await synapse.decideProposal(
 				request.params.id,
 				request.body,
 				{ kind: "user", id: member.id, name: member.name || member.email },
-				sharedSpaceId(requestWorkspace(request)),
+				sharedSpaceId(workspace),
 			);
+			await onProposalDecided?.(workspace.id, decided).catch(() => {});
+			return decided;
 		},
 	);
 }

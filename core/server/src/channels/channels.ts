@@ -72,7 +72,12 @@ export type ChannelServiceOptions = {
 	 * Called after a message is appended, before the post returns. A failure
 	 * here never fails the post.
 	 */
-	onMessage?: (channel: Channel, message: ChannelMessage) => unknown;
+	onMessage?: (
+		channel: Channel,
+		message: ChannelMessage,
+		/** `replay`: a retried post, settled again; its first settle may have run. */
+		context: { replay: boolean },
+	) => unknown;
 };
 
 export type ReadOptions = {
@@ -830,7 +835,11 @@ export class ChannelService {
 	 * author's read mark, and whoever listens for messages. Each step can be
 	 * repeated safely, so a retried post repairs any that a crash skipped.
 	 */
-	private async settle(channel: StoredChannel, entry: StoredMessage) {
+	private async settle(
+		channel: StoredChannel,
+		entry: StoredMessage,
+		replay = false,
+	) {
 		await Promise.all([
 			this.repository.touchChannel(channel.workspaceId, channel.id, {
 				lastSeq: entry.seq,
@@ -843,6 +852,7 @@ export class ChannelService {
 			await this.options.onMessage?.(
 				publicChannel(channel),
 				publicMessage(entry),
+				{ replay },
 			);
 		} catch {
 			// The message is posted; whoever listens handles its own trouble.
@@ -850,7 +860,7 @@ export class ChannelService {
 	}
 	/** A retry of a post that already landed: the first message, settled again. */
 	private async replayed(channel: StoredChannel, first: StoredMessage) {
-		await this.settle(channel, first);
+		await this.settle(channel, first, true);
 		return { message: publicMessage(first), created: false };
 	}
 	/**

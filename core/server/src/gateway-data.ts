@@ -1,5 +1,6 @@
 import type { SetupInventory } from "@autonomo.us/common";
 import { MongoClient } from "mongodb";
+import { AGENT_WEBHOOKS_COLLECTION } from "./agent-webhooks/repository.js";
 import { BOT_RUNS_COLLECTION, BOTS_COLLECTION } from "./bots/repository.js";
 import {
 	CHANNEL_MESSAGES_COLLECTION,
@@ -29,6 +30,8 @@ export const GATEWAY_COLLECTIONS = [
 	"gateway_invites",
 	"gateway_api_tokens",
 	"gateway_agent_tokens",
+	// An agent's webhook holds the receiver's credentials: it goes with the agent.
+	AGENT_WEBHOOKS_COLLECTION,
 	"gateway_providers",
 	"gateway_proxies",
 	"gateway_bot_web_requests",

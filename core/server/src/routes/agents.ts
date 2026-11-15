@@ -35,7 +35,8 @@ const agentBody = {
 	properties: agentFields,
 };
 
-function errors(server: FastifyInstance) {
+/** Errors as `{ error: { message } }`, with storage details kept out of responses. */
+export function agentRouteErrors(server: FastifyInstance) {
 	server.addHook("onRequest", async (_request, reply) => {
 		reply.header("cache-control", "no-store");
 	});
@@ -87,7 +88,7 @@ export async function agentRoutes(
 	server: FastifyInstance,
 	{ agentTokens, bots, oauth }: AgentRouteOptions,
 ) {
-	errors(server);
+	agentRouteErrors(server);
 
 	server.get("/agents", async (request): Promise<AgentList> => {
 		const workspace = requestWorkspace(request);
@@ -267,7 +268,7 @@ export async function oauthSignInRoutes(
 	server: FastifyInstance,
 	{ oauth }: { oauth: OAuthService },
 ) {
-	errors(server);
+	agentRouteErrors(server);
 	const params = {
 		type: "object",
 		required: ["id"],

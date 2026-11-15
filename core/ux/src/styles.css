@@ -1361,6 +1361,7 @@ a.button { text-decoration: none; }
 .agent-actions { margin-top: 16px; }
 .agent-address-row { display: flex; gap: 8px; }
 .agent-address-row input { flex: 1; min-width: 0; font-family: monospace; }
+.agent-webhook-header { margin-bottom: 8px; }
 .agent-steps { margin: 12px 0 0; padding-left: 20px; color: var(--text-secondary); font-size: 13px; }
 .agent-steps li { margin: 6px 0; }
 .agents-main .token-log-table { min-width: 520px; }
