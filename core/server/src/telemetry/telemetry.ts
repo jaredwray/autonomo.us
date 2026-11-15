@@ -413,7 +413,7 @@ export class TelemetryService {
 			web.fetches.push(...facts.fetches);
 			web.hosts.push(...facts.hosts);
 			web.steps.push(...facts.steps);
-			web.legacy += facts.legacy;
+			web.legacy.push(...facts.legacy);
 		}
 		return buildAnalytics(
 			events

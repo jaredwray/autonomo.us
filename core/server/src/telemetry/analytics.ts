@@ -309,16 +309,17 @@ export type WebFacts = {
 	steps: WebStepFact[];
 	/**
 	 * Fetches recorded before the gateway kept how they ended and what they
-	 * cost. They are left out of every number rather than counted as free
-	 * failures, and reported by this count instead.
+	 * cost, by caller. They are left out of every number rather than counted
+	 * as free failures, and reported as a count instead, which the caller
+	 * filter applies to like the rest.
 	 */
-	legacy: number;
+	legacy: Array<{ caller: TelemetryCaller; fetches: number }>;
 };
 export const noWebFacts = (): WebFacts => ({
 	fetches: [],
 	hosts: [],
 	steps: [],
-	legacy: 0,
+	legacy: [],
 });
 
 const nonNegative = (value: unknown) =>
@@ -339,9 +340,10 @@ export const webEventDetailed = (event: TelemetryEvent) =>
  * a missing key, a back-off) made no request and are not counted.
  */
 export function webEventFacts(event: TelemetryEvent): WebFacts {
-	if (!webEventDetailed(event)) return { ...noWebFacts(), legacy: 1 };
-	const data = event.data;
 	const caller = eventCaller(event);
+	if (!webEventDetailed(event))
+		return { ...noWebFacts(), legacy: [{ caller, fetches: 1 }] };
+	const data = event.data;
 	const ok = data.ok === true;
 	const counts: WebCounts = {
 		fetches: 1,
@@ -381,7 +383,7 @@ export function webEventFacts(event: TelemetryEvent): WebFacts {
 				costUsd: nonNegative(attempt.costUsd),
 				lastSeen: event.timestamp,
 			})),
-		legacy: 0,
+		legacy: [],
 	};
 }
 
@@ -504,7 +506,10 @@ export function buildWebAnalytics(
 			}))
 			.sort(byFetches)
 			.slice(0, WEB_TOP_SITES),
-		legacyFetches: facts.legacy,
+		legacyFetches: facts.legacy.reduce(
+			(total, row) => total + (keep(row.caller) ? row.fetches : 0),
+			0,
+		),
 	};
 }
 

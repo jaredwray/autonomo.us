@@ -250,6 +250,18 @@ function seedSkippedAndLegacy(
 		data: { operation: "web", callerId: "user:1", callerKind: "user" },
 	};
 	telemetry.record(legacy);
+	// Another caller's older fetch, which a filter to user:1 must not count.
+	telemetry.record({
+		...legacy,
+		id: "legacy-web-agent",
+		agentId: "bot-1",
+		data: {
+			operation: "web",
+			callerId: "agent:bot-1",
+			callerName: "Helper",
+			callerKind: "agent",
+		},
+	});
 	return legacy;
 }
 
@@ -498,8 +510,13 @@ describe("usage analytics", () => {
 		expect(
 			result.web.byConnection.map((row) => [row.id, row.attempts]),
 		).toEqual([["direct", 1]]);
-		// The older fetch is counted apart, not as a free failure.
-		expect(result.web.legacyFetches).toBe(1);
+		// Older fetches are counted apart, not as free failures, and the
+		// caller filter applies to the count too.
+		expect(result.web.legacyFetches).toBe(2);
+		expect(
+			(await telemetry.analytics({ ...query, caller: "user:1" })).web
+				.legacyFetches,
+		).toBe(1);
 	});
 
 	it("reports bounded history eviction and falls back when durable storage fails", async () => {
@@ -797,7 +814,7 @@ describe.skipIf(!available)("durable analytics", () => {
 		});
 		for (const event of durable.recentEvents().reverse()) memory.record(event);
 		await durable.flush();
-		expect((await durable.analytics(query)).web.legacyFetches).toBe(1);
+		expect((await durable.analytics(query)).web.legacyFetches).toBe(2);
 		for (const filters of [
 			{},
 			{ caller: "user:1" },
