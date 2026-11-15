@@ -969,7 +969,9 @@ a.button { text-decoration: none; }
 .synapse-graph-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .synapse-graph-controls .failover-enable { margin: 0 4px 0 0; font-size: 13px; }
 .synapse-graph .card-note { margin: 0 0 10px; }
-.synapse-graph-canvas { display: block; width: 100%; height: min(70vh, 640px); border: 1px solid var(--hairline); border-radius: 8px; background: radial-gradient(ellipse 70% 55% at 22% 28%, var(--graph-nebula-indigo), transparent 70%), radial-gradient(ellipse 60% 50% at 80% 68%, var(--graph-nebula-violet), transparent 70%), radial-gradient(ellipse 40% 34% at 68% 16%, var(--graph-nebula-magenta), transparent 72%), radial-gradient(ellipse 46% 38% at 16% 86%, var(--graph-nebula-teal), transparent 72%), var(--graph-space); cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
+.synapse-graph-canvas { display: block; width: 100%; height: min(70vh, 640px); border: 1px solid var(--hairline); border-radius: 8px; cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
+/* The sky: the canvas, and the whole graph when it is expanded. */
+.synapse-graph-canvas, .synapse-graph.is-expanded { background: radial-gradient(ellipse 70% 55% at 22% 28%, var(--graph-nebula-indigo), transparent 70%), radial-gradient(ellipse 60% 50% at 80% 68%, var(--graph-nebula-violet), transparent 70%), radial-gradient(ellipse 40% 34% at 68% 16%, var(--graph-nebula-magenta), transparent 72%), radial-gradient(ellipse 46% 38% at 16% 86%, var(--graph-nebula-teal), transparent 72%), var(--graph-space); }
 .synapse-graph-canvas:active { cursor: grabbing; }
 .synapse-graph-sky { pointer-events: none; }
 .synapse-graph-canvas pattern circle, .synapse-graph-sky circle { fill: var(--graph-label); }
@@ -1004,12 +1006,29 @@ a.button { text-decoration: none; }
 .synapse-graph-legend li { display: flex; align-items: center; gap: 5px; }
 .synapse-graph-legend svg { width: 18px; height: 18px; }
 .synapse-graph-legend .synapse-graph-node { cursor: default; }
-/* "Full screen": the notes column goes and the graph takes the content area; the app navigation and page header stay. */
-.synapse-view.is-expanded { max-width: none; }
+/* "Full screen": the graph covers the page beside the app navigation, which stays above it. Its header and legend float on the sky. */
+.synapse-view.is-expanded { height: 100vh; overflow: hidden; }
 .synapse-side[hidden] { display: none; }
-.synapse-layout.is-expanded { grid-template-columns: minmax(0, 1fr); }
-/* The height is set from a measurement of the room left in the window. */
-.synapse-graph.is-expanded .synapse-graph-canvas { max-height: none; aspect-ratio: auto; }
+.synapse-graph.is-expanded { position: fixed; inset: 0 0 0 var(--sidebar-width); z-index: 15; color: var(--graph-label); transition: left 180ms ease; }
+.synapse-graph.is-expanded .synapse-graph-canvas { position: absolute; inset: 0; width: 100%; height: 100%; max-height: none; aspect-ratio: auto; border: 0; border-radius: 0; }
+/* Only the controls take the pointer, so the sky under the chrome still pans. */
+.synapse-graph.is-expanded .synapse-graph-chrome { position: absolute; inset: 0 0 auto 0; z-index: 1; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 14px 16px; pointer-events: none; }
+.synapse-graph.is-expanded .synapse-graph-header { align-self: stretch; margin: 0; }
+.synapse-graph.is-expanded .synapse-graph-header h2 { text-shadow: 0 1px 6px var(--graph-space); }
+.synapse-graph.is-expanded .synapse-graph-controls > *, .synapse-graph.is-expanded .synapse-graph-chrome > .card-note, .synapse-graph.is-expanded .synapse-graph-chrome > .banner-error { pointer-events: auto; border: 1px solid color-mix(in srgb, var(--graph-label) 24%, transparent); border-radius: 7px; background: color-mix(in srgb, var(--graph-space) 62%, transparent); color: var(--graph-label); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+.synapse-graph.is-expanded .synapse-graph-controls .icon-button:hover { background: color-mix(in srgb, var(--graph-label) 18%, var(--graph-space)); }
+.synapse-graph.is-expanded .synapse-graph-controls .failover-enable { margin: 0; padding: 6px 10px; }
+.synapse-graph.is-expanded .synapse-graph-chrome > .card-note, .synapse-graph.is-expanded .synapse-graph-chrome > .banner-error { margin: 0; padding: 6px 10px; font-size: 12px; }
+.synapse-graph.is-expanded .synapse-graph-chrome > .banner-error { border-color: var(--status-critical); }
+.synapse-graph.is-expanded .synapse-graph-hint { display: none; }
+.synapse-graph.is-expanded :is(button, input, a, [role="button"]):focus-visible { outline: 2px solid var(--graph-glow); outline-offset: 2px; }
+.synapse-graph.is-expanded .synapse-graph-legend { position: absolute; left: 16px; bottom: 16px; z-index: 1; max-width: calc(100% - 32px); margin: 0; border: 1px solid color-mix(in srgb, var(--graph-label) 24%, transparent); background: color-mix(in srgb, var(--graph-space) 62%, transparent); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+/* Nothing drawn: an empty sky with the message in the middle. */
+.synapse-graph.is-expanded .synapse-graph-message { position: absolute; inset: 0; display: grid; place-content: center; padding: 80px 24px; text-align: center; }
+.synapse-graph.is-expanded .synapse-graph-message .empty-state { color: var(--graph-label); }
+@media (prefers-reduced-motion: reduce) {
+	.synapse-graph.is-expanded { transition: none; }
+}
 .synapse-graph-back { display: inline-block; margin-bottom: 12px; color: var(--series-1); font-size: 12px; text-decoration: none; }
 .synapse-graph-back:hover { text-decoration: underline; }
 .synapse-note-header { display: flex; align-items: start; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 8px; }

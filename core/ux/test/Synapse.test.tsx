@@ -1177,7 +1177,7 @@ it("says so when the graph is empty, capped, or cannot load, and settles at once
 	expect(within(alert).getByRole("button", { name: "Retry" })).toBeDefined();
 }, 30_000);
 
-it("expands the graph over the notes column, keeping the page header and navigation, until Esc or the button", async () => {
+it("expands the graph over the whole page beside the app navigation, until Esc or the button", async () => {
 	const running = await boot();
 	await createNote(running, "global", { title: "Brand voice", body: "" });
 	await createNote(running, "shared", {
@@ -1206,26 +1206,33 @@ it("expands the graph over the notes column, keeping the page header and navigat
 	const toggle = screen.getByRole("button", { name: "Full screen" });
 	toggle.focus();
 	fireEvent.click(toggle);
-	// The notes column goes; the graph says which space it shows.
+	// The graph says which space it shows; the rest of the page gives way.
 	expect(toggle.getAttribute("aria-label")).toBe("Exit full screen");
 	expect(toggle.getAttribute("title")).toBe("Exit full screen");
 	expect(document.activeElement).toBe(toggle);
 	expect(notes()).toBeNull();
 	expect(screen.getByRole("heading", { name: "Graph · Shared" })).toBeDefined();
-	expect(expandedParts()).toEqual([
-		"dashboard synapse-view",
-		"synapse-layout",
-		"synapse-graph",
-	]);
-	// The drawing is the same element, sized to the window.
+	expect(expandedParts()).toEqual(["dashboard synapse-view", "synapse-graph"]);
+	// The drawing is the same element; CSS alone sizes it.
 	expect(await graphCanvas()).toBe(canvas);
-	expect(canvas.style.height).toBe(`${window.innerHeight}px`);
-	// The page header, its actions, the tabs, and the app navigation stay.
-	expect(screen.getByRole("heading", { name: "Synapse" })).toBeDefined();
-	expect(screen.getByRole("button", { name: "New note" })).toBeDefined();
-	expect(screen.getByRole("tab", { name: "Proposals" })).toBeDefined();
+	expect(canvas.style.height).toBe("");
+	// The page header, its actions, the tabs, and the banners are gone.
+	const pageChrome = () => [
+		screen.queryByText(/Linked Markdown notes/),
+		screen.queryByRole("button", { name: "New note" }),
+		screen.queryByRole("button", { name: "Import" }),
+		screen.queryByRole("button", { name: "Export .zip" }),
+		screen.queryByRole("tablist"),
+		screen.queryByText(/Notes are temporary until MongoDB/),
+	];
+	expect(pageChrome()).toEqual([null, null, null, null, null, null]);
+	// The page keeps its heading, out of sight, and the app navigation stays.
+	const heading = screen.getByRole("heading", { name: "Synapse", level: 1 });
+	expect(heading.className).toBe("visually-hidden");
 	expect(screen.getByRole("link", { name: "Synapse" })).toBeDefined();
 	expect(screen.getByRole("link", { name: "Channels" })).toBeDefined();
+	// The hint is hidden by CSS, and the legend floats on the canvas.
+	expect(screen.getByRole("list", { name: "Legend" })).toBeDefined();
 
 	// Esc from inside the graph leaves.
 	fireEvent.keyDown(
@@ -1236,13 +1243,36 @@ it("expands the graph over the notes column, keeping the page header and navigat
 	expect(notes()).not.toBeNull();
 	expect(screen.getByRole("heading", { name: "Graph" })).toBeDefined();
 	expect(expandedParts()).toEqual([]);
-	expect(canvas.style.height).toBe("");
-	// Esc elsewhere on the page is not the graph's.
+	expect(pageChrome().every(Boolean)).toBe(true);
+	expect(
+		screen.getByRole("heading", { name: "Synapse", level: 1 }).className,
+	).toBe("");
+	// Esc in the app navigation is not the graph's.
 	fireEvent.click(toggle);
-	fireEvent.keyDown(screen.getByRole("tab", { name: "Notes" }), {
+	fireEvent.keyDown(screen.getByRole("link", { name: "Channels" }), {
 		key: "Escape",
 	});
 	expect(toggle.getAttribute("aria-label")).toBe("Exit full screen");
+	// With nothing focused, as after panning the sky, Esc leaves too.
+	fireEvent.keyDown(document.body, { key: "Escape" });
+	expect(toggle.getAttribute("aria-label")).toBe("Full screen");
+	fireEvent.click(toggle);
+
+	// An unresolved link leaves full screen for the New note form, which
+	// lives on the page the graph was covering.
+	fireEvent.click(
+		within(canvas).getByRole("button", {
+			name: "Create note Analytical Engine",
+		}),
+	);
+	expect((screen.getByLabelText("Title") as HTMLInputElement).value).toBe(
+		"Analytical Engine",
+	);
+	expect(toggle.getAttribute("aria-label")).toBe("Full screen");
+	expect(expandedParts()).toEqual([]);
+	expect(notes()).not.toBeNull();
+	fireEvent.click(screen.getByRole("button", { name: "Close new note form" }));
+	fireEvent.click(toggle);
 
 	// A note opens in the normal layout; going back returns to the expanded graph.
 	fireEvent.click(within(canvas).getByRole("link", { name: "Ada Lovelace" }));
@@ -1260,8 +1290,12 @@ it("expands the graph over the notes column, keeping the page header and navigat
 	await graphCanvas("Graph of 1 note and 0 links");
 	expect(screen.getByRole("heading", { name: "Graph · Global" })).toBeDefined();
 	expect(notes()).toBeNull();
-	// The Proposals tab is not the graph's to expand.
-	fireEvent.click(screen.getByRole("tab", { name: "Proposals" }));
+	// The Proposals tab, reached by its address, is not the graph's to cover.
+	window.location.hash = window.location.hash.replace(
+		/synapse.*$/,
+		"synapse/proposals",
+	);
+	await screen.findByRole("tab", { name: "Proposals", selected: true });
 	expect(expandedParts()).toEqual([]);
 	fireEvent.click(screen.getByRole("tab", { name: "Notes" }));
 	fireEvent.click(
@@ -1282,9 +1316,11 @@ it("keeps the way out of full screen when the expanded space has nothing to draw
 	const notes = () => screen.queryByRole("complementary", { name: "Notes" });
 	fireEvent.click(screen.getByRole("button", { name: "Full screen" }));
 	expect(notes()).toBeNull();
-	// Global is empty: nothing is drawn, yet the notes column can come back.
+	// Global is empty: nothing is drawn, yet the page can come back.
 	await pickSpace("global");
 	expect(await screen.findByText(/Nothing to draw yet/)).toBeDefined();
+	expect(document.querySelector(".synapse-graph.is-expanded")).not.toBeNull();
+	expect(screen.queryByRole("tablist")).toBeNull();
 	expect(screen.getByRole("heading", { name: "Graph · Global" })).toBeDefined();
 	expect(screen.queryByRole("button", { name: "Zoom in" })).toBeNull();
 	fireEvent.click(screen.getByRole("button", { name: "Exit full screen" }));
@@ -1295,52 +1331,11 @@ it("keeps the way out of full screen when the expanded space has nothing to draw
 	fireEvent.click(screen.getByRole("button", { name: "Full screen" }));
 	await running.server.close();
 	await pickSpace("global");
-	await within(graphRegion()).findByRole("alert");
+	// Only the graph's own error shows; the page's banners are covered.
+	const alert = await within(graphRegion()).findByRole("alert");
+	expect(alert.closest(".synapse-graph.is-expanded")).not.toBeNull();
+	expect(within(alert).getByRole("button", { name: "Retry" })).toBeDefined();
 	fireEvent.click(screen.getByRole("button", { name: "Exit full screen" }));
 	expect(notes()).not.toBeNull();
-});
-
-it("measures the expanded graph again when the page above it changes", async () => {
-	// jsdom has no ResizeObserver; this one records what is observed.
-	const observers: Array<{ callback: () => void; targets: Element[] }> = [];
-	vi.stubGlobal(
-		"ResizeObserver",
-		class {
-			callback: () => void;
-			targets: Element[] = [];
-			constructor(callback: () => void) {
-				this.callback = callback;
-				observers.push(this);
-			}
-			observe(target: Element) {
-				this.targets.push(target);
-			}
-			unobserve() {}
-			disconnect() {
-				this.targets = [];
-			}
-		},
-	);
-	const running = await boot();
-	await createNote(running, "shared", { title: "Ada Lovelace", body: "" });
-	renderAt("#/synapse");
-	const canvas = await graphCanvas("Graph of 1 note and 0 links");
-	fireEvent.click(screen.getByRole("button", { name: "Full screen" }));
-	expect(canvas.style.height).toBe(`${window.innerHeight}px`);
-	const page = canvas.closest(".dashboard") as HTMLElement;
-	const watcher = observers.find((item) => item.targets.includes(page));
-	expect(watcher).toBeDefined();
-	// A panel opens above the graph and pushes it 200 pixels down, with
-	// nothing new below it; no window resize happens.
-	const at = (top: number, bottom: number) =>
-		({ top, bottom, left: 0, right: 0, width: 0, height: 0 }) as DOMRect;
-	vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue(at(200, 200));
-	vi.spyOn(page, "getBoundingClientRect").mockReturnValue(at(0, 200));
-	watcher?.callback();
-	await new Promise((resolve) => requestAnimationFrame(resolve));
-	expect(canvas.style.height).toBe(`${window.innerHeight - 200}px`);
-	// Leaving full screen stops watching the page.
-	fireEvent.click(screen.getByRole("button", { name: "Exit full screen" }));
-	expect(watcher?.targets).toEqual([]);
-	expect(canvas.style.height).toBe("");
+	expect(screen.getByRole("tablist")).toBeDefined();
 });

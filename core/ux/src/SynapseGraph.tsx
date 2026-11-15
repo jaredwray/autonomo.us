@@ -40,8 +40,6 @@ const FIT_MARGIN = 40;
 /** A press that moves less than this is a click, not a drag. */
 const DRAG_THRESHOLD = 4;
 const LABEL_LENGTH = 32;
-/** Expanded, the canvas is never shorter than this, however small the window. */
-const EXPANDED_MIN_HEIGHT = 320;
 
 /** How far the glow around a note reaches, in radii. */
 const HALO = 3;
@@ -247,8 +245,9 @@ export function SynapseGraph({
 	/** Shown in the header while expanded, when the space picker is hidden. */
 	spaceName: string;
 	/**
-	 * "Full screen": the parent hides the notes column and the canvas fills
-	 * the window below the page header. The app navigation stays.
+	 * "Full screen": the graph covers the page beside the app navigation,
+	 * with its header and legend floating on the sky. The parent hides the
+	 * rest of the page.
 	 */
 	expanded: boolean;
 	onExpandedChange(expanded: boolean): void;
@@ -268,7 +267,6 @@ export function SynapseGraph({
 	const [hovered, setHovered] = useState<string | null>(null);
 	const [focused, setFocused] = useState<string | null>(null);
 	const sequence = useRef(0);
-	const containerRef = useRef<HTMLDivElement>(null);
 	const svgRef = useRef<SVGSVGElement>(null);
 	const viewportRef = useRef<SVGGElement>(null);
 	const stageRef = useRef<Stage | null>(null);
@@ -391,45 +389,27 @@ export function SynapseGraph({
 		};
 	}, [drawn]);
 
-	// Expanded, the canvas takes what is left of the window below its top
-	// edge, which only a measurement knows; the page then needs no scrolling.
-	// biome-ignore lint/correctness/useExhaustiveDependencies: `graph` and `drawn` change what sits above the canvas
-	useLayoutEffect(() => {
-		const svg = svgRef.current;
-		if (!svg) return;
-		const page = svg.closest(".dashboard") ?? containerRef.current;
-		const resize = () => {
-			if (expanded) {
-				const rect = svg.getBoundingClientRect();
-				// What the page keeps under the canvas: the legend and the padding.
-				const below = (page?.getBoundingClientRect().bottom ?? 0) - rect.bottom;
-				const height = window.innerHeight - (rect.top + window.scrollY) - below;
-				svg.style.height = `${Math.max(EXPANDED_MIN_HEIGHT, Math.floor(height))}px`;
-			} else svg.style.removeProperty("height");
-			const stage = stageRef.current;
-			if (stage?.auto) fit(stage);
-		};
-		resize();
+	// Esc leaves full screen wherever focus is on the covered page, which
+	// after panning the sky is nowhere in particular. In the app navigation
+	// it stays the navigation's own.
+	useEffect(() => {
 		if (!expanded) return;
-		window.addEventListener("resize", resize);
-		// A panel opening or closing above the graph, such as New note or
-		// Import, moves it without resizing the window: measure again on the
-		// next frame. The height does not depend on itself, so this settles.
-		let frame = 0;
-		const observer =
-			typeof ResizeObserver === "undefined" || !page
-				? null
-				: new ResizeObserver(() => {
-						cancelAnimationFrame(frame);
-						frame = requestAnimationFrame(resize);
-					});
-		if (page) observer?.observe(page);
-		return () => {
-			window.removeEventListener("resize", resize);
-			observer?.disconnect();
-			cancelAnimationFrame(frame);
+		const keyDown = (event: KeyboardEvent) => {
+			if (event.key !== "Escape") return;
+			const target = event.target;
+			if (!(target instanceof Element && target.closest(".sidebar")))
+				onExpandedChange(false);
 		};
-	}, [expanded, drawn, graph]);
+		document.addEventListener("keydown", keyDown);
+		return () => document.removeEventListener("keydown", keyDown);
+	}, [expanded, onExpandedChange]);
+	// Expanding changes the canvas's size: show the whole graph again,
+	// unless the person chose their own view.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: refits when full screen starts or ends
+	useLayoutEffect(() => {
+		const stage = stageRef.current;
+		if (stage?.auto) fit(stage);
+	}, [expanded]);
 
 	const activate = (node: SynapseGraphNode) => {
 		if (node.exists) onOpen(node.title);
@@ -508,133 +488,122 @@ export function SynapseGraph({
 		index === activeIndex ||
 		Boolean(shown?.neighbours[activeIndex]?.has(index));
 
-	const fullScreenToggle = (
-		<button
-			type="button"
-			className="icon-button"
-			aria-label={expanded ? "Exit full screen" : "Full screen"}
-			title={expanded ? "Exit full screen" : "Full screen"}
-			onClick={() => onExpandedChange(!expanded)}
-		>
-			<Icon name={expanded ? "exit-fullscreen" : "fullscreen"} />
-		</button>
-	);
-	// Expanded, the notes column is hidden, so the way out stays even when
-	// there is nothing to draw, the graph is loading, or it failed to load.
-	const exitOnly = expanded && (
-		<div className="synapse-graph-header">
-			<h2>Graph · {spaceName}</h2>
-			<div className="synapse-graph-controls">{fullScreenToggle}</div>
-		</div>
-	);
-	if (error && !graph)
-		return (
-			<>
-				{exitOnly}
-				<div className="banner-error" role="alert">
-					{error}{" "}
-					<button className="button" type="button" onClick={() => void load()}>
-						Retry
-					</button>
-				</div>
-			</>
-		);
-	if (!graph || !shown)
-		return (
-			<>
-				{exitOnly}
-				<p className="empty-state" role="status">
-					Loading graph…
-				</p>
-			</>
-		);
-	const notes = graph.nodes.filter((node) => node.exists).length;
-	const hasUnresolved = notes < graph.nodes.length;
+	const notes = graph?.nodes.filter((node) => node.exists).length ?? 0;
+	const hasUnresolved = notes < (graph?.nodes.length ?? 0);
 	return (
-		// biome-ignore lint/a11y/noStaticElementInteractions: Esc from anywhere in the graph leaves full screen
-		<div
-			ref={containerRef}
-			className={`synapse-graph${expanded ? " is-expanded" : ""}`}
-			onKeyDown={(event) => {
-				if (expanded && event.key === "Escape") onExpandedChange(false);
-			}}
-		>
-			<div className="synapse-graph-header">
-				<h2>
-					Graph
-					{/* The space picker is hidden while expanded. */}
-					{expanded && ` · ${spaceName}`}
-				</h2>
-				{(drawn || expanded) && (
-					<div className="synapse-graph-controls">
-						{drawn && hasUnresolved && (
-							<label className="failover-enable">
-								<input
-									type="checkbox"
-									checked={showUnresolved}
-									onChange={(event) => setShowUnresolved(event.target.checked)}
-								/>
-								Show unresolved
-							</label>
+		<div className={`synapse-graph${expanded ? " is-expanded" : ""}`}>
+			{/* Expanded, this floats over the sky; the way out stays even with nothing drawn. */}
+			<div className="synapse-graph-chrome">
+				{(shown || expanded) && (
+					<div className="synapse-graph-header">
+						<h2>
+							Graph
+							{/* The space picker is hidden while expanded. */}
+							{expanded && ` · ${spaceName}`}
+						</h2>
+						{(drawn || expanded) && (
+							<div className="synapse-graph-controls">
+								{drawn && hasUnresolved && (
+									<label className="failover-enable">
+										<input
+											type="checkbox"
+											checked={showUnresolved}
+											onChange={(event) =>
+												setShowUnresolved(event.target.checked)
+											}
+										/>
+										Show unresolved
+									</label>
+								)}
+								{drawn && (
+									<>
+										<button
+											type="button"
+											className="icon-button"
+											aria-label="Zoom out"
+											title="Zoom out"
+											onClick={() => zoom(1 / ZOOM_STEP)}
+										>
+											<Icon name="minus" />
+										</button>
+										<button
+											type="button"
+											className="icon-button"
+											aria-label="Zoom in"
+											title="Zoom in"
+											onClick={() => zoom(ZOOM_STEP)}
+										>
+											<Icon name="plus" />
+										</button>
+										<button
+											type="button"
+											className="icon-button"
+											aria-label="Fit graph to view"
+											title="Fit graph to view"
+											onClick={() => {
+												const stage = stageRef.current;
+												if (!stage) return;
+												stage.auto = true;
+												fit(stage);
+											}}
+										>
+											<Icon name="fit" />
+										</button>
+									</>
+								)}
+								<button
+									type="button"
+									className="icon-button"
+									aria-label={expanded ? "Exit full screen" : "Full screen"}
+									title={expanded ? "Exit full screen" : "Full screen"}
+									onClick={() => onExpandedChange(!expanded)}
+								>
+									<Icon name={expanded ? "exit-fullscreen" : "fullscreen"} />
+								</button>
+							</div>
 						)}
-						{drawn && (
-							<>
-								<button
-									type="button"
-									className="icon-button"
-									aria-label="Zoom out"
-									title="Zoom out"
-									onClick={() => zoom(1 / ZOOM_STEP)}
-								>
-									<Icon name="minus" />
-								</button>
-								<button
-									type="button"
-									className="icon-button"
-									aria-label="Zoom in"
-									title="Zoom in"
-									onClick={() => zoom(ZOOM_STEP)}
-								>
-									<Icon name="plus" />
-								</button>
-								<button
-									type="button"
-									className="icon-button"
-									aria-label="Fit graph to view"
-									title="Fit graph to view"
-									onClick={() => {
-										const stage = stageRef.current;
-										if (!stage) return;
-										stage.auto = true;
-										fit(stage);
-									}}
-								>
-									<Icon name="fit" />
-								</button>
-							</>
-						)}
-						{fullScreenToggle}
 					</div>
 				)}
-			</div>
-			{error && (
-				<div className="banner-error" role="alert">
-					{error}
-				</div>
-			)}
-			{drawn ? (
-				<>
-					<p className="card-note">
+				{error && shown && (
+					<div className="banner-error" role="alert">
+						{error}
+					</div>
+				)}
+				{drawn && (
+					<p className="card-note synapse-graph-hint">
 						Notes are stars and links are the lines between them. Select a note
 						to open it, drag to pan or move a note, and scroll to zoom.
 					</p>
-					{graph.truncated && (
-						<p className="card-note" role="status">
-							{notes < graph.noteCount
-								? `Showing the ${notes.toLocaleString("en-US")} most-linked of ${count(graph.noteCount, "note")}.`
-								: "Showing only the most-linked unresolved links."}
+				)}
+				{drawn && graph?.truncated && (
+					<p className="card-note" role="status">
+						{notes < graph.noteCount
+							? `Showing the ${notes.toLocaleString("en-US")} most-linked of ${count(graph.noteCount, "note")}.`
+							: "Showing only the most-linked unresolved links."}
+					</p>
+				)}
+			</div>
+			{!graph || !shown ? (
+				<div className="synapse-graph-message">
+					{error ? (
+						<div className="banner-error" role="alert">
+							{error}{" "}
+							<button
+								className="button"
+								type="button"
+								onClick={() => void load()}
+							>
+								Retry
+							</button>
+						</div>
+					) : (
+						<p className="empty-state" role="status">
+							Loading graph…
 						</p>
 					)}
+				</div>
+			) : drawn ? (
+				<>
 					{/* A group, not an image: the notes inside are links. */}
 					{/* biome-ignore lint/a11y/useSemanticElements: an SVG cannot be a fieldset */}
 					<svg
@@ -850,10 +819,12 @@ export function SynapseGraph({
 					</ul>
 				</>
 			) : (
-				<p className="empty-state">
-					Nothing to draw yet. Notes appear here as stars, joined by their
-					links.
-				</p>
+				<div className="synapse-graph-message">
+					<p className="empty-state">
+						Nothing to draw yet. Notes appear here as stars, joined by their
+						links.
+					</p>
+				</div>
 			)}
 		</div>
 	);
