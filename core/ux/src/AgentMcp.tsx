@@ -11,7 +11,6 @@ import {
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import {
 	createAgentToken,
-	createOAuthAgent,
 	disconnectAgentApp,
 	fetchAgentConnections,
 	fetchAgentTokens,
@@ -279,23 +278,23 @@ export function TokenAgent({
 	);
 }
 
-/** Name, description, and grants of an agent that signs in with OAuth. */
-export function OAuthAgentForm({
+/**
+ * Name, description, and grants of an agent that signs in with OAuth. A new
+ * one gets these when its first sign-in is approved (see `AuthorizeView`).
+ */
+function OAuthAgentForm({
 	agent,
 	onSaved,
 	onCancel,
 }: {
-	/** The agent to edit; absent to create one. */
-	agent?: AgentToken;
+	agent: AgentToken;
 	onSaved(agent: AgentToken): void;
 	onCancel(): void;
 }) {
 	const id = useId();
-	const [name, setName] = useState(agent?.name ?? "");
-	const [description, setDescription] = useState(agent?.description ?? "");
-	const [permissions, setPermissions] = useState<AgentTokenPermission[]>(() =>
-		agent ? [...agent.permissions] : ["mcp:read", "mcp:call"],
-	);
+	const [name, setName] = useState(agent.name);
+	const [description, setDescription] = useState(agent.description);
+	const [permissions, setPermissions] = useState(() => [...agent.permissions]);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState("");
 	return (
@@ -312,11 +311,7 @@ export function OAuthAgentForm({
 					permissions,
 				};
 				try {
-					onSaved(
-						agent
-							? await updateAgentToken(agent.id, input)
-							: await createOAuthAgent(input),
-					);
+					onSaved(await updateAgentToken(agent.id, input));
 				} catch (cause) {
 					setError(errorText(cause, "Could not save the agent."));
 					setBusy(false);
@@ -368,7 +363,7 @@ export function OAuthAgentForm({
 						type="submit"
 						disabled={!name.trim()}
 					>
-						{busy ? "Saving…" : agent ? "Save changes" : "Create agent"}
+						{busy ? "Saving…" : "Save changes"}
 					</button>
 				</div>
 			</fieldset>
@@ -419,6 +414,54 @@ function McpAddress() {
 	);
 }
 
+/** How an app connects: to the agent named, or as a new one when absent. */
+function ConnectSteps({ agent }: { agent?: string }) {
+	return (
+		<ol className="agent-steps">
+			<li>
+				In the app (Claude, Cursor, or another MCP app), add an MCP server with
+				this address. No token is needed.
+			</li>
+			<li>The app opens this dashboard in your browser and asks to sign in.</li>
+			<li>
+				{agent ? (
+					<>
+						Approve it and choose <strong>{agent}</strong>. The app is then
+						listed below.
+					</>
+				) : (
+					"Approve it as a new agent: give it a name and choose its permissions."
+				)}
+			</li>
+		</ol>
+	);
+}
+
+/**
+ * The start of an agent that signs in with OAuth: only the address to give
+ * an app. Nothing is made here. The agent is made, named, and given its
+ * grants when a workspace admin approves the app's sign-in.
+ */
+export function NewOAuthAgent({ onBack }: { onBack(): void }) {
+	return (
+		<>
+			<p className="card-note">
+				Nothing to fill in here. You name the agent and choose its permissions
+				when you approve the app's sign-in.
+			</p>
+			<McpAddress />
+			<ConnectSteps />
+			<p className="analytics-notice">
+				Waiting for the app to sign in. This page opens the new agent once you
+				approve it.
+			</p>
+			<div className="form-actions">
+				<button className="button" type="button" onClick={onBack}>Back</button>
+			</div>
+		</>
+	);
+}
+
 /**
  * An agent that apps sign in to with OAuth: how to connect one, the apps
  * signed in now, its grants, and revoking it.
@@ -426,13 +469,10 @@ function McpAddress() {
 export function OAuthAgent({
 	token,
 	actions,
-	created,
 	onChanged,
 }: {
 	token: AgentToken;
 	actions: AgentTokenAction[];
-	/** The agent was made in this visit, so connecting an app comes first. */
-	created: boolean;
 	/** Something was saved: read the agents again and say so. */
 	onChanged(message: string): void;
 }) {
@@ -580,26 +620,8 @@ export function OAuthAgent({
 			{active && (
 				<section className="card agents-card" aria-labelledby={connect}>
 					<h3 id={connect}>Connect an app</h3>
-					{created && (
-						<p className="analytics-notice">
-							Next: connect an app. Nothing can act as this agent until one
-							signs in.
-						</p>
-					)}
 					<McpAddress />
-					<ol className="agent-steps">
-						<li>
-							In the app (Claude, Cursor, or another MCP app), add an MCP server
-							with this address. No token is needed.
-						</li>
-						<li>
-							The app opens this dashboard in your browser and asks to sign in.
-						</li>
-						<li>
-							Approve it and choose <strong>{token.name}</strong>. The app is
-							then listed below.
-						</li>
-					</ol>
+					<ConnectSteps agent={token.name} />
 				</section>
 			)}
 			<section className="card agents-card" aria-labelledby={apps}>
