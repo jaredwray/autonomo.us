@@ -1268,7 +1268,10 @@ it("expands the graph over the notes column, keeping the page header and navigat
 		await screen.findByRole("button", { name: "Exit full screen" }),
 	);
 	expect(notes()).not.toBeNull();
-	expect(screen.getByRole("button", { name: "Full screen" })).toBeDefined();
+	// The way out shows while the graph loads; the way in once it is drawn.
+	expect(
+		await screen.findByRole("button", { name: "Full screen" }),
+	).toBeDefined();
 });
 
 it("keeps the way out of full screen when the expanded space has nothing to draw or fails to load", async () => {
