@@ -58,6 +58,7 @@ import type {
 	SynapseCategory,
 	SynapseDaily,
 	SynapseExport,
+	SynapseGraph,
 	SynapseImportRequest,
 	SynapseImportResult,
 	SynapseNote,
@@ -683,6 +684,9 @@ export function fetchSynapseCategories(
 	space: string,
 ): Promise<{ categories: SynapseCategory[] }> {
 	return apiRequest(`${spacePath(space)}/categories`);
+}
+export function fetchSynapseGraph(space: string): Promise<SynapseGraph> {
+	return apiRequest(`${spacePath(space)}/graph`);
 }
 export function fetchSynapseDaily(
 	space: string,

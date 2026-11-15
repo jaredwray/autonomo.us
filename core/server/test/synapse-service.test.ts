@@ -4,6 +4,7 @@ import { MemorySynapseRepository } from "../src/synapse/memory-repository.js";
 import {
 	appendLogLine,
 	MAX_BODY_LENGTH,
+	MAX_GRAPH_NODES,
 	MAX_PENDING_PROPOSALS,
 	PROPOSAL_CLAIM_MS,
 	SynapseService,
@@ -518,6 +519,152 @@ describe("finding things", () => {
 			"C",
 			"Ghost",
 		]);
+	});
+
+	it("builds the link graph: one edge per pair, unresolved targets, no self-links", async () => {
+		const { service } = synapse();
+		expect(await service.graph("shared")).toEqual({
+			nodes: [],
+			edges: [],
+			noteCount: 0,
+			truncated: false,
+		});
+		const make = (title: string, body: string, properties = {}) =>
+			service.createNote("shared", { title, body, properties }, user);
+		// Created out of title order: the output does not follow storage order.
+		await make(
+			"Hub",
+			"[[alpha]], [[Alpha]] again, [[Hub]] itself, [[ghost]].",
+			{
+				categories: ["[[Topics]]"],
+				owner: "[[Beta]]",
+			},
+		);
+		await make("Beta", "Back to [[HUB]] and on to [[Ghost]]. #draft");
+		await make("Alpha", "Back to [[Hub]].");
+		await make("Loner", "");
+		const graph = await service.graph("shared");
+		expect(graph.nodes).toEqual([
+			{
+				title: "Alpha",
+				exists: true,
+				space: "shared",
+				categories: [],
+				tags: [],
+				degree: 1,
+			},
+			{
+				title: "Beta",
+				exists: true,
+				space: "shared",
+				categories: [],
+				tags: ["draft"],
+				degree: 2,
+			},
+			// Beta sorts first, so its spelling of the missing note wins.
+			{ title: "Ghost", exists: false, categories: [], tags: [], degree: 2 },
+			{
+				title: "Hub",
+				exists: true,
+				space: "shared",
+				categories: ["Topics"],
+				tags: [],
+				degree: 4,
+			},
+			{
+				title: "Loner",
+				exists: true,
+				space: "shared",
+				categories: [],
+				tags: [],
+				degree: 0,
+			},
+			{
+				title: "Topics",
+				exists: true,
+				space: "shared",
+				categories: [],
+				tags: ["categories"],
+				degree: 1,
+			},
+		]);
+		expect(graph.edges).toEqual([
+			{ source: "Alpha", target: "Hub" },
+			{ source: "Beta", target: "Ghost" },
+			{ source: "Beta", target: "Hub" },
+			{ source: "Ghost", target: "Hub" },
+			{ source: "Hub", target: "Topics" },
+		]);
+		expect(graph).toMatchObject({ noteCount: 5, truncated: false });
+		expect(await service.graph("shared")).toEqual(graph);
+	});
+
+	it("caps the graph: the most-linked notes first, then unresolved targets in the room left", async () => {
+		const { service } = synapse();
+		const leaf = (n: number) => `Leaf ${String(n).padStart(4, "0")}`;
+		const unresolved = [
+			" [[Twice]] [[Once a]]",
+			" [[Twice]] [[Once b]]",
+			" [[Once c]]",
+		];
+		const leaves = (from: number, to: number) =>
+			Array.from({ length: to - from }, (_, n) => ({
+				path: `${leaf(from + n)}.md`,
+				content: `[[Hub]]${unresolved[from + n] ?? ""}`,
+			}));
+		// Two nodes short of the cap, with four unresolved targets.
+		await service.importSpace(
+			"shared",
+			{
+				files: [
+					{ path: "Hub.md", content: "" },
+					...leaves(0, MAX_GRAPH_NODES - 3),
+				],
+			},
+			user,
+		);
+		const roomy = await service.graph("shared");
+		expect(roomy.noteCount).toBe(MAX_GRAPH_NODES - 2);
+		expect(roomy.nodes).toHaveLength(MAX_GRAPH_NODES);
+		expect(roomy.truncated).toBe(true);
+		// The most-linked target, then the first by title among the rest.
+		expect(roomy.nodes.filter((node) => !node.exists)).toEqual([
+			{ title: "Once a", exists: false, categories: [], tags: [], degree: 1 },
+			{ title: "Twice", exists: false, categories: [], tags: [], degree: 2 },
+		]);
+		// Degrees count the links that are left.
+		expect(roomy.nodes.find((node) => node.title === leaf(1))?.degree).toBe(2);
+
+		// Past the cap, the least-linked notes go, and every unresolved target.
+		await service.importSpace(
+			"shared",
+			{
+				files: [
+					...leaves(MAX_GRAPH_NODES - 3, MAX_GRAPH_NODES),
+					{ path: "Zed.md", content: "[[Hub]]" },
+				],
+			},
+			user,
+		);
+		const graph = await service.graph("shared");
+		expect(graph.noteCount).toBe(MAX_GRAPH_NODES + 2);
+		expect(graph.truncated).toBe(true);
+		expect(graph.nodes).toHaveLength(MAX_GRAPH_NODES);
+		expect(graph.nodes.every((node) => node.exists)).toBe(true);
+		const titles = new Set(graph.nodes.map((node) => node.title));
+		expect(titles.has(leaf(MAX_GRAPH_NODES - 2))).toBe(true);
+		// Equally linked notes are kept in title order.
+		expect(titles.has(leaf(MAX_GRAPH_NODES - 1))).toBe(false);
+		expect(titles.has("Zed")).toBe(false);
+		expect(graph.nodes.find((node) => node.title === "Hub")?.degree).toBe(
+			MAX_GRAPH_NODES - 1,
+		);
+		expect(graph.edges).toHaveLength(MAX_GRAPH_NODES - 1);
+		expect(
+			graph.edges.every(
+				(edge) => titles.has(edge.source) && titles.has(edge.target),
+			),
+		).toBe(true);
 	});
 
 	it("lists a day's notes from titles, creation, date properties, and links", async () => {
@@ -1332,6 +1479,23 @@ describe("global inheritance", () => {
 			),
 		).toMatchObject({ count: 1, exists: true });
 
+		// The graph marks inherited notes with their own space.
+		const inheritedGraph = await service.graph(film);
+		expect(
+			inheritedGraph.nodes.map((node) => [node.title, node.space]),
+		).toEqual([
+			["Brand voice", "global"],
+			["Evergreen", "global"],
+			["Style guide", "global"],
+			["Trailer plan", "shared"],
+		]);
+		expect(inheritedGraph.edges).toEqual([
+			{ source: "Brand voice", target: "Evergreen" },
+			{ source: "Brand voice", target: "Style guide" },
+			{ source: "Brand voice", target: "Trailer plan" },
+		]);
+		expect((await service.graph("global")).noteCount).toBe(3);
+
 		// Inherited notes are read-only in the workspace.
 		const readOnly = /inherited from the global Synapse/;
 		await expect(
@@ -1364,6 +1528,23 @@ describe("global inheritance", () => {
 		expect((await service.getNote("global", "Brand voice")).body).toBe(
 			"Plain words. See [[Style guide]].",
 		);
+		// The override replaces the global note, and its links, in the graph.
+		const overriddenGraph = await service.graph(film);
+		expect(
+			overriddenGraph.nodes.map((node) => [
+				node.title,
+				node.space,
+				node.degree,
+			]),
+		).toEqual([
+			["Brand voice", "shared", 1],
+			["Evergreen", "global", 0],
+			["Style guide", "global", 0],
+			["Trailer plan", "shared", 1],
+		]);
+		expect(overriddenGraph.edges).toEqual([
+			{ source: "Brand voice", target: "Trailer plan" },
+		]);
 		const after = await service.query(film, { sort: "title" });
 		expect(after.notes.map((note) => [note.title, note.space])).toEqual([
 			["Brand voice", "shared"],

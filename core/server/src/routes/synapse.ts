@@ -333,6 +333,11 @@ export async function synapseRoutes(
 			categories: await synapse.categories(request.params.space),
 		}),
 	);
+	server.get<{ Params: SpaceParams }>(
+		"/synapse/spaces/:space/graph",
+		{ schema: { params: spaceParams } },
+		(request) => synapse.graph(request.params.space),
+	);
 	server.get<{ Params: SpaceParams & { date: string } }>(
 		"/synapse/spaces/:space/daily/:date",
 		{ schema: { params: dateParams } },

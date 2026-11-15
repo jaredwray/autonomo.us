@@ -21,6 +21,7 @@ import {
 	importSynapseNotes,
 } from "./api.js";
 import { Icon } from "./Icons.js";
+import { SynapseGraph } from "./SynapseGraph.js";
 import { SynapseNote, shortDate } from "./SynapseNote.js";
 import { SynapseProposals } from "./SynapseProposals.js";
 import {
@@ -619,6 +620,23 @@ export function SynapseView({
 	})();
 	const openNote = (title: string) =>
 		navigate({ tab: "notes", space: route.space, title });
+	const graphRoute: SynapseRoute = {
+		tab: "notes",
+		space: route.space,
+		title: null,
+	};
+	const startNote = (title: string) => {
+		setNotice("");
+		setPanel({ kind: "new", title });
+	};
+	/** The note last opened, so the graph can show where the viewer came from. */
+	const [lastNote, setLastNote] = useState<{
+		space: string;
+		title: string;
+	} | null>(null);
+	useEffect(() => {
+		if (route.title) setLastNote({ space: route.space, title: route.title });
+	}, [route.space, route.title]);
 	const showTab = (tab: SynapseRoute["tab"]) =>
 		navigate(
 			tab === "notes"
@@ -808,7 +826,10 @@ export function SynapseView({
 											</option>
 										))}
 									</select>
-									<span className="field-hint">{spaceHint(route.space)}</span>
+									<span className="field-hint">
+										{spaceHint(route.space)}
+										{spaces && ` Dates and daily notes use ${spaces.timeZone}.`}
+									</span>
 								</div>
 								<NotesList
 									key={route.space}
@@ -823,47 +844,53 @@ export function SynapseView({
 									}
 								/>
 							</div>
-							<section className="card synapse-main" aria-label="Note">
+							<section
+								className="card synapse-main"
+								aria-label={route.title ? "Note" : "Graph"}
+							>
 								{route.title ? (
-									<SynapseNote
-										key={`${route.space}/${route.title.toLowerCase()}`}
+									<>
+										<a
+											className="synapse-graph-back"
+											href={synapseHash(graphRoute)}
+											onClick={(event) => {
+												event.preventDefault();
+												navigate(graphRoute);
+											}}
+										>
+											<span aria-hidden="true">← </span>Back to graph
+										</a>
+										<SynapseNote
+											key={`${route.space}/${route.title.toLowerCase()}`}
+											space={route.space}
+											title={route.title}
+											version={version}
+											canEdit={canEdit}
+											onNavigate={openNote}
+											onNewNote={startNote}
+											onChanged={(title) => {
+												changed();
+												if (title !== route.title) openNote(title);
+											}}
+											onDeleted={() => {
+												setNotice(`Deleted “${route.title}”.`);
+												changed();
+												navigate(graphRoute);
+											}}
+										/>
+									</>
+								) : (
+									<SynapseGraph
+										key={route.space}
 										space={route.space}
-										title={route.title}
 										version={version}
 										canEdit={canEdit}
-										onNavigate={openNote}
-										onNewNote={(title) => {
-											setNotice("");
-											setPanel({ kind: "new", title });
-										}}
-										onChanged={(title) => {
-											changed();
-											if (title !== route.title) openNote(title);
-										}}
-										onDeleted={() => {
-											setNotice(`Deleted “${route.title}”.`);
-											changed();
-											navigate({
-												tab: "notes",
-												space: route.space,
-												title: null,
-											});
-										}}
+										current={
+											lastNote?.space === route.space ? lastNote.title : null
+										}
+										onOpen={openNote}
+										onNewNote={startNote}
 									/>
-								) : (
-									<div className="synapse-intro">
-										<h2>Pick a note</h2>
-										<p className="card-note">
-											Choose a note from the list, search for one, or create a
-											new note from a template. A note's page shows its
-											properties, body, backlinks, related notes, and the links
-											that don't resolve yet.
-										</p>
-										<p className="card-note">
-											Space: <strong>{route.space}</strong>
-											{spaces && ` · time zone ${spaces.timeZone}`}
-										</p>
-									</div>
 								)}
 							</section>
 						</div>

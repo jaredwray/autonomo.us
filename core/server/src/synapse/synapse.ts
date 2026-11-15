@@ -11,6 +11,8 @@ import {
 	type SynapseCategory,
 	type SynapseDaily,
 	type SynapseExport,
+	type SynapseGraph,
+	type SynapseGraphNode,
 	type SynapseImportRequest,
 	type SynapseImportResult,
 	type SynapseNote,
@@ -84,6 +86,11 @@ const CATEGORY_MEMBER_LIMIT = 500;
 const RELEVANCE_CANDIDATES = 1000;
 const WRITE_ATTEMPTS = 5;
 const UNRESOLVED_SOURCES = 5;
+/**
+ * The graph keeps this many nodes, notes before unresolved targets, so the
+ * largest space stays a small response the dashboard can lay out.
+ */
+export const MAX_GRAPH_NODES = 1000;
 const PROPOSAL_ACTIONS: readonly SynapseProposalAction[] = [
 	"create",
 	"update",
@@ -1040,6 +1047,86 @@ export class SynapseService {
 		return [...targets.values()]
 			.sort((a, b) => b.count - a.count || a.title.localeCompare(b.title))
 			.slice(0, Math.max(1, limit));
+	}
+
+	/**
+	 * The space's notes and unresolved link targets as an undirected graph.
+	 * Over `MAX_GRAPH_NODES`, the best-linked notes stay, then the best-linked
+	 * targets, and `degree` counts only the links that stay with them.
+	 */
+	async graph(space: SynapseSpaceId): Promise<SynapseGraph> {
+		const order = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+		// Sorted first, so "first-seen" spellings do not depend on storage order.
+		const index = [...(await this.readIndex(space))].sort((a, b) =>
+			order(a.titleKey, b.titleKey),
+		);
+		const notes = new Map(index.map((entry) => [entry.titleKey, entry]));
+		const missing = new Map<string, string>();
+		const neighbours = new Map<string, Set<string>>();
+		const connect = (from: string, to: string) => {
+			const linked = neighbours.get(from);
+			if (linked) linked.add(to);
+			else neighbours.set(from, new Set([to]));
+		};
+		for (const entry of index)
+			entry.links.forEach((link, position) => {
+				const key = entry.linkKeys[position];
+				if (key === entry.titleKey) return;
+				if (!notes.has(key) && !missing.has(key)) missing.set(key, link);
+				connect(entry.titleKey, key);
+				connect(key, entry.titleKey);
+			});
+		/** Keys with their neighbour counts, most-linked first. */
+		const ranked = (
+			keys: Iterable<string>,
+			count: (linked: Set<string>) => number,
+		) =>
+			[...keys]
+				.map((key) => ({
+					key,
+					degree: count(neighbours.get(key) ?? new Set()),
+				}))
+				.sort((a, b) => b.degree - a.degree || order(a.key, b.key));
+		const rankedNotes = ranked(notes.keys(), (linked) => linked.size);
+		const kept = new Set(
+			rankedNotes.slice(0, MAX_GRAPH_NODES).map((item) => item.key),
+		);
+		// Unresolved targets take the room the notes leave, ranked by their
+		// links from the notes that stay.
+		const room = MAX_GRAPH_NODES - kept.size;
+		const rankedTargets = ranked(
+			missing.keys(),
+			(linked) => [...linked].filter((key) => kept.has(key)).length,
+		).filter((item) => item.degree > 0);
+		for (const item of rankedTargets.slice(0, room)) kept.add(item.key);
+		const keys = [...kept].sort(order);
+		const title = (key: string) =>
+			notes.get(key)?.title ?? (missing.get(key) as string);
+		const links = (key: string) =>
+			[...(neighbours.get(key) ?? [])].filter((other) => kept.has(other));
+		return {
+			nodes: keys.map((key): SynapseGraphNode => {
+				const note = notes.get(key);
+				return {
+					title: title(key),
+					exists: Boolean(note),
+					...(note ? { space: publicSpaceId(note.space) } : {}),
+					categories: note?.categories ?? [],
+					tags: note?.tags ?? [],
+					degree: links(key).length,
+				};
+			}),
+			// Each pair once: from its earlier key to its later one.
+			edges: keys.flatMap((key) =>
+				links(key)
+					.filter((other) => other > key)
+					.sort(order)
+					.map((other) => ({ source: title(key), target: title(other) })),
+			),
+			noteCount: index.length,
+			truncated:
+				rankedNotes.length > MAX_GRAPH_NODES || rankedTargets.length > room,
+		};
 	}
 
 	async categories(space: SynapseSpaceId): Promise<SynapseCategory[]> {
