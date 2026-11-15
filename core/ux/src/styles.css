@@ -760,6 +760,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .token-action-name { text-transform: capitalize; }
 .button.danger { color: var(--status-critical); }
 .owner-access { max-width: 640px; margin: 40px auto; }
+.routing-intro { margin: 0 0 16px; max-width: 680px; }
 .routing-view .form-field { margin: 12px 0; }
 .routing-view textarea { width: 100%; resize: vertical; border: 1px solid var(--hairline); padding: 10px 12px; border-radius: 6px; background: var(--page); color: var(--text-primary); font: inherit; }
 .routing-add, .routing-target, .routing-subheader, .routing-row-actions { display: flex; align-items: center; gap: 12px; }
@@ -938,13 +939,14 @@ a.button { text-decoration: none; }
 .workspace-role-select { appearance: none; min-width: 120px; min-height: 34px; padding: 6px 32px 6px 10px; border: 1px solid var(--hairline); border-radius: 7px; background: var(--surface-1) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23898781' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat right 10px center / 14px; color: var(--text-primary); font: inherit; font-size: 13px; cursor: pointer; }
 .workspace-role-select:enabled:hover { border-color: var(--text-muted); }
 .workspace-role-select:disabled { color: var(--text-muted); cursor: not-allowed; }
+/* Page tabs (Synapse, Models) */
+.page-tabs { display: flex; gap: 4px; margin: 0 0 20px; border-bottom: 1px solid var(--hairline); }
+.page-tabs button { margin-bottom: -1px; padding: 10px 14px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--text-secondary); font: inherit; font-size: 13px; cursor: pointer; }
+.page-tabs button:hover { color: var(--text-primary); }
+.page-tabs button[aria-selected="true"] { color: var(--text-primary); border-bottom-color: var(--series-1); font-weight: 600; }
 /* Synapse */
 .synapse-view .header-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .synapse-view .page-description code, .synapse-view .field-hint code, .synapse-view .card-note code { font-size: 11px; padding: 1px 5px; border: 1px solid var(--hairline); border-radius: 4px; background: var(--page); }
-.synapse-tabs { display: flex; gap: 4px; margin: 0 0 20px; border-bottom: 1px solid var(--hairline); }
-.synapse-tabs button { margin-bottom: -1px; padding: 10px 14px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--text-secondary); font: inherit; font-size: 13px; cursor: pointer; }
-.synapse-tabs button:hover { color: var(--text-primary); }
-.synapse-tabs button[aria-selected="true"] { color: var(--text-primary); border-bottom-color: var(--series-1); font-weight: 600; }
 .synapse-layout { display: grid; grid-template-columns: minmax(240px, 320px) minmax(0, 1fr); gap: 20px; align-items: start; }
 .synapse-side { position: sticky; top: 24px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .synapse-space-field { margin: 0; }

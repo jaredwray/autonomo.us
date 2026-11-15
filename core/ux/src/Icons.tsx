@@ -5,7 +5,6 @@ export function Icon({
 		| "dashboard"
 		| "models"
 		| "proxies"
-		| "routing"
 		| "synapse"
 		| "channels"
 		| "agents"
@@ -29,7 +28,6 @@ export function Icon({
 		models: "m12 3 9 5-9 5-9-5 9-5z M3 12l9 5 9-5 M3 16l9 5 9-5",
 		proxies:
 			"M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z M3 12h18 M12 3c2.5 2.5 3.8 5.5 3.8 9s-1.3 6.5-3.8 9 M12 3C9.5 5.5 8.2 8.5 8.2 12s1.3 6.5 3.8 9",
-		routing: "M4 12h6 M10 12V5h10 M10 12v7h10 M17 2l3 3-3 3 M17 16l3 3-3 3",
 		synapse:
 			"M12 5v15 M12 5a3 3 0 0 0-5.6-1.5A3 3 0 0 0 4 7.5a3 3 0 0 0 .6 4.5A3 3 0 0 0 5 17a3 3 0 0 0 4 2.6A3 3 0 0 0 12 20 M12 5a3 3 0 0 1 5.6-1.5A3 3 0 0 1 20 7.5a3 3 0 0 1-.6 4.5A3 3 0 0 1 19 17a3 3 0 0 1-4 2.6A3 3 0 0 1 12 20 M7 9.5h5 M12 13.5h5",
 		channels: "M4 5h16v11H10l-5 4v-4H4z M8 9h8 M8 12h5",

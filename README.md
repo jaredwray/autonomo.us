@@ -196,11 +196,13 @@ connections and accept every token gateway-wide.
 ## Gateway
 
 The dashboard has a collapsible sidebar with a workspace switcher and
-**Dashboard**, **Models**, **Proxies**, **Routing**, **Synapse**, **Channels**,
+**Dashboard**, **Models**, **Proxies**, **Synapse**, **Channels**,
 **Agents**, **API Tokens**, **Workspaces**, and **Team** views. All but Workspaces and
 Team show the selected workspace, and their URLs name it
 (`#/w/<workspace id>/models`).
-In **Models**, search active models or choose **Add model** to connect Google
+**Models** has two tabs: **Models** and **Routing** (`#/w/<workspace id>/models/routing`;
+older `#/routing` links open it too).
+In the **Models** tab, search active models or choose **Add model** to connect Google
 Gemini, xAI Grok, Anthropic Claude, OpenAI, Groq, Mistral, DeepSeek, OpenRouter,
 Cloudflare Workers AI, or Jev (TypeSafe). Choose a catalog suggestion or enter a
 provider-native model ID and supply your API key. Cloudflare also requires your
@@ -810,9 +812,10 @@ To collect another provider, add a spec to `PROVIDERS` in
 
 ### Routing
 
-Open **Routing** to configure these features and send a test request using
-**Auto**, a pool, or a specific model. The tester uses saved settings and makes
-real provider calls. Add models and account connections in **Models** first.
+Open the **Routing** tab in **Models** to configure these features and send a
+test request using **Auto**, a pool, or a specific model. The tester uses saved
+settings and makes real provider calls. Add models and account connections in
+the **Models** tab first.
 
 - **Auto mode:** choose Jev or any configured chat model (including OpenAI) as
   the decision model. Add at least two allowed models or pools, describe the
@@ -925,7 +928,7 @@ callers, success rates, and successful-call latency. Choose a 24-hour, 7-day,
 daily trends, sort and page the model/caller tables, or export the filtered
 report as CSV. It refreshes every 30 seconds while visible and preserves the
 last successful report with a stale-data notice if refresh fails. Configuration,
-including failover, remains on the Models and Routing pages.
+including failover, remains on the Models page's Models and Routing tabs.
 
 Calls include chat completions, decisions, routing selectors, and failed
 fallback attempts; they are not a count of end-user requests. Caller attribution

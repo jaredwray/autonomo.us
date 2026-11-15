@@ -6,6 +6,7 @@ import type {
 } from "@autonomo.us/common";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { fetchModels, fetchRouting, sendChat, updateRouting } from "./api.js";
+import { modelsHash } from "./models-route.js";
 
 function ModelSelect({
 	label,
@@ -156,7 +157,8 @@ function PolicyEditor({
 	);
 }
 
-export function RoutingView() {
+/** The Routing tab of Models. */
+export function RoutingView({ onShowModels }: { onShowModels(): void }) {
 	const [config, setConfig] = useState<RoutingConfig | null>(null);
 	const [models, setModels] = useState<ModelInfo[]>([]);
 	const [persistence, setPersistence] = useState("");
@@ -221,17 +223,11 @@ export function RoutingView() {
 		}
 	};
 	return (
-		<div className="dashboard routing-view">
-			<header className="dashboard-header">
-				<div>
-					<p className="eyebrow">Gateway</p>
-					<h1>Routing</h1>
-					<p className="page-description">
-						Choose the right model, keep requests moving, and share traffic
-						across accounts.
-					</p>
-				</div>
-			</header>
+		<div className="routing-view">
+			<p className="page-description routing-intro">
+				Choose the right model, keep requests moving, and share traffic across
+				accounts.
+			</p>
 			{error ? (
 				<div className="banner-error" role="alert">
 					{error}
@@ -257,8 +253,16 @@ export function RoutingView() {
 					</p>
 					{chatModels.length === 0 ? (
 						<p className="banner-error">
-							<a href="#/models">Add chat models and account connections</a> to
-							start routing.
+							<a
+								href={modelsHash("models")}
+								onClick={(event) => {
+									event.preventDefault();
+									onShowModels();
+								}}
+							>
+								Add chat models and account connections
+							</a>{" "}
+							to start routing.
 						</p>
 					) : null}
 					<form

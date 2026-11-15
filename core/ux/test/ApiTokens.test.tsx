@@ -193,7 +193,8 @@ it("requires sign-in, keeps passwords out of storage, and clears access on sign 
 	expect(screen.queryByText(/Authentication is disabled/)).toBeNull();
 	for (const storage of [window.localStorage, window.sessionStorage])
 		expect(JSON.stringify(storage)).not.toContain(PASSWORD);
-	fireEvent.click(screen.getByRole("link", { name: "Routing", exact: true }));
+	fireEvent.click(screen.getByRole("link", { name: "Models", exact: true }));
+	fireEvent.click(await screen.findByRole("tab", { name: "Routing" }));
 	await screen.findByLabelText("Enable Auto routing");
 	fireEvent.click(screen.getByRole("button", { name: /Account menu for/ }));
 	fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
