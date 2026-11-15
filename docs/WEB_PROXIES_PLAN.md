@@ -490,7 +490,9 @@ is configured and nothing more.
   **Web access** switch next to **Tools**.
 - **Analytics.** The dashboard's usage gains a web section: proxied requests
   and cost per connection and per agent, and the share of fetches that
-  needed a proxy.
+  needed a proxy. *Built:* the Usage tab's Web fetches section, from the
+  `web` part of `/telemetry/analytics`; the Overview tab's totals and spend
+  by source read it too.
 
 ## 10. Limits, cost, and telemetry
 

@@ -134,6 +134,11 @@ export interface SynapseRepository {
 	/** Newest first. */
 	listProposals(filter: ProposalFilter): Promise<SynapseProposal[]>;
 	countProposals(filter: ProposalFilter): Promise<number>;
+	/** A shared space's latest decided proposals, most recently decided first. */
+	recentDecisions(
+		space: SynapseSpaceId,
+		limit: number,
+	): Promise<SynapseProposal[]>;
 	/** Records a decision only while the proposal is still pending. */
 	/** Reserves a pending proposal for approval; fails while another unexpired claim holds it. */
 	claimProposal(

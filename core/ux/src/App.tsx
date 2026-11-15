@@ -33,6 +33,8 @@ import { channelAttention, useChannelList } from "./channels-list.js";
 import { Dashboard } from "./Dashboard.js";
 import { Icon } from "./Icons.js";
 import { ModelsView } from "./ModelsView.js";
+import { overviewBadges } from "./overview-items.js";
+import { useOverview } from "./overview-state.js";
 import { ProfileView } from "./ProfileView.js";
 import { ProxiesView } from "./ProxiesView.js";
 import { SynapseView } from "./SynapseView.js";
@@ -314,6 +316,29 @@ export function App() {
 			: null,
 	);
 	const attention = channelAttention(channelList.channels);
+	// Also read here, for the counts of what waits on the person in Synapse
+	// and Agents. The dashboard hands its own reads back to keep them current.
+	const overview = useOverview(
+		gate.state === "ready" && !invite && !signInId
+			? (selected?.id ?? null)
+			: null,
+	);
+	const badges = overviewBadges(overview.overview);
+	/** Sidebar counts besides Channels: approvals the person can make. */
+	const counted: Partial<
+		Record<View, { count: number; one: string; many: string }>
+	> = {
+		synapse: {
+			count: badges.synapse,
+			one: "Synapse proposal to review",
+			many: "Synapse proposals to review",
+		},
+		agents: {
+			count: badges.agents,
+			one: "site request to decide",
+			many: "site requests to decide",
+		},
+	};
 	// A layout effect, so the address is right by the time the view is seen.
 	useLayoutEffect(() => {
 		if (gate.state !== "ready" || !selected || signInId) return;
@@ -535,8 +560,9 @@ export function App() {
 								aria-current={shown === item ? "page" : undefined}
 								aria-label={viewLabels[item]}
 								aria-describedby={
-									item === "channels" && attention.unread
-										? "channels-attention"
+									(item === "channels" && attention.unread) ||
+									counted[item]?.count
+										? `${item}-attention`
 										: undefined
 								}
 								title={collapsed ? viewLabels[item] : undefined}
@@ -566,6 +592,22 @@ export function App() {
 										</span>
 									</span>
 								)}
+								{(() => {
+									const badge = counted[item];
+									if (!badge?.count) return null;
+									return (
+										<span
+											id={`${item}-attention`}
+											className="nav-attention approvals"
+										>
+											{badge.count > 99 ? "99+" : badge.count}
+											<span className="visually-hidden">
+												{" "}
+												{badge.count === 1 ? badge.one : badge.many}
+											</span>
+										</span>
+									);
+								})()}
 							</a>
 						))}
 				</nav>
@@ -676,7 +718,12 @@ export function App() {
 								list={channelList}
 							/>
 						) : (
-							<Dashboard />
+							<Dashboard
+								workspace={selected}
+								channels={channelList.channels}
+								overview={overview.overview}
+								onOverview={overview.set}
+							/>
 						)}
 					</div>
 				)}

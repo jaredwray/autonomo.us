@@ -90,6 +90,7 @@ import type {
 	WorkspaceDetails,
 	WorkspaceList,
 	WorkspaceMembers,
+	WorkspaceOverview,
 	WorkspaceRole,
 } from "@autonomo.us/common";
 
@@ -422,6 +423,38 @@ export async function fetchDashboardData(
 	);
 	if (!response.ok)
 		throw new Error(`Analytics request failed (${response.status})`);
+	return response.json();
+}
+
+/**
+ * The workspace's home page in one request: what is waiting, its agents,
+ * the proxy budget, and health. `from`/`to` set the window bot replies are
+ * counted in (the last day by default). `workspace` defaults to the one shown.
+ */
+export async function fetchWorkspaceOverview(
+	query: { from?: string; to?: string } = {},
+	signal?: AbortSignal,
+	workspace = currentWorkspace,
+): Promise<WorkspaceOverview> {
+	const params = new URLSearchParams();
+	for (const [key, value] of Object.entries(query))
+		if (value) params.set(key, value);
+	const response = await apiFetch(
+		`${apiBase()}${ws("/overview", workspace)}${params.toString() ? `?${params}` : ""}`,
+		{
+			signal: signal
+				? AbortSignal.any([signal, AbortSignal.timeout(15000)])
+				: AbortSignal.timeout(15000),
+			headers: { accept: "application/json" },
+		},
+	);
+	if (!response.ok)
+		throw new Error(
+			await errorMessage(
+				response,
+				`The overview could not be loaded (${response.status}).`,
+			),
+		);
 	return response.json();
 }
 

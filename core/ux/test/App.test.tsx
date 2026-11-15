@@ -86,6 +86,11 @@ function seedTraffic(telemetry: TelemetryService) {
 	});
 }
 
+/** Opens the dashboard's Usage tab, where the full analytics are. */
+async function openUsage() {
+	fireEvent.click(await screen.findByRole("tab", { name: "Usage" }));
+}
+
 describe("App", () => {
 	it("adds a second connection of the same provider and reuses only the selected connection", async () => {
 		const app = await startApp({
@@ -179,7 +184,7 @@ describe("App", () => {
 		}
 	});
 
-	it("renders the dashboard heading, brand and live API status", async () => {
+	it("renders the dashboard heading, brand, overview, and gateway health", async () => {
 		await startApp();
 		render(<App />);
 		expect(
@@ -188,7 +193,70 @@ describe("App", () => {
 		expect(
 			screen.getByRole("link", { name: "autonomo.us home" }),
 		).toBeDefined();
-		expect(await screen.findByText("API connected")).toBeDefined();
+		const needs = await screen.findByRole("region", { name: "Needs you" });
+		expect(needs.textContent).toContain("Nothing needs you.");
+		// These suites run without MongoDB, and the header says so.
+		expect(await screen.findByText("Not saved to a database")).toBeDefined();
+		expect(
+			screen
+				.getByRole("tab", { name: "Overview" })
+				.getAttribute("aria-selected"),
+		).toBe("true");
+	});
+
+	it("counts proposals and expiring agents in the sidebar and the overview", async () => {
+		const app = await startApp();
+		const base = `${app.url}/v1/${app.workspaceId}`;
+		const created = await fetch(`${base}/agent-tokens`, {
+			method: "POST",
+			headers: { ...app.headers, "content-type": "application/json" },
+			body: JSON.stringify({
+				name: "Alice",
+				description: "",
+				ttlDays: 7,
+				permissions: ["mcp:read", "mcp:call"],
+			}),
+		});
+		const { secret } = (await created.json()) as { secret: string };
+		const proposed = await fetch(`${app.url}/mcp`, {
+			method: "POST",
+			headers: {
+				"content-type": "application/json",
+				authorization: `Bearer ${secret}`,
+			},
+			body: JSON.stringify({
+				jsonrpc: "2.0",
+				id: 1,
+				method: "tools/call",
+				params: {
+					name: "synapse_propose",
+					arguments: {
+						action: "create",
+						title: "Tone checklist",
+						body: "Short sentences.",
+						reason: "Agents keep asking.",
+					},
+				},
+			}),
+		});
+		expect(proposed.status).toBe(200);
+		render(<App />);
+		const needs = await screen.findByRole("region", { name: "Needs you" });
+		await waitFor(() =>
+			expect(needs.textContent).toContain("1 Synapse proposal to review"),
+		);
+		expect(needs.textContent).toMatch(/Alice's token expires/);
+		expect(
+			within(needs)
+				.getByRole("link", { name: /Synapse proposal to review/ })
+				.getAttribute("href"),
+		).toBe(`#/w/${app.workspaceId}/synapse/proposals`);
+		const synapse = screen.getByRole("link", { name: "Synapse" });
+		await waitFor(() =>
+			expect(synapse.textContent).toContain("1 Synapse proposal to review"),
+		);
+		const agents = screen.getByRole("region", { name: "Agents" });
+		expect(within(agents).getByRole("link", { name: "Alice" })).toBeDefined();
 	});
 
 	it("collapses navigation, keeps accessible icon links, and remembers the preference", async () => {
@@ -352,6 +420,7 @@ describe("App", () => {
 		const app = await startApp();
 		seedTraffic(app.telemetry);
 		render(<App />);
+		await openUsage();
 		const totals = await screen.findByRole("region", { name: "Usage totals" });
 		expect(within(totals).getByText("160K")).toBeDefined();
 		expect(within(totals).getByText("142 ms")).toBeDefined();
@@ -381,6 +450,7 @@ describe("App", () => {
 			latencyMs: 20,
 		});
 		render(<App />);
+		await openUsage();
 		await screen.findByRole("region", { name: "Usage totals" });
 		fireEvent.change(screen.getByLabelText("Caller"), {
 			target: { value: "agent:support-agent" },
@@ -429,6 +499,7 @@ describe("App", () => {
 			},
 		});
 		render(<App />);
+		await openUsage();
 		await screen.findByRole("heading", { name: "No activity in this period" });
 		fireEvent.change(screen.getByLabelText("Period"), {
 			target: { value: "7d" },
@@ -454,6 +525,7 @@ describe("App", () => {
 		);
 		seedTraffic(app.telemetry);
 		render(<App />);
+		await openUsage();
 		const models = await screen.findByRole("region", {
 			name: "Usage by model",
 		});
@@ -474,6 +546,7 @@ describe("App", () => {
 			throw new Error("analytics store unavailable");
 		};
 		render(<App />);
+		await openUsage();
 		expect(await screen.findByText("Analytics unavailable")).toBeDefined();
 		expect(screen.getByRole("alert").textContent).toContain(
 			"No report is available",

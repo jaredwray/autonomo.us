@@ -44,6 +44,7 @@ import { failoverRoutes } from "./routes/failover.js";
 import { healthRoutes } from "./routes/health.js";
 import { catalogRoutes, modelsRoutes } from "./routes/models.js";
 import { oauthRoutes } from "./routes/oauth.js";
+import { overviewRoutes } from "./routes/overview.js";
 import { routingRoutes } from "./routes/routing.js";
 import { synapseRoutes } from "./routes/synapse.js";
 import { teamRoutes } from "./routes/team.js";
@@ -360,6 +361,19 @@ export function createServer(options: CreateServerOptions = {}) {
 			scoped.register(channelRoutes, { channels });
 			scoped.register(botRoutes, { bots, webRequests: botWebRequests });
 			scoped.register(webRoutes, { store: proxies, web });
+			scoped.register(overviewRoutes, {
+				accounts,
+				agentTokens,
+				tokens,
+				bots,
+				botWebRequests,
+				oauth,
+				synapse,
+				channels,
+				proxies,
+				web,
+				telemetry,
+			});
 		},
 		{ prefix: "/v1/:workspace" },
 	);
