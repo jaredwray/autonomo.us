@@ -15,7 +15,7 @@ if (!available)
 	console.warn(
 		"[agent-webhooks-repository] no MongoDB — skipping the MongoDB half.",
 	);
-const mongoUrl = uniqueMongoUrl("webhookrepo");
+const mongoUrl = uniqueMongoUrl("hookrepo");
 const cleanup = new MongoClient(mongoUrl, { serverSelectionTimeoutMS: 1500 });
 afterAll(async () => {
 	if (available) await cleanup.db().dropDatabase();
