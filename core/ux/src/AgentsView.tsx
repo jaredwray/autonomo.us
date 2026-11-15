@@ -207,11 +207,13 @@ export function AgentsView({
 		const made = list.agents.find(
 			(item) => item.kind === "oauth" && !known.has(item.id),
 		);
-		if (!made) return;
+		// Its details come in a separate read; wait until both have it.
+		const ready = settings?.tokens.some((token) => token.id === made?.id);
+		if (!made || !ready) return;
 		setCreating(null);
 		setNotice(`Created ${made.name}.`);
 		navigate(made.id);
-	}, [creating, list, navigate]);
+	}, [creating, list, navigate, settings]);
 	useEffect(() => {
 		if (creating !== "oauth") return;
 		const check = () => {
