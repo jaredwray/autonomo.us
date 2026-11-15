@@ -87,18 +87,29 @@ export interface BotRepository {
 		now: string,
 		pendingAfter: string,
 	): Promise<BotRun[]>;
-	/** The workspace's runs created in [from, to), counted by status. */
+	/** The workspace's runs created in [from, to), counted by bot and status. */
 	countRunsByStatus(
 		workspaceId: string,
 		from: string,
 		to: string,
-	): Promise<Partial<Record<BotRunStatus, number>>>;
-	/** The workspace's latest runs that ended this way, newest first. */
+	): Promise<Array<{ botId: string; status: BotRunStatus; count: number }>>;
+	/** The workspace's latest runs created in [from, to) that ended this way, newest first. */
 	recentRuns(
 		workspaceId: string,
 		status: BotRunStatus,
 		limit: number,
+		window: { from: string; to: string },
 	): Promise<BotRun[]>;
+	/**
+	 * Every bot's replies started since `hourAgo` (skipped runs do not count)
+	 * and tokens since `dayStart`, in one read: what `countRunsSince` and
+	 * `tokensSince` answer one bot at a time.
+	 */
+	usageSince(
+		workspaceId: string,
+		hourAgo: string,
+		dayStart: string,
+	): Promise<Map<string, { replies: number; tokens: number }>>;
 	/** How many of the bot's runs hold a live lease right now. */
 	countRunning(botId: string, now: string): Promise<number>;
 	/** Replies the bot started since `since`; skipped runs do not count. */
@@ -219,22 +230,57 @@ export class MemoryBotRepository implements BotRepository {
 			.map(publicRun);
 	}
 	async countRunsByStatus(workspaceId: string, from: string, to: string) {
-		const counts: Partial<Record<BotRunStatus, number>> = {};
-		for (const run of this.runs.values())
+		const counts = new Map<
+			string,
+			{ botId: string; status: BotRunStatus; count: number }
+		>();
+		for (const run of this.runs.values()) {
 			if (
-				run.workspaceId === workspaceId &&
-				run.createdAt >= from &&
-				run.createdAt < to
+				run.workspaceId !== workspaceId ||
+				run.createdAt < from ||
+				run.createdAt >= to
 			)
-				counts[run.status] = (counts[run.status] ?? 0) + 1;
-		return counts;
+				continue;
+			const key = `${run.botId}\n${run.status}`;
+			const row = counts.get(key) ?? {
+				botId: run.botId,
+				status: run.status,
+				count: 0,
+			};
+			row.count += 1;
+			counts.set(key, row);
+		}
+		return [...counts.values()];
 	}
-	async recentRuns(workspaceId: string, status: BotRunStatus, limit: number) {
+	async recentRuns(
+		workspaceId: string,
+		status: BotRunStatus,
+		limit: number,
+		window: { from: string; to: string },
+	) {
 		return [...this.runs.values()]
-			.filter((run) => run.workspaceId === workspaceId && run.status === status)
+			.filter(
+				(run) =>
+					run.workspaceId === workspaceId &&
+					run.status === status &&
+					run.createdAt >= window.from &&
+					run.createdAt < window.to,
+			)
 			.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
 			.slice(0, limit)
 			.map(publicRun);
+	}
+	async usageSince(workspaceId: string, hourAgo: string, dayStart: string) {
+		const usage = new Map<string, { replies: number; tokens: number }>();
+		for (const run of this.runs.values()) {
+			if (run.workspaceId !== workspaceId) continue;
+			const row = usage.get(run.botId) ?? { replies: 0, tokens: 0 };
+			if (run.createdAt >= hourAgo && run.status !== "skipped")
+				row.replies += 1;
+			if (run.createdAt >= dayStart) row.tokens += total(run.usage);
+			usage.set(run.botId, row);
+		}
+		return usage;
 	}
 	async countRunning(botId: string, now: string) {
 		return [...this.runs.values()].filter(
@@ -310,7 +356,12 @@ export class MongoBotRepository implements BotRepository {
 					name: "channel_status",
 				},
 				{ key: { status: 1, leaseUntil: 1 }, name: "status_lease" },
-				// The overview: a workspace's runs in a window, and its latest failures.
+				// The overview: a workspace's runs in a window and its bots' usage,
+				// and its latest failures.
+				{
+					key: { workspaceId: 1, createdAt: -1 },
+					name: "workspace_created",
+				},
 				{
 					key: { workspaceId: 1, status: 1, createdAt: -1 },
 					name: "workspace_status_created",
@@ -481,25 +532,92 @@ export class MongoBotRepository implements BotRepository {
 	async countRunsByStatus(workspaceId: string, from: string, to: string) {
 		const rows = await this.storage(() =>
 			this.runs()
-				.aggregate<{ _id: BotRunStatus; count: number }>([
+				.aggregate<{
+					_id: { botId: string; status: BotRunStatus };
+					count: number;
+				}>([
 					{ $match: { workspaceId, createdAt: { $gte: from, $lt: to } } },
-					{ $group: { _id: "$status", count: { $sum: 1 } } },
+					{
+						$group: {
+							_id: { botId: "$botId", status: "$status" },
+							count: { $sum: 1 },
+						},
+					},
 				])
 				.toArray(),
 		);
-		const counts: Partial<Record<BotRunStatus, number>> = {};
-		for (const row of rows) counts[row._id] = row.count;
-		return counts;
+		return rows.map((row) => ({
+			botId: row._id.botId,
+			status: row._id.status,
+			count: row.count,
+		}));
 	}
-	async recentRuns(workspaceId: string, status: BotRunStatus, limit: number) {
+	async recentRuns(
+		workspaceId: string,
+		status: BotRunStatus,
+		limit: number,
+		window: { from: string; to: string },
+	) {
 		const found = await this.storage(() =>
 			this.runs()
-				.find({ workspaceId, status })
+				.find({
+					workspaceId,
+					status,
+					createdAt: { $gte: window.from, $lt: window.to },
+				})
 				.sort({ createdAt: -1 })
 				.limit(limit)
 				.toArray(),
 		);
 		return found.map((run) => publicRun(toRun(run)));
+	}
+	async usageSince(workspaceId: string, hourAgo: string, dayStart: string) {
+		const rows = await this.storage(() =>
+			this.runs()
+				.aggregate<{ _id: string; replies: number; tokens: number }>([
+					{
+						$match: {
+							workspaceId,
+							createdAt: { $gte: hourAgo < dayStart ? hourAgo : dayStart },
+						},
+					},
+					{
+						$group: {
+							_id: "$botId",
+							replies: {
+								$sum: {
+									$cond: [
+										{
+											$and: [
+												{ $gte: ["$createdAt", hourAgo] },
+												{ $ne: ["$status", "skipped"] },
+											],
+										},
+										1,
+										0,
+									],
+								},
+							},
+							tokens: {
+								$sum: {
+									$cond: [
+										{ $gte: ["$createdAt", dayStart] },
+										{ $ifNull: ["$usage.totalTokens", 0] },
+										0,
+									],
+								},
+							},
+						},
+					},
+				])
+				.toArray(),
+		);
+		return new Map(
+			rows.map((row) => [
+				row._id,
+				{ replies: row.replies, tokens: row.tokens },
+			]),
+		);
 	}
 	countRunning(botId: string, now: string) {
 		return this.storage(() =>

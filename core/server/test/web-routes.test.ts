@@ -530,6 +530,19 @@ describe("a bot's web scope", () => {
 			(await api.ok<WorkspaceOverview>("GET", "/v1/overview")).waiting
 				.siteRequests,
 		).toEqual([]);
+		// A deleted bot's waiting request can never be decided: it is not
+		// waiting on anyone.
+		const gone = await api.bot({ name: "Gone", model: "stub/web-model" });
+		await api.ask(gone.id, "what does it cost?");
+		expect(
+			(await api.ok<WorkspaceOverview>("GET", "/v1/overview")).waiting
+				.siteRequests,
+		).toEqual([{ botId: gone.id, name: "Gone", count: 1 }]);
+		await api.ok("DELETE", `/v1/bots/${gone.id}`, {}, 204);
+		expect(
+			(await api.ok<WorkspaceOverview>("GET", "/v1/overview")).waiting
+				.siteRequests,
+		).toEqual([]);
 		expect(
 			(await api.ok<BotDetails>("GET", `/v1/bots/${reader.id}`)).webHosts,
 		).toEqual(["example.com"]);

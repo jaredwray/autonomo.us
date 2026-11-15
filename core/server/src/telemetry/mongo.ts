@@ -13,6 +13,7 @@ import {
 	RECORDED_CALLER_KINDS,
 	stepConnection,
 	WEB_EVENT_TYPE,
+	WEB_TOP_SITES,
 	type WebFacts,
 } from "./analytics.js";
 
@@ -440,7 +441,14 @@ export class MongoTelemetrySink {
 		}));
 	}
 
-	/** Grouped web fetch facts for one window. Callers apply the caller filter. */
+	/**
+	 * Grouped web fetch facts for one window. Fetches and steps are grouped
+	 * by caller, and the caller filter is applied afterwards like the model
+	 * report's. Sites are grouped by host alone, after the caller filter, and
+	 * only the top ones are returned, so a crawling agent cannot reach the
+	 * grouping limit. Fetches recorded before outcomes were kept are only
+	 * counted.
+	 */
 	async queryWebAnalytics(
 		query: AnalyticsQuery,
 		workspace?: WorkspaceRef,
@@ -449,14 +457,12 @@ export class MongoTelemetrySink {
 		const to = Date.parse(query.to);
 		if (!Number.isFinite(from) || !Number.isFinite(to))
 			throw new Error("Invalid analytics window");
-		const interval = bucketMs(query);
-		const match = {
-			$match: {
-				type: WEB_EVENT_TYPE,
-				timestamp: { $gte: new Date(from), $lt: new Date(to) },
-				...(workspace ? { workspaceId: workspaceFilter(workspace) } : {}),
-			},
+		const window = {
+			type: WEB_EVENT_TYPE,
+			timestamp: { $gte: new Date(from), $lt: new Date(to) },
+			...(workspace ? { workspaceId: workspaceFilter(workspace) } : {}),
 		};
+		const detailed = { ...window, outcome: { $exists: true, $ne: "" } };
 		const counts = {
 			fetches: { $sum: 1 },
 			succeeded: { $sum: { $cond: [{ $eq: ["$ok", true] }, 1, 0] } },
@@ -483,10 +489,8 @@ export class MongoTelemetrySink {
 			callerKind: string;
 		};
 		const limit = { $limit: 100_001 };
-		let fetches: Array<
-			Counts & { _id: CallerKey & { bucket: number; outcome: string } }
-		>;
-		let hosts: Array<Counts & { _id: CallerKey & { host: string } }>;
+		let fetches: Array<Counts & { _id: CallerKey & { outcome: string } }>;
+		let hosts: Array<Counts & { _id: string }>;
 		let steps: Array<{
 			_id: CallerKey & { step: string };
 			attempts: number;
@@ -494,29 +498,17 @@ export class MongoTelemetrySink {
 			costUsd: number;
 			lastSeen: Date | number;
 		}>;
+		let legacy: number;
 		try {
 			await this.ensureSchema();
 			const collection = this.collection();
-			[fetches, hosts, steps] = await Promise.all([
+			[fetches, hosts, steps, legacy] = await Promise.all([
 				collection
 					.aggregate<(typeof fetches)[number]>([
-						match,
+						{ $match: detailed },
 						{
 							$group: {
-								_id: {
-									bucket: {
-										$multiply: [
-											{
-												$floor: {
-													$divide: [{ $toLong: "$timestamp" }, interval],
-												},
-											},
-											interval,
-										],
-									},
-									...callerKey(),
-									outcome: labeled("$outcome", "unknown"),
-								},
+								_id: { ...callerKey(), outcome: "$outcome" },
 								...counts,
 							},
 						},
@@ -525,20 +517,24 @@ export class MongoTelemetrySink {
 					.toArray(),
 				collection
 					.aggregate<(typeof hosts)[number]>([
-						match,
 						{
-							$group: {
-								_id: { ...callerKey(), host: labeled("$host", "Unknown site") },
-								...counts,
+							$match: {
+								...detailed,
+								// Web fetches always record their caller.
+								...(query.caller ? { callerId: query.caller } : {}),
 							},
 						},
-						limit,
+						{ $group: { _id: labeled("$host", "Unknown site"), ...counts } },
+						{ $sort: { fetches: -1, costUsd: -1, _id: 1 } },
+						{ $limit: WEB_TOP_SITES },
 					])
 					.toArray(),
 				collection
 					.aggregate<(typeof steps)[number]>([
-						match,
+						{ $match: detailed },
 						{ $unwind: "$attempts" },
+						// A skipped step made no request.
+						{ $match: { "attempts.outcome": { $ne: "skipped" } } },
 						{
 							$group: {
 								_id: { ...callerKey(), step: "$attempts.step" },
@@ -553,16 +549,16 @@ export class MongoTelemetrySink {
 						limit,
 					])
 					.toArray(),
+				collection.countDocuments({
+					...window,
+					$or: [{ outcome: { $exists: false } }, { outcome: "" }],
+				}),
 			]);
 			this.healthy = true;
 		} catch (error) {
 			this.fail(error);
 		}
-		if (
-			fetches.length > 100_000 ||
-			hosts.length > 100_000 ||
-			steps.length > 100_000
-		)
+		if (fetches.length > 100_000 || steps.length > 100_000)
 			throw new Error("Analytics grouping limit exceeded");
 		const seen = (value: Date | number) =>
 			new Date(asMillis(value)).toISOString();
@@ -578,15 +574,10 @@ export class MongoTelemetrySink {
 		return {
 			fetches: fetches.map((row) => ({
 				...countsOf(row),
-				timestamp: new Date(asMillis(row._id.bucket)).toISOString(),
 				caller: caller(row._id),
 				outcome: row._id.outcome,
 			})),
-			hosts: hosts.map((row) => ({
-				...countsOf(row),
-				host: row._id.host,
-				caller: caller(row._id),
-			})),
+			hosts: hosts.map((row) => ({ ...countsOf(row), host: row._id })),
 			// Steps are grouped by their label (`zenrows:auto`), so connections
 			// are summed here, the same way memory sums them.
 			steps: steps.map((row) => ({
@@ -597,6 +588,7 @@ export class MongoTelemetrySink {
 				costUsd: row.costUsd,
 				lastSeen: seen(row.lastSeen),
 			})),
+			legacy,
 		};
 	}
 

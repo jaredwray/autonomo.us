@@ -75,7 +75,7 @@ export type WebUsageMetrics = {
 	fetches: number;
 	/** Fetches that returned a page. */
 	succeeded: number;
-	/** Fetches that tried at least one proxy step. */
+	/** Fetches that sent at least one request through a proxy. */
 	proxied: number;
 	/** Fetches answered from the gateway's cache, at no cost. */
 	cached: number;
@@ -112,5 +112,9 @@ export type WebAnalytics = {
 	byOutcome: Array<{ id: string; fetches: number }>;
 	/** The sites fetched most, at most ten. */
 	byHost: WebBreakdown[];
-	series: Array<WebUsageMetrics & { timestamp: string }>;
+	/**
+	 * Fetches in the window recorded before the gateway kept their outcome
+	 * and cost. They are in none of the numbers above.
+	 */
+	legacyFetches: number;
 };

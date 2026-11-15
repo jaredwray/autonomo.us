@@ -115,6 +115,7 @@ export {
 	type OverviewNote,
 	type OverviewProposal,
 	type OverviewQuery,
+	type OverviewSection,
 	type WorkspaceOverview,
 } from "./overview.js";
 export {

@@ -283,11 +283,18 @@ type WebCounts = {
 	lastSeen: string;
 };
 export type WebFetchFact = WebCounts & {
-	timestamp: string;
 	caller: TelemetryCaller;
 	outcome: string;
 };
-export type WebHostFact = WebCounts & { host: string; caller: TelemetryCaller };
+/**
+ * One site's fetches. `caller` is set when the facts are per caller (memory);
+ * MongoDB groups by site alone, already filtered to the query's caller, so
+ * that a crawling agent cannot exceed the grouping limit.
+ */
+export type WebHostFact = WebCounts & {
+	host: string;
+	caller?: TelemetryCaller;
+};
 export type WebStepFact = {
 	connection: string;
 	caller: TelemetryCaller;
@@ -300,11 +307,18 @@ export type WebFacts = {
 	fetches: WebFetchFact[];
 	hosts: WebHostFact[];
 	steps: WebStepFact[];
+	/**
+	 * Fetches recorded before the gateway kept how they ended and what they
+	 * cost. They are left out of every number rather than counted as free
+	 * failures, and reported by this count instead.
+	 */
+	legacy: number;
 };
 export const noWebFacts = (): WebFacts => ({
 	fetches: [],
 	hosts: [],
 	steps: [],
+	legacy: 0,
 });
 
 const nonNegative = (value: unknown) =>
@@ -313,11 +327,19 @@ const nonNegative = (value: unknown) =>
 /** `zenrows:auto` → `zenrows`; `direct` stays `direct`. */
 export const stepConnection = (step: string) => step.split(":")[0] || "direct";
 
-/** One retained web event as facts. Missing fields count as unknown, not as zero cost. */
-export function webEventFacts(
-	event: TelemetryEvent,
-	interval: number,
-): WebFacts {
+/**
+ * Whether a recorded web event carries the details analytics need. Older
+ * events, written before fetches recorded their outcome, do not.
+ */
+export const webEventDetailed = (event: TelemetryEvent) =>
+	typeof event.data.outcome === "string" && event.data.outcome !== "";
+
+/**
+ * One retained web event as facts. Steps that were skipped (a spent budget,
+ * a missing key, a back-off) made no request and are not counted.
+ */
+export function webEventFacts(event: TelemetryEvent): WebFacts {
+	if (!webEventDetailed(event)) return { ...noWebFacts(), legacy: 1 };
 	const data = event.data;
 	const caller = eventCaller(event);
 	const ok = data.ok === true;
@@ -332,19 +354,7 @@ export function webEventFacts(
 	};
 	const attempts = Array.isArray(data.attempts) ? data.attempts : [];
 	return {
-		fetches: [
-			{
-				...counts,
-				timestamp: new Date(
-					Math.floor(Date.parse(event.timestamp) / interval) * interval,
-				).toISOString(),
-				caller,
-				outcome:
-					typeof data.outcome === "string" && data.outcome
-						? data.outcome
-						: "unknown",
-			},
-		],
+		fetches: [{ ...counts, caller, outcome: data.outcome as string }],
 		hosts: [
 			{
 				...counts,
@@ -360,7 +370,8 @@ export function webEventFacts(
 				(attempt): attempt is Record<string, unknown> =>
 					Boolean(attempt) &&
 					typeof attempt === "object" &&
-					typeof (attempt as { step?: unknown }).step === "string",
+					typeof (attempt as { step?: unknown }).step === "string" &&
+					(attempt as { outcome?: unknown }).outcome !== "skipped",
 			)
 			.map((attempt) => ({
 				connection: stepConnection(attempt.step as string),
@@ -370,6 +381,7 @@ export function webEventFacts(
 				costUsd: nonNegative(attempt.costUsd),
 				lastSeen: event.timestamp,
 			})),
+		legacy: 0,
 	};
 }
 
@@ -406,25 +418,21 @@ function webMetrics(value: WebCounts): WebUsageMetrics {
 			: 0,
 	};
 }
+/** The order sites and callers are listed in; MongoDB sorts sites the same way. */
+const byFetches = (a: WebBreakdown, b: WebBreakdown) =>
+	b.fetches - a.fetches || b.costUsd - a.costUsd || a.id.localeCompare(b.id);
+export const WEB_TOP_SITES = 10;
 
 /** Web usage for a window. Only the caller filter applies. */
 export function buildWebAnalytics(
 	facts: WebFacts,
 	query: AnalyticsQuery,
 ): WebAnalytics {
-	const interval = bucketMs(query);
-	const keep = (caller: TelemetryCaller) =>
-		!query.caller || query.caller === caller.id;
+	const keep = (caller: TelemetryCaller | undefined) =>
+		!query.caller || !caller || query.caller === caller.id;
 	const totals = emptyWeb();
 	const callers = new Map<string, WebCounts & { caller: TelemetryCaller }>();
 	const outcomes = new Map<string, number>();
-	const series = new Map<string, WebCounts>();
-	for (
-		let time = Math.floor(Date.parse(query.from) / interval) * interval;
-		time < Date.parse(query.to);
-		time += interval
-	)
-		series.set(new Date(time).toISOString(), emptyWeb());
 	for (const fact of facts.fetches) {
 		if (!keep(fact.caller)) continue;
 		addWeb(totals, fact);
@@ -439,8 +447,6 @@ export function buildWebAnalytics(
 			fact.outcome,
 			(outcomes.get(fact.outcome) ?? 0) + fact.fetches,
 		);
-		const point = series.get(fact.timestamp);
-		if (point) addWeb(point, fact);
 	}
 	const hosts = new Map<string, WebCounts>();
 	for (const fact of facts.hosts) {
@@ -467,8 +473,6 @@ export function buildWebAnalytics(
 		if (fact.lastSeen > row.lastSeen) row.lastSeen = fact.lastSeen;
 		connections.set(fact.connection, row);
 	}
-	const byFetches = (a: WebBreakdown, b: WebBreakdown) =>
-		b.fetches - a.fetches || b.costUsd - a.costUsd || a.id.localeCompare(b.id);
 	return {
 		totals: webMetrics(totals),
 		byCaller: [...callers]
@@ -499,11 +503,8 @@ export function buildWebAnalytics(
 				lastSeen: value.lastSeen,
 			}))
 			.sort(byFetches)
-			.slice(0, 10),
-		series: [...series].map(([timestamp, value]) => ({
-			timestamp,
-			...webMetrics(value),
-		})),
+			.slice(0, WEB_TOP_SITES),
+		legacyFetches: facts.legacy,
 	};
 }
 

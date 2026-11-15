@@ -74,6 +74,7 @@ describe("workspace overview", () => {
 				siteRequests: [],
 				proxyProblems: [],
 				expiringAgents: [],
+				failingBots: [],
 				botsAtLimit: [],
 				mentions: [],
 				invites: 0,
@@ -85,6 +86,7 @@ describe("workspace overview", () => {
 			failedRuns: [],
 			recentNotes: [],
 			recentDecisions: [],
+			unavailable: [],
 			health: {
 				persistence: "memory",
 				telemetry: "none",
@@ -108,16 +110,24 @@ describe("workspace overview", () => {
 			const asked = await post(channel.id, `<@agent:${agent.id}> hello?`);
 			await next(channel.id, asked.seq);
 		}
+		// One failure is not yet a failing bot.
+		expect((await overview()).waiting.failingBots).toEqual([]);
+		const again = await post(channel.id, `<@agent:${broken.id}> still there?`);
+		await next(channel.id, again.seq);
 
 		const seen = await overview();
-		expect(seen.runs).toMatchObject({ succeeded: 2, failed: 1 });
-		expect(seen.failedRuns).toEqual([
+		expect(seen.runs).toMatchObject({ succeeded: 2, failed: 2 });
+		expect(seen.failedRuns).toHaveLength(2);
+		expect(seen.failedRuns[0]).toEqual(
 			expect.objectContaining({
 				botId: broken.id,
 				name: "Broken",
 				channelId: channel.id,
 				detail: expect.stringContaining("provider exploded"),
 			}),
+		);
+		expect(seen.waiting.failingBots).toEqual([
+			{ id: broken.id, name: "Broken", failed: 2, replies: 2 },
 		]);
 		expect(seen.waiting.botsAtLimit).toEqual([
 			{ id: daily.id, name: "Daily", limit: "tokens" },
@@ -137,13 +147,94 @@ describe("workspace overview", () => {
 			tokens: { used: 15, limit: 500_000 },
 			expiresAt: null,
 		});
-		// A window before any of it counts no replies, but still lists failures.
+		// A window before any of it counts no replies and lists no failures.
 		const earlier = await overview(
 			undefined,
 			`?from=2026-01-01T00:00:00.000Z&to=2026-01-02T00:00:00.000Z`,
 		);
 		expect(earlier.runs.succeeded).toBe(0);
-		expect(earlier.failedRuns).toHaveLength(1);
+		expect(earlier.failedRuns).toEqual([]);
+		expect(earlier.waiting.failingBots).toEqual([]);
+	});
+
+	it("shows only its own workspace", async () => {
+		const { ok, call, bot, tool, agent, overview } = await start();
+		await bot({ name: "Here" });
+		const response = await call("POST", "/v1/workspaces", {
+			body: { name: "Elsewhere" },
+		});
+		const other = (await response.json()) as { id: string };
+		await ok(
+			"POST",
+			`/v1/${other.id}/bots`,
+			{
+				body: {
+					name: "There",
+					instructions: "Answer briefly.",
+					model: "stub/chat-model",
+				},
+			},
+			201,
+		);
+		const made = await ok<{ token: { id: string }; secret: string }>(
+			"POST",
+			`/v1/${other.id}/agent-tokens`,
+			{
+				body: {
+					name: "Remote",
+					description: "",
+					ttlDays: 7,
+					permissions: ["mcp:read", "mcp:call"],
+				},
+			},
+			201,
+		);
+		await tool(made.secret, "synapse_propose", {
+			action: "create",
+			title: "Elsewhere only",
+			body: "Not for the default workspace.",
+			reason: "Isolation.",
+		});
+		await agent("Local");
+
+		const here = await overview();
+		expect(here.agents.map((item) => item.name)).toEqual(["Here", "Local"]);
+		expect(here.waiting.proposals).toBe(0);
+		expect(here.waiting.expiringAgents.map((item) => item.name)).toEqual([
+			"Local",
+		]);
+		const there = await ok<WorkspaceOverview>(
+			"GET",
+			`/v1/${other.id}/overview`,
+		);
+		expect(there.agents.map((item) => item.name)).toEqual(["Remote", "There"]);
+		expect(there.waiting.proposals).toBe(1);
+	});
+
+	it("tells a workspace admin what they may do, without org-level items", async () => {
+		const { ok, join, overview } = await start();
+		const admin = await join("wsadmin@example.com");
+		await ok("PUT", `/v1/members/${admin.user.id}`, {
+			body: { role: "admin" },
+		});
+		const seen = await overview(admin.token);
+		expect(seen.can).toEqual({
+			decideProposals: true,
+			manageAgents: true,
+			editProxies: true,
+			manageTokens: false,
+			manageTeam: false,
+		});
+		expect(seen.waiting.invites).toBeNull();
+		expect(seen.waiting.expiringApiTokens).toBeNull();
+		// The owner sees the team's unused invites, counted once for the team.
+		await ok(
+			"POST",
+			"/v1/team/invites",
+			{ body: { role: "member", ttlDays: 7 } },
+			201,
+		);
+		expect((await overview()).waiting.invites).toBe(1);
 	});
 
 	it("shows proposals, notes, expiring agents, and the person's mentions", async () => {
@@ -187,6 +278,7 @@ describe("workspace overview", () => {
 		expect(seen.recentDecisions).toEqual([
 			expect.objectContaining({
 				id: second.data.id,
+				action: "create",
 				title: "Brand voice",
 				status: "approved",
 				author: "Alice",

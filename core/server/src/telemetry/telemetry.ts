@@ -225,12 +225,15 @@ export class TelemetryService {
 	 * carry tokens. Web events stay out of model analytics.
 	 */
 	recordWebFetch(fetch: WebFetchTelemetry): TelemetryEvent {
-		// How it ended and whether a proxy was tried, decided once here so
-		// memory and MongoDB report the same thing.
-		const outcome = fetch.ok
-			? "ok"
-			: (fetch.attempts.at(-1)?.outcome ?? "skipped");
-		const proxied = fetch.attempts.some((attempt) => attempt.step !== "direct");
+		// How it ended and whether a proxy was used, decided once here so
+		// memory and MongoDB report the same thing. A skipped step made no
+		// request: a fetch blocked directly whose proxy was then skipped for
+		// the budget ended "blocked", and used no proxy.
+		const ran = fetch.attempts.filter(
+			(attempt) => attempt.outcome !== "skipped",
+		);
+		const outcome = fetch.ok ? "ok" : (ran.at(-1)?.outcome ?? "skipped");
+		const proxied = ran.some((attempt) => attempt.step !== "direct");
 		const event: TelemetryEvent = {
 			id: randomUUID(),
 			type: "gateway.web",
@@ -406,10 +409,11 @@ export class TelemetryService {
 		const web = noWebFacts();
 		for (const event of events) {
 			if (event.type !== WEB_EVENT_TYPE) continue;
-			const facts = webEventFacts(event, interval);
+			const facts = webEventFacts(event);
 			web.fetches.push(...facts.fetches);
 			web.hosts.push(...facts.hosts);
 			web.steps.push(...facts.steps);
+			web.legacy += facts.legacy;
 		}
 		return buildAnalytics(
 			events

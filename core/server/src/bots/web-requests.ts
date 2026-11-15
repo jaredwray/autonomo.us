@@ -44,6 +44,12 @@ export class BotWebRequestStore {
 				botId: 1,
 				requestedAt: -1,
 			}),
+			// The overview: every bot's waiting requests in a workspace.
+			this.collection().createIndex({
+				workspaceId: 1,
+				status: 1,
+				requestedAt: 1,
+			}),
 		]);
 		this.indexed = true;
 	}
@@ -179,6 +185,7 @@ export class BotWebRequestStore {
 				.sort((a, b) => a.requestedAt.localeCompare(b.requestedAt))
 				.map((request) => ({ ...request }));
 		try {
+			await this.ensureIndexes().catch(() => {});
 			const documents = await this.collection()
 				.find({ workspaceId: { $eq: workspaceId }, status: { $eq: "pending" } })
 				.sort({ requestedAt: 1 })

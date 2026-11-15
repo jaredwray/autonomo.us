@@ -1455,6 +1455,52 @@ export class SynapseService {
 	countProposals(filter: ProposalFilter): Promise<number> {
 		return this.repository.countProposals(filter);
 	}
+	/**
+	 * The notes a workspace's shared space shows that changed last: its own,
+	 * and Global's it does not override. Unlike `query`, it neither counts
+	 * nor scans the space, so the dashboard can poll it.
+	 */
+	async recentNotes(
+		shared: SynapseSpaceId,
+		limit: number,
+	): Promise<Array<{ title: string; updatedAt: string; global: boolean }>> {
+		const latest = {
+			sort: { by: "updatedAt" as const, direction: "desc" as const },
+			limit,
+		};
+		const [own, global] = await Promise.all([
+			this.repository.findNotes({ space: shared }, latest),
+			shared === SYNAPSE_GLOBAL_SPACE
+				? Promise.resolve([])
+				: this.repository.findNotes({ space: SYNAPSE_GLOBAL_SPACE }, latest),
+		]);
+		const overridden = global.length
+			? new Set(
+					(
+						await this.repository.findNotes(
+							{
+								space: shared,
+								titleKeys: global.map((note) => note.titleKey),
+							},
+							{ ...latest, limit: global.length },
+						)
+					).map((note) => note.titleKey),
+				)
+			: new Set<string>();
+		return [
+			...own.map((note) => ({ note, global: false })),
+			...global
+				.filter((note) => !overridden.has(note.titleKey))
+				.map((note) => ({ note, global: true })),
+		]
+			.sort((a, b) => b.note.updatedAt.localeCompare(a.note.updatedAt))
+			.slice(0, limit)
+			.map(({ note, global }) => ({
+				title: note.title,
+				updatedAt: note.updatedAt,
+				global,
+			}));
+	}
 	async recentDecisions(
 		space: SynapseSpaceId,
 		limit: number,

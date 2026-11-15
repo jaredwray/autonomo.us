@@ -18,6 +18,16 @@ export const OVERVIEW_RECENT_NOTES = 5;
 
 export type OverviewQuery = { from?: string; to?: string };
 
+/** Parts of the overview read from separate stores, which can fail apart. */
+export type OverviewSection =
+	| "synapse"
+	| "channels"
+	| "proxies"
+	| "site-requests"
+	| "connections"
+	| "team"
+	| "api-tokens";
+
 /** One of the workspace's agents, with what it has done lately. */
 export type OverviewAgent = Pick<
 	AgentSummary,
@@ -53,6 +63,8 @@ export type OverviewNote = {
 
 export type OverviewProposal = {
 	id: string;
+	action: "create" | "update" | "append" | "delete";
+	/** The note's title once the proposal applied (a rename's new title). */
 	title: string;
 	status: "approved" | "rejected";
 	author: string;
@@ -83,6 +95,16 @@ export type WorkspaceOverview = {
 		}>;
 		/** Agent credentials that stop working soon. */
 		expiringAgents: Array<{ id: string; name: string; expiresAt: string }>;
+		/**
+		 * Bots whose replies in the query's window failed at least twice and at
+		 * least as often as they succeeded: usually a model or key problem.
+		 */
+		failingBots: Array<{
+			id: string;
+			name: string;
+			failed: number;
+			replies: number;
+		}>;
 		/** Bots that used up an hourly or daily limit. */
 		botsAtLimit: Array<{
 			id: string;
@@ -91,7 +113,10 @@ export type WorkspaceOverview = {
 		}>;
 		/** Unread mentions of the signed-in person, by channel. */
 		mentions: Array<{ channelId: string; name: string; count: number }>;
-		/** Org owners and admins: invite links not yet used. Null for others. */
+		/**
+		 * Org owners and admins: invite links not yet used, across the whole
+		 * team (not this workspace alone). Null for others.
+		 */
 		invites: number | null;
 		/** Org owners and admins: API tokens that stop working soon. Null for others. */
 		expiringApiTokens: Array<{
@@ -100,14 +125,19 @@ export type WorkspaceOverview = {
 			expiresAt: string;
 		}> | null;
 	};
-	/** The proxy budget for the calendar month (UTC). */
-	budget: { month: string; spentUsd: number; limitUsd: number };
+	/** The proxy budget for the calendar month (UTC); null when proxies could not be read. */
+	budget: { month: string; spentUsd: number; limitUsd: number } | null;
 	agents: OverviewAgent[];
 	/** Bot replies started in the query's window, by how they ended. */
 	runs: Record<BotRunStatus, number>;
 	failedRuns: OverviewFailedRun[];
 	recentNotes: OverviewNote[];
 	recentDecisions: OverviewProposal[];
+	/**
+	 * Sections that could not be read this time. The rest of the overview
+	 * is still current; these show as unavailable rather than as empty.
+	 */
+	unavailable: OverviewSection[];
 	health: {
 		/** Where the workspace's settings live. Memory is lost on restart. */
 		persistence: "mongodb" | "memory";

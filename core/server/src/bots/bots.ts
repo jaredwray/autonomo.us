@@ -335,7 +335,8 @@ export class BotService {
 
 	/**
 	 * The workspace's bots with their usage, which are replying now, how
-	 * replies started in [from, to) ended, and the latest failures.
+	 * replies started in [from, to) ended (in all and by bot), and the
+	 * window's latest failures. A fixed number of reads, however many bots.
 	 */
 	async overview(
 		workspaceId: string,
@@ -345,29 +346,49 @@ export class BotService {
 		bots: BotSummary[];
 		replying: Set<string>;
 		runs: Record<BotRunStatus, number>;
+		byBot: Map<string, Partial<Record<BotRunStatus, number>>>;
 		failedRuns: BotRun[];
 	}> {
-		const [list, active, counts, failedRuns] = await Promise.all([
-			this.list(workspaceId),
+		const now = this.now();
+		const [bots, usage, active, counts, failedRuns] = await Promise.all([
+			this.repository.listBots(workspaceId),
+			this.repository.usageSince(
+				workspaceId,
+				new Date(now - HOUR_MS).toISOString(),
+				startOfDay(now),
+			),
 			this.repository.activeRuns(
 				workspaceId,
 				null,
 				this.at(),
-				new Date(this.now() - PENDING_SHOWN_MS).toISOString(),
+				new Date(now - PENDING_SHOWN_MS).toISOString(),
 			),
 			this.repository.countRunsByStatus(workspaceId, window.from, window.to),
-			this.repository.recentRuns(workspaceId, "failed", failures),
+			this.repository.recentRuns(workspaceId, "failed", failures, window),
 		]);
+		const runs: Record<BotRunStatus, number> = {
+			pending: 0,
+			running: 0,
+			succeeded: 0,
+			failed: 0,
+			skipped: 0,
+		};
+		const byBot = new Map<string, Partial<Record<BotRunStatus, number>>>();
+		for (const row of counts) {
+			runs[row.status] += row.count;
+			const bot = byBot.get(row.botId) ?? {};
+			bot[row.status] = (bot[row.status] ?? 0) + row.count;
+			byBot.set(row.botId, bot);
+		}
 		return {
-			bots: list.bots,
+			bots: bots.map((bot) => ({
+				...bot,
+				repliesLastHour: usage.get(bot.id)?.replies ?? 0,
+				tokensToday: usage.get(bot.id)?.tokens ?? 0,
+			})),
 			replying: new Set(active.map((run) => run.botId)),
-			runs: {
-				pending: counts.pending ?? 0,
-				running: counts.running ?? 0,
-				succeeded: counts.succeeded ?? 0,
-				failed: counts.failed ?? 0,
-				skipped: counts.skipped ?? 0,
-			},
+			runs,
+			byBot,
 			failedRuns,
 		};
 	}
