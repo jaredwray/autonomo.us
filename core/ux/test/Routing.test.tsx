@@ -36,7 +36,10 @@ let workspaceHash = "";
 async function start({
 	hash = "#/models/routing",
 	chat = true,
-}: { hash?: string; chat?: boolean } = {}) {
+}: {
+	hash?: string;
+	chat?: boolean;
+} = {}) {
 	const provider = await startOpenAIStub();
 	const providers: ApiConfig["providers"] = [
 		{
