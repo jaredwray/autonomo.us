@@ -101,7 +101,8 @@ describe("webhook state", () => {
 			webhook: StoredAgentWebhook,
 			event: AgentWakeEvent,
 			key: string,
-		) => enqueued(webhook, event, key, NOW, wide);
+			replay = false,
+		) => enqueued(webhook, event, key, NOW, wide, replay);
 		const inChannel = (channelId: string, seq: number) =>
 			({
 				...message(seq),
@@ -134,9 +135,17 @@ describe("webhook state", () => {
 		expect(webhook.channelSeqs.quiet).toEqual([7]);
 		expect(webhook.channelSeqs.busy).toHaveLength(50);
 		// The quiet channel's post, retried, is still known.
-		expect(add(webhook, inChannel("quiet", 7), "channel:quiet:7")).toBeNull();
-		// So is a busy channel's post older than every one it remembers.
-		expect(add(webhook, inChannel("busy", 3), "channel:busy:3")).toBeNull();
+		expect(
+			add(webhook, inChannel("quiet", 7), "channel:quiet:7", true),
+		).toBeNull();
+		// So is a busy channel's retried post older than every one it remembers.
+		expect(
+			add(webhook, inChannel("busy", 3), "channel:busy:3b", true),
+		).toBeNull();
+		// A first report that old is late, not a retry: it is never dropped.
+		expect(
+			add(webhook, inChannel("busy", 3), "channel:busy:3b"),
+		).not.toBeNull();
 		// A post reported late, behind newer ones, is still new.
 		const quiet = add(webhook, inChannel("quiet", 150), "channel:quiet:150");
 		expect(

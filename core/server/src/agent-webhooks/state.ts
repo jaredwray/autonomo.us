@@ -41,9 +41,8 @@ export const DEFAULT_TIMING: WebhookTiming = {
 const RECENT_KEYS = 200;
 /**
  * Messages remembered per channel, so a retried post is recognized however
- * much happens elsewhere. A message older than every one remembered is a
- * retry too: posts that land together are reported a few apart at most,
- * never this many.
+ * much happens elsewhere. A retried post older than every one remembered was
+ * reported long ago. A first report is never dropped, however late it comes.
  */
 const CHANNEL_WINDOW = 50;
 
@@ -90,6 +89,8 @@ export function enqueued(
 	key: string,
 	now: number,
 	timing: WebhookTiming,
+	/** A retried post, settled again: it may have been reported already. */
+	replay = false,
 ): StoredAgentWebhook | null {
 	if (webhook.status !== "active" || webhook.recentKeys.includes(key))
 		return null;
@@ -99,7 +100,7 @@ export function enqueued(
 		const seen = channelSeqs[event.channelId] ?? [];
 		if (
 			seen.includes(event.seq) ||
-			(seen.length >= CHANNEL_WINDOW && event.seq < seen[0])
+			(replay && seen.length >= CHANNEL_WINDOW && event.seq < seen[0])
 		)
 			return null;
 		channelSeqs = {

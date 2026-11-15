@@ -260,10 +260,10 @@ export function createServer(options: CreateServerOptions = {}) {
 	const channels: ChannelService = new ChannelService(channelRepository, {
 		// A message that mentions one of the gateway's own bots starts its
 		// reply; one meant for an agent elsewhere wakes it through its webhook.
-		onMessage: async (channel, message) => {
+		onMessage: async (channel, message, context) => {
 			await Promise.allSettled([
 				botRunner.onMessage(channel, message),
-				agentWebhooks.onMessage(channel, message),
+				agentWebhooks.onMessage(channel, message, context),
 			]);
 		},
 		directory: {

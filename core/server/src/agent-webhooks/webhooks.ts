@@ -333,7 +333,12 @@ export class AgentWebhooks {
 	 * nobody unless it mentions them, so two agents cannot wake each other in
 	 * a loop by talking.
 	 */
-	async onMessage(channel: Channel, message: ChannelMessage): Promise<void> {
+	async onMessage(
+		channel: Channel,
+		message: ChannelMessage,
+		/** A retried post, settled again: it may have been reported already. */
+		{ replay }: { replay: boolean } = { replay: false },
+	): Promise<void> {
 		if (channel.archivedAt || message.deletedAt) return;
 		const author = message.author;
 		const candidates = channel.agents
@@ -390,6 +395,7 @@ export class AgentWebhooks {
 				},
 				// One event per message and agent, so a retried post adds nothing.
 				`channel:${channel.id}:${message.seq}`,
+				replay,
 			);
 		}
 	}
@@ -424,12 +430,14 @@ export class AgentWebhooks {
 		webhook: StoredAgentWebhook,
 		event: AgentWakeEvent,
 		key: string,
+		replay = false,
 	) {
 		const updated = await mutateWebhook(
 			this.options.repository,
 			webhook.workspaceId,
 			webhook.agentId,
-			(current) => enqueued(current, event, key, this.now(), this.timing),
+			(current) =>
+				enqueued(current, event, key, this.now(), this.timing, replay),
 			webhook,
 		);
 		if (updated) this.schedule(updated);
