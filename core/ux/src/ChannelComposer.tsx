@@ -241,9 +241,7 @@ export function Composer({
 			>
 				Send
 			</button>
-			<p className="field-hint channel-composer-hint">
-				{disabledNote ?? hint}
-			</p>
+			<p className="field-hint channel-composer-hint">{disabledNote ?? hint}</p>
 		</form>
 	);
 }
