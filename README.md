@@ -305,7 +305,8 @@ through environment variables:
 - `PUT /v1/:workspace/routing` — replace the full routing configuration; returns `{ config, persistence }`. Invalid settings are rejected before activation.
 - `GET /v1/:workspace/telemetry/summary` — usage aggregates (MongoDB when available, in-memory otherwise; `?source=memory|mongodb` to force).
 - `GET /v1/:workspace/telemetry/events` — recent gateway events and sink status.
-- `GET /v1/:workspace/telemetry/analytics?from=<ISO timestamp>&to=<ISO timestamp>` — date-filtered model, connection, caller, and time-series analytics. Optional `model`, `provider` (connection ID), and `caller` filters apply to the entire report. Ranges are start-inclusive, end-exclusive, and limited to 90 days. Requires `telemetry:read` when API authentication is enabled.
+- `GET /v1/:workspace/telemetry/analytics?from=<ISO timestamp>&to=<ISO timestamp>` — date-filtered model, connection, caller, and time-series analytics, plus a `web` section for web fetches. Optional `model`, `provider` (connection ID), and `caller` filters apply to the model report; only `caller` applies to `web`. Ranges are start-inclusive, end-exclusive, and limited to 90 days. Requires `telemetry:read` when API authentication is enabled.
+- `GET /v1/:workspace/overview?from=<ISO timestamp>&to=<ISO timestamp>` — the dashboard's home page in one request; see [Dashboard](#dashboard). Signed-in team members only.
 
 - `/v1/:workspace/synapse/...` — Synapse's notes, spaces, export/import, and proposals; see [Synapse](#synapse).
 - `/v1/:workspace/channels/...` — channels, their messages, agents, and read marks; see [Channels](#channels).
@@ -947,20 +948,54 @@ is sent — once output reaches the client the response is committed to that
 model; SSE clients see a `failover` event when the gateway switches models.
 `FAILOVER_*` environment variables seed the policy at boot.
 
-The dashboard reports model calls, token usage, estimated spending, active
-callers, success rates, and successful-call latency. Choose a 24-hour, 7-day,
-30-day, or 90-day window, filter by connection/model/caller, inspect hourly or
-daily trends, sort and page the model/caller tables, or export the filtered
-report as CSV. It refreshes every 30 seconds while visible and preserves the
-last successful report with a stale-data notice if refresh fails. Configuration,
-including failover, remains on the Models page's Models and Routing tabs.
+### Dashboard
+
+Each workspace opens on its dashboard (`#/w/<workspace id>/dashboard`), which
+has two tabs. Both refresh every 30 seconds while visible and keep the last
+good answer, with a notice, when a refresh fails. The header names the
+workspace and reports health: whether settings are saved to MongoDB, whether
+usage history is being written, and whether web access is on.
+
+**Overview** answers what needs you, what your agents are doing, and what it
+costs:
+
+- **Needs you** lists, most severe first, each with a link to where it is
+  dealt with: proxy problems, a proxy budget at 80% or used up, your unread
+  mentions, Synapse proposals to review, sites bots asked to fetch, bots at
+  their hourly or daily limit, agent tokens that expire within 7 days, and for
+  org owners and admins, unused invite links and expiring API tokens. What
+  only a workspace admin can act on is listed apart for members.
+- **Totals** for the period: spend (models and proxies), model calls, agent
+  replies by outcome, web fetches and the share that needed a proxy, and
+  active agents.
+- **Agents**, each with its status, its limits as meters, and its spend.
+- **Spend by source** across model connections and proxies, with the proxy
+  budget for the month; **Recent** failed replies, unread channels, changed
+  shared notes, and decided proposals; and the activity chart.
+
+It reads `GET /v1/:workspace/overview`, which answers what is waiting for
+everyone and says in `can` what the signed-in person may act on. The sidebar
+reads it too, to count the Synapse proposals and site requests the person can
+decide, and **Workspaces** shows what needs you in each workspace.
+
+**Usage** (`#/w/<workspace id>/dashboard/usage`) reports model calls, token
+usage, estimated spending, active callers, success rates, and successful-call
+latency. Choose a 24-hour, 7-day, 30-day, or 90-day window, filter by
+connection/model/caller, inspect hourly or daily trends, sort and page the
+model/caller tables, or export the filtered report as CSV. Below them, web
+fetches are reported apart from model calls: totals, requests and cost by
+connection, how fetches ended (blocked, needed JavaScript, and so on), the
+sites fetched most (hosts only), and who fetched. Configuration, including
+failover, remains on the Models page's Models and Routing tabs.
 
 Calls include chat completions, decisions, routing selectors, and failed
 fallback attempts; they are not a count of end-user requests. Caller attribution
-uses authenticated API token IDs (stable across token rotation), the owner
-credential, or a client-reported `agentId` for unauthenticated traffic. Calls
-without identity are shown as unattributed, not counted as unique users. No
-credentials or prompts are stored in these analytics.
+uses the identity the gateway recorded: API token IDs (stable across token
+rotation), team members, the owner credential, and agents (agent tokens,
+OAuth apps, and the bots the gateway runs), which show by name and link to
+their page. Unauthenticated history falls back to a client-reported `agentId`.
+Calls without identity are shown as unattributed, not counted as unique users.
+No credentials or prompts are stored in these analytics.
 
 Estimated USD spending uses the catalog's models.dev base input/output rates,
 snapshotted with each call so later price changes do not reprice history.
