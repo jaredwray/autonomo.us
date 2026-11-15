@@ -397,11 +397,11 @@ export function SynapseGraph({
 	useLayoutEffect(() => {
 		const svg = svgRef.current;
 		if (!svg) return;
+		const page = svg.closest(".dashboard") ?? containerRef.current;
 		const resize = () => {
 			if (expanded) {
 				const rect = svg.getBoundingClientRect();
 				// What the page keeps under the canvas: the legend and the padding.
-				const page = svg.closest(".dashboard") ?? containerRef.current;
 				const below = (page?.getBoundingClientRect().bottom ?? 0) - rect.bottom;
 				const height = window.innerHeight - (rect.top + window.scrollY) - below;
 				svg.style.height = `${Math.max(EXPANDED_MIN_HEIGHT, Math.floor(height))}px`;
@@ -412,7 +412,23 @@ export function SynapseGraph({
 		resize();
 		if (!expanded) return;
 		window.addEventListener("resize", resize);
-		return () => window.removeEventListener("resize", resize);
+		// A panel opening or closing above the graph, such as New note or
+		// Import, moves it without resizing the window: measure again on the
+		// next frame. The height does not depend on itself, so this settles.
+		let frame = 0;
+		const observer =
+			typeof ResizeObserver === "undefined" || !page
+				? null
+				: new ResizeObserver(() => {
+						cancelAnimationFrame(frame);
+						frame = requestAnimationFrame(resize);
+					});
+		if (page) observer?.observe(page);
+		return () => {
+			window.removeEventListener("resize", resize);
+			observer?.disconnect();
+			cancelAnimationFrame(frame);
+		};
 	}, [expanded, drawn, graph]);
 
 	const activate = (node: SynapseGraphNode) => {
@@ -492,20 +508,45 @@ export function SynapseGraph({
 		index === activeIndex ||
 		Boolean(shown?.neighbours[activeIndex]?.has(index));
 
+	const fullScreenToggle = (
+		<button
+			type="button"
+			className="icon-button"
+			aria-label={expanded ? "Exit full screen" : "Full screen"}
+			title={expanded ? "Exit full screen" : "Full screen"}
+			onClick={() => onExpandedChange(!expanded)}
+		>
+			<Icon name={expanded ? "exit-fullscreen" : "fullscreen"} />
+		</button>
+	);
+	// Expanded, the notes column is hidden, so the way out stays even when
+	// there is nothing to draw, the graph is loading, or it failed to load.
+	const exitOnly = expanded && (
+		<div className="synapse-graph-header">
+			<h2>Graph · {spaceName}</h2>
+			<div className="synapse-graph-controls">{fullScreenToggle}</div>
+		</div>
+	);
 	if (error && !graph)
 		return (
-			<div className="banner-error" role="alert">
-				{error}{" "}
-				<button className="button" type="button" onClick={() => void load()}>
-					Retry
-				</button>
-			</div>
+			<>
+				{exitOnly}
+				<div className="banner-error" role="alert">
+					{error}{" "}
+					<button className="button" type="button" onClick={() => void load()}>
+						Retry
+					</button>
+				</div>
+			</>
 		);
 	if (!graph || !shown)
 		return (
-			<p className="empty-state" role="status">
-				Loading graph…
-			</p>
+			<>
+				{exitOnly}
+				<p className="empty-state" role="status">
+					Loading graph…
+				</p>
+			</>
 		);
 	const notes = graph.nodes.filter((node) => node.exists).length;
 	const hasUnresolved = notes < graph.nodes.length;
@@ -524,9 +565,9 @@ export function SynapseGraph({
 					{/* The space picker is hidden while expanded. */}
 					{expanded && ` · ${spaceName}`}
 				</h2>
-				{drawn && (
+				{(drawn || expanded) && (
 					<div className="synapse-graph-controls">
-						{hasUnresolved && (
+						{drawn && hasUnresolved && (
 							<label className="failover-enable">
 								<input
 									type="checkbox"
@@ -536,47 +577,43 @@ export function SynapseGraph({
 								Show unresolved
 							</label>
 						)}
-						<button
-							type="button"
-							className="icon-button"
-							aria-label="Zoom out"
-							title="Zoom out"
-							onClick={() => zoom(1 / ZOOM_STEP)}
-						>
-							<Icon name="minus" />
-						</button>
-						<button
-							type="button"
-							className="icon-button"
-							aria-label="Zoom in"
-							title="Zoom in"
-							onClick={() => zoom(ZOOM_STEP)}
-						>
-							<Icon name="plus" />
-						</button>
-						<button
-							type="button"
-							className="icon-button"
-							aria-label="Fit graph to view"
-							title="Fit graph to view"
-							onClick={() => {
-								const stage = stageRef.current;
-								if (!stage) return;
-								stage.auto = true;
-								fit(stage);
-							}}
-						>
-							<Icon name="fit" />
-						</button>
-						<button
-							type="button"
-							className="icon-button"
-							aria-label={expanded ? "Exit full screen" : "Full screen"}
-							title={expanded ? "Exit full screen" : "Full screen"}
-							onClick={() => onExpandedChange(!expanded)}
-						>
-							<Icon name={expanded ? "exit-fullscreen" : "fullscreen"} />
-						</button>
+						{drawn && (
+							<>
+								<button
+									type="button"
+									className="icon-button"
+									aria-label="Zoom out"
+									title="Zoom out"
+									onClick={() => zoom(1 / ZOOM_STEP)}
+								>
+									<Icon name="minus" />
+								</button>
+								<button
+									type="button"
+									className="icon-button"
+									aria-label="Zoom in"
+									title="Zoom in"
+									onClick={() => zoom(ZOOM_STEP)}
+								>
+									<Icon name="plus" />
+								</button>
+								<button
+									type="button"
+									className="icon-button"
+									aria-label="Fit graph to view"
+									title="Fit graph to view"
+									onClick={() => {
+										const stage = stageRef.current;
+										if (!stage) return;
+										stage.auto = true;
+										fit(stage);
+									}}
+								>
+									<Icon name="fit" />
+								</button>
+							</>
+						)}
+						{fullScreenToggle}
 					</div>
 				)}
 			</div>

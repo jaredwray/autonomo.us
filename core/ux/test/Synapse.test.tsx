@@ -1270,3 +1270,74 @@ it("expands the graph over the notes column, keeping the page header and navigat
 	expect(notes()).not.toBeNull();
 	expect(screen.getByRole("button", { name: "Full screen" })).toBeDefined();
 });
+
+it("keeps the way out of full screen when the expanded space has nothing to draw or fails to load", async () => {
+	const running = await boot();
+	await createNote(running, "shared", { title: "Ada Lovelace", body: "" });
+	renderAt("#/synapse");
+	await graphCanvas("Graph of 1 note and 0 links");
+	const notes = () => screen.queryByRole("complementary", { name: "Notes" });
+	fireEvent.click(screen.getByRole("button", { name: "Full screen" }));
+	expect(notes()).toBeNull();
+	// Global is empty: nothing is drawn, yet the notes column can come back.
+	await pickSpace("global");
+	expect(await screen.findByText(/Nothing to draw yet/)).toBeDefined();
+	expect(screen.getByRole("heading", { name: "Graph · Global" })).toBeDefined();
+	expect(screen.queryByRole("button", { name: "Zoom in" })).toBeNull();
+	fireEvent.click(screen.getByRole("button", { name: "Exit full screen" }));
+	expect(notes()).not.toBeNull();
+	// The same when the graph cannot load.
+	await pickSpace("shared");
+	await graphCanvas("Graph of 1 note and 0 links");
+	fireEvent.click(screen.getByRole("button", { name: "Full screen" }));
+	await running.server.close();
+	await pickSpace("global");
+	await within(graphRegion()).findByRole("alert");
+	fireEvent.click(screen.getByRole("button", { name: "Exit full screen" }));
+	expect(notes()).not.toBeNull();
+});
+
+it("measures the expanded graph again when the page above it changes", async () => {
+	// jsdom has no ResizeObserver; this one records what is observed.
+	const observers: Array<{ callback: () => void; targets: Element[] }> = [];
+	vi.stubGlobal(
+		"ResizeObserver",
+		class {
+			callback: () => void;
+			targets: Element[] = [];
+			constructor(callback: () => void) {
+				this.callback = callback;
+				observers.push(this);
+			}
+			observe(target: Element) {
+				this.targets.push(target);
+			}
+			unobserve() {}
+			disconnect() {
+				this.targets = [];
+			}
+		},
+	);
+	const running = await boot();
+	await createNote(running, "shared", { title: "Ada Lovelace", body: "" });
+	renderAt("#/synapse");
+	const canvas = await graphCanvas("Graph of 1 note and 0 links");
+	fireEvent.click(screen.getByRole("button", { name: "Full screen" }));
+	expect(canvas.style.height).toBe(`${window.innerHeight}px`);
+	const page = canvas.closest(".dashboard") as HTMLElement;
+	const watcher = observers.find((item) => item.targets.includes(page));
+	expect(watcher).toBeDefined();
+	// A panel opens above the graph and pushes it 200 pixels down, with
+	// nothing new below it; no window resize happens.
+	const at = (top: number, bottom: number) =>
+		({ top, bottom, left: 0, right: 0, width: 0, height: 0 }) as DOMRect;
+	vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue(at(200, 200));
+	vi.spyOn(page, "getBoundingClientRect").mockReturnValue(at(0, 200));
+	watcher?.callback();
+	await new Promise((resolve) => requestAnimationFrame(resolve));
+	expect(canvas.style.height).toBe(`${window.innerHeight - 200}px`);
+	// Leaving full screen stops watching the page.
+	fireEvent.click(screen.getByRole("button", { name: "Exit full screen" }));
+	expect(watcher?.targets).toEqual([]);
+	expect(canvas.style.height).toBe("");
+});
