@@ -18,6 +18,7 @@ import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../src/App.js";
 import { clearCredential } from "../src/api.js";
+import { Composer, writeMentions } from "../src/ChannelComposer.js";
 import { MessageBody, memberIndex } from "../src/ChannelMessages.js";
 import { parseChannelsRoute } from "../src/channels-route.js";
 import {
@@ -427,11 +428,17 @@ it("adds an agent from the details panel, changes its access, and edits the chan
 	);
 	expect(options.getByRole("option").textContent).toContain("Captain");
 	enter(box);
-	expect(box.value).toBe(`<@agent:${captain.token.id}> `);
+	// The box shows the name; the post carries the mention.
+	expect(box.value).toBe("@Captain ");
 	type(box, `${box.value}status?`);
 	enter(box);
 	const asked = await row(view, "status?");
-	expect(asked.getByText("@Captain")).toBeDefined();
+	expect(asked.getByText("@Captain").className).toContain("channel-mention");
+	await waitFor(async () =>
+		expect((await running.messages(channel)).at(-1)?.body).toBe(
+			`<@agent:${captain.token.id}> status?`,
+		),
+	);
 
 	// Topic and name are edited in place; a rename moves the link.
 	type(panel.getByLabelText("Topic"), "Ship talk");
@@ -672,7 +679,7 @@ it("picks a mention with the keyboard and closes the picker with Escape", async 
 	type(box, "Hi @gr");
 	expect(names()).toEqual([["Grace", "true"]]);
 	enter(box);
-	expect(box.value).toBe(`Hi <@user:${grace.user.id}> `);
+	expect(box.value).toBe("Hi @Grace ");
 	expect(screen.queryByRole("listbox")).toBeNull();
 	enter(box);
 	const sent = await row(view, "@Grace");
@@ -952,6 +959,71 @@ describe("channel helpers", () => {
 			"#/models",
 		])
 			expect(parseChannelsRoute(hash)).toEqual({ name: null });
+	});
+
+	it("writes the mention for each picked name standing on its own", () => {
+		const picked = [
+			{ label: "@Ada", mention: "<@user:a>" },
+			{ label: "@Ada Lovelace", mention: "<@user:al>" },
+		];
+		expect(
+			writeMentions("@Ada Lovelace and @Ada, not @Adam or x@Ada", picked),
+		).toBe("<@user:al> and <@user:a>, not @Adam or x@Ada");
+		expect(writeMentions("(@Ada.)", picked)).toBe("(<@user:a>.)");
+		// Names are matched as written, regex characters included.
+		expect(
+			writeMentions("@C++ and @Cxx", [
+				{ label: "@C++", mention: "<@agent:c>" },
+			]),
+		).toBe("<@agent:c> and @Cxx");
+		expect(writeMentions("@Ada", [])).toBe("@Ada");
+	});
+
+	it("shows picked names in the box and sends their mentions", () => {
+		const sent: string[] = [];
+		const member = (kind: "user" | "agent", id: string, name: string) => ({
+			kind,
+			id,
+			name,
+			mention: `<@${kind}:${id}>`,
+		});
+		render(
+			<Composer
+				label="Message"
+				placeholder=""
+				members={[
+					member("user", "u1", "Sam"),
+					member("agent", "a1", "Sam"),
+					member("user", "u2", "Grace"),
+				]}
+				onSend={(body) => sent.push(body)}
+			/>,
+		);
+		const box = screen.getByLabelText("Message") as HTMLTextAreaElement;
+		const pick = (value: string, key = "Tab") => {
+			type(box, value);
+			fireEvent.keyDown(box, { key });
+		};
+		pick("@gr");
+		pick(`${box.value}and @sa`);
+		expect(box.value).toBe("@Grace and @Sam ");
+		// A name edited by hand is no longer a mention.
+		type(box, box.value.replace("@Grace", "@Gracie"));
+		enter(box);
+		expect(sent.at(-1)).toBe("@Gracie and <@user:u1>");
+		expect(box.value).toBe("");
+
+		// The second of two same-named members cannot be told apart by name.
+		pick("@sa");
+		type(box, `${box.value}@sa`);
+		fireEvent.keyDown(box, { key: "ArrowDown" });
+		fireEvent.keyDown(box, { key: "Tab" });
+		expect(box.value).toBe("@Sam <@agent:a1> ");
+		// Picking the first again reuses its name.
+		pick(`${box.value}@sa`);
+		expect(box.value).toBe("@Sam <@agent:a1> @Sam ");
+		enter(box);
+		expect(sent.at(-1)).toBe("<@user:u1> <@agent:a1> <@user:u1>");
 	});
 
 	it("shows a mention of someone who is no longer a member as unknown", () => {

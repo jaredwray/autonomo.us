@@ -11,10 +11,37 @@ function mentionAt(text: string, caret: number): Picker | null {
 }
 const PICKER_SIZE = 8;
 
+/** A name the picker wrote into the box, and the mention it stands for. */
+type Picked = { label: string; mention: string };
+const escapeRegExp = (text: string) =>
+	text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/** A name touching one of these is part of a longer word, not the name. */
+const WORD = "[\\p{L}\\p{M}\\p{N}_]";
+/** Matches each picked `@Name` that stands on its own. */
+function pickedPattern(picked: Picked[]): RegExp | null {
+	if (picked.length === 0) return null;
+	// Longest first, so `@Ada Lovelace` wins over `@Ada`.
+	const labels = picked
+		.map((pick) => pick.label)
+		.sort((a, b) => b.length - a.length)
+		.map(escapeRegExp);
+	return new RegExp(`(?<!${WORD})(?:${labels.join("|")})(?!${WORD})`, "gu");
+}
+/**
+ * The text to post: each picked `@Name` becomes the mention the gateway
+ * understands.
+ */
+export function writeMentions(text: string, picked: Picked[]): string {
+	const pattern = pickedPattern(picked);
+	if (!pattern) return text;
+	const mentions = new Map(picked.map((pick) => [pick.label, pick.mention]));
+	return text.replace(pattern, (label) => mentions.get(label) ?? label);
+}
+
 /**
  * The message box. Enter sends and Shift+Enter adds a line. Typing `@` opens
- * a picker of the channel's people and agents; choosing one writes the
- * mention the gateway understands.
+ * a picker of the channel's people and agents; choosing one writes `@Name`,
+ * which becomes the mention the gateway understands when the message is sent.
  */
 export function Composer({
 	label,
@@ -35,6 +62,8 @@ export function Composer({
 	const [active, setActive] = useState(0);
 	/** Where the picker was dismissed, so Escape keeps it closed for that `@`. */
 	const dismissed = useRef(-1);
+	/** Names chosen from the picker for this draft. */
+	const picked = useRef<Picked[]>([]);
 	const caret = useRef<number | null>(null);
 	const input = useRef<HTMLTextAreaElement>(null);
 	const listId = useId();
@@ -56,8 +85,20 @@ export function Composer({
 	const choose = (member: ChannelMember) => {
 		if (!picker) return;
 		const end = input.current?.selectionStart ?? text.length;
-		const before = `${text.slice(0, picker.start)}${member.mention} `;
-		setText(before + text.slice(end));
+		const head = text.slice(0, picker.start);
+		const after = text.slice(end);
+		// Forget names no longer in the draft, so their label is free again.
+		picked.current = picked.current.filter((pick) =>
+			pickedPattern([pick])?.test(`${head} ${after}`),
+		);
+		let label = `@${member.name}`;
+		const taken = picked.current.find((pick) => pick.label === label);
+		if (!taken) picked.current.push({ label, mention: member.mention });
+		// Two members with the same name in one draft: the name cannot tell
+		// them apart, so the second is written as its mention.
+		else if (taken.mention !== member.mention) label = member.mention;
+		const before = `${head}${label} `;
+		setText(before + after);
 		caret.current = before.length;
 		setPicker(null);
 	};
@@ -70,11 +111,12 @@ export function Composer({
 		caret.current = null;
 	}, [text]);
 	const send = () => {
-		const body = text.trim();
+		const body = writeMentions(text, picked.current).trim();
 		if (!body || disabledNote) return;
 		onSend(body);
 		setText("");
 		setPicker(null);
+		picked.current = [];
 	};
 	const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
 		if (open) {
