@@ -72,6 +72,48 @@ function seed(telemetry: TelemetryService, setTime: (value: string) => void) {
 	}); // exclusive end
 }
 
+/**
+ * An agent's calls as the gateway records them (a bot it runs and an MCP
+ * agent), after older history that only carried the agent id.
+ */
+function seedAgents(
+	telemetry: TelemetryService,
+	setTime: (value: string) => void,
+) {
+	setTime("2026-11-01T04:00:00.000Z");
+	telemetry.recordChat({
+		model: "work/paid",
+		provider: "work",
+		agentId: "bot-1",
+		usage,
+		latencyMs: 100,
+	});
+	setTime("2026-11-01T05:00:00.000Z");
+	telemetry.recordChat({
+		model: "work/paid",
+		provider: "work",
+		caller: { id: "agent:bot-1", name: "Helper", kind: "agent" },
+		usage,
+		latencyMs: 100,
+	});
+	telemetry.recordChat({
+		model: "work/paid",
+		provider: "work",
+		agentId: "mcp-1",
+		caller: { id: "agent:mcp-1", name: "Claude Desktop", kind: "agent" },
+		usage,
+		latencyMs: 100,
+	});
+	// A recorded agent caller must name an agent; anything else is not trusted.
+	telemetry.recordChat({
+		model: "work/paid",
+		provider: "work",
+		caller: { id: "api-token:9", name: "Impostor", kind: "agent" },
+		usage,
+		latencyMs: 100,
+	});
+}
+
 describe("usage analytics", () => {
 	it.each([
 		{ name: "chat", operation: "chat" as const, stream: false },
@@ -191,6 +233,44 @@ describe("usage analytics", () => {
 		).toBe(0);
 		telemetry.setPricingResolver(() => ({ input: 99, output: 99 }));
 		expect((await telemetry.analytics(query)).totals.estimatedCostUsd).toBe(10); // historical snapshot
+	});
+
+	it("names agents by their recorded identity and merges older history by agent id", async () => {
+		let time = from;
+		const telemetry = new TelemetryService({ now: () => new Date(time) });
+		seedAgents(telemetry, (value) => {
+			time = value;
+		});
+		const result = await telemetry.analytics(query);
+		expect(
+			result.byCaller.map(({ id, name, kind, requests }) => ({
+				id,
+				name,
+				kind,
+				requests,
+			})),
+		).toEqual([
+			{ id: "agent:bot-1", name: "Helper", kind: "agent", requests: 2 },
+			{
+				id: "agent:mcp-1",
+				name: "Claude Desktop",
+				kind: "agent",
+				requests: 1,
+			},
+			{
+				id: "unattributed",
+				name: "Unattributed",
+				kind: "unattributed",
+				requests: 1,
+			},
+		]);
+		expect(result.activeCallers).toBe(2);
+		expect(result.unattributedRequests).toBe(1);
+		const filtered = await telemetry.analytics({
+			...query,
+			caller: "agent:bot-1",
+		});
+		expect(filtered.totals.requests).toBe(2);
 	});
 
 	it("reports bounded history eviction and falls back when durable storage fails", async () => {
@@ -422,5 +502,42 @@ describe.skipIf(!available)("durable analytics", () => {
 			pricedRequests: 3,
 			estimatedCostUsd: 10,
 		});
+	});
+
+	it("attributes agents the same way in MongoDB and memory", async () => {
+		let time = from;
+		const url = uniqueMongoUrl("agents");
+		const sink = new MongoTelemetrySink(url);
+		const durable = new TelemetryService({
+			sink,
+			now: () => new Date(time),
+			flushIntervalMs: 60_000,
+		});
+		const memory = new TelemetryService({ now: () => new Date(time) });
+		cleanups.push(async () => {
+			await durable.close();
+			const client = new MongoClient(url, { serverSelectionTimeoutMS: 1500 });
+			try {
+				await client.db().dropDatabase();
+			} finally {
+				await client.close();
+			}
+		});
+		seedAgents(durable, (value) => {
+			time = value;
+		});
+		for (const event of durable.recentEvents().reverse()) memory.record(event);
+		await durable.flush();
+		for (const filters of [{}, { caller: "agent:bot-1" }]) {
+			const result = await durable.analytics({ ...query, ...filters });
+			const expected = await memory.analytics({ ...query, ...filters });
+			expect(result.source).toBe("mongodb");
+			expect(result.byCaller).toEqual(expected.byCaller);
+			expect(result.totals).toEqual(expected.totals);
+		}
+		const result = await durable.analytics(query);
+		expect(result.byCaller.find((row) => row.id === "agent:bot-1")?.name).toBe(
+			"Helper",
+		);
 	});
 });

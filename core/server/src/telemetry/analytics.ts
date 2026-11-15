@@ -33,19 +33,36 @@ export function bucketMs(query: AnalyticsQuery): number {
 		: DAY_MS;
 }
 
+/**
+ * Caller kinds the gateway sets itself: a credential, a team member, or an
+ * agent it authenticated (an agent token, an OAuth app, or a bot it runs).
+ */
+export const RECORDED_CALLER_KINDS = [
+	"api-token",
+	"owner",
+	"user",
+	"agent",
+] as const;
+
+/**
+ * Who made a call. A caller the gateway recorded wins over a client-supplied
+ * agent id, and an agent it recorded keeps its name. History from before
+ * callers were recorded falls back to the agent id, named by that id.
+ */
 export function eventCaller(event: TelemetryEvent): TelemetryCaller {
 	const data = event.data;
+	const kind = RECORDED_CALLER_KINDS.find((item) => item === data.callerKind);
 	if (
+		kind &&
 		typeof data.callerId === "string" &&
 		data.callerId &&
-		(data.callerKind === "api-token" ||
-			data.callerKind === "owner" ||
-			data.callerKind === "user")
+		// Agents are always `agent:<id>`, so old and new history merge.
+		(kind !== "agent" || data.callerId.startsWith("agent:"))
 	) {
 		return {
 			id: data.callerId,
 			name: String(data.callerName || data.callerId),
-			kind: data.callerKind,
+			kind,
 		};
 	}
 	return event.agentId

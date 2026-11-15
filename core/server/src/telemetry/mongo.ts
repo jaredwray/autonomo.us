@@ -7,7 +7,11 @@ import type {
 import { type Collection, MongoBulkWriteError, MongoClient } from "mongodb";
 import { mongoOperationDeadlines, requestMongoClient } from "../mongo.js";
 import { type WorkspaceRef, workspaceFilter } from "../workspaces/store.js";
-import { type AnalyticsFact, bucketMs } from "./analytics.js";
+import {
+	type AnalyticsFact,
+	bucketMs,
+	RECORDED_CALLER_KINDS,
+} from "./analytics.js";
 
 const GATEWAY_TYPES = [
 	"gateway.chat",
@@ -308,7 +312,7 @@ export class MongoTelemetrySink {
 								provider: labeled("$provider", "Unknown provider"),
 								callerId: {
 									$cond: [
-										credentialCaller(),
+										recordedCaller(),
 										"$callerId",
 										{
 											$cond: [
@@ -321,7 +325,7 @@ export class MongoTelemetrySink {
 								},
 								callerName: {
 									$cond: [
-										credentialCaller(),
+										recordedCaller(),
 										{
 											$cond: [
 												nonEmpty("$callerName"),
@@ -336,7 +340,7 @@ export class MongoTelemetrySink {
 								},
 								callerKind: {
 									$cond: [
-										credentialCaller(),
+										recordedCaller(),
 										"$callerKind",
 										{
 											$cond: [nonEmpty("$agentId"), "agent", "unattributed"],
@@ -467,14 +471,25 @@ function labeled(field: string, fallback: string) {
 	return { $cond: [nonEmpty(field), field, fallback] };
 }
 
-/** Credential callers win over a client-supplied agent id. */
-function credentialCaller() {
+/**
+ * Callers the gateway recorded win over a client-supplied agent id; the same
+ * rule as `eventCaller`, so memory and MongoDB agree.
+ */
+function recordedCaller() {
 	return {
 		$and: [
 			{
-				$in: [{ $ifNull: ["$callerKind", ""] }, ["api-token", "owner", "user"]],
+				$in: [{ $ifNull: ["$callerKind", ""] }, [...RECORDED_CALLER_KINDS]],
 			},
 			nonEmpty("$callerId"),
+			{
+				$or: [
+					{ $ne: ["$callerKind", "agent"] },
+					{
+						$eq: [{ $substrCP: [{ $ifNull: ["$callerId", ""] }, 0, 6] }, "agent:"],
+					},
+				],
+			},
 		],
 	};
 }
