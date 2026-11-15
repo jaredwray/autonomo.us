@@ -705,6 +705,112 @@ it("lets owners approve and reject agent proposals, surfacing conflicts", async 
 	expect(screen.getByRole("heading", { name: "Log" })).toBeDefined();
 });
 
+it("approves the proposals an owner checks, all at once", async () => {
+	const running = await boot();
+	const { server, url, owner } = running;
+	const agent = await createAgent(running);
+	await createNote(running, "shared", {
+		title: "Brand voice",
+		body: "Warm and precise.",
+	});
+	await mcpCall(url, agent.secret, "synapse_propose", {
+		action: "create",
+		title: "Release checklist",
+		body: "- Tag the build",
+		reason: "We repeat this every release.",
+	});
+	await mcpCall(url, agent.secret, "synapse_propose", {
+		action: "append",
+		title: "Brand voice",
+		text: "No exclamation marks.",
+		reason: "Agreed in the meeting.",
+	});
+	await mcpCall(url, agent.secret, "synapse_propose", {
+		action: "create",
+		title: "Glossary",
+		body: "Synapse: shared memory.",
+		reason: "New people ask.",
+	});
+	renderAt("#/synapse/proposals");
+	const bulk = within(
+		await screen.findByRole("group", { name: "Approve several proposals" }),
+	);
+	const selectAll = bulk.getByRole("checkbox", {
+		name: "Select all",
+	}) as HTMLInputElement;
+	const approveSelected = () =>
+		bulk.getByRole("button", { name: /^Approve/ }) as HTMLButtonElement;
+	const box = (name: string) =>
+		screen.getByRole("checkbox", { name }) as HTMLInputElement;
+	const checklist = "Select create “Release checklist”";
+	const voice = "Select append to “Brand voice”";
+	const glossary = "Select create “Glossary”";
+	const checked = () =>
+		[checklist, voice, glossary].map((name) => box(name).checked);
+	await screen.findByRole("article", { name: "Create Glossary" });
+	expect(bulk.getByText("0 of 3 proposals selected")).toBeDefined();
+	expect(approveSelected().disabled).toBe(true);
+	// One picked: the select-all box is partly checked.
+	fireEvent.click(box(checklist));
+	expect(selectAll.checked).toBe(false);
+	expect(selectAll.indeterminate).toBe(true);
+	expect(bulk.getByText("1 of 3 proposals selected")).toBeDefined();
+	// Select all checks every proposal, and again clears them.
+	fireEvent.click(selectAll);
+	expect(checked()).toEqual([true, true, true]);
+	expect(selectAll.checked).toBe(true);
+	expect(selectAll.indeterminate).toBe(false);
+	expect(approveSelected().textContent).toBe("Approve selected (3)");
+	fireEvent.click(selectAll);
+	expect(checked()).toEqual([false, false, false]);
+	expect(approveSelected().disabled).toBe(true);
+	// Pick two. The shared note moves on first, so the append conflicts.
+	fireEvent.click(box(checklist));
+	fireEvent.click(box(voice));
+	const patched = await server.inject({
+		method: "PATCH",
+		url: "/v1/synapse/spaces/shared/notes/Brand%20voice",
+		headers: owner,
+		payload: { body: "Warm, precise, and short." },
+	});
+	expect(patched.statusCode, patched.body).toBe(200);
+	fireEvent.click(approveSelected());
+	await screen.findByText("Approved 1 proposal.");
+	const failure = await screen.findByText(/Could not approve 1 proposal/);
+	expect(failure.closest("[role=alert]")?.textContent).toMatch(
+		/Append to “Brand voice”: .*(revision|changed)/i,
+	);
+	await waitFor(() =>
+		expect(
+			screen.queryByRole("article", { name: "Create Release checklist" }),
+		).toBeNull(),
+	);
+	// The failed approval stays checked; the unpicked proposal stays unchecked.
+	expect(box(voice).checked).toBe(true);
+	expect(box(glossary).checked).toBe(false);
+	expect(bulk.getByText("1 of 2 proposals selected")).toBeDefined();
+	expect(selectAll.indeterminate).toBe(true);
+	const proposals = (
+		await server.inject({ url: "/v1/synapse/proposals", headers: owner })
+	).json();
+	expect(
+		Object.fromEntries(
+			proposals.proposals.map((item: { title: string; status: string }) => [
+				item.title,
+				item.status,
+			]),
+		),
+	).toEqual({
+		"Release checklist": "approved",
+		"Brand voice": "pending",
+		Glossary: "pending",
+	});
+	expect(
+		(await readNote(running, "shared", "Release checklist")).statusCode,
+	).toBe(200);
+	expect((await readNote(running, "shared", "Glossary")).statusCode).toBe(404);
+});
+
 it("shows members the proposals read-only", async () => {
 	const server = createServer({
 		config: { providers: [], corsOrigins: ["*"] },
@@ -761,6 +867,10 @@ it("shows members the proposals read-only", async () => {
 	).toBeDefined();
 	expect(screen.queryByRole("button", { name: /^Approve/ })).toBeNull();
 	expect(screen.queryByRole("button", { name: /^Reject/ })).toBeNull();
+	expect(screen.queryByRole("checkbox", { name: /^Select/ })).toBeNull();
+	expect(
+		screen.queryByRole("group", { name: "Approve several proposals" }),
+	).toBeNull();
 	// Members still read and write spaces from the dashboard.
 	fireEvent.click(screen.getByRole("tab", { name: "Notes" }));
 	expect(screen.getByRole("button", { name: "New note" })).toBeDefined();
