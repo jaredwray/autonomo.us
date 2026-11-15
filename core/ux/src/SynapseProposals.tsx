@@ -6,6 +6,7 @@ import type {
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
 	ApiError,
+	currentWorkspaceId,
 	decideSynapseProposal,
 	fetchSynapseNote,
 	fetchSynapseProposals,
@@ -353,13 +354,20 @@ export function SynapseProposals({
 		setNotice("");
 		setFailures([]);
 		setProgress({ done: 0, total: chosen.length });
+		// Switching workspaces mid-batch remounts this view, but the loop runs
+		// on: keep every approval in the workspace the admin approved them in.
+		const workspace = currentWorkspaceId();
 		const approved: string[] = [];
 		const failed: BulkFailure[] = [];
 		// One at a time: two proposals can touch the same note, and each
 		// approval must see the note as the one before it left it.
 		for (const proposal of chosen) {
 			try {
-				await decideSynapseProposal(proposal.id, { decision: "approve" });
+				await decideSynapseProposal(
+					proposal.id,
+					{ decision: "approve" },
+					workspace,
+				);
 				approved.push(proposal.id);
 			} catch (cause) {
 				const label = `${ACTION_LABEL[proposal.action]} “${proposal.title}”`;

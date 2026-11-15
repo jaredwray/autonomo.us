@@ -123,9 +123,9 @@ export function setCurrentWorkspace(id: string | null) {
 export function currentWorkspaceId(): string | null {
 	return currentWorkspace;
 }
-function ws(path: string): string {
-	if (!currentWorkspace) throw new Error("Choose a workspace first.");
-	return `/v1/${encodeURIComponent(currentWorkspace)}${path}`;
+function ws(path: string, workspace = currentWorkspace): string {
+	if (!workspace) throw new Error("Choose a workspace first.");
+	return `/v1/${encodeURIComponent(workspace)}${path}`;
 }
 
 /**
@@ -733,11 +733,13 @@ export function fetchSynapseProposals(
 export function decideSynapseProposal(
 	id: string,
 	input: DecideSynapseProposalRequest,
+	/** Defaults to the selected one; a batch keeps the one it began in. */
+	workspace = currentWorkspace,
 ): Promise<SynapseProposal> {
-	return apiRequest(ws(`/synapse/proposals/${encodeURIComponent(id)}/decide`), {
-		method: "POST",
-		body: input,
-	});
+	return apiRequest(
+		ws(`/synapse/proposals/${encodeURIComponent(id)}/decide`, workspace),
+		{ method: "POST", body: input },
+	);
 }
 
 const channelPath = (id?: string, rest = "") =>
