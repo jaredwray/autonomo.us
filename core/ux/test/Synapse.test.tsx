@@ -1176,3 +1176,97 @@ it("says so when the graph is empty, capped, or cannot load, and settles at once
 	const alert = await within(graphRegion()).findByRole("alert");
 	expect(within(alert).getByRole("button", { name: "Retry" })).toBeDefined();
 }, 30_000);
+
+it("expands the graph over the notes column, keeping the page header and navigation, until Esc or the button", async () => {
+	const running = await boot();
+	await createNote(running, "global", { title: "Brand voice", body: "" });
+	await createNote(running, "shared", {
+		title: "Ada Lovelace",
+		body: "Wrote about the [[Analytical Engine]].",
+	});
+	renderAt("#/synapse");
+	const canvas = await graphCanvas("Graph of 2 notes and 1 link");
+	// Every icon-only control says what it does on hover.
+	for (const name of [
+		"Zoom out",
+		"Zoom in",
+		"Fit graph to view",
+		"Full screen",
+	])
+		expect(screen.getByRole("button", { name }).getAttribute("title")).toBe(
+			name,
+		);
+	const notes = () => screen.queryByRole("complementary", { name: "Notes" });
+	const expandedParts = () =>
+		Array.from(document.querySelectorAll(".is-expanded"), (item) =>
+			item.className.replace(" is-expanded", ""),
+		);
+	expect(notes()).not.toBeNull();
+	expect(screen.getByRole("heading", { name: "Graph" })).toBeDefined();
+	const toggle = screen.getByRole("button", { name: "Full screen" });
+	toggle.focus();
+	fireEvent.click(toggle);
+	// The notes column goes; the graph says which space it shows.
+	expect(toggle.getAttribute("aria-label")).toBe("Exit full screen");
+	expect(toggle.getAttribute("title")).toBe("Exit full screen");
+	expect(document.activeElement).toBe(toggle);
+	expect(notes()).toBeNull();
+	expect(screen.getByRole("heading", { name: "Graph · Shared" })).toBeDefined();
+	expect(expandedParts()).toEqual([
+		"dashboard synapse-view",
+		"synapse-layout",
+		"synapse-graph",
+	]);
+	// The drawing is the same element, sized to the window.
+	expect(await graphCanvas()).toBe(canvas);
+	expect(canvas.style.height).toBe(`${window.innerHeight}px`);
+	// The page header, its actions, the tabs, and the app navigation stay.
+	expect(screen.getByRole("heading", { name: "Synapse" })).toBeDefined();
+	expect(screen.getByRole("button", { name: "New note" })).toBeDefined();
+	expect(screen.getByRole("tab", { name: "Proposals" })).toBeDefined();
+	expect(screen.getByRole("link", { name: "Synapse" })).toBeDefined();
+	expect(screen.getByRole("link", { name: "Channels" })).toBeDefined();
+
+	// Esc from inside the graph leaves.
+	fireEvent.keyDown(
+		within(canvas).getByRole("link", { name: "Ada Lovelace" }),
+		{ key: "Escape" },
+	);
+	expect(toggle.getAttribute("aria-label")).toBe("Full screen");
+	expect(notes()).not.toBeNull();
+	expect(screen.getByRole("heading", { name: "Graph" })).toBeDefined();
+	expect(expandedParts()).toEqual([]);
+	expect(canvas.style.height).toBe("");
+	// Esc elsewhere on the page is not the graph's.
+	fireEvent.click(toggle);
+	fireEvent.keyDown(screen.getByRole("tab", { name: "Notes" }), {
+		key: "Escape",
+	});
+	expect(toggle.getAttribute("aria-label")).toBe("Exit full screen");
+
+	// A note opens in the normal layout; going back returns to the expanded graph.
+	fireEvent.click(within(canvas).getByRole("link", { name: "Ada Lovelace" }));
+	await screen.findByRole("heading", { name: "Ada Lovelace" });
+	expect(notes()).not.toBeNull();
+	expect(expandedParts()).toEqual([]);
+	fireEvent.click(screen.getByRole("link", { name: "Back to graph" }));
+	await graphCanvas("Graph of 2 notes and 1 link");
+	expect(
+		screen.getByRole("button", { name: "Exit full screen" }),
+	).toBeDefined();
+	expect(notes()).toBeNull();
+	// Another space is drawn expanded too, under its own name.
+	await pickSpace("global");
+	await graphCanvas("Graph of 1 note and 0 links");
+	expect(screen.getByRole("heading", { name: "Graph · Global" })).toBeDefined();
+	expect(notes()).toBeNull();
+	// The Proposals tab is not the graph's to expand.
+	fireEvent.click(screen.getByRole("tab", { name: "Proposals" }));
+	expect(expandedParts()).toEqual([]);
+	fireEvent.click(screen.getByRole("tab", { name: "Notes" }));
+	fireEvent.click(
+		await screen.findByRole("button", { name: "Exit full screen" }),
+	);
+	expect(notes()).not.toBeNull();
+	expect(screen.getByRole("button", { name: "Full screen" })).toBeDefined();
+});

@@ -1004,6 +1004,12 @@ a.button { text-decoration: none; }
 .synapse-graph-legend li { display: flex; align-items: center; gap: 5px; }
 .synapse-graph-legend svg { width: 18px; height: 18px; }
 .synapse-graph-legend .synapse-graph-node { cursor: default; }
+/* "Full screen": the notes column goes and the graph takes the content area; the app navigation and page header stay. */
+.synapse-view.is-expanded { max-width: none; }
+.synapse-side[hidden] { display: none; }
+.synapse-layout.is-expanded { grid-template-columns: minmax(0, 1fr); }
+/* The height is set from a measurement of the room left in the window. */
+.synapse-graph.is-expanded .synapse-graph-canvas { max-height: none; aspect-ratio: auto; }
 .synapse-graph-back { display: inline-block; margin-bottom: 12px; color: var(--series-1); font-size: 12px; text-decoration: none; }
 .synapse-graph-back:hover { text-decoration: underline; }
 .synapse-note-header { display: flex; align-items: start; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 8px; }

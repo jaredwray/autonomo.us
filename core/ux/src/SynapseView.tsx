@@ -625,6 +625,9 @@ export function SynapseView({
 		space: route.space,
 		title: null,
 	};
+	/** The graph's "full screen", kept here so it outlasts a visit to a note. */
+	const [graphExpanded, setGraphExpanded] = useState(false);
+	const expanded = graphExpanded && route.tab === "notes" && !route.title;
 	const startNote = (title: string) => {
 		setNotice("");
 		setPanel({ kind: "new", title });
@@ -664,7 +667,7 @@ export function SynapseView({
 	const canEdit =
 		route.space !== SYNAPSE_GLOBAL_SPACE || user.role !== "member";
 	return (
-		<div className="dashboard synapse-view">
+		<div className={`dashboard synapse-view${expanded ? " is-expanded" : ""}`}>
 			<header className="dashboard-header">
 				<div>
 					<h1>Synapse</h1>
@@ -805,8 +808,8 @@ export function SynapseView({
 								onImported={changed}
 							/>
 						)}
-						<div className="synapse-layout">
-							<div className="synapse-side">
+						<div className={`synapse-layout${expanded ? " is-expanded" : ""}`}>
+							<div className="synapse-side" hidden={expanded}>
 								<div className="form-field synapse-space-field">
 									<label htmlFor="synapse-space">Space</label>
 									<select
@@ -883,6 +886,12 @@ export function SynapseView({
 									<SynapseGraph
 										key={route.space}
 										space={route.space}
+										spaceName={
+											spaceOptions.find((space) => space.id === route.space)
+												?.name ?? route.space
+										}
+										expanded={expanded}
+										onExpandedChange={setGraphExpanded}
 										version={version}
 										canEdit={canEdit}
 										current={
