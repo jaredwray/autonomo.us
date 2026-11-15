@@ -11,6 +11,9 @@ import {
 	type AnalyticsFact,
 	bucketMs,
 	RECORDED_CALLER_KINDS,
+	stepConnection,
+	WEB_EVENT_TYPE,
+	type WebFacts,
 } from "./analytics.js";
 
 const GATEWAY_TYPES = [
@@ -46,6 +49,16 @@ type TelemetryDocument = {
 	 * so a missing value must not be stored as 0.
 	 */
 	estimatedCostUsd?: number;
+	/** Web fetches only (`gateway.web`): the target's host, never its path. */
+	host?: string;
+	ok?: boolean;
+	outcome?: string;
+	proxied?: boolean;
+	cached?: boolean;
+	via?: string;
+	/** What the proxies charged for the fetch. */
+	costUsd?: number;
+	attempts?: Array<{ step: string; outcome: string; costUsd: number }>;
 };
 
 function asNumber(value: unknown): number {
@@ -94,6 +107,42 @@ export function eventToDocument(event: TelemetryEvent): TelemetryDocument {
 		...(callerName ? { callerName } : {}),
 		...(callerKind ? { callerKind } : {}),
 		...(estimatedCostUsd !== undefined ? { estimatedCostUsd } : {}),
+		...(event.type === WEB_EVENT_TYPE ? webFields(data) : {}),
+	};
+}
+
+/** The parts of a web fetch that analytics group by. */
+function webFields(
+	data: TelemetryEvent["data"],
+): Partial<TelemetryDocument> {
+	const host = text(data.host);
+	const outcome = text(data.outcome);
+	const via = text(data.via);
+	const attempts = Array.isArray(data.attempts)
+		? data.attempts.flatMap((attempt) => {
+				if (!attempt || typeof attempt !== "object") return [];
+				const item = attempt as Record<string, unknown>;
+				const step = text(item.step);
+				return step
+					? [
+							{
+								step,
+								outcome: text(item.outcome) ?? "",
+								costUsd: Math.max(0, asNumber(item.costUsd)),
+							},
+						]
+					: [];
+			})
+		: [];
+	return {
+		...(host ? { host } : {}),
+		...(typeof data.ok === "boolean" ? { ok: data.ok } : {}),
+		...(outcome ? { outcome } : {}),
+		...(typeof data.proxied === "boolean" ? { proxied: data.proxied } : {}),
+		...(typeof data.cached === "boolean" ? { cached: data.cached } : {}),
+		...(via ? { via } : {}),
+		costUsd: Math.max(0, asNumber(data.costUsd)),
+		attempts,
 	};
 }
 
@@ -310,43 +359,7 @@ export class MongoTelemetrySink {
 								},
 								model: labeled("$model", "Unknown model"),
 								provider: labeled("$provider", "Unknown provider"),
-								callerId: {
-									$cond: [
-										recordedCaller(),
-										"$callerId",
-										{
-											$cond: [
-												nonEmpty("$agentId"),
-												{ $concat: ["agent:", "$agentId"] },
-												"unattributed",
-											],
-										},
-									],
-								},
-								callerName: {
-									$cond: [
-										recordedCaller(),
-										{
-											$cond: [
-												nonEmpty("$callerName"),
-												"$callerName",
-												"$callerId",
-											],
-										},
-										{
-											$cond: [nonEmpty("$agentId"), "$agentId", "Unattributed"],
-										},
-									],
-								},
-								callerKind: {
-									$cond: [
-										recordedCaller(),
-										"$callerKind",
-										{
-											$cond: [nonEmpty("$agentId"), "agent", "unattributed"],
-										},
-									],
-								},
+								...callerKey(),
 								operation: {
 									$cond: [
 										nonEmpty("$operation"),
@@ -415,11 +428,7 @@ export class MongoTelemetrySink {
 			timestamp: new Date(asMillis(row._id.bucket)).toISOString(),
 			model: row._id.model,
 			provider: row._id.provider,
-			caller: {
-				id: row._id.callerId,
-				name: row._id.callerName || row._id.callerId,
-				kind: callerKind(row._id.callerKind),
-			},
+			caller: caller(row._id),
 			operation: row._id.operation,
 			requests: row.requests,
 			errors: row.errors,
@@ -431,6 +440,162 @@ export class MongoTelemetrySink {
 			latencyTotal: row.latencyTotal,
 			lastSeen: new Date(asMillis(row.lastSeen)).toISOString(),
 		}));
+	}
+
+	/** Grouped web fetch facts for one window. Callers apply the caller filter. */
+	async queryWebAnalytics(
+		query: AnalyticsQuery,
+		workspace?: WorkspaceRef,
+	): Promise<WebFacts> {
+		const from = Date.parse(query.from);
+		const to = Date.parse(query.to);
+		if (!Number.isFinite(from) || !Number.isFinite(to))
+			throw new Error("Invalid analytics window");
+		const interval = bucketMs(query);
+		const match = {
+			$match: {
+				type: WEB_EVENT_TYPE,
+				timestamp: { $gte: new Date(from), $lt: new Date(to) },
+				...(workspace ? { workspaceId: workspaceFilter(workspace) } : {}),
+			},
+		};
+		const counts = {
+			fetches: { $sum: 1 },
+			succeeded: { $sum: { $cond: [{ $eq: ["$ok", true] }, 1, 0] } },
+			proxied: { $sum: { $cond: [{ $eq: ["$proxied", true] }, 1, 0] } },
+			cached: { $sum: { $cond: [{ $eq: ["$cached", true] }, 1, 0] } },
+			costUsd: { $sum: nonNegative("$costUsd") },
+			latencyTotal: {
+				$sum: { $cond: [{ $eq: ["$ok", true] }, nonNegative("$latencyMs"), 0] },
+			},
+			lastSeen: { $max: "$timestamp" },
+		};
+		type Counts = {
+			fetches: number;
+			succeeded: number;
+			proxied: number;
+			cached: number;
+			costUsd: number;
+			latencyTotal: number;
+			lastSeen: Date | number;
+		};
+		type CallerKey = { callerId: string; callerName: string; callerKind: string };
+		const limit = { $limit: 100_001 };
+		let fetches: Array<
+			Counts & { _id: CallerKey & { bucket: number; outcome: string } }
+		>;
+		let hosts: Array<Counts & { _id: CallerKey & { host: string } }>;
+		let steps: Array<{
+			_id: CallerKey & { step: string };
+			attempts: number;
+			succeeded: number;
+			costUsd: number;
+			lastSeen: Date | number;
+		}>;
+		try {
+			await this.ensureSchema();
+			const collection = this.collection();
+			[fetches, hosts, steps] = await Promise.all([
+				collection
+					.aggregate<(typeof fetches)[number]>([
+						match,
+						{
+							$group: {
+								_id: {
+									bucket: {
+										$multiply: [
+											{
+												$floor: {
+													$divide: [{ $toLong: "$timestamp" }, interval],
+												},
+											},
+											interval,
+										],
+									},
+									...callerKey(),
+									outcome: labeled("$outcome", "unknown"),
+								},
+								...counts,
+							},
+						},
+						limit,
+					])
+					.toArray(),
+				collection
+					.aggregate<(typeof hosts)[number]>([
+						match,
+						{
+							$group: {
+								_id: { ...callerKey(), host: labeled("$host", "Unknown site") },
+								...counts,
+							},
+						},
+						limit,
+					])
+					.toArray(),
+				collection
+					.aggregate<(typeof steps)[number]>([
+						match,
+						{ $unwind: "$attempts" },
+						{
+							$group: {
+								_id: { ...callerKey(), step: "$attempts.step" },
+								attempts: { $sum: 1 },
+								succeeded: {
+									$sum: { $cond: [{ $eq: ["$attempts.outcome", "ok"] }, 1, 0] },
+								},
+								costUsd: { $sum: nonNegative("$attempts.costUsd") },
+								lastSeen: { $max: "$timestamp" },
+							},
+						},
+						limit,
+					])
+					.toArray(),
+			]);
+			this.healthy = true;
+		} catch (error) {
+			this.fail(error);
+		}
+		if (
+			fetches.length > 100_000 ||
+			hosts.length > 100_000 ||
+			steps.length > 100_000
+		)
+			throw new Error("Analytics grouping limit exceeded");
+		const seen = (value: Date | number) =>
+			new Date(asMillis(value)).toISOString();
+		const countsOf = (row: Counts) => ({
+			fetches: row.fetches,
+			succeeded: row.succeeded,
+			proxied: row.proxied,
+			cached: row.cached,
+			costUsd: row.costUsd,
+			latencyTotal: row.latencyTotal,
+			lastSeen: seen(row.lastSeen),
+		});
+		return {
+			fetches: fetches.map((row) => ({
+				...countsOf(row),
+				timestamp: new Date(asMillis(row._id.bucket)).toISOString(),
+				caller: caller(row._id),
+				outcome: row._id.outcome,
+			})),
+			hosts: hosts.map((row) => ({
+				...countsOf(row),
+				host: row._id.host,
+				caller: caller(row._id),
+			})),
+			// Steps are grouped by their label (`zenrows:auto`), so connections
+			// are summed here, the same way memory sums them.
+			steps: steps.map((row) => ({
+				connection: stepConnection(row._id.step),
+				caller: caller(row._id),
+				attempts: row.attempts,
+				succeeded: row.succeeded,
+				costUsd: row.costUsd,
+				lastSeen: seen(row.lastSeen),
+			})),
+		};
 	}
 
 	async close(): Promise<void> {
@@ -462,6 +627,67 @@ type AnalyticsGroup = {
 	latencyTotal: number;
 	lastSeen: Date | number;
 };
+
+/** The caller of a grouped row; matches `eventCaller` in analytics.ts. */
+function callerKey() {
+	return {
+		callerId: {
+			$cond: [
+				recordedCaller(),
+				"$callerId",
+				{
+					$cond: [
+						nonEmpty("$agentId"),
+						{ $concat: ["agent:", "$agentId"] },
+						"unattributed",
+					],
+				},
+			],
+		},
+		callerName: {
+			$cond: [
+				recordedCaller(),
+				{ $cond: [nonEmpty("$callerName"), "$callerName", "$callerId"] },
+				{ $cond: [nonEmpty("$agentId"), "$agentId", "Unattributed"] },
+			],
+		},
+		callerKind: {
+			$cond: [
+				recordedCaller(),
+				"$callerKind",
+				{ $cond: [nonEmpty("$agentId"), "agent", "unattributed"] },
+			],
+		},
+	};
+}
+
+function caller(row: {
+	callerId: string;
+	callerName: string;
+	callerKind: string;
+}): AnalyticsFact["caller"] {
+	return {
+		id: row.callerId,
+		name: row.callerName || row.callerId,
+		kind: callerKind(row.callerKind),
+	};
+}
+
+/** A number at least zero, or zero: the same rule memory applies. */
+function nonNegative(field: string) {
+	return {
+		$cond: [
+			{
+				$and: [
+					{ $in: [{ $type: field }, ["double", "int", "long", "decimal"]] },
+					{ $gte: [field, 0] },
+				],
+			},
+			field,
+			0,
+		],
+	};
+}
 
 function nonEmpty(field: string) {
 	return { $gt: [{ $strLenCP: { $ifNull: [field, ""] } }, 0] };

@@ -114,6 +114,78 @@ function seedAgents(
 	});
 }
 
+/** Four fetches: plain, through a proxy, blocked, and from the cache. */
+function seedWeb(telemetry: TelemetryService, setTime: (value: string) => void) {
+	const helper = { id: "agent:bot-1", name: "Helper", kind: "agent" as const };
+	const founder = { id: "user:1", name: "Founder", kind: "user" as const };
+	setTime("2026-11-01T06:00:00.000Z");
+	telemetry.recordWebFetch({
+		workspaceId: "default",
+		caller: helper,
+		host: "example.com",
+		ok: true,
+		via: "direct",
+		cached: false,
+		costUsd: 0,
+		latencyMs: 200,
+		attempts: [
+			{ step: "direct", outcome: "ok", status: 200, latencyMs: 200, costUsd: 0 },
+		],
+	});
+	telemetry.recordWebFetch({
+		workspaceId: "default",
+		caller: helper,
+		host: "shop.test",
+		ok: true,
+		via: "zenrows:auto",
+		cached: false,
+		costUsd: 0.25,
+		latencyMs: 1000,
+		attempts: [
+			{ step: "direct", outcome: "blocked", status: 403, latencyMs: 100, costUsd: 0 },
+			{
+				step: "zenrows:auto",
+				outcome: "ok",
+				status: 200,
+				latencyMs: 900,
+				costUsd: 0.25,
+			},
+		],
+	});
+	setTime("2026-11-01T07:00:00.000Z");
+	telemetry.recordWebFetch({
+		workspaceId: "default",
+		caller: founder,
+		host: "shop.test",
+		ok: false,
+		via: "",
+		cached: false,
+		costUsd: 0.5,
+		latencyMs: 3000,
+		attempts: [
+			{ step: "direct", outcome: "blocked", status: 403, latencyMs: 100, costUsd: 0 },
+			{
+				step: "zenrows:premium",
+				outcome: "blocked",
+				status: 403,
+				latencyMs: 2900,
+				costUsd: 0.5,
+			},
+		],
+	});
+	telemetry.recordWebFetch({
+		workspaceId: "default",
+		caller: founder,
+		host: "example.com",
+		ok: true,
+		via: "direct",
+		cached: true,
+		costUsd: 0,
+		latencyMs: 0,
+		attempts: [],
+	});
+}
+
 describe("usage analytics", () => {
 	it.each([
 		{ name: "chat", operation: "chat" as const, stream: false },
@@ -271,6 +343,75 @@ describe("usage analytics", () => {
 			caller: "agent:bot-1",
 		});
 		expect(filtered.totals.requests).toBe(2);
+	});
+
+	it("reports web fetches apart from model calls", async () => {
+		let time = from;
+		const telemetry = new TelemetryService({ now: () => new Date(time) });
+		seedWeb(telemetry, (value) => {
+			time = value;
+		});
+		const result = await telemetry.analytics(query);
+		expect(result.totals.requests).toBe(0);
+		expect(result.byOperation).toEqual([]);
+		expect(result.web.totals).toEqual({
+			fetches: 4,
+			succeeded: 3,
+			proxied: 2,
+			cached: 1,
+			costUsd: 0.75,
+			avgLatencyMs: 400,
+		});
+		expect(result.web.byConnection).toEqual([
+			{
+				id: "direct",
+				attempts: 3,
+				succeeded: 1,
+				costUsd: 0,
+				lastSeen: "2026-11-01T07:00:00.000Z",
+			},
+			{
+				id: "zenrows",
+				attempts: 2,
+				succeeded: 1,
+				costUsd: 0.75,
+				lastSeen: "2026-11-01T07:00:00.000Z",
+			},
+		]);
+		expect(result.web.byOutcome).toEqual([
+			{ id: "ok", fetches: 3 },
+			{ id: "blocked", fetches: 1 },
+		]);
+		expect(result.web.byHost.map((row) => [row.id, row.fetches])).toEqual([
+			["shop.test", 2],
+			["example.com", 2],
+		]);
+		expect(
+			result.web.byCaller.map(({ id, name, fetches, costUsd }) => ({
+				id,
+				name,
+				fetches,
+				costUsd,
+			})),
+		).toEqual([
+			{ id: "user:1", name: "Founder", fetches: 2, costUsd: 0.5 },
+			{ id: "agent:bot-1", name: "Helper", fetches: 2, costUsd: 0.25 },
+		]);
+		expect(result.web.series[6]).toMatchObject({ fetches: 2, proxied: 1 });
+		expect(result.options.callers.map((caller) => caller.id).sort()).toEqual([
+			"agent:bot-1",
+			"user:1",
+		]);
+		const founder = await telemetry.analytics({ ...query, caller: "user:1" });
+		expect(founder.web.totals).toMatchObject({ fetches: 2, costUsd: 0.5 });
+		// A tie on attempts puts the costlier connection first.
+		expect(founder.web.byConnection.map((row) => row.id)).toEqual([
+			"zenrows",
+			"direct",
+		]);
+		// Model filters leave web fetches alone; they have no model.
+		const model = await telemetry.analytics({ ...query, model: "work/paid" });
+		expect(model.web.totals.fetches).toBe(4);
 	});
 
 	it("reports bounded history eviction and falls back when durable storage fails", async () => {
@@ -539,5 +680,39 @@ describe.skipIf(!available)("durable analytics", () => {
 		expect(result.byCaller.find((row) => row.id === "agent:bot-1")?.name).toBe(
 			"Helper",
 		);
+	});
+
+	it("reports web fetches the same way in MongoDB and memory", async () => {
+		let time = from;
+		const url = uniqueMongoUrl("web");
+		const sink = new MongoTelemetrySink(url);
+		const durable = new TelemetryService({
+			sink,
+			now: () => new Date(time),
+			flushIntervalMs: 60_000,
+		});
+		const memory = new TelemetryService({ now: () => new Date(time) });
+		cleanups.push(async () => {
+			await durable.close();
+			const client = new MongoClient(url, { serverSelectionTimeoutMS: 1500 });
+			try {
+				await client.db().dropDatabase();
+			} finally {
+				await client.close();
+			}
+		});
+		seedWeb(durable, (value) => {
+			time = value;
+		});
+		for (const event of durable.recentEvents().reverse()) memory.record(event);
+		await durable.flush();
+		for (const filters of [{}, { caller: "user:1" }]) {
+			const result = await durable.analytics({ ...query, ...filters });
+			const expected = await memory.analytics({ ...query, ...filters });
+			expect(result.source).toBe("mongodb");
+			expect(result.web).toEqual(expected.web);
+			expect(result.options.callers).toEqual(expected.options.callers);
+		}
+		expect((await durable.analytics(query)).web.totals.costUsd).toBe(0.75);
 	});
 });

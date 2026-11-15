@@ -35,6 +35,10 @@ export type {
 	TelemetryCaller,
 	UsageAnalytics,
 	UsageMetrics,
+	WebAnalytics,
+	WebBreakdown,
+	WebConnectionUsage,
+	WebUsageMetrics,
 } from "./analytics.js";
 export {
 	API_TOKEN_PERMISSIONS,
