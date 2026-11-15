@@ -774,7 +774,23 @@ describe("Overview tab, when something is missing or failing", () => {
 		let resolve!: (value: WorkspaceOverview) => void;
 		vi.mocked(fetchWorkspaceOverview)
 			.mockResolvedValueOnce(
-				overview({ waiting: { ...overview().waiting, proposals: 2 } }),
+				overview({
+					waiting: {
+						...overview().waiting,
+						proposals: 2,
+						failingBots: [{ id: AGENT, name: "Herald", failed: 2, replies: 2 }],
+					},
+					failedRuns: [
+						{
+							id: "r1",
+							botId: AGENT,
+							name: "Herald",
+							channelId: "c1",
+							detail: null,
+							createdAt: new Date().toISOString(),
+						},
+					],
+				}),
 			)
 			.mockImplementationOnce(
 				() =>
@@ -785,12 +801,20 @@ describe("Overview tab, when something is missing or failing", () => {
 		render(<Dashboard workspace={WORKSPACE} />);
 		const needs = await screen.findByRole("region", { name: "Needs you" });
 		expect(needs.textContent).toContain("2 Synapse proposals to review");
+		expect(needs.textContent).toContain("Herald failed 2");
 		fireEvent.change(screen.getByLabelText("Period"), {
 			target: { value: "7d" },
 		});
 		expect(
 			screen.getByRole("region", { name: "Needs you" }).textContent,
 		).toContain("2 Synapse proposals to review");
+		// Failures belong to the last period: hidden until the new one's arrive.
+		expect(
+			screen.getByRole("region", { name: "Needs you" }).textContent,
+		).not.toContain("Herald failed");
+		expect(
+			screen.getByRole("region", { name: "Recent" }).textContent,
+		).not.toContain("could not reply");
 		expect(
 			screen.getByRole("region", { name: "Workspace totals" }).textContent,
 		).toContain("Loading the period…");

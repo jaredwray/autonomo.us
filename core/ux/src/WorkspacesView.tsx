@@ -569,6 +569,7 @@ function useWorkspaceAttention(ids: string[], version: number) {
 		const controller = new AbortController();
 		const queue = [...ids];
 		let teamSeen = false;
+		let read = 0;
 		const worker = async () => {
 			for (let id = queue.shift(); id; id = queue.shift()) {
 				const workspace = id;
@@ -583,6 +584,7 @@ function useWorkspaceAttention(ids: string[], version: number) {
 						(item) => item.yours,
 					);
 					result = { yours: items.filter((item) => !item.org) };
+					read += 1;
 					if (!teamSeen && !controller.signal.aborted) {
 						teamSeen = true;
 						setTeam(items.filter((item) => item.org));
@@ -595,7 +597,12 @@ function useWorkspaceAttention(ids: string[], version: number) {
 				setAttention((current) => ({ ...current, [workspace]: result }));
 			}
 		};
-		for (let i = 0; i < OVERVIEW_CONCURRENCY; i++) void worker();
+		void Promise.all(
+			Array.from({ length: OVERVIEW_CONCURRENCY }, () => worker()),
+		).then(() => {
+			// Nothing could be read: the last team items cannot be vouched for.
+			if (!controller.signal.aborted && !read) setTeam([]);
+		});
 		return () => controller.abort();
 	}, [key, version]);
 	return { attention, team };

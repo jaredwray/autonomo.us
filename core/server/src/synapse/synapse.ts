@@ -119,6 +119,9 @@ export const agentSpaceId = (agentTokenId: string): SynapseSpaceId =>
 	`agent-${agentTokenId}`;
 
 /** A workspace's shared space in storage. The default workspace keeps the original key. */
+/** Pages of Global notes `recentNotes` reads past the ones a workspace overrides. */
+const RECENT_NOTES_PAGES = 20;
+
 export const sharedSpaceId = (workspace: {
 	id: string;
 	isDefault: boolean;
@@ -1468,30 +1471,44 @@ export class SynapseService {
 			sort: { by: "updatedAt" as const, direction: "desc" as const },
 			limit,
 		};
-		const [own, global] = await Promise.all([
-			this.repository.findNotes({ space: shared }, latest),
-			shared === SYNAPSE_GLOBAL_SPACE
-				? Promise.resolve([])
-				: this.repository.findNotes({ space: SYNAPSE_GLOBAL_SPACE }, latest),
-		]);
-		const overridden = global.length
-			? new Set(
+		const own = await this.repository.findNotes({ space: shared }, latest);
+		// Global notes the workspace overrides are not visible in it, so page
+		// through Global until enough visible ones are found, the pages reach
+		// notes older than the workspace's own oldest shown, or Global ends.
+		const global: StoredNote[] = [];
+		if (shared !== SYNAPSE_GLOBAL_SPACE)
+			for (let page = 0; page < RECENT_NOTES_PAGES; page++) {
+				const candidates = await this.repository.findNotes(
+					{ space: SYNAPSE_GLOBAL_SPACE },
+					{ ...latest, offset: page * limit },
+				);
+				if (!candidates.length) break;
+				const overridden = new Set(
 					(
 						await this.repository.findNotes(
 							{
 								space: shared,
-								titleKeys: global.map((note) => note.titleKey),
+								titleKeys: candidates.map((note) => note.titleKey),
 							},
-							{ ...latest, limit: global.length },
+							{ ...latest, limit: candidates.length },
 						)
 					).map((note) => note.titleKey),
+				);
+				global.push(
+					...candidates.filter((note) => !overridden.has(note.titleKey)),
+				);
+				const oldestShown =
+					own.length === limit ? own[own.length - 1].updatedAt : "";
+				if (
+					global.length >= limit ||
+					candidates.length < limit ||
+					(candidates.at(-1)?.updatedAt ?? "") < oldestShown
 				)
-			: new Set<string>();
+					break;
+			}
 		return [
 			...own.map((note) => ({ note, global: false })),
-			...global
-				.filter((note) => !overridden.has(note.titleKey))
-				.map((note) => ({ note, global: true })),
+			...global.map((note) => ({ note, global: true })),
 		]
 			.sort((a, b) => b.note.updatedAt.localeCompare(a.note.updatedAt))
 			.slice(0, limit)

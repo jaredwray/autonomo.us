@@ -1381,7 +1381,20 @@ export function Dashboard({
 						)}
 						{overview.current ? (
 							<OverviewPanel
-								overview={overview.current}
+								overview={
+									overview.runsCurrent
+										? overview.current
+										: // Failures belong to the period: those of the last one
+											// are hidden until the new period's arrive.
+											{
+												...overview.current,
+												waiting: {
+													...overview.current.waiting,
+													failingBots: [],
+												},
+												failedRuns: [],
+											}
+								}
 								analytics={analytics.current}
 								analyticsError={analytics.error}
 								runsCurrent={overview.runsCurrent}
