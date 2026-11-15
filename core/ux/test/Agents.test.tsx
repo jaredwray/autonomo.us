@@ -857,11 +857,21 @@ it("creates an agent with a token, shows the value once, and edits, rolls, and r
 		screen.getByRole("region", { name: "Create agent token" }),
 	);
 	expect(form.queryByRole("checkbox", { name: "Models: Read" })).toBeNull();
-	for (const name of ["MCP: Read", "MCP: Call", "Channels: Manage"])
+	for (const name of [
+		"MCP: Read",
+		"MCP: Call",
+		"Channels: Manage",
+		"Inference: Run",
+	])
 		expect(checkbox(form, name).checked).toBe(false);
 	expect(
 		form.getByText(
 			"Lets this agent create and manage channels, which opens every channel in the workspace to it.",
+		),
+	).toBeDefined();
+	expect(
+		form.getByText(
+			/^Lets this agent call the workspace's models with models_chat/,
 		),
 	).toBeDefined();
 	type(field(form, "Name"), "Research agent");

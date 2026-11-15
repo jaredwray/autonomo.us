@@ -36,7 +36,7 @@ export type JsonSchema = {
 	additionalProperties: false;
 };
 export type PropertySchema = {
-	type: "string" | "integer" | "object" | "boolean";
+	type: "string" | "integer" | "number" | "object" | "boolean";
 	description: string;
 	enum?: readonly string[];
 	minimum?: number;
@@ -136,6 +136,13 @@ export function argumentProblem(
 		} else if (rule.type === "integer") {
 			if (typeof value !== "number" || !Number.isInteger(value))
 				return `${key} must be an integer`;
+			if (rule.minimum !== undefined && value < rule.minimum)
+				return `${key} must be at least ${rule.minimum}`;
+			if (rule.maximum !== undefined && value > rule.maximum)
+				return `${key} must be at most ${rule.maximum}`;
+		} else if (rule.type === "number") {
+			if (typeof value !== "number" || !Number.isFinite(value))
+				return `${key} must be a number`;
 			if (rule.minimum !== undefined && value < rule.minimum)
 				return `${key} must be at least ${rule.minimum}`;
 			if (rule.maximum !== undefined && value > rule.maximum)

@@ -16,12 +16,15 @@ export { API_TOKEN_TTLS as AGENT_TOKEN_TTLS } from "./api-tokens.js";
  * change which agents are in them, so it opens every channel in its workspace.
  * `web:fetch` lets an agent read web pages through the gateway, including
  * through the workspace's paid proxies, within the workspace's limits.
+ * `inference:run` lets an agent call the workspace's models with
+ * `models_chat`, on the workspace's connections, routing, and failover.
  */
 export const AGENT_TOKEN_PERMISSIONS = {
 	"mcp:read": "MCP: Read",
 	"mcp:call": "MCP: Call",
 	"channels:manage": "Channels: Manage",
 	"web:fetch": "Web: Fetch",
+	"inference:run": "Inference: Run",
 } as const;
 export type AgentTokenPermission = keyof typeof AGENT_TOKEN_PERMISSIONS;
 export const DEFAULT_AGENT_TOKEN_PERMISSIONS: readonly AgentTokenPermission[] =
