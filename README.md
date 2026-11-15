@@ -311,7 +311,7 @@ through environment variables:
 - `/v1/:workspace/channels/...` — channels, their messages, agents, and read marks; see [Channels](#channels).
 - `/v1/:workspace/bots/...` — agents the gateway runs and their runs; see [Agents with instructions](#agents-with-instructions).
 - `/v1/:workspace/proxies/...` and `/v1/:workspace/web/...` — web proxies, the web policy, and fetching a page; see [Web access and proxies](#web-access-and-proxies).
-- `POST /mcp` — the MCP endpoint for agents; see [Synapse](#synapse), [Channels](#channels), and [Web access and proxies](#web-access-and-proxies).
+- `POST /mcp` — the MCP endpoint for agents; see [Synapse](#synapse), [Channels](#channels), [Models for agents](#models-for-agents), and [Web access and proxies](#web-access-and-proxies).
 - `/.well-known/oauth-protected-resource`, `/.well-known/oauth-authorization-server`, `/oauth/register`, `/oauth/authorize`, `/oauth/token`, `/oauth/revoke` — OAuth sign-in for MCP apps; see [Agents that sign in with OAuth](#agents-that-sign-in-with-oauth).
 
 ```bash
@@ -399,8 +399,10 @@ one. How an agent is made decides how it works, and does not change later:
 Workspace admins create, change, and revoke every kind of agent in their
 workspace, and approve OAuth sign-ins to it. Members see the list. An agent
 acts only in its own workspace. Agents of the last two kinds use the MCP
-server at `POST /mcp`, which serves the [Synapse](#synapse) and
-[Channels](#channels) tools, and hold MCP grants that an admin chooses.
+server at `POST /mcp`, which serves the [Synapse](#synapse),
+[Channels](#channels), [model](#models-for-agents), and
+[web](#web-access-and-proxies) tools, and hold MCP grants that an admin
+chooses.
 
 #### Agents with a token
 
@@ -419,8 +421,9 @@ API. The MCP grants are `mcp:read` (`tools/list`) and `mcp:call` (`tools/call`).
 They are independent; an agent that uses Synapse or Channels needs both. A third
 grant, `web:fetch`, lets an agent read web pages with `web_fetch`, through the
 workspace's proxies when a site blocks it; see
-[Web access and proxies](#web-access-and-proxies). Another grant,
-`channels:manage`, lets an agent create, rename, and archive channels and
+[Web access and proxies](#web-access-and-proxies). `models:chat` lets an
+agent call the workspace's models with `models_chat`; see
+[Models for agents](#models-for-agents). Another grant, `channels:manage`, lets an agent create, rename, and archive channels and
 change which agents are in them. That includes adding itself, so it opens every
 channel in the workspace to that agent. These grants do
 not authorize any REST endpoint: an agent token on `/v1/*` gets 401. Permission
@@ -749,6 +752,28 @@ month's usage, the policy, and the budget); `POST /proxies`
 `GET|PUT /web/policy` (`PUT` sends the `revision` it read, 409 if stale); and
 `POST /web/fetch` (`{ url, format?, maxChars?, skipDirect?, render? }`). The MCP
 tool takes the same arguments as `/web/fetch`.
+
+### Models for agents
+
+Agents reach the workspace's models over MCP with two tools:
+
+- `models_list` returns the workspace's chat models (`provider/model`), its
+  routing pools (`pool/<id>`) and their members, and the targets auto routing
+  picks from when it is on. It also says whether the agent holds
+  `models:chat`. It needs only `mcp:call`.
+- `models_chat` (`{ model, prompt, system?, temperature?, maxTokens? }`) sends
+  one prompt to a model, a pool, or `auto`, and returns the answer. It needs
+  the `models:chat` grant as well as `mcp:call`. It is an agent grant, separate
+  from the API token grant `inference:run`, which agents cannot hold.
+
+A `models_chat` call takes the same path as `POST /v1/<workspace id>/chat`: the
+workspace's own connections and keys, its pools, auto routing, and
+[failover](#failover). Each attempt is recorded in telemetry under the agent
+(`agent:<id>`), so the dashboard shows what each agent spent. Unknown models,
+provider failures, and disabled auto routing come back as tool results with
+`isError: true`. Decision models are left out; they answer
+`POST /v1/<workspace id>/decisions`. A call may take up to five minutes,
+failover included. Bots the gateway runs do not get these tools.
 
 ### Jev decisions
 

@@ -19,6 +19,7 @@ import { FailoverPolicyStore } from "./failover.js";
 import { GatewayData } from "./gateway-data.js";
 import { mcpRoutes } from "./mcp/server.js";
 import { ModelCatalogService } from "./model-catalog-service.js";
+import { modelToolSet } from "./models/mcp.js";
 import { controlPlaneConnection, mongoErrorDetails } from "./mongo.js";
 import { type OAuthAgents, OAuthService } from "./oauth/oauth.js";
 import { publicOrigin } from "./oauth/origin.js";
@@ -266,6 +267,7 @@ export function createServer(options: CreateServerOptions = {}) {
 	const toolSets = [
 		synapseToolSet(synapse),
 		channelToolSet(channels),
+		modelToolSet({ providers, routing, router, telemetry }),
 		// The operator's off switch removes the tool, not just its answers.
 		...(web.available ? [webToolSet(web)] : []),
 	];
