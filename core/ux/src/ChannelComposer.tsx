@@ -11,31 +11,54 @@ function mentionAt(text: string, caret: number): Picker | null {
 }
 const PICKER_SIZE = 8;
 
-/** A name the picker wrote into the box, and the mention it stands for. */
-type Picked = { label: string; mention: string };
-const escapeRegExp = (text: string) =>
-	text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-/** A name touching one of these is part of a longer word, not the name. */
-const WORD = "[\\p{L}\\p{M}\\p{N}_]";
-/** Matches each picked `@Name` that stands on its own. */
-function pickedPattern(picked: Picked[]): RegExp | null {
-	if (picked.length === 0) return null;
-	// Longest first, so `@Ada Lovelace` wins over `@Ada`.
-	const labels = picked
-		.map((pick) => pick.label)
-		.sort((a, b) => b.length - a.length)
-		.map(escapeRegExp);
-	return new RegExp(`(?<!${WORD})(?:${labels.join("|")})(?!${WORD})`, "gu");
+/** A name the picker wrote into the box, where it sits, and who it mentions. */
+export type Picked = { start: number; label: string; mention: string };
+type Draft = { text: string; picks: Picked[] };
+const EMPTY: Draft = { text: "", picks: [] };
+/** Text at [from, to) was replaced by `text`. */
+type Edit = { from: number; to: number; text: string };
+
+/** The one stretch where `after` differs from `before`. */
+function editBetween(before: string, after: string): Edit {
+	const most = Math.min(before.length, after.length);
+	let from = 0;
+	while (from < most && before[from] === after[from]) from++;
+	const room = most - from;
+	let tail = 0;
+	while (tail < room && before.at(-1 - tail) === after.at(-1 - tail)) tail++;
+	const to = before.length - tail;
+	return { from, to, text: after.slice(from, after.length - tail) };
 }
+/** Typed straight after a name, this continues the name. */
+const NAME_CHAR = /^[\p{L}\p{M}\p{N}_]/u;
+
 /**
- * The text to post: each picked `@Name` becomes the mention the gateway
- * understands.
+ * Keeps picked names in step with an edit. Text typed before a name moves
+ * it; an edit that changes the name itself, including letters typed straight
+ * after it, makes it plain text. A space or `,` after a name leaves it be.
  */
-export function writeMentions(text: string, picked: Picked[]): string {
-	const pattern = pickedPattern(picked);
-	if (!pattern) return text;
-	const mentions = new Map(picked.map((pick) => [pick.label, pick.mention]));
-	return text.replace(pattern, (label) => mentions.get(label) ?? label);
+function movePicks(picks: Picked[], { from, to, text }: Edit): Picked[] {
+	const shift = text.length - (to - from);
+	return picks.flatMap((pick) => {
+		const end = pick.start + pick.label.length;
+		if (from > end || (from === end && !NAME_CHAR.test(text))) return [pick];
+		if (to <= pick.start) return [{ ...pick, start: pick.start + shift }];
+		return [];
+	});
+}
+
+/**
+ * The text to post: each picked name still where it was written becomes the
+ * mention the gateway understands. A name typed by hand stays as written.
+ */
+export function writeMentions(text: string, picks: Picked[]): string {
+	let body = text;
+	for (const pick of [...picks].sort((a, b) => b.start - a.start)) {
+		const end = pick.start + pick.label.length;
+		if (body.slice(pick.start, end) !== pick.label) continue;
+		body = body.slice(0, pick.start) + pick.mention + body.slice(end);
+	}
+	return body;
 }
 
 /**
@@ -57,13 +80,12 @@ export function Composer({
 	disabledNote?: string;
 	onSend(body: string): void;
 }) {
-	const [text, setText] = useState("");
+	const [draft, setDraft] = useState(EMPTY);
+	const { text, picks } = draft;
 	const [picker, setPicker] = useState<Picker | null>(null);
 	const [active, setActive] = useState(0);
 	/** Where the picker was dismissed, so Escape keeps it closed for that `@`. */
 	const dismissed = useRef(-1);
-	/** Names chosen from the picker for this draft. */
-	const picked = useRef<Picked[]>([]);
 	const caret = useRef<number | null>(null);
 	const input = useRef<HTMLTextAreaElement>(null);
 	const listId = useId();
@@ -85,20 +107,16 @@ export function Composer({
 	const choose = (member: ChannelMember) => {
 		if (!picker) return;
 		const end = input.current?.selectionStart ?? text.length;
-		const head = text.slice(0, picker.start);
-		const after = text.slice(end);
-		// Forget names no longer in the draft, so their label is free again.
-		picked.current = picked.current.filter((pick) =>
-			pickedPattern([pick])?.test(`${head} ${after}`),
-		);
-		let label = `@${member.name}`;
-		const taken = picked.current.find((pick) => pick.label === label);
-		if (!taken) picked.current.push({ label, mention: member.mention });
-		// Two members with the same name in one draft: the name cannot tell
-		// them apart, so the second is written as its mention.
-		else if (taken.mention !== member.mention) label = member.mention;
-		const before = `${head}${label} `;
-		setText(before + after);
+		const label = `@${member.name}`;
+		const before = `${text.slice(0, picker.start)}${label} `;
+		const edit = { from: picker.start, to: end, text: `${label} ` };
+		setDraft({
+			text: before + text.slice(end),
+			picks: [
+				...movePicks(picks, edit),
+				{ start: picker.start, label, mention: member.mention },
+			],
+		});
 		caret.current = before.length;
 		setPicker(null);
 	};
@@ -110,13 +128,18 @@ export function Composer({
 		input.current?.setSelectionRange(caret.current, caret.current);
 		caret.current = null;
 	}, [text]);
+	const body = writeMentions(text, picks).trim();
+	/** Mentions are longer than the names shown, so a full box can overflow. */
+	const over = body.length - CHANNEL_LIMITS.bodyLength;
+	const hint =
+		over > 0
+			? `Mentions take more room once sent. Shorten this by ${over} ${over === 1 ? "character" : "characters"}.`
+			: "Enter to send, Shift+Enter for a new line, @ to mention. Markdown and [[wikilinks]] work.";
 	const send = () => {
-		const body = writeMentions(text, picked.current).trim();
-		if (!body || disabledNote) return;
+		if (!body || disabledNote || over > 0) return;
 		onSend(body);
-		setText("");
+		setDraft(EMPTY);
 		setPicker(null);
-		picked.current = [];
 	};
 	const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
 		if (open) {
@@ -198,8 +221,12 @@ export function Composer({
 				rows={Math.min(8, Math.max(1, text.split("\n").length))}
 				disabled={Boolean(disabledNote)}
 				onChange={(event) => {
-					setText(event.target.value);
-					sync(event.target.value, event.target.selectionStart);
+					const value = event.target.value;
+					setDraft((current) => ({
+						text: value,
+						picks: movePicks(current.picks, editBetween(current.text, value)),
+					}));
+					sync(value, event.target.selectionStart);
 				}}
 				onSelect={(event) =>
 					sync(event.currentTarget.value, event.currentTarget.selectionStart)
@@ -210,13 +237,12 @@ export function Composer({
 			<button
 				className="button primary"
 				type="submit"
-				disabled={Boolean(disabledNote) || !text.trim()}
+				disabled={Boolean(disabledNote) || !body || over > 0}
 			>
 				Send
 			</button>
 			<p className="field-hint channel-composer-hint">
-				{disabledNote ??
-					"Enter to send, Shift+Enter for a new line, @ to mention. Markdown and [[wikilinks]] work."}
+				{disabledNote ?? hint}
 			</p>
 		</form>
 	);

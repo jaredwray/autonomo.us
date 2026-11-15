@@ -652,7 +652,7 @@ it("adds a bot to a channel, shows it replying to a mention, and records the run
 	type(box, "@slo");
 	await screen.findByRole("listbox", { name: "Mention someone" });
 	fireEvent.keyDown(box, { key: "Enter" });
-	expect(box.value).toBe(`<@agent:${slow.id}> `);
+	expect(box.value).toBe("@Slow ");
 	type(box, `${box.value}is the trailer ready?`);
 	fireEvent.keyDown(box, { key: "Enter" });
 	await waitFor(
