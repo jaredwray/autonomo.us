@@ -36,7 +36,6 @@ import type {
 	CreateApiTokenRequest,
 	CreateBotRequest,
 	CreateChannelRequest,
-	CreateOAuthAgentRequest,
 	CreateProxyRequest,
 	CreateSynapseNoteRequest,
 	CreateTeamInviteRequest,
@@ -928,12 +927,6 @@ const agentPath = (id: string, rest = "") =>
  */
 export function fetchAgents(workspaceId?: string): Promise<AgentList> {
 	return apiRequest(inWorkspace(workspaceId, "/agents"));
-}
-/** An agent that apps sign in to with OAuth; it has no token. */
-export function createOAuthAgent(
-	input: CreateOAuthAgentRequest,
-): Promise<AgentToken> {
-	return apiRequest(ws("/agents/oauth"), { method: "POST", body: input });
 }
 /** The apps signed in to an OAuth agent. */
 export function fetchAgentConnections(
