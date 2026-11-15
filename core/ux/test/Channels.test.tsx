@@ -1026,6 +1026,14 @@ describe("channel helpers", () => {
 		type(box, `${box.value}and @Sam by hand`);
 		enter(box);
 		expect(sent.at(-1)).toBe("<@user:u1> <@agent:a1> and @Sam by hand");
+
+		// Punctuation after a name keeps the mention; a hyphen continues the name.
+		pick("@ada");
+		pick(`${box.value}and @ada`);
+		type(box, "@Ada, and @Ada ");
+		type(box, "@Ada, and @Ada-B ");
+		enter(box);
+		expect(sent.at(-1)).toBe("<@user:u2>, and @Ada-B");
 	});
 
 	it("keeps a draft that mentions would push over the length limit", () => {

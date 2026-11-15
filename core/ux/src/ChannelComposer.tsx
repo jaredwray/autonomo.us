@@ -29,8 +29,8 @@ function editBetween(before: string, after: string): Edit {
 	const to = before.length - tail;
 	return { from, to, text: after.slice(from, after.length - tail) };
 }
-/** Typed straight after a name, this continues the name. */
-const NAME_CHAR = /^[\p{L}\p{M}\p{N}_]/u;
+/** Typed straight after a name, this continues the name, as in `Ada-B`. */
+const NAME_CHAR = /^[\p{L}\p{M}\p{N}_-]/u;
 
 /**
  * Keeps picked names in step with an edit. Text typed before a name moves
