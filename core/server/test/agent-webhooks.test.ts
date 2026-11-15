@@ -420,21 +420,30 @@ describe("what wakes an agent", () => {
 		const { agent, addAgent, createChannel, post, tool, hook, hooks, settle } =
 			await start();
 		const scout = await agent("Scout");
+		const quill = await agent("Quill");
 		const channel = await createChannel("general");
 		await addAgent(channel.id, scout.id);
+		await addAgent(channel.id, quill.id);
 		await hook(scout.id, {
 			url: "https://hooks.example.com/scout",
 			events: ["mentions"],
 		});
-		const asked = await tool<{ id: string }>(scout.secret, "channels_post", {
-			channel: channel.id,
-			text: "Which cut should I review first?",
-		});
+		const asked = await tool<{ id: string; seq: number }>(
+			scout.secret,
+			"channels_post",
+			{ channel: channel.id, text: "Which cut should I review first?" },
+		);
 		const root = await post(channel.id, "Unrelated thread starter");
 		await post(channel.id, "The second one.", {
 			threadId: asked.data.id,
 		});
 		await post(channel.id, "Not about Scout", { threadId: root.id });
+		// Another agent's reply wakes nobody unless it mentions them.
+		await tool(quill.secret, "channels_post", {
+			channel: channel.id,
+			text: "I can take the first one.",
+			replyTo: asked.data.seq,
+		});
 		await settle();
 		const events = hooks.received.flatMap((wake) => wake.body.data.events);
 		expect(events).toEqual([

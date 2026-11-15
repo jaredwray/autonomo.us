@@ -179,6 +179,8 @@ export function claimed(
 	leaseId: string,
 	now: number,
 	timing: WebhookTiming,
+	/** Recorded on a new delivery; its retries keep it. */
+	agentName?: string,
 ): Claim | null {
 	const at = iso(now);
 	if (webhook.status !== "active" || !webhook.dueAt || webhook.dueAt > at)
@@ -209,6 +211,7 @@ export function claimed(
 			createdAt: at,
 			events: current.queue,
 			omitted: current.omitted,
+			...(agentName === undefined ? {} : { agentName }),
 			attempts: 0,
 		};
 		current = { ...current, queue: [], omitted: 0 };

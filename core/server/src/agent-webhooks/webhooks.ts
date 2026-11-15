@@ -316,7 +316,9 @@ export class AgentWebhooks {
 					? null
 					: result.kind === "failed"
 						? result.error
-						: `http_${result.status}`,
+						: result.kind === "cancelled"
+							? "cancelled"
+							: `http_${result.status}`,
 			durationMs: Math.max(0, this.now() - started),
 		};
 	}
@@ -354,7 +356,12 @@ export class AgentWebhooks {
 				"channel.mention" | "channel.reply" | "channel.message"
 			> = [];
 			if (mentioned.has(webhook.agentId)) types.push("channel.mention");
-			else if (message.threadId && wants(webhook, "channel.reply")) {
+			// Like a new message, an agent's reply wakes nobody unless it mentions them.
+			else if (
+				message.threadId &&
+				author.kind !== "agent" &&
+				wants(webhook, "channel.reply")
+			) {
 				threadAuthor ??= this.options
 					.threadAuthor(channel.workspaceId, channel.id, message.threadId)
 					.catch(() => null);
@@ -459,10 +466,11 @@ export class AgentWebhooks {
 		}
 		const { workspaceId, agentId } = webhook;
 		this.track(
-			new Promise<void>((resolve) => {
+			new Promise<void>((resolve, reject) => {
 				const timer = setTimeout(() => {
 					if (this.timers.get(key)?.timer === timer) this.timers.delete(key);
-					this.deliver(workspaceId, agentId).finally(resolve);
+					// A failure reaches `track`, which logs it; the sweep retries.
+					this.deliver(workspaceId, agentId).then(resolve, reject);
 				}, delay);
 				this.timers.set(key, { at, timer, done: resolve });
 			}),
@@ -474,13 +482,20 @@ export class AgentWebhooks {
 		if (this.closing) return;
 		const { repository } = this.options;
 		const leaseId = randomUUID();
+		const agent = await this.options.agents.find(agentId);
 		const claim: { delivery: StoredDelivery | null } = { delivery: null };
 		const held = await mutateWebhook(
 			repository,
 			workspaceId,
 			agentId,
 			(current) => {
-				const taken = claimed(current, leaseId, this.now(), this.timing);
+				const taken = claimed(
+					current,
+					leaseId,
+					this.now(),
+					this.timing,
+					agent?.name,
+				);
 				claim.delivery = taken?.delivery ?? null;
 				return taken?.webhook ?? null;
 			},
@@ -494,7 +509,7 @@ export class AgentWebhooks {
 				this.schedule(current, 5);
 			return;
 		}
-		const outcome = await this.attempt(held, claim.delivery);
+		const outcome = await this.attempt(held, claim.delivery, agent, leaseId);
 		const after = await mutateWebhook(
 			repository,
 			workspaceId,
@@ -508,8 +523,9 @@ export class AgentWebhooks {
 	private async attempt(
 		webhook: StoredAgentWebhook,
 		delivery: StoredDelivery,
+		agent: WebhookAgent | null,
+		leaseId: string,
 	): Promise<Outcome> {
-		const agent = await this.options.agents.find(webhook.agentId);
 		const own =
 			agent &&
 			(agent.workspaceId ??
@@ -524,13 +540,27 @@ export class AgentWebhooks {
 		try {
 			const result = await this.send(
 				webhook,
-				{ id: webhook.agentId, name: agent.name },
+				{ id: webhook.agentId, name: delivery.agentName ?? agent.name },
 				delivery,
 				controller.signal,
+				// Paused, deleted (as revoking the agent does), or taken over
+				// while the lookup ran: send nothing. A new secret or key is used.
+				async () => {
+					const current = await this.options.repository.get(
+						webhook.workspaceId,
+						webhook.agentId,
+					);
+					return current?.status === "active" && current.leaseId === leaseId
+						? current
+						: null;
+				},
 			);
 			if (this.closing && controller.signal.aborted)
 				return { kind: "released" };
 			switch (result.kind) {
+				// Nothing went out; what follows depends on why (see `finished`).
+				case "cancelled":
+					return { kind: "released" };
 				case "ok":
 					return { kind: "ok" };
 				case "gone":
@@ -550,6 +580,7 @@ export class AgentWebhooks {
 		agent: { id: string; name: string },
 		delivery: Pick<StoredDelivery, "id" | "createdAt" | "events" | "omitted">,
 		signal?: AbortSignal,
+		beforeSend?: () => Promise<StoredAgentWebhook | null>,
 	): Promise<PostResult> {
 		return post(
 			webhook,
@@ -561,6 +592,7 @@ export class AgentWebhooks {
 				timeoutMs: this.timeoutMs,
 				now: this.now,
 				signal,
+				beforeSend,
 			},
 		);
 	}

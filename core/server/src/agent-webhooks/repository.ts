@@ -22,6 +22,8 @@ export type StoredDelivery = {
 	createdAt: string;
 	events: AgentWakeEvent[];
 	omitted: number;
+	/** The agent's name when the delivery was made up, so every attempt sends the same body. */
+	agentName?: string;
 	/** Attempts started so far, a crashed one included. */
 	attempts: number;
 };

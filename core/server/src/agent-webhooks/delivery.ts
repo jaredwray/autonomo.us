@@ -249,7 +249,33 @@ export type PostResult =
 	| { kind: "ok"; status: number }
 	| { kind: "gone"; status: number }
 	| { kind: "throttled"; status: number; retryAfterMs: number | null }
-	| { kind: "failed"; status: number | null; error: string };
+	| { kind: "failed"; status: number | null; error: string }
+	/** `beforeSend` called it off: nothing was sent. */
+	| { kind: "cancelled"; status: null };
+
+class Aborted extends Error {}
+
+/**
+ * Settles with `work`, or rejects with `Aborted` once `signal` aborts. A DNS
+ * lookup cannot be cancelled, so the POST stops waiting for it instead.
+ */
+function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+	return new Promise<T>((resolve, reject) => {
+		const stop = () => reject(new Aborted());
+		if (signal.aborted) return stop();
+		signal.addEventListener("abort", stop, { once: true });
+		work.then(
+			(value) => {
+				signal.removeEventListener("abort", stop);
+				resolve(value);
+			},
+			(error) => {
+				signal.removeEventListener("abort", stop);
+				reject(error);
+			},
+		);
+	});
+}
 
 /** Seconds or an HTTP date, as milliseconds from `now`. */
 export function retryAfterMs(value: string | null, now: number): number | null {
@@ -283,6 +309,13 @@ export async function post(
 		now: () => number;
 		/** Aborts the POST early, for a shutdown. */
 		signal?: AbortSignal;
+		/**
+		 * Called after the lookup, just before the POST goes out, for the
+		 * webhook as it stands now: null calls the POST off, so a pause,
+		 * deletion, or new URL that came meanwhile is honored, and a new
+		 * secret or key is used.
+		 */
+		beforeSend?: () => Promise<PostTarget | null>;
 	},
 ): Promise<PostResult> {
 	if (agentWebhookUrlProblem(target.url))
@@ -294,26 +327,49 @@ export async function post(
 	let address: ResolvedAddress | null = null;
 	if (options.transport.pinsAddress && options.resolver) {
 		try {
-			address = await resolvePublicAddress(url.hostname, options.resolver);
+			address = await untilAborted(
+				resolvePublicAddress(url.hostname, options.resolver),
+				signal,
+			);
 		} catch (error) {
 			return {
 				kind: "failed",
 				status: null,
-				error: error instanceof TargetNotFoundError ? "network" : "blocked",
+				error:
+					error instanceof Aborted
+						? "timeout"
+						: error instanceof TargetNotFoundError
+							? "network"
+							: "blocked",
 			};
 		}
 	}
+	let to = target;
+	if (options.beforeSend) {
+		let current: PostTarget | null;
+		try {
+			current = await untilAborted(options.beforeSend(), signal);
+		} catch (error) {
+			if (error instanceof Aborted)
+				return { kind: "failed", status: null, error: "timeout" };
+			throw error;
+		}
+		// A different URL was not the one checked above.
+		if (!current || current.url !== target.url)
+			return { kind: "cancelled", status: null };
+		to = current;
+	}
 	const headers: Record<string, string> = {};
-	for (const header of target.headers)
+	for (const header of to.headers)
 		headers[header.name.toLowerCase()] = header.value;
-	if (target.authKey) headers.authorization = `Bearer ${target.authKey}`;
+	if (to.authKey) headers.authorization = `Bearer ${to.authKey}`;
 	const timestamp = String(Math.floor(options.now() / 1000));
 	Object.assign(headers, {
 		"content-type": "application/json",
 		"user-agent": USER_AGENT,
 		"webhook-id": deliveryId,
 		"webhook-timestamp": timestamp,
-		"webhook-signature": signature(target.secret, deliveryId, timestamp, body),
+		"webhook-signature": signature(to.secret, deliveryId, timestamp, body),
 	});
 	let response: WebhookResponse;
 	try {

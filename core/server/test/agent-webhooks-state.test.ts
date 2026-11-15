@@ -209,6 +209,22 @@ describe("webhook state", () => {
 		});
 	});
 
+	it("keeps the agent's name from the first attempt for every retry", () => {
+		const queued = enqueued(stored(), message(1), "k1", NOW, timing);
+		if (!queued) throw new Error("not enqueued");
+		const first = claimed(queued, "a", NOW + 5_000, timing, "Scout");
+		expect(first?.delivery?.agentName).toBe("Scout");
+		const failed = finished(
+			first?.webhook as StoredAgentWebhook,
+			"a",
+			{ kind: "failed", error: "http_500" },
+			NOW + 6_000,
+			timing,
+		) as StoredAgentWebhook;
+		const retry = claimed(failed, "b", NOW + 16_000, timing, "Renamed");
+		expect(retry?.delivery).toMatchObject({ agentName: "Scout", attempts: 2 });
+	});
+
 	it("gives up on a delivery whose last attempt crashed, and disables after repeated failures", () => {
 		const crashed = stored({
 			consecutiveFailures: 1,
