@@ -32,6 +32,7 @@ import {
 	updateBot,
 } from "./api.js";
 import { channelsHash } from "./channels-route.js";
+import { attentionChanged } from "./overview-state.js";
 
 const date = (value: string) => new Date(value).toLocaleString();
 const count = (value: number) => value.toLocaleString();
@@ -708,6 +709,7 @@ function WebRequests({
 		setDeciding(item.id);
 		try {
 			await decideBotWebRequest(botId, item.id, approve);
+			attentionChanged();
 			await load();
 			onDecided();
 		} catch (cause) {

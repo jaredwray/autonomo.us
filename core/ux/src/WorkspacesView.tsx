@@ -5,6 +5,7 @@ import {
 	type WorkspaceDetails,
 	type WorkspaceList,
 	type WorkspaceMembers,
+	type WorkspaceOverview,
 	type WorkspaceRole,
 } from "@autonomo.us/common";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -13,6 +14,7 @@ import {
 	fetchTeam,
 	fetchWorkspace,
 	fetchWorkspaceMembers,
+	fetchWorkspaceOverview,
 	fetchWorkspaces,
 	removeWorkspaceMember,
 	setWorkspaceArchived,
@@ -20,6 +22,7 @@ import {
 	updateWorkspace,
 } from "./api.js";
 import { Icon } from "./Icons.js";
+import { type AttentionItem, attentionItems } from "./overview-items.js";
 
 const date = (value: string) => new Date(value).toLocaleString();
 const message = (cause: unknown, fallback: string) =>
@@ -546,6 +549,85 @@ function WorkspacePanel({
 	);
 }
 
+/** Overviews read at once; an org owner may see many workspaces. */
+const OVERVIEW_CONCURRENCY = 4;
+type Attention = { yours: AttentionItem[] } | "error";
+
+/**
+ * What waits on the person in each open workspace, read from each one's
+ * overview, so an owner sees across workspaces without opening each.
+ */
+function useWorkspaceAttention(ids: string[]) {
+	const [attention, setAttention] = useState<Record<string, Attention>>({});
+	const key = ids.join("\n");
+	// biome-ignore lint/correctness/useExhaustiveDependencies: key stands for ids.
+	useEffect(() => {
+		const controller = new AbortController();
+		const queue = [...ids];
+		const worker = async () => {
+			for (let id = queue.shift(); id; id = queue.shift()) {
+				const workspace = id;
+				let result: Attention;
+				try {
+					const overview: WorkspaceOverview = await fetchWorkspaceOverview(
+						{},
+						controller.signal,
+						workspace,
+					);
+					result = {
+						yours: attentionItems(overview, workspace).filter(
+							(item) => item.yours,
+						),
+					};
+				} catch {
+					if (controller.signal.aborted) return;
+					result = "error";
+				}
+				if (controller.signal.aborted) return;
+				setAttention((current) => ({ ...current, [workspace]: result }));
+			}
+		};
+		for (let i = 0; i < OVERVIEW_CONCURRENCY; i++) void worker();
+		return () => controller.abort();
+	}, [key]);
+	return attention;
+}
+
+function AttentionCell({
+	workspaceId,
+	attention,
+}: {
+	workspaceId: string;
+	attention: Attention | undefined;
+}) {
+	if (attention === undefined)
+		return <span className="token-date">Checking…</span>;
+	if (attention === "error")
+		return <span className="token-date">Unavailable</span>;
+	if (!attention.yours.length)
+		return <span className="token-date">Nothing</span>;
+	const urgent = attention.yours.some((item) => item.severity === "critical");
+	return (
+		<a
+			href={`#/w/${encodeURIComponent(workspaceId)}/dashboard`}
+			className="workspace-attention"
+			title={attention.yours.map((item) => item.text).join("\n")}
+		>
+			<span
+				className={`nav-attention ${urgent ? "" : "approvals"}`}
+				aria-hidden="true"
+			>
+				{attention.yours.length > 99 ? "99+" : attention.yours.length}
+			</span>
+			<span>
+				{attention.yours.length === 1
+					? attention.yours[0].text
+					: `${attention.yours.length} things, starting with: ${attention.yours[0].text}`}
+			</span>
+		</a>
+	);
+}
+
 export function WorkspacesView({
 	onChanged,
 }: {
@@ -586,6 +668,11 @@ export function WorkspacesView({
 		void refresh();
 		onChanged?.();
 	};
+	const attention = useWorkspaceAttention(
+		(data?.workspaces ?? [])
+			.filter((workspace) => !workspace.archivedAt)
+			.map((workspace) => workspace.id),
+	);
 	return (
 		<div className="dashboard tokens-view workspaces-view">
 			<header className="dashboard-header">
@@ -656,6 +743,7 @@ export function WorkspacesView({
 								<tr>
 									<th>Workspace</th>
 									<th>Your role</th>
+									<th>Needs you</th>
 									<th>Created</th>
 									<th>Actions</th>
 								</tr>
@@ -683,6 +771,16 @@ export function WorkspacesView({
 											{WORKSPACE_ROLES[workspace.role]}
 											{workspace.implicit && (
 												<small className="token-date">From team role</small>
+											)}
+										</td>
+										<td>
+											{workspace.archivedAt ? (
+												<span className="token-date">Archived</span>
+											) : (
+												<AttentionCell
+													workspaceId={workspace.id}
+													attention={attention[workspace.id]}
+												/>
 											)}
 										</td>
 										<td>{date(workspace.createdAt)}</td>
