@@ -19,6 +19,8 @@ export function Icon({
 		| "plus"
 		| "minus"
 		| "fit"
+		| "fullscreen"
+		| "exit-fullscreen"
 		| "search"
 		| "close";
 }) {
@@ -43,7 +45,9 @@ export function Icon({
 		expand: "M9 4H4v16h5 M16 7l5 5-5 5 M10 12h11",
 		plus: "M12 5v14 M5 12h14",
 		minus: "M5 12h14",
-		fit: "M4 9V4h5 M20 9V4h-5 M4 15v5h5 M20 15v5h-5",
+		fit: "M12 3v4 M12 17v4 M3 12h4 M17 12h4 M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0",
+		fullscreen: "M4 9V4h5 M20 9V4h-5 M4 15v5h5 M20 15v5h-5",
+		"exit-fullscreen": "M9 4v5H4 M15 4v5h5 M9 20v-5H4 M15 20v-5h5",
 		search: "M21 21l-5-5 M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0",
 		close: "m6 6 12 12 M6 18 18 6",
 	};

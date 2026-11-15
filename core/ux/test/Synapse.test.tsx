@@ -1286,3 +1286,172 @@ it("says so when the graph is empty, capped, or cannot load, and settles at once
 	const alert = await within(graphRegion()).findByRole("alert");
 	expect(within(alert).getByRole("button", { name: "Retry" })).toBeDefined();
 }, 30_000);
+
+it("expands the graph over the whole page beside the app navigation, until Esc or the button", async () => {
+	const running = await boot();
+	await createNote(running, "global", { title: "Brand voice", body: "" });
+	await createNote(running, "shared", {
+		title: "Ada Lovelace",
+		body: "Wrote about the [[Analytical Engine]].",
+	});
+	renderAt("#/synapse");
+	const canvas = await graphCanvas("Graph of 2 notes and 1 link");
+	// Every icon-only control says what it does on hover.
+	for (const name of [
+		"Zoom out",
+		"Zoom in",
+		"Fit graph to view",
+		"Full screen",
+	])
+		expect(screen.getByRole("button", { name }).getAttribute("title")).toBe(
+			name,
+		);
+	const notes = () => screen.queryByRole("complementary", { name: "Notes" });
+	const expandedParts = () =>
+		Array.from(document.querySelectorAll(".is-expanded"), (item) =>
+			item.className.replace(" is-expanded", ""),
+		);
+	expect(notes()).not.toBeNull();
+	expect(screen.getByRole("heading", { name: "Graph" })).toBeDefined();
+	const toggle = screen.getByRole("button", { name: "Full screen" });
+	toggle.focus();
+	fireEvent.click(toggle);
+	// The graph says which space it shows; the rest of the page gives way.
+	expect(toggle.getAttribute("aria-label")).toBe("Exit full screen");
+	expect(toggle.getAttribute("title")).toBe("Exit full screen");
+	expect(document.activeElement).toBe(toggle);
+	expect(notes()).toBeNull();
+	expect(
+		screen.getByRole("heading", { name: "Synapse Graph - Shared" }),
+	).toBeDefined();
+	expect(expandedParts()).toEqual(["dashboard synapse-view", "synapse-graph"]);
+	// The drawing is the same element; CSS alone sizes it.
+	expect(await graphCanvas()).toBe(canvas);
+	expect(canvas.style.height).toBe("");
+	// The page header, its actions, the tabs, and the banners are gone.
+	const pageChrome = () => [
+		screen.queryByText(/Linked Markdown notes/),
+		screen.queryByRole("button", { name: "New note" }),
+		screen.queryByRole("button", { name: "Import" }),
+		screen.queryByRole("button", { name: "Export .zip" }),
+		screen.queryByRole("tablist"),
+		screen.queryByText(/Notes are temporary until MongoDB/),
+	];
+	expect(pageChrome()).toEqual([null, null, null, null, null, null]);
+	// The page keeps its heading, out of sight, and the app navigation stays.
+	const heading = screen.getByRole("heading", { name: "Synapse", level: 1 });
+	expect(heading.className).toBe("visually-hidden");
+	expect(screen.getByRole("link", { name: "Synapse" })).toBeDefined();
+	expect(screen.getByRole("link", { name: "Channels" })).toBeDefined();
+	// The hint is hidden by CSS, and the legend floats on the canvas.
+	expect(screen.getByRole("list", { name: "Legend" })).toBeDefined();
+
+	// Esc from inside the graph leaves.
+	fireEvent.keyDown(
+		within(canvas).getByRole("link", { name: "Ada Lovelace" }),
+		{ key: "Escape" },
+	);
+	expect(toggle.getAttribute("aria-label")).toBe("Full screen");
+	expect(notes()).not.toBeNull();
+	expect(screen.getByRole("heading", { name: "Graph" })).toBeDefined();
+	expect(expandedParts()).toEqual([]);
+	expect(pageChrome().every(Boolean)).toBe(true);
+	expect(
+		screen.getByRole("heading", { name: "Synapse", level: 1 }).className,
+	).toBe("");
+	// Esc in the app navigation is not the graph's.
+	fireEvent.click(toggle);
+	fireEvent.keyDown(screen.getByRole("link", { name: "Channels" }), {
+		key: "Escape",
+	});
+	expect(toggle.getAttribute("aria-label")).toBe("Exit full screen");
+	// With nothing focused, as after panning the sky, Esc leaves too.
+	fireEvent.keyDown(document.body, { key: "Escape" });
+	expect(toggle.getAttribute("aria-label")).toBe("Full screen");
+	fireEvent.click(toggle);
+
+	// An unresolved link leaves full screen for the New note form, which
+	// lives on the page the graph was covering.
+	fireEvent.click(
+		within(canvas).getByRole("button", {
+			name: "Create note Analytical Engine",
+		}),
+	);
+	expect((screen.getByLabelText("Title") as HTMLInputElement).value).toBe(
+		"Analytical Engine",
+	);
+	expect(toggle.getAttribute("aria-label")).toBe("Full screen");
+	expect(expandedParts()).toEqual([]);
+	expect(notes()).not.toBeNull();
+	fireEvent.click(screen.getByRole("button", { name: "Close new note form" }));
+	fireEvent.click(toggle);
+
+	// A note opens in the normal layout; going back returns to the expanded graph.
+	fireEvent.click(within(canvas).getByRole("link", { name: "Ada Lovelace" }));
+	await screen.findByRole("heading", { name: "Ada Lovelace" });
+	expect(notes()).not.toBeNull();
+	expect(expandedParts()).toEqual([]);
+	fireEvent.click(screen.getByRole("link", { name: "Back to graph" }));
+	await graphCanvas("Graph of 2 notes and 1 link");
+	expect(
+		screen.getByRole("button", { name: "Exit full screen" }),
+	).toBeDefined();
+	expect(notes()).toBeNull();
+	// Another space is drawn expanded too, under its own name.
+	await pickSpace("global");
+	await graphCanvas("Graph of 1 note and 0 links");
+	expect(
+		screen.getByRole("heading", { name: "Synapse Graph - Global" }),
+	).toBeDefined();
+	expect(notes()).toBeNull();
+	// The Proposals tab, reached by its address, is not the graph's to cover.
+	window.location.hash = window.location.hash.replace(
+		/synapse.*$/,
+		"synapse/proposals",
+	);
+	await screen.findByRole("tab", { name: "Proposals", selected: true });
+	expect(expandedParts()).toEqual([]);
+	fireEvent.click(screen.getByRole("tab", { name: "Notes" }));
+	fireEvent.click(
+		await screen.findByRole("button", { name: "Exit full screen" }),
+	);
+	expect(notes()).not.toBeNull();
+	// The way out shows while the graph loads; the way in once it is drawn.
+	expect(
+		await screen.findByRole("button", { name: "Full screen" }),
+	).toBeDefined();
+});
+
+it("keeps the way out of full screen when the expanded space has nothing to draw or fails to load", async () => {
+	const running = await boot();
+	await createNote(running, "shared", { title: "Ada Lovelace", body: "" });
+	renderAt("#/synapse");
+	await graphCanvas("Graph of 1 note and 0 links");
+	const notes = () => screen.queryByRole("complementary", { name: "Notes" });
+	fireEvent.click(screen.getByRole("button", { name: "Full screen" }));
+	expect(notes()).toBeNull();
+	// Global is empty: nothing is drawn, yet the page can come back.
+	await pickSpace("global");
+	expect(await screen.findByText(/Nothing to draw yet/)).toBeDefined();
+	expect(document.querySelector(".synapse-graph.is-expanded")).not.toBeNull();
+	expect(screen.queryByRole("tablist")).toBeNull();
+	expect(
+		screen.getByRole("heading", { name: "Synapse Graph - Global" }),
+	).toBeDefined();
+	expect(screen.queryByRole("button", { name: "Zoom in" })).toBeNull();
+	fireEvent.click(screen.getByRole("button", { name: "Exit full screen" }));
+	expect(notes()).not.toBeNull();
+	// The same when the graph cannot load.
+	await pickSpace("shared");
+	await graphCanvas("Graph of 1 note and 0 links");
+	fireEvent.click(screen.getByRole("button", { name: "Full screen" }));
+	await running.server.close();
+	await pickSpace("global");
+	// Only the graph's own error shows; the page's banners are covered.
+	const alert = await within(graphRegion()).findByRole("alert");
+	expect(alert.closest(".synapse-graph.is-expanded")).not.toBeNull();
+	expect(within(alert).getByRole("button", { name: "Retry" })).toBeDefined();
+	fireEvent.click(screen.getByRole("button", { name: "Exit full screen" }));
+	expect(notes()).not.toBeNull();
+	expect(screen.getByRole("tablist")).toBeDefined();
+});

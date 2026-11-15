@@ -625,6 +625,9 @@ export function SynapseView({
 		space: route.space,
 		title: null,
 	};
+	/** The graph's "full screen", kept here so it outlasts a visit to a note. */
+	const [graphExpanded, setGraphExpanded] = useState(false);
+	const expanded = graphExpanded && route.tab === "notes" && !route.title;
 	const startNote = (title: string) => {
 		setNotice("");
 		setPanel({ kind: "new", title });
@@ -664,116 +667,125 @@ export function SynapseView({
 	const canEdit =
 		route.space !== SYNAPSE_GLOBAL_SPACE || user.role !== "member";
 	return (
-		<div className="dashboard synapse-view">
-			<header className="dashboard-header">
-				<div>
-					<h1>Synapse</h1>
-					<p className="page-description">
-						Linked Markdown notes: {workspace.name}'s shared memory, which
-						inherits the global canon, and each agent's private space. Notes
-						link with <code>[[Title]]</code> and are classified by category, not
-						folders.
-					</p>
-				</div>
-				{route.tab === "notes" && (
-					<div className="header-actions">
-						{canEdit && (
-							<button
-								className="button"
-								type="button"
-								disabled={Boolean(panel)}
-								onClick={() => {
-									setNotice("");
-									setPanel({ kind: "import" });
-								}}
-							>
-								Import
-							</button>
+		<div className={`dashboard synapse-view${expanded ? " is-expanded" : ""}`}>
+			{expanded ? (
+				// The graph covers the page; the page keeps its heading.
+				<h1 className="visually-hidden">Synapse</h1>
+			) : (
+				<>
+					<header className="dashboard-header">
+						<div>
+							<h1>Synapse</h1>
+							<p className="page-description">
+								Linked Markdown notes: {workspace.name}'s shared memory, which
+								inherits the global canon, and each agent's private space. Notes
+								link with <code>[[Title]]</code> and are classified by category,
+								not folders.
+							</p>
+						</div>
+						{route.tab === "notes" && (
+							<div className="header-actions">
+								{canEdit && (
+									<button
+										className="button"
+										type="button"
+										disabled={Boolean(panel)}
+										onClick={() => {
+											setNotice("");
+											setPanel({ kind: "import" });
+										}}
+									>
+										Import
+									</button>
+								)}
+								<button
+									className="button"
+									type="button"
+									disabled={exporting}
+									onClick={() => void exportZip()}
+								>
+									{exporting ? "Exporting…" : "Export .zip"}
+								</button>
+								{canEdit && (
+									<button
+										className="button primary"
+										type="button"
+										disabled={Boolean(panel)}
+										onClick={() => {
+											setNotice("");
+											setPanel({ kind: "new", title: "" });
+										}}
+									>
+										<Icon name="plus" />
+										New note
+									</button>
+								)}
+							</div>
 						)}
-						<button
-							className="button"
-							type="button"
-							disabled={exporting}
-							onClick={() => void exportZip()}
-						>
-							{exporting ? "Exporting…" : "Export .zip"}
-						</button>
-						{canEdit && (
-							<button
-								className="button primary"
-								type="button"
-								disabled={Boolean(panel)}
-								onClick={() => {
-									setNotice("");
-									setPanel({ kind: "new", title: "" });
-								}}
-							>
-								<Icon name="plus" />
-								New note
-							</button>
-						)}
-					</div>
-				)}
-			</header>
-			{/* ARIA tabs: arrow keys, Home, and End move between them; one panel follows. */}
-			<div
-				className="synapse-tabs"
-				role="tablist"
-				aria-label="Synapse sections"
-				onKeyDown={(event) => {
-					const order = ["notes", "proposals"] as const;
-					const at = order.indexOf(route.tab);
-					const next =
-						event.key === "ArrowRight"
-							? order[(at + 1) % order.length]
-							: event.key === "ArrowLeft"
-								? order[(at + order.length - 1) % order.length]
-								: event.key === "Home"
-									? order[0]
-									: event.key === "End"
-										? order[order.length - 1]
-										: null;
-					if (!next) return;
-					event.preventDefault();
-					showTab(next);
-					document.getElementById(`synapse-tab-${next}`)?.focus();
-				}}
-			>
-				{(["notes", "proposals"] as const).map((tab) => (
-					<button
-						key={tab}
-						type="button"
-						role="tab"
-						id={`synapse-tab-${tab}`}
-						aria-controls="synapse-panel"
-						aria-selected={route.tab === tab}
-						tabIndex={route.tab === tab ? 0 : -1}
-						onClick={() => showTab(tab)}
+					</header>
+					{/* ARIA tabs: arrow keys, Home, and End move between them; one panel follows. */}
+					<div
+						className="synapse-tabs"
+						role="tablist"
+						aria-label="Synapse sections"
+						onKeyDown={(event) => {
+							const order = ["notes", "proposals"] as const;
+							const at = order.indexOf(route.tab);
+							const next =
+								event.key === "ArrowRight"
+									? order[(at + 1) % order.length]
+									: event.key === "ArrowLeft"
+										? order[(at + order.length - 1) % order.length]
+										: event.key === "Home"
+											? order[0]
+											: event.key === "End"
+												? order[order.length - 1]
+												: null;
+							if (!next) return;
+							event.preventDefault();
+							showTab(next);
+							document.getElementById(`synapse-tab-${next}`)?.focus();
+						}}
 					>
-						{tab === "notes" ? "Notes" : "Proposals"}
-					</button>
-				))}
-			</div>
-			{error && (
-				<div className="banner-error" role="alert">
-					{error}
-				</div>
-			)}
-			{notice && (
-				<p className="success-notice" role="status">
-					{notice}
-				</p>
-			)}
-			{spaces?.persistence === "memory" && (
-				<p className="card-note">
-					Notes are temporary until MongoDB is connected. They are lost when the
-					API restarts.
-				</p>
+						{(["notes", "proposals"] as const).map((tab) => (
+							<button
+								key={tab}
+								type="button"
+								role="tab"
+								id={`synapse-tab-${tab}`}
+								aria-controls="synapse-panel"
+								aria-selected={route.tab === tab}
+								tabIndex={route.tab === tab ? 0 : -1}
+								onClick={() => showTab(tab)}
+							>
+								{tab === "notes" ? "Notes" : "Proposals"}
+							</button>
+						))}
+					</div>
+					{error && (
+						<div className="banner-error" role="alert">
+							{error}
+						</div>
+					)}
+					{notice && (
+						<p className="success-notice" role="status">
+							{notice}
+						</p>
+					)}
+					{spaces?.persistence === "memory" && (
+						<p className="card-note">
+							Notes are temporary until MongoDB is connected. They are lost when
+							the API restarts.
+						</p>
+					)}
+				</>
 			)}
 			<div
 				role="tabpanel"
 				id="synapse-panel"
-				aria-labelledby={`synapse-tab-${route.tab}`}
+				// The tabs are hidden while the graph is expanded.
+				aria-labelledby={expanded ? undefined : `synapse-tab-${route.tab}`}
+				aria-label={expanded ? "Notes" : undefined}
 			>
 				{route.tab === "proposals" ? (
 					<SynapseProposals
@@ -806,7 +818,7 @@ export function SynapseView({
 							/>
 						)}
 						<div className="synapse-layout">
-							<div className="synapse-side">
+							<div className="synapse-side" hidden={expanded}>
 								<div className="form-field synapse-space-field">
 									<label htmlFor="synapse-space">Space</label>
 									<select
@@ -883,13 +895,23 @@ export function SynapseView({
 									<SynapseGraph
 										key={route.space}
 										space={route.space}
+										spaceName={
+											spaceOptions.find((space) => space.id === route.space)
+												?.name ?? route.space
+										}
+										expanded={expanded}
+										onExpandedChange={setGraphExpanded}
 										version={version}
 										canEdit={canEdit}
 										current={
 											lastNote?.space === route.space ? lastNote.title : null
 										}
 										onOpen={openNote}
-										onNewNote={startNote}
+										// The New note form is on the page the expanded graph covers.
+										onNewNote={(title) => {
+											setGraphExpanded(false);
+											startNote(title);
+										}}
 									/>
 								)}
 							</section>
