@@ -40,12 +40,12 @@ export const DEFAULT_TIMING: WebhookTiming = {
 /** Keys kept to recognize an event that is reported twice. */
 const RECENT_KEYS = 200;
 /**
- * How far below a channel's highest reported message an event may be and
- * still count as new. Posts that land together can be reported out of order,
- * but never this far apart; anything older is a retried post being settled
- * again, however long ago it was first reported.
+ * Messages remembered per channel, so a retried post is recognized however
+ * much happens elsewhere. A message older than every one remembered is a
+ * retry too: posts that land together are reported a few apart at most,
+ * never this many.
  */
-const REPLAY_SLACK = 100;
+const CHANNEL_WINDOW = 50;
 
 /** The dashboard group an event belongs to. */
 export function eventGroup(
@@ -95,10 +95,19 @@ export function enqueued(
 		return null;
 	let channelSeqs = webhook.channelSeqs ?? {};
 	if ("seq" in event) {
-		const highest = channelSeqs[event.channelId] ?? 0;
-		if (event.seq <= highest - REPLAY_SLACK) return null;
-		if (event.seq > highest)
-			channelSeqs = { ...channelSeqs, [event.channelId]: event.seq };
+		// Ascending, so the first is the oldest remembered.
+		const seen = channelSeqs[event.channelId] ?? [];
+		if (
+			seen.includes(event.seq) ||
+			(seen.length >= CHANNEL_WINDOW && event.seq < seen[0])
+		)
+			return null;
+		channelSeqs = {
+			...channelSeqs,
+			[event.channelId]: [...seen, event.seq]
+				.sort((a, b) => a - b)
+				.slice(-CHANNEL_WINDOW),
+		};
 	}
 	let queue = webhook.queue;
 	let omitted = webhook.omitted;

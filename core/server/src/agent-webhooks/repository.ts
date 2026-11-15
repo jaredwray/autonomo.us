@@ -66,10 +66,10 @@ export type StoredAgentWebhook = {
 	/** Keys of recent events, so a retried post or decision is not sent twice. */
 	recentKeys: string[];
 	/**
-	 * The highest message `seq` reported from each channel, so a post retried
-	 * long after its key left `recentKeys` is still recognized.
+	 * The latest message `seq`s reported from each channel, ascending, so a
+	 * post retried long after its key left `recentKeys` is still recognized.
 	 */
-	channelSeqs: Record<string, number>;
+	channelSeqs: Record<string, number[]>;
 	version: number;
 };
 

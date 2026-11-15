@@ -95,27 +95,61 @@ describe("webhook state", () => {
 		).toBeNull();
 	});
 
-	it("recognizes a retried post long after its key was forgotten", () => {
+	it("recognizes a retried post however much happened since", () => {
 		const wide = { ...timing, eventsPerDelivery: 1000 };
-		let webhook = enqueued(stored(), message(1), "channel:c1:1", NOW, wide);
+		const add = (
+			webhook: StoredAgentWebhook,
+			event: AgentWakeEvent,
+			key: string,
+		) => enqueued(webhook, event, key, NOW, wide);
+		const inChannel = (channelId: string, seq: number) =>
+			({
+				...message(seq),
+				channelId,
+				messageId: `${channelId}-${seq}`,
+			}) as AgentWakeEvent;
+		let webhook = add(stored(), inChannel("quiet", 7), "channel:quiet:7");
 		if (!webhook) throw new Error("not enqueued");
-		// 250 later messages push the first one's key out of the recent keys.
-		for (let seq = 2; seq <= 251; seq++)
+		// 250 events elsewhere, in a busy channel and as decisions, push the
+		// quiet channel's key out of the recent keys.
+		for (let seq = 1; seq <= 200; seq++)
 			webhook =
-				enqueued(webhook, message(seq), `channel:c1:${seq}`, NOW, wide) ??
-				webhook;
-		expect(webhook.recentKeys).not.toContain("channel:c1:1");
-		expect(webhook.channelSeqs).toEqual({ c1: 251 });
-		expect(enqueued(webhook, message(1), "channel:c1:1", NOW, wide)).toBeNull();
-		// Posts that land together may be reported a little out of order.
-		const late = { ...message(240), messageId: "m240b" };
+				add(webhook, inChannel("busy", seq), `channel:busy:${seq}`) ?? webhook;
+		for (let n = 1; n <= 50; n++)
+			webhook =
+				add(
+					webhook,
+					{
+						type: "proposal.decided",
+						at: iso(NOW),
+						proposalId: `p${n}`,
+						action: "update",
+						title: "Note",
+						status: "approved",
+						decidedBy: "Jared",
+					},
+					`proposal:p${n}`,
+				) ?? webhook;
+		expect(webhook.recentKeys).not.toContain("channel:quiet:7");
+		expect(webhook.channelSeqs.quiet).toEqual([7]);
+		expect(webhook.channelSeqs.busy).toHaveLength(50);
+		// The quiet channel's post, retried, is still known.
+		expect(add(webhook, inChannel("quiet", 7), "channel:quiet:7")).toBeNull();
+		// So is a busy channel's post older than every one it remembers.
+		expect(add(webhook, inChannel("busy", 3), "channel:busy:3")).toBeNull();
+		// A post reported late, behind newer ones, is still new.
+		const quiet = add(webhook, inChannel("quiet", 150), "channel:quiet:150");
 		expect(
-			enqueued(
+			add(quiet ?? webhook, inChannel("quiet", 30), "channel:quiet:30"),
+		).not.toBeNull();
+		expect(
+			add(webhook, inChannel("busy", 190), "channel:busy:190b"),
+		).toBeNull();
+		expect(
+			add(
 				{ ...webhook, recentKeys: [] },
-				late,
-				"channel:c1:240",
-				NOW,
-				wide,
+				inChannel("busy", 201),
+				"channel:busy:201",
 			),
 		).not.toBeNull();
 	});
