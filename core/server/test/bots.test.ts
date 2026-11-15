@@ -251,6 +251,23 @@ describe("bots the gateway runs", () => {
 			callerName: "Helper",
 			callerKind: "agent",
 		});
+		// The dashboard's analytics name the bot, not "Unattributed".
+		const now = Date.now();
+		const analytics = await ok<{
+			byCaller: Array<{ id: string; name: string; kind: string }>;
+			unattributedRequests: number;
+		}>(
+			"GET",
+			`/v1/telemetry/analytics?from=${new Date(now - 3_600_000).toISOString()}&to=${new Date(now + 60_000).toISOString()}`,
+		);
+		expect(analytics.byCaller).toContainEqual(
+			expect.objectContaining({
+				id: `agent:${helper.id}`,
+				name: "Helper",
+				kind: "agent",
+			}),
+		);
+		expect(analytics.unattributedRequests).toBe(0);
 
 		// Its own earlier reply comes back as an assistant turn.
 		const again = await post(

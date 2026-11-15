@@ -108,6 +108,56 @@ function contract(name: string, open: () => SynapseRepository) {
 			}
 		});
 
+		it("lists a shared space's latest decisions, most recently decided first", async () => {
+			const repo = open();
+			try {
+				const space: SynapseSpaceId = `shared-${randomUUID()}`;
+				const actor = { kind: "agent" as const, id: randomUUID(), name: "A" };
+				const proposal = (
+					title: string,
+					status: SynapseProposal["status"],
+					decidedAt?: string,
+					target: SynapseSpaceId = space,
+				): SynapseProposal => ({
+					id: randomUUID(),
+					space: target,
+					action: "create",
+					title,
+					body: "b",
+					reason: "r",
+					status,
+					author: actor,
+					createdAt: "2026-11-08T00:00:00.000Z",
+					baseRevision: null,
+					...(decidedAt
+						? {
+								decidedAt,
+								decidedBy: { kind: "user" as const, id: "u", name: "U" },
+							}
+						: {}),
+				});
+				for (const item of [
+					proposal("Waiting", "pending"),
+					proposal("Older", "approved", "2026-11-09T00:00:00.000Z"),
+					proposal("Newer", "rejected", "2026-11-10T00:00:00.000Z"),
+					proposal("Newest", "approved", "2026-11-11T00:00:00.000Z"),
+					proposal(
+						"Elsewhere",
+						"approved",
+						"2026-11-12T00:00:00.000Z",
+						"shared",
+					),
+				])
+					await repo.insertProposal(item);
+				expect(
+					(await repo.recentDecisions(space, 2)).map((item) => item.title),
+				).toEqual(["Newest", "Newer"]);
+				expect(await repo.recentDecisions(space, 10)).toHaveLength(3);
+			} finally {
+				await repo.close();
+			}
+		});
+
 		it("claims titles uniquely per space and compares revisions on replace and delete", async () => {
 			const repo = open();
 			try {

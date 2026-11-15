@@ -44,6 +44,12 @@ export class BotWebRequestStore {
 				botId: 1,
 				requestedAt: -1,
 			}),
+			// The overview: every bot's waiting requests in a workspace.
+			this.collection().createIndex({
+				workspaceId: 1,
+				status: 1,
+				requestedAt: 1,
+			}),
 		]);
 		this.indexed = true;
 	}
@@ -163,6 +169,30 @@ export class BotWebRequestStore {
 				.limit(SHOWN * 2)
 				.toArray();
 			return documents.map(toRequest).sort(order).slice(0, SHOWN);
+		} catch (error) {
+			this.unavailable(error);
+		}
+	}
+
+	/** Every waiting request in a workspace, oldest first, for the overview. */
+	async pending(workspaceId: string): Promise<BotWebRequest[]> {
+		if (!this.mongo)
+			return [...this.memory.values()]
+				.filter(
+					(request) =>
+						request.workspaceId === workspaceId && request.status === "pending",
+				)
+				.sort((a, b) => a.requestedAt.localeCompare(b.requestedAt))
+				.map((request) => ({ ...request }));
+		try {
+			await this.ensureIndexes().catch(() => {});
+			const documents = await this.collection()
+				.find({ workspaceId: { $eq: workspaceId }, status: { $eq: "pending" } })
+				.sort({ requestedAt: 1 })
+				// Each bot holds at most this many, and a workspace at most 50 bots.
+				.limit(BOT_LIMITS.maxPendingWebRequests * BOT_LIMITS.bots)
+				.toArray();
+			return documents.map(toRequest);
 		} catch (error) {
 			this.unavailable(error);
 		}

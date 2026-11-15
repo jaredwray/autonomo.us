@@ -61,6 +61,10 @@ export type {
 	TelemetryCaller,
 	UsageAnalytics,
 	UsageMetrics,
+	WebAnalytics,
+	WebBreakdown,
+	WebConnectionUsage,
+	WebUsageMetrics,
 } from "./analytics.js";
 export {
 	API_TOKEN_PERMISSIONS,
@@ -127,6 +131,19 @@ export {
 	splitChannelMentions,
 	type UpdateChannelRequest,
 } from "./channels.js";
+export {
+	OVERVIEW_BUDGET_WARNING,
+	OVERVIEW_EXPIRING_DAYS,
+	OVERVIEW_FAILED_RUNS,
+	OVERVIEW_RECENT_NOTES,
+	type OverviewAgent,
+	type OverviewFailedRun,
+	type OverviewNote,
+	type OverviewProposal,
+	type OverviewQuery,
+	type OverviewSection,
+	type WorkspaceOverview,
+} from "./overview.js";
 export {
 	type AppendSynapseNoteRequest,
 	type CreateSynapseNoteRequest,

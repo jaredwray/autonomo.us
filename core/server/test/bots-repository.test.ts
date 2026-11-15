@@ -200,6 +200,84 @@ describe.each(implementations)("bot repository (%s)", (_name, create) => {
 		).toBeNull();
 	});
 
+	it("counts a workspace's runs by status and lists its latest failures", async () => {
+		const workspace = randomUUID();
+		const helper = bot(workspace, "Helper");
+		const other = bot(workspace, "Other");
+		const elsewhere = bot(randomUUID(), "Elsewhere");
+		for (const item of [
+			run(helper, 1, {
+				status: "succeeded",
+				createdAt: T0,
+				usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+			}),
+			run(helper, 2, { status: "failed", createdAt: T1, detail: "first" }),
+			run(other, 3, { status: "failed", createdAt: T2, detail: "second" }),
+			run(other, 4, { status: "skipped", createdAt: T2 }),
+			run(helper, 5, {
+				status: "running",
+				createdAt: T3,
+				channelId: "channel-2",
+				leaseId: "live",
+				leaseUntil: "2026-11-13T11:00:00.000Z",
+			}),
+			run(elsewhere, 6, { status: "failed", createdAt: T2 }),
+		])
+			await repository.insertRun(item);
+
+		const counts = async (from: string, to: string) =>
+			(await repository.countRunsByStatus(workspace, from, to))
+				.map((row) => [
+					row.botId === helper.id ? "helper" : "other",
+					row.status,
+					row.count,
+				])
+				.sort((a, b) => String(a).localeCompare(String(b)));
+		expect(await counts(T0, T3)).toEqual([
+			["helper", "failed", 1],
+			["helper", "succeeded", 1],
+			["other", "failed", 1],
+			["other", "skipped", 1],
+		]);
+		// The window's end is exclusive and its start inclusive.
+		expect(await counts(T1, T2)).toEqual([["helper", "failed", 1]]);
+		expect(
+			(
+				await repository.recentRuns(workspace, "failed", 5, {
+					from: T0,
+					to: T3,
+				})
+			).map((item) => item.detail),
+		).toEqual(["second", "first"]);
+		expect(
+			await repository.recentRuns(workspace, "failed", 1, { from: T0, to: T3 }),
+		).toHaveLength(1);
+		// Failures outside the window stay out of it, at either end.
+		expect(
+			await repository.recentRuns(workspace, "failed", 5, { from: T0, to: T1 }),
+		).toEqual([]);
+		expect(
+			(
+				await repository.recentRuns(workspace, "failed", 5, {
+					from: T2,
+					to: T3,
+				})
+			).map((item) => item.detail),
+		).toEqual(["second"]);
+		// Every bot's usage in one read: replies since the hour (skipped runs
+		// do not count) and tokens since the day began.
+		const usage = await repository.usageSince(workspace, T1, T0);
+		expect(usage.get(helper.id)).toEqual({ replies: 2, tokens: 15 });
+		expect(usage.get(other.id)).toEqual({ replies: 1, tokens: 0 });
+		expect(usage.has(elsewhere.id)).toBe(false);
+		// Null looks in every channel of the workspace.
+		expect(
+			(await repository.activeRuns(workspace, null, T3, T3)).map(
+				(item) => item.triggerSeq,
+			),
+		).toEqual([5]);
+	});
+
 	it("finds stale and active runs and adds up what a bot used", async () => {
 		const owner = bot(randomUUID(), "Helper");
 		const waiting = run(owner, 1);

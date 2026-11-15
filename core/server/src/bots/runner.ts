@@ -379,6 +379,8 @@ export class BotRunner {
 			workspace,
 			body: {
 				model: bot.model,
+				// Its calls belong to the bot, as an agent's do (models/mcp.ts).
+				agentId: bot.id,
 				maxTokens: bot.limits.maxOutputTokens,
 				messages: this.prompt(bot, channel, workspace.name, members, context),
 			},

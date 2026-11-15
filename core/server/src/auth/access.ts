@@ -169,6 +169,9 @@ export const ROUTE_RULES = new Map<string, RouteRule>([
 	["GET /v1/:workspace/telemetry/summary", workspace("telemetry:read")],
 	["GET /v1/:workspace/telemetry/events", workspace("telemetry:read")],
 	["GET /v1/:workspace/telemetry/analytics", workspace("telemetry:read")],
+	// The dashboard's home page: everything a member can see, in one call.
+	// Dashboard only; no token holds workspace:read.
+	["GET /v1/:workspace/overview", workspace("workspace:read")],
 	// API tokens reach the gateway's own REST API: org owners and admins only.
 	...tokenRoutes("/v1/:workspace/api-tokens", "tokens:manage"),
 	// Agents, however they are made, belong to their workspace's admins.

@@ -8,6 +8,8 @@ import {
 	type BotDetails,
 	type BotLimits,
 	type BotList,
+	type BotRun,
+	type BotRunStatus,
 	type BotSummary,
 	type CreateBotRequest,
 	DEFAULT_BOT_LIMITS,
@@ -329,6 +331,66 @@ export class BotService {
 		await this.find(workspaceId, id);
 		if (!(await this.repository.deleteBot(workspaceId, id)))
 			throw new BotError("Bot not found.", 404);
+	}
+
+	/**
+	 * The workspace's bots with their usage, which are replying now, how
+	 * replies started in [from, to) ended (in all and by bot), and the
+	 * window's latest failures. A fixed number of reads, however many bots.
+	 */
+	async overview(
+		workspaceId: string,
+		window: { from: string; to: string },
+		failures: number,
+	): Promise<{
+		bots: BotSummary[];
+		replying: Set<string>;
+		runs: Record<BotRunStatus, number>;
+		byBot: Map<string, Partial<Record<BotRunStatus, number>>>;
+		failedRuns: BotRun[];
+	}> {
+		const now = this.now();
+		const [bots, usage, active, counts, failedRuns] = await Promise.all([
+			this.repository.listBots(workspaceId),
+			this.repository.usageSince(
+				workspaceId,
+				new Date(now - HOUR_MS).toISOString(),
+				startOfDay(now),
+			),
+			this.repository.activeRuns(
+				workspaceId,
+				null,
+				this.at(),
+				new Date(now - PENDING_SHOWN_MS).toISOString(),
+			),
+			this.repository.countRunsByStatus(workspaceId, window.from, window.to),
+			this.repository.recentRuns(workspaceId, "failed", failures, window),
+		]);
+		const runs: Record<BotRunStatus, number> = {
+			pending: 0,
+			running: 0,
+			succeeded: 0,
+			failed: 0,
+			skipped: 0,
+		};
+		const byBot = new Map<string, Partial<Record<BotRunStatus, number>>>();
+		for (const row of counts) {
+			runs[row.status] += row.count;
+			const bot = byBot.get(row.botId) ?? {};
+			bot[row.status] = (bot[row.status] ?? 0) + row.count;
+			byBot.set(row.botId, bot);
+		}
+		return {
+			bots: bots.map((bot) => ({
+				...bot,
+				repliesLastHour: usage.get(bot.id)?.replies ?? 0,
+				tokensToday: usage.get(bot.id)?.tokens ?? 0,
+			})),
+			replying: new Set(active.map((run) => run.botId)),
+			runs,
+			byBot,
+			failedRuns,
+		};
 	}
 
 	/** Bots working on a reply in a channel, for "is replying…". */

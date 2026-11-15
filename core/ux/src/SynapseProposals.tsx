@@ -11,6 +11,7 @@ import {
 	fetchSynapseNote,
 	fetchSynapseProposals,
 } from "./api.js";
+import { attentionChanged } from "./overview-state.js";
 import { shortDate } from "./SynapseNote.js";
 import { noteHash } from "./synapse-route.js";
 
@@ -111,6 +112,7 @@ function ProposalCard({
 				decision,
 				reason: decision === "reject" ? reason.trim() : undefined,
 			});
+			attentionChanged();
 			onDecided(
 				decision === "approve"
 					? `Approved: ${ACTION_LABEL[proposal.action].toLowerCase()} “${proposal.title}”.`
@@ -390,6 +392,7 @@ export function SynapseProposals({
 		setFailures(failed);
 		if (approved.length) {
 			setNotice(`Approved ${plural(approved.length)}.`);
+			attentionChanged();
 			onDecided();
 		}
 		void refresh();

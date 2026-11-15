@@ -57,9 +57,64 @@ export type UsageAnalytics = {
 	byCaller: AnalyticsBreakdown[];
 	byOperation: AnalyticsBreakdown[];
 	series: Array<UsageMetrics & { timestamp: string }>;
+	/** Web fetches in the same window; model and connection filters do not apply. */
+	web: WebAnalytics;
 	options: {
 		models: Array<{ id: string; provider: string }>;
 		providers: string[];
 		callers: TelemetryCaller[];
 	};
+};
+
+/**
+ * Web fetches (`web_fetch`), counted apart from model calls: a fetch is one
+ * page an agent, person, or token asked for, however many steps it took.
+ */
+export type WebUsageMetrics = {
+	/** Fetches asked for, cached answers included. */
+	fetches: number;
+	/** Fetches that returned a page. */
+	succeeded: number;
+	/** Fetches that sent at least one request through a proxy. */
+	proxied: number;
+	/** Fetches answered from the gateway's cache, at no cost. */
+	cached: number;
+	/** What the proxies charged, as reported or estimated. */
+	costUsd: number;
+	/** Mean time of fetches that returned a page. */
+	avgLatencyMs: number;
+};
+
+export type WebBreakdown = WebUsageMetrics & {
+	id: string;
+	name: string;
+	kind?: TelemetryCaller["kind"];
+	lastSeen: string;
+};
+
+/** Steps through one proxy connection, or `direct` for plain requests. */
+export type WebConnectionUsage = {
+	id: string;
+	/** Steps tried through it; one fetch can try several connections. */
+	attempts: number;
+	/** Steps that returned the page. */
+	succeeded: number;
+	costUsd: number;
+	lastSeen: string;
+};
+
+export type WebAnalytics = {
+	totals: WebUsageMetrics;
+	/** Only the caller filter applies: web fetches have no model or connection. */
+	byCaller: WebBreakdown[];
+	byConnection: WebConnectionUsage[];
+	/** How fetches ended: `ok`, or the last step's outcome, such as `blocked`. */
+	byOutcome: Array<{ id: string; fetches: number }>;
+	/** The sites fetched most, at most ten. */
+	byHost: WebBreakdown[];
+	/**
+	 * Fetches in the window recorded before the gateway kept their outcome
+	 * and cost. They are in none of the numbers above.
+	 */
+	legacyFetches: number;
 };

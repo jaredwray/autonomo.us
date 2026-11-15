@@ -1410,6 +1410,43 @@ describe("global inheritance", () => {
 	const film = sharedSpaceId({ id: "film", isDefault: false });
 	const games = sharedSpaceId({ id: "games", isDefault: false });
 
+	it("lists recent notes past the global ones a workspace overrides", async () => {
+		const { service, tick } = synapse();
+		// Older global notes the workspace still sees.
+		for (const title of ["Glossary", "People"]) {
+			await service.createNote("global", { title, body: "Shared." }, user);
+			tick();
+		}
+		// The newest global notes, each overridden by the workspace first.
+		for (const title of ["One", "Two", "Three"]) {
+			await service.createNote(film, { title, body: "Ours." }, user);
+			tick();
+		}
+		for (const title of ["One", "Two", "Three"]) {
+			await service.createNote("global", { title, body: "Theirs." }, user);
+			tick();
+		}
+		const recent = await service.recentNotes(film, 3);
+		// The workspace's own three, newest first, are the latest it shows.
+		expect(recent.map((note) => [note.title, note.global])).toEqual([
+			["Three", false],
+			["Two", false],
+			["One", false],
+		]);
+		// With room for more, the visible global notes behind the overrides show.
+		const more = await service.recentNotes(film, 5);
+		expect(more.map((note) => [note.title, note.global])).toEqual([
+			["Three", false],
+			["Two", false],
+			["One", false],
+			["People", true],
+			["Glossary", true],
+		]);
+		expect(more.some((note) => note.global && note.title === "One")).toBe(
+			false,
+		);
+	});
+
 	it("shows global notes in every workspace's shared space until a workspace overrides them", async () => {
 		const { service, tick } = synapse();
 		expect(film).toBe("shared-film");

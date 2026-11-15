@@ -119,6 +119,9 @@ export const agentSpaceId = (agentTokenId: string): SynapseSpaceId =>
 	`agent-${agentTokenId}`;
 
 /** A workspace's shared space in storage. The default workspace keeps the original key. */
+/** Pages of Global notes `recentNotes` reads past the ones a workspace overrides. */
+const RECENT_NOTES_PAGES = 20;
+
 export const sharedSpaceId = (workspace: {
 	id: string;
 	isDefault: boolean;
@@ -1451,6 +1454,77 @@ export class SynapseService {
 
 	async listProposals(filter: ProposalFilter): Promise<SynapseProposal[]> {
 		return (await this.repository.listProposals(filter)).map(publicProposal);
+	}
+	countProposals(filter: ProposalFilter): Promise<number> {
+		return this.repository.countProposals(filter);
+	}
+	/**
+	 * The notes a workspace's shared space shows that changed last: its own,
+	 * and Global's it does not override. Unlike `query`, it neither counts
+	 * nor scans the space, so the dashboard can poll it.
+	 */
+	async recentNotes(
+		shared: SynapseSpaceId,
+		limit: number,
+	): Promise<Array<{ title: string; updatedAt: string; global: boolean }>> {
+		const latest = {
+			sort: { by: "updatedAt" as const, direction: "desc" as const },
+			limit,
+		};
+		const own = await this.repository.findNotes({ space: shared }, latest);
+		// Global notes the workspace overrides are not visible in it, so page
+		// through Global until enough visible ones are found, the pages reach
+		// notes older than the workspace's own oldest shown, or Global ends.
+		const global: StoredNote[] = [];
+		if (shared !== SYNAPSE_GLOBAL_SPACE)
+			for (let page = 0; page < RECENT_NOTES_PAGES; page++) {
+				const candidates = await this.repository.findNotes(
+					{ space: SYNAPSE_GLOBAL_SPACE },
+					{ ...latest, offset: page * limit },
+				);
+				if (!candidates.length) break;
+				const overridden = new Set(
+					(
+						await this.repository.findNotes(
+							{
+								space: shared,
+								titleKeys: candidates.map((note) => note.titleKey),
+							},
+							{ ...latest, limit: candidates.length },
+						)
+					).map((note) => note.titleKey),
+				);
+				global.push(
+					...candidates.filter((note) => !overridden.has(note.titleKey)),
+				);
+				const oldestShown =
+					own.length === limit ? own[own.length - 1].updatedAt : "";
+				if (
+					global.length >= limit ||
+					candidates.length < limit ||
+					(candidates.at(-1)?.updatedAt ?? "") < oldestShown
+				)
+					break;
+			}
+		return [
+			...own.map((note) => ({ note, global: false })),
+			...global.map((note) => ({ note, global: true })),
+		]
+			.sort((a, b) => b.note.updatedAt.localeCompare(a.note.updatedAt))
+			.slice(0, limit)
+			.map(({ note, global }) => ({
+				title: note.title,
+				updatedAt: note.updatedAt,
+				global,
+			}));
+	}
+	async recentDecisions(
+		space: SynapseSpaceId,
+		limit: number,
+	): Promise<SynapseProposal[]> {
+		return (await this.repository.recentDecisions(space, limit)).map(
+			publicProposal,
+		);
 	}
 
 	/** Approval applies the change as the reviewer; see docs/SYNAPSE.md §7. */

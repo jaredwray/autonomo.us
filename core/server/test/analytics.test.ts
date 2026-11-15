@@ -72,6 +72,199 @@ function seed(telemetry: TelemetryService, setTime: (value: string) => void) {
 	}); // exclusive end
 }
 
+/**
+ * An agent's calls as the gateway records them (a bot it runs and an MCP
+ * agent), after older history that only carried the agent id.
+ */
+function seedAgents(
+	telemetry: TelemetryService,
+	setTime: (value: string) => void,
+) {
+	setTime("2026-11-01T04:00:00.000Z");
+	telemetry.recordChat({
+		model: "work/paid",
+		provider: "work",
+		agentId: "bot-1",
+		usage,
+		latencyMs: 100,
+	});
+	setTime("2026-11-01T05:00:00.000Z");
+	telemetry.recordChat({
+		model: "work/paid",
+		provider: "work",
+		caller: { id: "agent:bot-1", name: "Helper", kind: "agent" },
+		usage,
+		latencyMs: 100,
+	});
+	telemetry.recordChat({
+		model: "work/paid",
+		provider: "work",
+		agentId: "mcp-1",
+		caller: { id: "agent:mcp-1", name: "Claude Desktop", kind: "agent" },
+		usage,
+		latencyMs: 100,
+	});
+	// A recorded agent caller must name an agent; anything else is not trusted.
+	telemetry.recordChat({
+		model: "work/paid",
+		provider: "work",
+		caller: { id: "api-token:9", name: "Impostor", kind: "agent" },
+		usage,
+		latencyMs: 100,
+	});
+}
+
+/** Four fetches: plain, through a proxy, blocked, and from the cache. */
+function seedWeb(
+	telemetry: TelemetryService,
+	setTime: (value: string) => void,
+) {
+	const helper = { id: "agent:bot-1", name: "Helper", kind: "agent" as const };
+	const founder = { id: "user:1", name: "Founder", kind: "user" as const };
+	setTime("2026-11-01T06:00:00.000Z");
+	telemetry.recordWebFetch({
+		workspaceId: "default",
+		caller: helper,
+		host: "example.com",
+		ok: true,
+		via: "direct",
+		cached: false,
+		costUsd: 0,
+		latencyMs: 200,
+		attempts: [
+			{
+				step: "direct",
+				outcome: "ok",
+				status: 200,
+				latencyMs: 200,
+				costUsd: 0,
+			},
+		],
+	});
+	telemetry.recordWebFetch({
+		workspaceId: "default",
+		caller: helper,
+		host: "shop.test",
+		ok: true,
+		via: "zenrows:auto",
+		cached: false,
+		costUsd: 0.25,
+		latencyMs: 1000,
+		attempts: [
+			{
+				step: "direct",
+				outcome: "blocked",
+				status: 403,
+				latencyMs: 100,
+				costUsd: 0,
+			},
+			{
+				step: "zenrows:auto",
+				outcome: "ok",
+				status: 200,
+				latencyMs: 900,
+				costUsd: 0.25,
+			},
+		],
+	});
+	setTime("2026-11-01T07:00:00.000Z");
+	telemetry.recordWebFetch({
+		workspaceId: "default",
+		caller: founder,
+		host: "shop.test",
+		ok: false,
+		via: "",
+		cached: false,
+		costUsd: 0.5,
+		latencyMs: 3000,
+		attempts: [
+			{
+				step: "direct",
+				outcome: "blocked",
+				status: 403,
+				latencyMs: 100,
+				costUsd: 0,
+			},
+			{
+				step: "zenrows:premium",
+				outcome: "blocked",
+				status: 403,
+				latencyMs: 2900,
+				costUsd: 0.5,
+			},
+		],
+	});
+	telemetry.recordWebFetch({
+		workspaceId: "default",
+		caller: founder,
+		host: "example.com",
+		ok: true,
+		via: "direct",
+		cached: true,
+		costUsd: 0,
+		latencyMs: 0,
+		attempts: [],
+	});
+}
+
+/**
+ * A fetch blocked directly whose proxy was skipped for the budget, and one
+ * recorded before fetches kept their outcome and cost.
+ */
+function seedSkippedAndLegacy(
+	telemetry: TelemetryService,
+	setTime: (value: string) => void,
+) {
+	setTime("2026-11-01T08:00:00.000Z");
+	telemetry.recordWebFetch({
+		workspaceId: "default",
+		caller: { id: "user:1", name: "Founder", kind: "user" },
+		host: "shop.test",
+		ok: false,
+		via: "",
+		cached: false,
+		costUsd: 0,
+		latencyMs: 150,
+		attempts: [
+			{
+				step: "direct",
+				outcome: "blocked",
+				status: 403,
+				latencyMs: 150,
+				costUsd: 0,
+			},
+			{
+				step: "zenrows:auto",
+				outcome: "skipped",
+				status: null,
+				latencyMs: 0,
+				costUsd: 0,
+			},
+		],
+	});
+	const legacy = {
+		id: "legacy-web",
+		type: "gateway.web",
+		workspaceId: "default",
+		timestamp: "2026-11-01T09:00:00.000Z",
+		data: { operation: "web", callerId: "user:1", callerKind: "user" },
+	};
+	telemetry.record(legacy);
+	// Another caller's older fetch, which a filter to user:1 must not count.
+	telemetry.record({
+		...legacy,
+		id: "legacy-web-agent",
+		agentId: "bot-1",
+		data: {
+			operation: "web",
+			callerId: "agent:bot-1",
+			callerName: "Helper",
+			callerKind: "agent",
+		},
+	});
+	return legacy;
+}
+
 describe("usage analytics", () => {
 	it.each([
 		{ name: "chat", operation: "chat" as const, stream: false },
@@ -191,6 +384,139 @@ describe("usage analytics", () => {
 		).toBe(0);
 		telemetry.setPricingResolver(() => ({ input: 99, output: 99 }));
 		expect((await telemetry.analytics(query)).totals.estimatedCostUsd).toBe(10); // historical snapshot
+	});
+
+	it("names agents by their recorded identity and merges older history by agent id", async () => {
+		let time = from;
+		const telemetry = new TelemetryService({ now: () => new Date(time) });
+		seedAgents(telemetry, (value) => {
+			time = value;
+		});
+		const result = await telemetry.analytics(query);
+		expect(
+			result.byCaller.map(({ id, name, kind, requests }) => ({
+				id,
+				name,
+				kind,
+				requests,
+			})),
+		).toEqual([
+			{ id: "agent:bot-1", name: "Helper", kind: "agent", requests: 2 },
+			{
+				id: "agent:mcp-1",
+				name: "Claude Desktop",
+				kind: "agent",
+				requests: 1,
+			},
+			{
+				id: "unattributed",
+				name: "Unattributed",
+				kind: "unattributed",
+				requests: 1,
+			},
+		]);
+		expect(result.activeCallers).toBe(2);
+		expect(result.unattributedRequests).toBe(1);
+		const filtered = await telemetry.analytics({
+			...query,
+			caller: "agent:bot-1",
+		});
+		expect(filtered.totals.requests).toBe(2);
+	});
+
+	it("reports web fetches apart from model calls", async () => {
+		let time = from;
+		const telemetry = new TelemetryService({ now: () => new Date(time) });
+		seedWeb(telemetry, (value) => {
+			time = value;
+		});
+		const result = await telemetry.analytics(query);
+		expect(result.totals.requests).toBe(0);
+		expect(result.byOperation).toEqual([]);
+		expect(result.web.totals).toEqual({
+			fetches: 4,
+			succeeded: 3,
+			proxied: 2,
+			cached: 1,
+			costUsd: 0.75,
+			avgLatencyMs: 400,
+		});
+		expect(result.web.byConnection).toEqual([
+			{
+				id: "direct",
+				attempts: 3,
+				succeeded: 1,
+				costUsd: 0,
+				lastSeen: "2026-11-01T07:00:00.000Z",
+			},
+			{
+				id: "zenrows",
+				attempts: 2,
+				succeeded: 1,
+				costUsd: 0.75,
+				lastSeen: "2026-11-01T07:00:00.000Z",
+			},
+		]);
+		expect(result.web.byOutcome).toEqual([
+			{ id: "ok", fetches: 3 },
+			{ id: "blocked", fetches: 1 },
+		]);
+		expect(result.web.byHost.map((row) => [row.id, row.fetches])).toEqual([
+			["shop.test", 2],
+			["example.com", 2],
+		]);
+		expect(
+			result.web.byCaller.map(({ id, name, fetches, costUsd }) => ({
+				id,
+				name,
+				fetches,
+				costUsd,
+			})),
+		).toEqual([
+			{ id: "user:1", name: "Founder", fetches: 2, costUsd: 0.5 },
+			{ id: "agent:bot-1", name: "Helper", fetches: 2, costUsd: 0.25 },
+		]);
+		expect(result.web.legacyFetches).toBe(0);
+		expect(result.options.callers.map((caller) => caller.id).sort()).toEqual([
+			"agent:bot-1",
+			"user:1",
+		]);
+		const founder = await telemetry.analytics({ ...query, caller: "user:1" });
+		expect(founder.web.totals).toMatchObject({ fetches: 2, costUsd: 0.5 });
+		// A tie on attempts puts the costlier connection first.
+		expect(founder.web.byConnection.map((row) => row.id)).toEqual([
+			"zenrows",
+			"direct",
+		]);
+		// Model filters leave web fetches alone; they have no model.
+		const model = await telemetry.analytics({ ...query, model: "work/paid" });
+		expect(model.web.totals.fetches).toBe(4);
+	});
+
+	it("counts no skipped step as a request, and leaves pre-upgrade fetches out", async () => {
+		let time = from;
+		const telemetry = new TelemetryService({ now: () => new Date(time) });
+		seedSkippedAndLegacy(telemetry, (value) => {
+			time = value;
+		});
+		const result = await telemetry.analytics(query);
+		// The skipped proxy made no request: the fetch ended blocked, unproxied.
+		expect(result.web.totals).toMatchObject({
+			fetches: 1,
+			succeeded: 0,
+			proxied: 0,
+		});
+		expect(result.web.byOutcome).toEqual([{ id: "blocked", fetches: 1 }]);
+		expect(
+			result.web.byConnection.map((row) => [row.id, row.attempts]),
+		).toEqual([["direct", 1]]);
+		// Older fetches are counted apart, not as free failures, and the
+		// caller filter applies to the count too.
+		expect(result.web.legacyFetches).toBe(2);
+		expect(
+			(await telemetry.analytics({ ...query, caller: "user:1" })).web
+				.legacyFetches,
+		).toBe(1);
 	});
 
 	it("reports bounded history eviction and falls back when durable storage fails", async () => {
@@ -422,5 +748,84 @@ describe.skipIf(!available)("durable analytics", () => {
 			pricedRequests: 3,
 			estimatedCostUsd: 10,
 		});
+	});
+
+	it("attributes agents the same way in MongoDB and memory", async () => {
+		let time = from;
+		const url = uniqueMongoUrl("agents");
+		const sink = new MongoTelemetrySink(url);
+		const durable = new TelemetryService({
+			sink,
+			now: () => new Date(time),
+			flushIntervalMs: 60_000,
+		});
+		const memory = new TelemetryService({ now: () => new Date(time) });
+		cleanups.push(async () => {
+			await durable.close();
+			const client = new MongoClient(url, { serverSelectionTimeoutMS: 1500 });
+			try {
+				await client.db().dropDatabase();
+			} finally {
+				await client.close();
+			}
+		});
+		seedAgents(durable, (value) => {
+			time = value;
+		});
+		for (const event of durable.recentEvents().reverse()) memory.record(event);
+		await durable.flush();
+		for (const filters of [{}, { caller: "agent:bot-1" }]) {
+			const result = await durable.analytics({ ...query, ...filters });
+			const expected = await memory.analytics({ ...query, ...filters });
+			expect(result.source).toBe("mongodb");
+			expect(result.byCaller).toEqual(expected.byCaller);
+			expect(result.totals).toEqual(expected.totals);
+		}
+		const result = await durable.analytics(query);
+		expect(result.byCaller.find((row) => row.id === "agent:bot-1")?.name).toBe(
+			"Helper",
+		);
+	});
+
+	it("reports web fetches the same way in MongoDB and memory", async () => {
+		let time = from;
+		const url = uniqueMongoUrl("web");
+		const sink = new MongoTelemetrySink(url);
+		const durable = new TelemetryService({
+			sink,
+			now: () => new Date(time),
+			flushIntervalMs: 60_000,
+		});
+		const memory = new TelemetryService({ now: () => new Date(time) });
+		cleanups.push(async () => {
+			await durable.close();
+			const client = new MongoClient(url, { serverSelectionTimeoutMS: 1500 });
+			try {
+				await client.db().dropDatabase();
+			} finally {
+				await client.close();
+			}
+		});
+		seedWeb(durable, (value) => {
+			time = value;
+		});
+		seedSkippedAndLegacy(durable, (value) => {
+			time = value;
+		});
+		for (const event of durable.recentEvents().reverse()) memory.record(event);
+		await durable.flush();
+		expect((await durable.analytics(query)).web.legacyFetches).toBe(2);
+		for (const filters of [
+			{},
+			{ caller: "user:1" },
+			{ caller: "agent:bot-1" },
+		]) {
+			const result = await durable.analytics({ ...query, ...filters });
+			const expected = await memory.analytics({ ...query, ...filters });
+			expect(result.source).toBe("mongodb");
+			expect(result.web).toEqual(expected.web);
+			expect(result.options.callers).toEqual(expected.options.callers);
+		}
+		expect((await durable.analytics(query)).web.totals.costUsd).toBe(0.75);
 	});
 });

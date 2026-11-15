@@ -15,6 +15,9 @@ import {
 	buildAnalytics,
 	eventFact,
 	GATEWAY_EVENT_TYPES,
+	noWebFacts,
+	WEB_EVENT_TYPE,
+	webEventFacts,
 } from "./analytics.js";
 import type { MongoTelemetrySink } from "./mongo.js";
 
@@ -222,6 +225,15 @@ export class TelemetryService {
 	 * carry tokens. Web events stay out of model analytics.
 	 */
 	recordWebFetch(fetch: WebFetchTelemetry): TelemetryEvent {
+		// How it ended and whether a proxy was used, decided once here so
+		// memory and MongoDB report the same thing. A skipped step made no
+		// request: a fetch blocked directly whose proxy was then skipped for
+		// the budget ended "blocked", and used no proxy.
+		const ran = fetch.attempts.filter(
+			(attempt) => attempt.outcome !== "skipped",
+		);
+		const outcome = fetch.ok ? "ok" : (ran.at(-1)?.outcome ?? "skipped");
+		const proxied = ran.some((attempt) => attempt.step !== "direct");
 		const event: TelemetryEvent = {
 			id: randomUUID(),
 			type: "gateway.web",
@@ -236,6 +248,8 @@ export class TelemetryService {
 				callerKind: fetch.caller.kind,
 				host: fetch.host,
 				ok: fetch.ok,
+				outcome,
+				proxied,
 				via: fetch.via,
 				cached: fetch.cached,
 				costUsd: fetch.costUsd,
@@ -251,7 +265,8 @@ export class TelemetryService {
 	/** Stores a raw telemetry event (ring buffer + sink queue). */
 	record(event: TelemetryEvent): void {
 		if (
-			GATEWAY_EVENT_TYPES.includes(event.type) &&
+			(GATEWAY_EVENT_TYPES.includes(event.type) ||
+				event.type === WEB_EVENT_TYPE) &&
 			Number.isFinite(Date.parse(event.timestamp))
 		) {
 			if (this.analyticsEvents.length < this.maxAnalyticsEvents)
@@ -362,35 +377,58 @@ export class TelemetryService {
 		const generatedAt = this.now().toISOString();
 		if (this.sink && (await this.drain()) && !this.durableIncomplete) {
 			try {
-				const facts = await this.sink.queryAnalytics(query, workspace);
-				return buildAnalytics(facts, query, {
-					generatedAt,
-					source: "mongodb",
-					coverageFrom: null,
-					partial: false,
-					durableUnavailable: false,
-				});
+				const [facts, web] = await Promise.all([
+					this.sink.queryAnalytics(query, workspace),
+					this.sink.queryWebAnalytics(query, workspace),
+				]);
+				return buildAnalytics(
+					facts,
+					query,
+					{
+						generatedAt,
+						source: "mongodb",
+						coverageFrom: null,
+						partial: false,
+						durableUnavailable: false,
+					},
+					web,
+				);
 			} catch {
 				/* Explicitly report the reduced memory coverage below. */
 			}
 		}
 		const from = Date.parse(query.from);
 		const to = Date.parse(query.to);
-		const facts = this.analyticsEvents
-			.filter(
-				(event) =>
-					Date.parse(event.timestamp) >= from &&
-					Date.parse(event.timestamp) < to &&
-					(!workspace || inWorkspace(event.workspaceId, workspace)),
-			)
-			.map((event) => eventFact(event, bucketMs(query)));
-		return buildAnalytics(facts, query, {
-			generatedAt,
-			source: "memory",
-			coverageFrom: this.coverageFrom,
-			partial: from < Date.parse(this.coverageFrom),
-			durableUnavailable: Boolean(this.sink),
-		});
+		const interval = bucketMs(query);
+		const events = this.analyticsEvents.filter(
+			(event) =>
+				Date.parse(event.timestamp) >= from &&
+				Date.parse(event.timestamp) < to &&
+				(!workspace || inWorkspace(event.workspaceId, workspace)),
+		);
+		const web = noWebFacts();
+		for (const event of events) {
+			if (event.type !== WEB_EVENT_TYPE) continue;
+			const facts = webEventFacts(event);
+			web.fetches.push(...facts.fetches);
+			web.hosts.push(...facts.hosts);
+			web.steps.push(...facts.steps);
+			web.legacy.push(...facts.legacy);
+		}
+		return buildAnalytics(
+			events
+				.filter((event) => GATEWAY_EVENT_TYPES.includes(event.type))
+				.map((event) => eventFact(event, interval)),
+			query,
+			{
+				generatedAt,
+				source: "memory",
+				coverageFrom: this.coverageFrom,
+				partial: from < Date.parse(this.coverageFrom),
+				durableUnavailable: Boolean(this.sink),
+			},
+			web,
+		);
 	}
 
 	private aggregate(partition: Partition, chat: ChatTelemetry): void {
