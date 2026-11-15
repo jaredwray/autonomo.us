@@ -497,9 +497,8 @@ export function SynapseGraph({
 				{(shown || expanded) && (
 					<div className="synapse-graph-header">
 						<h2>
-							Graph
-							{/* The space picker is hidden while expanded. */}
-							{expanded && ` · ${spaceName}`}
+							{/* Expanded, it stands for the page and names the space, whose picker is hidden. */}
+							{expanded ? `Synapse Graph - ${spaceName}` : "Graph"}
 						</h2>
 						{(drawn || expanded) && (
 							<div className="synapse-graph-controls">

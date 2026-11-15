@@ -1211,7 +1211,9 @@ it("expands the graph over the whole page beside the app navigation, until Esc o
 	expect(toggle.getAttribute("title")).toBe("Exit full screen");
 	expect(document.activeElement).toBe(toggle);
 	expect(notes()).toBeNull();
-	expect(screen.getByRole("heading", { name: "Graph · Shared" })).toBeDefined();
+	expect(
+		screen.getByRole("heading", { name: "Synapse Graph - Shared" }),
+	).toBeDefined();
 	expect(expandedParts()).toEqual(["dashboard synapse-view", "synapse-graph"]);
 	// The drawing is the same element; CSS alone sizes it.
 	expect(await graphCanvas()).toBe(canvas);
@@ -1288,7 +1290,9 @@ it("expands the graph over the whole page beside the app navigation, until Esc o
 	// Another space is drawn expanded too, under its own name.
 	await pickSpace("global");
 	await graphCanvas("Graph of 1 note and 0 links");
-	expect(screen.getByRole("heading", { name: "Graph · Global" })).toBeDefined();
+	expect(
+		screen.getByRole("heading", { name: "Synapse Graph - Global" }),
+	).toBeDefined();
 	expect(notes()).toBeNull();
 	// The Proposals tab, reached by its address, is not the graph's to cover.
 	window.location.hash = window.location.hash.replace(
@@ -1321,7 +1325,9 @@ it("keeps the way out of full screen when the expanded space has nothing to draw
 	expect(await screen.findByText(/Nothing to draw yet/)).toBeDefined();
 	expect(document.querySelector(".synapse-graph.is-expanded")).not.toBeNull();
 	expect(screen.queryByRole("tablist")).toBeNull();
-	expect(screen.getByRole("heading", { name: "Graph · Global" })).toBeDefined();
+	expect(
+		screen.getByRole("heading", { name: "Synapse Graph - Global" }),
+	).toBeDefined();
 	expect(screen.queryByRole("button", { name: "Zoom in" })).toBeNull();
 	fireEvent.click(screen.getByRole("button", { name: "Exit full screen" }));
 	expect(notes()).not.toBeNull();
