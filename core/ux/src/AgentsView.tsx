@@ -189,6 +189,8 @@ export function AgentsView({
 	 * An OAuth agent is made when its app's sign-in is approved, usually in
 	 * another tab. While the person waits, the list is read more often and
 	 * again when they come back, and the first new OAuth agent is opened.
+	 * The OAuth choice waits for the first list, so the agents there were
+	 * before the wait are always known.
 	 */
 	const before = useRef<Set<string> | null>(null);
 	useEffect(() => {
@@ -354,6 +356,7 @@ export function AgentsView({
 										<button
 											type="button"
 											className="agent-kind-choice"
+											disabled={choice.kind === "oauth" && !list}
 											onClick={() => setCreating(choice.kind)}
 										>
 											<strong>{choice.title}</strong>
