@@ -313,7 +313,11 @@ export type WebFacts = {
 	 * as free failures, and reported as a count instead, which the caller
 	 * filter applies to like the rest.
 	 */
-	legacy: Array<{ caller: TelemetryCaller; fetches: number }>;
+	legacy: Array<{
+		/** Unset when the count was already filtered to the query's caller. */
+		caller?: TelemetryCaller;
+		fetches: number;
+	}>;
 };
 export const noWebFacts = (): WebFacts => ({
 	fetches: [],

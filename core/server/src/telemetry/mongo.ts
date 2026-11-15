@@ -498,7 +498,7 @@ export class MongoTelemetrySink {
 			costUsd: number;
 			lastSeen: Date | number;
 		}>;
-		let legacy: Array<{ _id: CallerKey; fetches: number }>;
+		let legacy: number;
 		try {
 			await this.ensureSchema();
 			const collection = this.collection();
@@ -549,28 +549,19 @@ export class MongoTelemetrySink {
 						limit,
 					])
 					.toArray(),
-				collection
-					.aggregate<(typeof legacy)[number]>([
-						{
-							$match: {
-								...window,
-								$or: [{ outcome: { $exists: false } }, { outcome: "" }],
-							},
-						},
-						{ $group: { _id: callerKey(), fetches: { $sum: 1 } } },
-						limit,
-					])
-					.toArray(),
+				// A plain count, filtered in the query, so no number of callers
+				// can reach a grouping limit. Web fetches always record their caller.
+				collection.countDocuments({
+					...window,
+					$or: [{ outcome: { $exists: false } }, { outcome: "" }],
+					...(query.caller ? { callerId: query.caller } : {}),
+				}),
 			]);
 			this.healthy = true;
 		} catch (error) {
 			this.fail(error);
 		}
-		if (
-			fetches.length > 100_000 ||
-			steps.length > 100_000 ||
-			legacy.length > 100_000
-		)
+		if (fetches.length > 100_000 || steps.length > 100_000)
 			throw new Error("Analytics grouping limit exceeded");
 		const seen = (value: Date | number) =>
 			new Date(asMillis(value)).toISOString();
@@ -600,10 +591,7 @@ export class MongoTelemetrySink {
 				costUsd: row.costUsd,
 				lastSeen: seen(row.lastSeen),
 			})),
-			legacy: legacy.map((row) => ({
-				caller: caller(row._id),
-				fetches: row.fetches,
-			})),
+			legacy: legacy ? [{ fetches: legacy }] : [],
 		};
 	}
 
