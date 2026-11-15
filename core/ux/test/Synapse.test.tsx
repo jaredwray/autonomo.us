@@ -75,6 +75,22 @@ const expectHash = (path: string) =>
 const change = (label: string, value: string) =>
 	fireEvent.change(screen.getByLabelText(label), { target: { value } });
 const noteRegion = () => screen.getByRole("region", { name: "Note" });
+/**
+ * Picks a space once the list of spaces has it, as a person would. Before
+ * the list loads, the select offers only the current space, and picking an
+ * option it does not have yet would choose none.
+ */
+const pickSpace = async (id: string) => {
+	const select = screen.getByLabelText("Space") as HTMLSelectElement;
+	await waitFor(
+		() =>
+			expect(Array.from(select.options, (option) => option.value)).toContain(
+				id,
+			),
+		{ timeout: 3000 },
+	);
+	fireEvent.change(select, { target: { value: id } });
+};
 const graphRegion = () => screen.getByRole("region", { name: "Graph" });
 /** The graph's drawing; its name counts the notes and links it shows. */
 const graphCanvas = async (name: string | RegExp = /^Graph of/) =>
@@ -1087,7 +1103,7 @@ it("marks notes inherited from Global in the Shared graph and redraws per space"
 		),
 	).toBeDefined();
 	// In Global the note is simply a note.
-	change("Space", "global");
+	await pickSpace("global");
 	const global = within(await graphCanvas("Graph of 1 note and 0 links"));
 	expect(
 		global
@@ -1134,9 +1150,9 @@ it("says so when the graph is empty, capped, or cannot load, and settles at once
 	}
 	await createNote(running, "shared", { title: "Hub", body: "" });
 	// Any change to the space redraws the graph.
-	change("Space", "global");
+	await pickSpace("global");
 	await screen.findByText(/owners and admins change it/);
-	change("Space", "shared");
+	await pickSpace("shared");
 	const canvas = await graphCanvas("Graph of 1,000 notes and 999 links");
 	expect(
 		screen.getByText("Showing the 1,000 most-linked of 1,002 notes."),
@@ -1156,7 +1172,7 @@ it("says so when the graph is empty, capped, or cannot load, and settles at once
 
 	// A graph that cannot load says what went wrong and offers a retry.
 	await running.server.close();
-	change("Space", "global");
+	await pickSpace("global");
 	const alert = await within(graphRegion()).findByRole("alert");
 	expect(within(alert).getByRole("button", { name: "Retry" })).toBeDefined();
 }, 30_000);
