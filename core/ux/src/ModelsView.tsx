@@ -16,8 +16,15 @@ import {
 } from "./api.js";
 import { Icon } from "./Icons.js";
 import { ModelCombobox } from "./ModelCombobox.js";
+import { type ModelsTab, modelsHash, parseModelsTab } from "./models-route.js";
+import { PageTabs } from "./PageTabs.js";
+import { RoutingView } from "./RoutingView.js";
 
 const providerNames: Record<string, string> = PROVIDER_NAMES;
+const MODELS_TABS = [
+	{ id: "models", label: "Models" },
+	{ id: "routing", label: "Routing" },
+] as const;
 
 function AddModelForm(props: {
 	settings: ProviderSettings;
@@ -333,6 +340,19 @@ export function ModelsView({
 } = {}) {
 	// Workspace members read connections; admins add them and change keys.
 	const canEdit = workspace?.role !== "member";
+	const [tab, setTab] = useState<ModelsTab>(() =>
+		parseModelsTab(window.location.hash),
+	);
+	useEffect(() => {
+		const sync = () => setTab(parseModelsTab(window.location.hash));
+		window.addEventListener("hashchange", sync);
+		return () => window.removeEventListener("hashchange", sync);
+	}, []);
+	const showTab = useCallback((next: ModelsTab) => {
+		const hash = modelsHash(next);
+		if (window.location.hash !== hash) window.history.pushState(null, "", hash);
+		setTab(next);
+	}, []);
 	const [data, setData] = useState<ModelsData | null>(null);
 	const [settings, setSettings] = useState<ProviderSettings | null>(null);
 	const [catalog, setCatalog] = useState<ModelCatalog | null>(null);
@@ -387,35 +407,8 @@ export function ModelsView({
 			.includes(search.toLowerCase().trim()),
 	);
 
-	return (
-		<div className="dashboard models-page">
-			<header className="dashboard-header">
-				<div>
-					<p className="eyebrow">Gateway</p>
-					<h1>Models</h1>
-					<p className="page-description">
-						Manage the models available to your agents.
-					</p>
-				</div>
-				{canEdit ? (
-					<button
-						ref={addButton}
-						className="button primary"
-						type="button"
-						disabled={!settings || adding}
-						onClick={() => {
-							setAdding(true);
-							setNotice("");
-						}}
-					>
-						<Icon name="plus" /> Add model
-					</button>
-				) : (
-					<p className="card-note">
-						Ask a workspace admin to add models or change keys.
-					</p>
-				)}
-			</header>
+	const modelsPanel = (
+		<>
 			{notice ? (
 				<p className="success-notice" role="status">
 					{notice}
@@ -611,6 +604,57 @@ export function ModelsView({
 					</div>
 				)}
 			</section>
+		</>
+	);
+
+	return (
+		<div className="dashboard models-page">
+			<header className="dashboard-header">
+				<div>
+					<p className="eyebrow">Gateway</p>
+					<h1>Models</h1>
+					<p className="page-description">
+						Manage the models available to your agents, and route requests
+						between them.
+					</p>
+				</div>
+				{tab !== "models" ? null : canEdit ? (
+					<button
+						ref={addButton}
+						className="button primary"
+						type="button"
+						disabled={!settings || adding}
+						onClick={() => {
+							setAdding(true);
+							setNotice("");
+						}}
+					>
+						<Icon name="plus" /> Add model
+					</button>
+				) : (
+					<p className="card-note">
+						Ask a workspace admin to add models or change keys.
+					</p>
+				)}
+			</header>
+			<PageTabs
+				label="Models sections"
+				idPrefix="models"
+				tabs={MODELS_TABS}
+				selected={tab}
+				onSelect={showTab}
+			/>
+			<div
+				role="tabpanel"
+				id="models-panel"
+				aria-labelledby={`models-tab-${tab}`}
+			>
+				{tab === "routing" ? (
+					<RoutingView onShowModels={() => showTab("models")} />
+				) : (
+					modelsPanel
+				)}
+			</div>
 		</div>
 	);
 }

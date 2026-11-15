@@ -21,6 +21,7 @@ import {
 	importSynapseNotes,
 } from "./api.js";
 import { Icon } from "./Icons.js";
+import { PageTabs } from "./PageTabs.js";
 import { SynapseGraph } from "./SynapseGraph.js";
 import { SynapseNote, shortDate } from "./SynapseNote.js";
 import { SynapseProposals } from "./SynapseProposals.js";
@@ -38,6 +39,11 @@ import {
 } from "./synapse-route.js";
 
 type Panel = { kind: "new"; title: string } | { kind: "import" };
+
+const SYNAPSE_TABS = [
+	{ id: "notes", label: "Notes" },
+	{ id: "proposals", label: "Proposals" },
+] as const;
 
 /** Counts are each space's own notes; Shared also shows Global's notes. */
 const spaceLabel = (space: SynapseSpace) =>
@@ -723,45 +729,13 @@ export function SynapseView({
 							</div>
 						)}
 					</header>
-					{/* ARIA tabs: arrow keys, Home, and End move between them; one panel follows. */}
-					<div
-						className="synapse-tabs"
-						role="tablist"
-						aria-label="Synapse sections"
-						onKeyDown={(event) => {
-							const order = ["notes", "proposals"] as const;
-							const at = order.indexOf(route.tab);
-							const next =
-								event.key === "ArrowRight"
-									? order[(at + 1) % order.length]
-									: event.key === "ArrowLeft"
-										? order[(at + order.length - 1) % order.length]
-										: event.key === "Home"
-											? order[0]
-											: event.key === "End"
-												? order[order.length - 1]
-												: null;
-							if (!next) return;
-							event.preventDefault();
-							showTab(next);
-							document.getElementById(`synapse-tab-${next}`)?.focus();
-						}}
-					>
-						{(["notes", "proposals"] as const).map((tab) => (
-							<button
-								key={tab}
-								type="button"
-								role="tab"
-								id={`synapse-tab-${tab}`}
-								aria-controls="synapse-panel"
-								aria-selected={route.tab === tab}
-								tabIndex={route.tab === tab ? 0 : -1}
-								onClick={() => showTab(tab)}
-							>
-								{tab === "notes" ? "Notes" : "Proposals"}
-							</button>
-						))}
-					</div>
+					<PageTabs
+						label="Synapse sections"
+						idPrefix="synapse"
+						tabs={SYNAPSE_TABS}
+						selected={route.tab}
+						onSelect={showTab}
+					/>
 					{error && (
 						<div className="banner-error" role="alert">
 							{error}

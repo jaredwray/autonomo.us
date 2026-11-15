@@ -28,24 +28,38 @@ afterEach(async () => {
 	window.history.replaceState(null, "", "/");
 });
 let owner: Record<string, string> = {};
-async function start() {
+let workspaceHash = "";
+/**
+ * Opens Routing, a tab of Models, at `hash`. Without `chat`, the workspace
+ * has only Jev, which can decide but cannot answer.
+ */
+async function start({
+	hash = "#/models/routing",
+	chat = true,
+}: {
+	hash?: string;
+	chat?: boolean;
+} = {}) {
 	const provider = await startOpenAIStub();
+	const providers: ApiConfig["providers"] = [
+		{
+			kind: "openai-compatible",
+			name: "work",
+			models: ["chat"],
+			baseURL: provider.url,
+		},
+		{
+			kind: "openai-compatible",
+			name: "personal",
+			models: ["chat"],
+			baseURL: provider.url,
+		},
+		{ kind: "typesafe", name: "jev", models: ["selector"], apiKey: "secret" },
+	];
 	const config: ApiConfig = {
-		providers: [
-			{
-				kind: "openai-compatible",
-				name: "work",
-				models: ["chat"],
-				baseURL: provider.url,
-			},
-			{
-				kind: "openai-compatible",
-				name: "personal",
-				models: ["chat"],
-				baseURL: provider.url,
-			},
-			{ kind: "typesafe", name: "jev", models: ["selector"], apiKey: "secret" },
-		],
+		providers: chat
+			? providers
+			: providers.filter((item) => item.kind === "typesafe"),
 		corsOrigins: ["*"],
 	};
 	const server = createServer({ config, logger: false });
@@ -57,8 +71,10 @@ async function start() {
 	vi.stubEnv("VITE_API_URL", url);
 	const token = await setUpOwner(url);
 	owner = { authorization: `Bearer ${token}` };
-	routeToWorkspace(server, await defaultWorkspaceId(url, token));
-	window.history.replaceState(null, "", "#/routing");
+	const workspaceId = await defaultWorkspaceId(url, token);
+	workspaceHash = `#/w/${encodeURIComponent(workspaceId)}`;
+	routeToWorkspace(server, workspaceId);
+	window.history.replaceState(null, "", hash);
 	render(
 		<StrictMode>
 			<App />
@@ -74,8 +90,12 @@ function change(label: string, value: string) {
 it("saves a weighted account pool, uses it for a real request, and restores it when navigating back", async () => {
 	const server = await start();
 	expect(
-		screen.getByRole("link", { name: "Routing" }).getAttribute("aria-current"),
+		screen.getByRole("link", { name: "Models" }).getAttribute("aria-current"),
 	).toBe("page");
+	expect(
+		screen.getByRole("tab", { name: "Routing", selected: true }),
+	).toBeDefined();
+	expect(window.location.hash).toBe(`${workspaceHash}/models/routing`);
 	expect(screen.getByText(/Settings are temporary/)).toBeDefined();
 	change("New pool name", "coding");
 	fireEvent.click(screen.getByRole("button", { name: "Add pool" }));
@@ -104,8 +124,10 @@ it("saves a weighted account pool, uses it for a real request, and restores it w
 	fireEvent.click(screen.getByRole("button", { name: "Send request" }));
 	await screen.findByText("Hello there");
 	expect(screen.getByText("work/chat", { selector: "strong" })).toBeDefined();
-	fireEvent.click(screen.getByRole("link", { name: "Models", exact: true }));
-	fireEvent.click(screen.getByRole("link", { name: "Routing" }));
+	fireEvent.click(screen.getByRole("tab", { name: "Models" }));
+	await screen.findByRole("heading", { name: "Active models" });
+	expect(screen.queryByLabelText("Weight for work/chat")).toBeNull();
+	fireEvent.click(screen.getByRole("tab", { name: "Routing" }));
 	await screen.findByLabelText("Weight for work/chat");
 	expect(
 		(screen.getByLabelText("Weight for work/chat") as HTMLInputElement).value,
@@ -174,4 +196,73 @@ it("saves an ordered model failover rule independently of the default", async ()
 		},
 	]);
 	expect(config.failover.enabled).toBe(false);
+});
+
+it("keeps Routing as a tab of Models, moved to with the arrow keys", async () => {
+	await start();
+	// Routing has no place of its own in the navigation any more.
+	expect(screen.queryByRole("link", { name: "Routing" })).toBeNull();
+	const routingTab = screen.getByRole("tab", { name: "Routing" });
+	expect(routingTab.getAttribute("aria-controls")).toBe("models-panel");
+	expect(screen.getByRole("tabpanel").getAttribute("aria-labelledby")).toBe(
+		"models-tab-routing",
+	);
+	// Adding a model belongs to the Models tab.
+	expect(screen.queryByRole("button", { name: "Add model" })).toBeNull();
+	routingTab.focus();
+	fireEvent.keyDown(routingTab, { key: "ArrowLeft" });
+	const modelsTab = screen.getByRole("tab", { name: "Models" });
+	await waitFor(() =>
+		expect(modelsTab.getAttribute("aria-selected")).toBe("true"),
+	);
+	expect(document.activeElement).toBe(modelsTab);
+	expect(modelsTab.tabIndex).toBe(0);
+	expect(screen.getByRole("tab", { name: "Routing" }).tabIndex).toBe(-1);
+	expect(window.location.hash).toBe(`${workspaceHash}/models`);
+	expect(screen.getByRole("tabpanel").getAttribute("aria-labelledby")).toBe(
+		"models-tab-models",
+	);
+	await screen.findByRole("button", { name: "Add model" });
+	expect(screen.queryByLabelText("Enable Auto routing")).toBeNull();
+	fireEvent.keyDown(modelsTab, { key: "End" });
+	await screen.findByLabelText("Enable Auto routing");
+	expect(document.activeElement).toBe(
+		screen.getByRole("tab", { name: "Routing" }),
+	);
+	expect(window.location.hash).toBe(`${workspaceHash}/models/routing`);
+});
+
+it("opens the Routing tab from links to the former Routing view", async () => {
+	await start({ hash: "#/routing" });
+	expect(
+		screen.getByRole("tab", { name: "Routing", selected: true }),
+	).toBeDefined();
+	await waitFor(() =>
+		expect(window.location.hash).toBe(`${workspaceHash}/models/routing`),
+	);
+	fireEvent.click(screen.getByRole("tab", { name: "Models" }));
+	await screen.findByRole("button", { name: "Add model" });
+	// A link into the workspace, from before Routing joined Models.
+	window.location.hash = `${workspaceHash}/routing`;
+	await screen.findByLabelText("Enable Auto routing");
+	expect(
+		screen.getByRole("tab", { name: "Routing", selected: true }),
+	).toBeDefined();
+	await waitFor(() =>
+		expect(window.location.hash).toBe(`${workspaceHash}/models/routing`),
+	);
+});
+
+it("sends a workspace with no chat models to the Models tab to add them", async () => {
+	await start({ chat: false });
+	fireEvent.click(
+		screen.getByRole("link", {
+			name: "Add chat models and account connections",
+		}),
+	);
+	expect(
+		screen.getByRole("tab", { name: "Models", selected: true }),
+	).toBeDefined();
+	expect(window.location.hash).toBe(`${workspaceHash}/models`);
+	await screen.findByRole("button", { name: "Add model" });
 });

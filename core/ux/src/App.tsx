@@ -35,7 +35,6 @@ import { Icon } from "./Icons.js";
 import { ModelsView } from "./ModelsView.js";
 import { ProfileView } from "./ProfileView.js";
 import { ProxiesView } from "./ProxiesView.js";
-import { RoutingView } from "./RoutingView.js";
 import { SynapseView } from "./SynapseView.js";
 import { TeamView } from "./TeamView.js";
 import { WorkspacesView } from "./WorkspacesView.js";
@@ -47,21 +46,22 @@ const workspaceViews = {
 	dashboard: "Dashboard",
 	models: "Models",
 	proxies: "Proxies",
-	routing: "Routing",
 	synapse: "Synapse",
 	channels: "Channels",
 	agents: "Agents",
 	"api-tokens": "API Tokens",
 };
 /**
- * Where links from before Bots and Agent Tokens became Agents lead now. A
- * bot's link keeps naming its agent; the token list had nothing after it.
+ * Where links to views that were renamed or folded into another lead now.
+ * `rest`, when given, replaces what followed the former name: a bot's link
+ * keeps naming its agent, the token list had nothing after it, and Routing is
+ * now a tab of Models.
  */
-const formerViews: Record<string, { view: WorkspaceView; keepRest: boolean }> =
-	{
-		bots: { view: "agents", keepRest: true },
-		"agent-tokens": { view: "agents", keepRest: false },
-	};
+const formerViews: Record<string, { view: WorkspaceView; rest?: string }> = {
+	bots: { view: "agents" },
+	"agent-tokens": { view: "agents", rest: "" },
+	routing: { view: "models", rest: "/routing" },
+};
 /** Views of the whole gateway, at `#/<view>`. */
 const instanceViews = { workspaces: "Workspaces", team: "Team" };
 const viewLabels = { ...workspaceViews, ...instanceViews };
@@ -91,7 +91,7 @@ function currentRoute(): Route {
 		return {
 			view: known ? view : "dashboard",
 			workspaceId: decodeURIComponent(scoped[1]),
-			rest: known && former?.keepRest !== false ? (scoped[3] ?? "") : "",
+			rest: known ? (former?.rest ?? scoped[3] ?? "") : "",
 			renamed: Boolean(former),
 		};
 	}
@@ -104,10 +104,9 @@ function currentRoute(): Route {
 	return {
 		view: known ? (view as View) : "dashboard",
 		workspaceId: null,
-		rest:
-			known && rest.length && former?.keepRest !== false
-				? `/${rest.join("/")}`
-				: "",
+		rest: known
+			? (former?.rest ?? (rest.length ? `/${rest.join("/")}` : ""))
+			: "",
 		renamed: Boolean(former),
 	};
 }
@@ -676,8 +675,6 @@ export function App() {
 								workspace={selected}
 								list={channelList}
 							/>
-						) : shown === "routing" ? (
-							<RoutingView />
 						) : (
 							<Dashboard />
 						)}
