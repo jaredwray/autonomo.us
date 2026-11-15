@@ -8,6 +8,8 @@ import {
 	type BotDetails,
 	type BotLimits,
 	type BotList,
+	type BotRun,
+	type BotRunStatus,
 	type BotSummary,
 	type CreateBotRequest,
 	DEFAULT_BOT_LIMITS,
@@ -329,6 +331,45 @@ export class BotService {
 		await this.find(workspaceId, id);
 		if (!(await this.repository.deleteBot(workspaceId, id)))
 			throw new BotError("Bot not found.", 404);
+	}
+
+	/**
+	 * The workspace's bots with their usage, which are replying now, how
+	 * replies started in [from, to) ended, and the latest failures.
+	 */
+	async overview(
+		workspaceId: string,
+		window: { from: string; to: string },
+		failures: number,
+	): Promise<{
+		bots: BotSummary[];
+		replying: Set<string>;
+		runs: Record<BotRunStatus, number>;
+		failedRuns: BotRun[];
+	}> {
+		const [list, active, counts, failedRuns] = await Promise.all([
+			this.list(workspaceId),
+			this.repository.activeRuns(
+				workspaceId,
+				null,
+				this.at(),
+				new Date(this.now() - PENDING_SHOWN_MS).toISOString(),
+			),
+			this.repository.countRunsByStatus(workspaceId, window.from, window.to),
+			this.repository.recentRuns(workspaceId, "failed", failures),
+		]);
+		return {
+			bots: list.bots,
+			replying: new Set(active.map((run) => run.botId)),
+			runs: {
+				pending: counts.pending ?? 0,
+				running: counts.running ?? 0,
+				succeeded: counts.succeeded ?? 0,
+				failed: counts.failed ?? 0,
+				skipped: counts.skipped ?? 0,
+			},
+			failedRuns,
+		};
 	}
 
 	/** Bots working on a reply in a channel, for "is replying…". */

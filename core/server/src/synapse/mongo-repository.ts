@@ -141,6 +141,7 @@ export class MongoSynapseRepository implements SynapseRepository {
 			},
 			// Each workspace lists the proposals for its own shared space.
 			{ key: { space: 1, status: 1, createdAt: -1 }, name: "space_status" },
+			{ key: { space: 1, decidedAt: -1 }, name: "space_decided" },
 		]);
 	}
 	/** Runs `operation` once the indexes exist; driver failures become 503s. */
@@ -329,6 +330,16 @@ export class MongoSynapseRepository implements SynapseRepository {
 			this.proposals()
 				.find(this.proposalQuery(filter))
 				.sort({ createdAt: -1, _id: -1 })
+				.toArray(),
+		);
+		return found.map(proposalOf);
+	}
+	async recentDecisions(space: SynapseSpaceId, limit: number) {
+		const found = await this.storage(() =>
+			this.proposals()
+				.find({ space, status: { $in: ["approved", "rejected"] } })
+				.sort({ decidedAt: -1, _id: -1 })
+				.limit(limit)
 				.toArray(),
 		);
 		return found.map(proposalOf);

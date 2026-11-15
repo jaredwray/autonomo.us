@@ -252,6 +252,17 @@ export class MemorySynapseRepository implements SynapseRepository {
 	async countProposals(filter: ProposalFilter) {
 		return this.selectProposals(filter).length;
 	}
+	async recentDecisions(space: SynapseSpaceId, limit: number) {
+		return this.selectProposals({ space })
+			.filter((proposal) => proposal.status !== "pending")
+			.sort(
+				(a, b) =>
+					(b.decidedAt ?? "").localeCompare(a.decidedAt ?? "") ||
+					b.id.localeCompare(a.id),
+			)
+			.slice(0, limit)
+			.map((proposal) => structuredClone(proposal));
+	}
 	private claimHeld(id: string, now: string) {
 		const claim = this.claims.get(id);
 		return claim !== undefined && claim.until > now;

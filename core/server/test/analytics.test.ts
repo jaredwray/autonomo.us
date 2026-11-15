@@ -115,7 +115,10 @@ function seedAgents(
 }
 
 /** Four fetches: plain, through a proxy, blocked, and from the cache. */
-function seedWeb(telemetry: TelemetryService, setTime: (value: string) => void) {
+function seedWeb(
+	telemetry: TelemetryService,
+	setTime: (value: string) => void,
+) {
 	const helper = { id: "agent:bot-1", name: "Helper", kind: "agent" as const };
 	const founder = { id: "user:1", name: "Founder", kind: "user" as const };
 	setTime("2026-11-01T06:00:00.000Z");
@@ -129,7 +132,13 @@ function seedWeb(telemetry: TelemetryService, setTime: (value: string) => void) 
 		costUsd: 0,
 		latencyMs: 200,
 		attempts: [
-			{ step: "direct", outcome: "ok", status: 200, latencyMs: 200, costUsd: 0 },
+			{
+				step: "direct",
+				outcome: "ok",
+				status: 200,
+				latencyMs: 200,
+				costUsd: 0,
+			},
 		],
 	});
 	telemetry.recordWebFetch({
@@ -142,7 +151,13 @@ function seedWeb(telemetry: TelemetryService, setTime: (value: string) => void) 
 		costUsd: 0.25,
 		latencyMs: 1000,
 		attempts: [
-			{ step: "direct", outcome: "blocked", status: 403, latencyMs: 100, costUsd: 0 },
+			{
+				step: "direct",
+				outcome: "blocked",
+				status: 403,
+				latencyMs: 100,
+				costUsd: 0,
+			},
 			{
 				step: "zenrows:auto",
 				outcome: "ok",
@@ -163,7 +178,13 @@ function seedWeb(telemetry: TelemetryService, setTime: (value: string) => void) 
 		costUsd: 0.5,
 		latencyMs: 3000,
 		attempts: [
-			{ step: "direct", outcome: "blocked", status: 403, latencyMs: 100, costUsd: 0 },
+			{
+				step: "direct",
+				outcome: "blocked",
+				status: 403,
+				latencyMs: 100,
+				costUsd: 0,
+			},
 			{
 				step: "zenrows:premium",
 				outcome: "blocked",

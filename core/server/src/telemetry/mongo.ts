@@ -112,9 +112,7 @@ export function eventToDocument(event: TelemetryEvent): TelemetryDocument {
 }
 
 /** The parts of a web fetch that analytics group by. */
-function webFields(
-	data: TelemetryEvent["data"],
-): Partial<TelemetryDocument> {
+function webFields(data: TelemetryEvent["data"]): Partial<TelemetryDocument> {
 	const host = text(data.host);
 	const outcome = text(data.outcome);
 	const via = text(data.via);
@@ -479,7 +477,11 @@ export class MongoTelemetrySink {
 			latencyTotal: number;
 			lastSeen: Date | number;
 		};
-		type CallerKey = { callerId: string; callerName: string; callerKind: string };
+		type CallerKey = {
+			callerId: string;
+			callerName: string;
+			callerKind: string;
+		};
 		const limit = { $limit: 100_001 };
 		let fetches: Array<
 			Counts & { _id: CallerKey & { bucket: number; outcome: string } }
@@ -712,7 +714,10 @@ function recordedCaller() {
 				$or: [
 					{ $ne: ["$callerKind", "agent"] },
 					{
-						$eq: [{ $substrCP: [{ $ifNull: ["$callerId", ""] }, 0, 6] }, "agent:"],
+						$eq: [
+							{ $substrCP: [{ $ifNull: ["$callerId", ""] }, 0, 6] },
+							"agent:",
+						],
 					},
 				],
 			},

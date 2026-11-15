@@ -168,6 +168,29 @@ export class BotWebRequestStore {
 		}
 	}
 
+	/** Every waiting request in a workspace, oldest first, for the overview. */
+	async pending(workspaceId: string): Promise<BotWebRequest[]> {
+		if (!this.mongo)
+			return [...this.memory.values()]
+				.filter(
+					(request) =>
+						request.workspaceId === workspaceId && request.status === "pending",
+				)
+				.sort((a, b) => a.requestedAt.localeCompare(b.requestedAt))
+				.map((request) => ({ ...request }));
+		try {
+			const documents = await this.collection()
+				.find({ workspaceId: { $eq: workspaceId }, status: { $eq: "pending" } })
+				.sort({ requestedAt: 1 })
+				// Each bot holds at most this many, and a workspace at most 50 bots.
+				.limit(BOT_LIMITS.maxPendingWebRequests * BOT_LIMITS.bots)
+				.toArray();
+			return documents.map(toRequest);
+		} catch (error) {
+			this.unavailable(error);
+		}
+	}
+
 	/** Decides a waiting request once. A decided or unknown one is refused. */
 	async decide(
 		workspaceId: string,

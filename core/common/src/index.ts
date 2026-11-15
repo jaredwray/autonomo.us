@@ -106,6 +106,18 @@ export {
 	type UpdateChannelRequest,
 } from "./channels.js";
 export {
+	OVERVIEW_BUDGET_WARNING,
+	OVERVIEW_EXPIRING_DAYS,
+	OVERVIEW_FAILED_RUNS,
+	OVERVIEW_RECENT_NOTES,
+	type OverviewAgent,
+	type OverviewFailedRun,
+	type OverviewNote,
+	type OverviewProposal,
+	type OverviewQuery,
+	type WorkspaceOverview,
+} from "./overview.js";
+export {
 	type AppendSynapseNoteRequest,
 	type CreateSynapseNoteRequest,
 	type CreateSynapseProposalRequest,

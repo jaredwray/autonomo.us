@@ -1,6 +1,7 @@
 import {
 	type Bot,
 	type BotRun,
+	type BotRunStatus,
 	DEFAULT_BOT_LIMITS,
 	type TokenUsage,
 } from "@autonomo.us/common";
@@ -75,15 +76,28 @@ export interface BotRepository {
 		limit: number,
 	): Promise<BotRun[]>;
 	/**
-	 * Runs in a channel that someone is working on: running under a live
-	 * lease, or pending since `pendingAfter`. An older pending run was never
-	 * started and is not in progress.
+	 * Runs in a channel, or in every channel for null, that someone is
+	 * working on: running under a live lease, or pending since
+	 * `pendingAfter`. An older pending run was never started and is not in
+	 * progress.
 	 */
 	activeRuns(
 		workspaceId: string,
-		channelId: string,
+		channelId: string | null,
 		now: string,
 		pendingAfter: string,
+	): Promise<BotRun[]>;
+	/** The workspace's runs created in [from, to), counted by status. */
+	countRunsByStatus(
+		workspaceId: string,
+		from: string,
+		to: string,
+	): Promise<Partial<Record<BotRunStatus, number>>>;
+	/** The workspace's latest runs that ended this way, newest first. */
+	recentRuns(
+		workspaceId: string,
+		status: BotRunStatus,
+		limit: number,
 	): Promise<BotRun[]>;
 	/** How many of the bot's runs hold a live lease right now. */
 	countRunning(botId: string, now: string): Promise<number>;
@@ -198,10 +212,28 @@ export class MemoryBotRepository implements BotRepository {
 			.filter(
 				(run) =>
 					run.workspaceId === workspaceId &&
-					run.channelId === channelId &&
+					(channelId === null || run.channelId === channelId) &&
 					((run.status === "pending" && run.createdAt > pendingAfter) ||
 						(run.status === "running" && (run.leaseUntil ?? "") > now)),
 			)
+			.map(publicRun);
+	}
+	async countRunsByStatus(workspaceId: string, from: string, to: string) {
+		const counts: Partial<Record<BotRunStatus, number>> = {};
+		for (const run of this.runs.values())
+			if (
+				run.workspaceId === workspaceId &&
+				run.createdAt >= from &&
+				run.createdAt < to
+			)
+				counts[run.status] = (counts[run.status] ?? 0) + 1;
+		return counts;
+	}
+	async recentRuns(workspaceId: string, status: BotRunStatus, limit: number) {
+		return [...this.runs.values()]
+			.filter((run) => run.workspaceId === workspaceId && run.status === status)
+			.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+			.slice(0, limit)
 			.map(publicRun);
 	}
 	async countRunning(botId: string, now: string) {
@@ -278,6 +310,11 @@ export class MongoBotRepository implements BotRepository {
 					name: "channel_status",
 				},
 				{ key: { status: 1, leaseUntil: 1 }, name: "status_lease" },
+				// The overview: a workspace's runs in a window, and its latest failures.
+				{
+					key: { workspaceId: 1, status: 1, createdAt: -1 },
+					name: "workspace_status_created",
+				},
 			]);
 		})();
 		this.indexed.catch(() => {
@@ -431,12 +468,35 @@ export class MongoBotRepository implements BotRepository {
 			this.runs()
 				.find({
 					workspaceId,
-					channelId,
+					...(channelId === null ? {} : { channelId }),
 					$or: [
 						{ status: "pending", createdAt: { $gt: pendingAfter } },
 						{ status: "running", leaseUntil: { $gt: now } },
 					],
 				})
+				.toArray(),
+		);
+		return found.map((run) => publicRun(toRun(run)));
+	}
+	async countRunsByStatus(workspaceId: string, from: string, to: string) {
+		const rows = await this.storage(() =>
+			this.runs()
+				.aggregate<{ _id: BotRunStatus; count: number }>([
+					{ $match: { workspaceId, createdAt: { $gte: from, $lt: to } } },
+					{ $group: { _id: "$status", count: { $sum: 1 } } },
+				])
+				.toArray(),
+		);
+		const counts: Partial<Record<BotRunStatus, number>> = {};
+		for (const row of rows) counts[row._id] = row.count;
+		return counts;
+	}
+	async recentRuns(workspaceId: string, status: BotRunStatus, limit: number) {
+		const found = await this.storage(() =>
+			this.runs()
+				.find({ workspaceId, status })
+				.sort({ createdAt: -1 })
+				.limit(limit)
 				.toArray(),
 		);
 		return found.map((run) => publicRun(toRun(run)));

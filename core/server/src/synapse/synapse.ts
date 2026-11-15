@@ -1452,6 +1452,17 @@ export class SynapseService {
 	async listProposals(filter: ProposalFilter): Promise<SynapseProposal[]> {
 		return (await this.repository.listProposals(filter)).map(publicProposal);
 	}
+	countProposals(filter: ProposalFilter): Promise<number> {
+		return this.repository.countProposals(filter);
+	}
+	async recentDecisions(
+		space: SynapseSpaceId,
+		limit: number,
+	): Promise<SynapseProposal[]> {
+		return (await this.repository.recentDecisions(space, limit)).map(
+			publicProposal,
+		);
+	}
 
 	/** Approval applies the change as the reviewer; see docs/SYNAPSE.md §7. */
 	async decideProposal(

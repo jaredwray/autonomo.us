@@ -8,6 +8,7 @@ import type {
 	ProxyList,
 	WebFetchResult,
 	WebPolicy,
+	WorkspaceOverview,
 } from "@autonomo.us/common";
 import { afterEach, describe, expect, it } from "vitest";
 import { ROUTE_RULES } from "../src/auth/access.js";
@@ -495,11 +496,21 @@ describe("a bot's web scope", () => {
 				count: 2,
 			},
 		]);
+		// The overview gathers every bot's waiting requests in one place.
+		expect(
+			(await api.ok<WorkspaceOverview>("GET", "/v1/overview")).waiting
+				.siteRequests,
+		).toEqual([{ botId: reader.id, name: "Reader", count: 1 }]);
 		// Members look; only admins decide.
 		const member = await api.join("member@example.com");
 		await api.ok("GET", `/v1/bots/${reader.id}/web-requests`, {
 			token: member.token,
 		});
+		const seen = await api.ok<WorkspaceOverview>("GET", "/v1/overview", {
+			token: member.token,
+		});
+		expect(seen.waiting.siteRequests).toHaveLength(1);
+		expect(seen.can.manageAgents).toBe(false);
 		expect(
 			(
 				await api.refused(
@@ -515,6 +526,10 @@ describe("a bot's web scope", () => {
 			{ body: { approve: true } },
 		);
 		expect(decided).toMatchObject({ status: "approved", decidedBy: "Founder" });
+		expect(
+			(await api.ok<WorkspaceOverview>("GET", "/v1/overview")).waiting
+				.siteRequests,
+		).toEqual([]);
 		expect(
 			(await api.ok<BotDetails>("GET", `/v1/bots/${reader.id}`)).webHosts,
 		).toEqual(["example.com"]);

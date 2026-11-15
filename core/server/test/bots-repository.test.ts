@@ -200,6 +200,50 @@ describe.each(implementations)("bot repository (%s)", (_name, create) => {
 		).toBeNull();
 	});
 
+	it("counts a workspace's runs by status and lists its latest failures", async () => {
+		const workspace = randomUUID();
+		const helper = bot(workspace, "Helper");
+		const other = bot(workspace, "Other");
+		const elsewhere = bot(randomUUID(), "Elsewhere");
+		for (const item of [
+			run(helper, 1, { status: "succeeded", createdAt: T0 }),
+			run(helper, 2, { status: "failed", createdAt: T1, detail: "first" }),
+			run(other, 3, { status: "failed", createdAt: T2, detail: "second" }),
+			run(other, 4, { status: "skipped", createdAt: T2 }),
+			run(helper, 5, {
+				status: "running",
+				createdAt: T3,
+				channelId: "channel-2",
+				leaseId: "live",
+				leaseUntil: "2026-11-13T11:00:00.000Z",
+			}),
+			run(elsewhere, 6, { status: "failed", createdAt: T2 }),
+		])
+			await repository.insertRun(item);
+
+		expect(await repository.countRunsByStatus(workspace, T0, T3)).toEqual({
+			succeeded: 1,
+			failed: 2,
+			skipped: 1,
+		});
+		// The window's end is exclusive and its start inclusive.
+		expect(await repository.countRunsByStatus(workspace, T1, T2)).toEqual({
+			failed: 1,
+		});
+		expect(
+			(await repository.recentRuns(workspace, "failed", 5)).map(
+				(item) => item.detail,
+			),
+		).toEqual(["second", "first"]);
+		expect(await repository.recentRuns(workspace, "failed", 1)).toHaveLength(1);
+		// Null looks in every channel of the workspace.
+		expect(
+			(await repository.activeRuns(workspace, null, T3, T3)).map(
+				(item) => item.triggerSeq,
+			),
+		).toEqual([5]);
+	});
+
 	it("finds stale and active runs and adds up what a bot used", async () => {
 		const owner = bot(randomUUID(), "Helper");
 		const waiting = run(owner, 1);

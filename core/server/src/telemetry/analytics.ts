@@ -435,7 +435,10 @@ export function buildWebAnalytics(
 		if (fact.lastSeen >= caller.lastSeen) caller.caller = fact.caller;
 		addWeb(caller, fact);
 		callers.set(fact.caller.id, caller);
-		outcomes.set(fact.outcome, (outcomes.get(fact.outcome) ?? 0) + fact.fetches);
+		outcomes.set(
+			fact.outcome,
+			(outcomes.get(fact.outcome) ?? 0) + fact.fetches,
+		);
 		const point = series.get(fact.timestamp);
 		if (point) addWeb(point, fact);
 	}
@@ -510,7 +513,10 @@ export function webCallers(facts: WebFacts): TelemetryCaller[] {
 	for (const fact of facts.fetches) {
 		const known = seen.get(fact.caller.id);
 		if (!known || fact.lastSeen >= known.lastSeen)
-			seen.set(fact.caller.id, { caller: fact.caller, lastSeen: fact.lastSeen });
+			seen.set(fact.caller.id, {
+				caller: fact.caller,
+				lastSeen: fact.lastSeen,
+			});
 	}
 	return [...seen.values()].map((item) => item.caller);
 }
