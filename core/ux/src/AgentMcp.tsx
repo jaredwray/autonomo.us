@@ -9,6 +9,7 @@ import {
 	type AgentTokenSecret,
 } from "@autonomo.us/common";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { AgentWebhookCard } from "./AgentWebhook.js";
 import {
 	createAgentToken,
 	createOAuthAgent,
@@ -274,6 +275,13 @@ export function TokenAgent({
 					})}
 				</div>
 			</section>
+			{token.status !== "revoked" && (
+				<AgentWebhookCard
+					agentId={token.id}
+					agentName={token.name}
+					onChanged={onChanged}
+				/>
+			)}
 			<History actions={actions} />
 		</>
 	);
@@ -691,6 +699,13 @@ export function OAuthAgent({
 					</p>
 				)}
 			</section>
+			{active && (
+				<AgentWebhookCard
+					agentId={token.id}
+					agentName={token.name}
+					onChanged={onChanged}
+				/>
+			)}
 			<History actions={actions} />
 		</>
 	);

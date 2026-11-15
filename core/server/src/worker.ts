@@ -4,6 +4,7 @@ import { configFromEnv } from "./config.js";
 import { ModelCatalogService } from "./model-catalog-service.js";
 import { mongoErrorDetails, withMongoRequestScope } from "./mongo.js";
 import {
+	catchUpBackgroundWork,
 	createServer,
 	initializePersistence,
 	releaseRequestResources,
@@ -58,8 +59,12 @@ export default {
 			const started = Date.now();
 			const end = async () => {
 				try {
-					// A bot's reply to a message this request posted is still
-					// running: it uses this request's sockets, so keep them.
+					// Webhook retries have no timer between requests: every so
+					// often a request sends the ones that are due.
+					catchUpBackgroundWork(server);
+					// A bot's reply to a message this request posted, or a
+					// webhook POST it started, is still running: it uses this
+					// request's sockets, so keep them.
 					await settleBackgroundWork(server);
 				} finally {
 					try {

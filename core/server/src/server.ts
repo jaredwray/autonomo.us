@@ -1,6 +1,17 @@
 import cors from "@fastify/cors";
 import Fastify from "fastify";
 import packageJson from "../package.json" with { type: "json" };
+import {
+	fetchWebhookTransport,
+	nodeWebhookTransport,
+	type WebhookTransport,
+} from "./agent-webhooks/delivery.js";
+import {
+	MemoryAgentWebhookRepository,
+	MongoAgentWebhookRepository,
+} from "./agent-webhooks/repository.js";
+import type { WebhookTiming } from "./agent-webhooks/state.js";
+import { AgentWebhooks } from "./agent-webhooks/webhooks.js";
 import { registerApiAccess, requireRouteScopes } from "./auth/access.js";
 import { AccountStore } from "./auth/accounts.js";
 import { AgentTokenStore } from "./auth/agent-tokens.js";
@@ -33,6 +44,7 @@ import {
 } from "./providers/registry.js";
 import { ProviderSettingsStore } from "./providers/settings.js";
 import { agentTokenRoutes } from "./routes/agent-tokens.js";
+import { agentWebhookRoutes } from "./routes/agent-webhooks.js";
 import { agentRoutes, oauthSignInRoutes } from "./routes/agents.js";
 import { apiTokenRoutes } from "./routes/api-tokens.js";
 import { authRoutes } from "./routes/auth.js";
@@ -67,13 +79,13 @@ import { webToolSet } from "./web/mcp.js";
 import { WebService } from "./web/service.js";
 import { ProxyStore } from "./web/store.js";
 import type { FetchLike } from "./web/types.js";
-import type { Resolver } from "./web/url-guard.js";
+import { type Resolver, systemResolver } from "./web/url-guard.js";
 import { type WorkspaceRef, WorkspaceStore } from "./workspaces/store.js";
 
 const releases = new WeakMap<ReturnType<typeof Fastify>, () => Promise<void>>();
 const backgrounds = new WeakMap<
 	ReturnType<typeof Fastify>,
-	{ settle(): Promise<void>; sweep(): Promise<void> }
+	{ settle(): Promise<void>; sweep(): Promise<void>; catchUp(): void }
 >();
 const BOT_SWEEP_INTERVAL_MS = 30_000;
 type PersistenceErrorHandler = (
@@ -118,6 +130,16 @@ export type CreateServerOptions = {
 	webDirect?: { transport: DirectTransport; resolver?: Resolver };
 	/** How provider APIs are called, for tests. */
 	webFetch?: FetchLike;
+	/**
+	 * How agent webhooks are sent and paced, for tests. The transport
+	 * defaults to Node's HTTPS client, or `fetch` with `webTransport: "fetch"`.
+	 */
+	agentWebhooks?: {
+		transport?: WebhookTransport;
+		resolver?: Resolver;
+		timing?: Partial<WebhookTiming>;
+		timeoutMs?: number;
+	};
 	/**
 	 * The runtime ends TLS before the server sees a request, as Workers do, so
 	 * an address taken from a request is HTTPS unless it is on localhost.
@@ -190,9 +212,60 @@ export function createServer(options: CreateServerOptions = {}) {
 		: new MemoryBotRepository();
 	const bots = new BotService(botRepository);
 	const botWebRequests = new BotWebRequestStore(mongo);
+	const agentWebhookRepository = mongo
+		? new MongoAgentWebhookRepository(mongo)
+		: new MemoryAgentWebhookRepository();
+	const webhookTransport =
+		options.agentWebhooks?.transport ??
+		(options.webTransport === "fetch"
+			? fetchWebhookTransport()
+			: nodeWebhookTransport());
+	const agentWebhooks = new AgentWebhooks({
+		repository: agentWebhookRepository,
+		agents: {
+			find: async (id) => {
+				const agent = await agentTokens.find(id);
+				return (
+					agent && {
+						name: agent.name,
+						workspaceId: agent.workspaceId,
+						status: agent.status,
+					}
+				);
+			},
+		},
+		workspaces,
+		threadAuthor: async (workspaceId, channelId, messageId) => {
+			const entry = await channelRepository.getEntry(
+				workspaceId,
+				channelId,
+				messageId,
+			);
+			return entry?.type === "message" ? entry.author : null;
+		},
+		transport: webhookTransport,
+		resolver:
+			options.agentWebhooks?.resolver ??
+			(webhookTransport.pinsAddress ? systemResolver : undefined),
+		timing: options.agentWebhooks?.timing,
+		timeoutMs: options.agentWebhooks?.timeoutMs,
+		// A Worker request's background work has about 30 seconds: it sends
+		// the first POST, and its retries wait for a later request's sweep.
+		maxTimerMs:
+			options.webTransport === "fetch"
+				? (options.agentWebhooks?.timing?.gapMs ?? 5_000) + 1_000
+				: 60_000,
+		log: (message, details) => server.log.error(details, message),
+	});
 	const channels: ChannelService = new ChannelService(channelRepository, {
-		// A message that mentions one of the gateway's own bots starts its reply.
-		onMessage: (channel, message) => botRunner.onMessage(channel, message),
+		// A message that mentions one of the gateway's own bots starts its
+		// reply; one meant for an agent elsewhere wakes it through its webhook.
+		onMessage: async (channel, message) => {
+			await Promise.allSettled([
+				botRunner.onMessage(channel, message),
+				agentWebhooks.onMessage(channel, message),
+			]);
+		},
 		directory: {
 			// A channel's agents are agent tokens and the bots the gateway runs.
 			agents: async (workspaceId) => {
@@ -353,10 +426,25 @@ export function createServer(options: CreateServerOptions = {}) {
 			scoped.register(decisionsRoutes, { providers, telemetry });
 			scoped.register(telemetryRoutes, { telemetry });
 			scoped.register(apiTokenRoutes, { tokens });
-			scoped.register(agentTokenRoutes, { tokens: agentTokens, oauth });
+			scoped.register(agentTokenRoutes, {
+				tokens: agentTokens,
+				oauth,
+				webhooks: agentWebhooks,
+			});
 			scoped.register(agentRoutes, { agentTokens, bots, oauth });
+			scoped.register(agentWebhookRoutes, {
+				webhooks: agentWebhooks,
+				agentTokens,
+				bots,
+			});
 			scoped.register(memberRoutes, { accounts });
-			scoped.register(synapseRoutes, { synapse, agentTokens: agentIds });
+			scoped.register(synapseRoutes, {
+				synapse,
+				agentTokens: agentIds,
+				// The proposing agent hears the decision through its webhook.
+				onProposalDecided: (workspaceId, proposal) =>
+					agentWebhooks.onProposalDecided(workspaceId, proposal),
+			});
 			scoped.register(channelRoutes, { channels });
 			scoped.register(botRoutes, { bots, webRequests: botWebRequests });
 			scoped.register(webRoutes, { store: proxies, web });
@@ -438,6 +526,7 @@ export function createServer(options: CreateServerOptions = {}) {
 			synapseRepository.close(),
 			channelRepository.close(),
 			botRepository.close(),
+			agentWebhookRepository.close(),
 			oauthRepository.close(),
 			proxies.close(),
 		]);
@@ -446,25 +535,34 @@ export function createServer(options: CreateServerOptions = {}) {
 		);
 		if (failed) throw failed.reason;
 	};
-	// A crashed or restarted run is picked up here. Workers have no timers
-	// between requests, so a reply interrupted there is not retried.
+	// A crashed or restarted run is picked up here, and so is a webhook POST
+	// whose retry waits longer than a timer. Workers have no timers between
+	// requests: a reply interrupted there is not retried, and webhook retries
+	// wait for the sweep a later request starts (`catchUpBackgroundWork`).
 	let sweeper: ReturnType<typeof setInterval> | undefined;
 	if (!options.deferPersistence)
 		server.addHook("onReady", async () => {
 			sweeper = setInterval(() => {
 				botRunner.sweep().catch(() => {});
+				agentWebhooks.sweep().catch(() => {});
 			}, BOT_SWEEP_INTERVAL_MS);
 			sweeper.unref();
 		});
 	backgrounds.set(server, {
-		settle: () => botRunner.idle(),
-		sweep: () => botRunner.sweep(),
+		settle: async () => {
+			await Promise.all([botRunner.idle(), agentWebhooks.idle()]);
+		},
+		sweep: async () => {
+			await Promise.all([botRunner.sweep(), agentWebhooks.sweep()]);
+		},
+		catchUp: () => agentWebhooks.catchUp(),
 	});
 	server.addHook("onClose", async () => {
 		clearInterval(sweeper);
 		// Replies in progress stop before their database client closes; one
-		// that was waiting on a model is retried by the next sweep.
-		await botRunner.close();
+		// that was waiting on a model is retried by the next sweep. A webhook
+		// POST in flight is handed back the same way.
+		await Promise.all([botRunner.close(), agentWebhooks.close()]);
 		modelCatalog.stop();
 		await closeAll();
 	});
@@ -492,7 +590,16 @@ export async function settleBackgroundWork(
 	await backgrounds.get(server)?.settle();
 }
 
-/** Starts bot runs that nobody is working on, then waits for them. */
+/**
+ * Starts a sweep of webhook POSTs that are due, unless one started in the last
+ * few seconds. The Worker entry calls it after each request, since it has no
+ * timers between requests; `settleBackgroundWork` then waits for it.
+ */
+export function catchUpBackgroundWork(server: ReturnType<typeof Fastify>) {
+	backgrounds.get(server)?.catchUp();
+}
+
+/** Starts bot runs and webhook POSTs that nobody is working on, then waits for them. */
 export async function sweepBackgroundWork(
 	server: ReturnType<typeof Fastify>,
 ): Promise<void> {

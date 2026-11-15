@@ -8,6 +8,10 @@ import type {
 	AgentToken,
 	AgentTokenSecret,
 	AgentTokenSettings,
+	AgentWebhook,
+	AgentWebhookDetails,
+	AgentWebhookSecret,
+	AgentWebhookTestResult,
 	AnalyticsQuery,
 	ApiToken,
 	ApiTokenSecret,
@@ -28,6 +32,7 @@ import type {
 	ChannelMembers,
 	ChannelMessage,
 	CreateAgentTokenRequest,
+	CreateAgentWebhookRequest,
 	CreateApiTokenRequest,
 	CreateBotRequest,
 	CreateChannelRequest,
@@ -76,6 +81,7 @@ import type {
 	TeamMember,
 	TeamSettings,
 	UpdateAgentTokenRequest,
+	UpdateAgentWebhookRequest,
 	UpdateApiTokenRequest,
 	UpdateBotRequest,
 	UpdateChannelRequest,
@@ -943,6 +949,40 @@ export function disconnectAgentApp(
 		agentPath(id, `/connections/${encodeURIComponent(connectionId)}`),
 		{ method: "DELETE" },
 	);
+}
+
+/** An agent's webhook, or null; workspace admins only. */
+export function fetchAgentWebhook(id: string): Promise<AgentWebhookDetails> {
+	return apiRequest(agentPath(id, "/webhook"));
+}
+/** The signing secret is in the answer, and only there. */
+export function createAgentWebhook(
+	id: string,
+	input: CreateAgentWebhookRequest,
+): Promise<AgentWebhookSecret> {
+	return apiRequest(agentPath(id, "/webhook"), { method: "POST", body: input });
+}
+/** Omitted fields are kept; `authKey: null` and `headers: null` remove them. */
+export function updateAgentWebhook(
+	id: string,
+	input: UpdateAgentWebhookRequest,
+): Promise<AgentWebhook> {
+	return apiRequest(agentPath(id, "/webhook"), {
+		method: "PATCH",
+		body: input,
+	});
+}
+export function deleteAgentWebhook(id: string): Promise<void> {
+	return apiRequest(agentPath(id, "/webhook"), { method: "DELETE" });
+}
+export function rotateAgentWebhookSecret(
+	id: string,
+): Promise<AgentWebhookSecret> {
+	return apiRequest(agentPath(id, "/webhook/secret"), { method: "POST" });
+}
+/** A real POST to the receiver, which may start a run there. */
+export function testAgentWebhook(id: string): Promise<AgentWebhookTestResult> {
+	return apiRequest(agentPath(id, "/webhook/test"), { method: "POST" });
 }
 
 const signInPath = (id: string) => `/oauth/sign-ins/${encodeURIComponent(id)}`;

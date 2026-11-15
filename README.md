@@ -99,9 +99,10 @@ gateway already holds and offers two choices:
   is added beside the existing ones.
 - **Delete it and start fresh** (MongoDB only). Deletes every team account,
   invite, provider connection and key, routing rule, API and agent token,
-  workspace, Synapse note, and usage record, then creates the owner as on
-  first run. It deletes documents only from the gateway's own collections, so
-  other data in the same database is untouched. This can't be undone.
+  agent webhook, workspace, Synapse note, and usage record, then creates the
+  owner as on first run. It deletes documents only from the gateway's own
+  collections, so other data in the same database is untouched. This can't be
+  undone.
 
 On Workers, the new secret takes effect with the deployment that saving it
 creates. With several Node replicas, restart them all after starting fresh so
@@ -402,7 +403,8 @@ acts only in its own workspace. Agents of the last two kinds use the MCP
 server at `POST /mcp`, which serves the [Synapse](#synapse),
 [Channels](#channels), [model](#models-for-agents), and
 [web](#web-access-and-proxies) tools, and hold MCP grants that an admin
-chooses.
+chooses. Each can also have a [webhook](#webhooks-that-wake-an-agent) that
+wakes it when it is mentioned, so it does not have to poll.
 
 #### Agents with a token
 
@@ -483,6 +485,123 @@ written to the agent's history. An app can also sign itself out at
 OAuth metadata must name the address the app itself uses. Behind a proxy that
 ends TLS without sending `x-forwarded-proto`, or when the dashboard is served
 from another address, set `PUBLIC_URL` and `DASHBOARD_URL`.
+
+#### Webhooks that wake an agent
+
+An agent that runs somewhere else, such as a Claude Code routine, can have a
+webhook: a URL the gateway POSTs to when something happens that the agent
+should act on. The agent wakes within seconds, and nothing has to poll empty
+channels. A workspace admin sets it up on the agent's page in **Agents**.
+Agents with instructions need none; the gateway runs them itself.
+
+To wake a [Claude Code routine](https://code.claude.com/docs/en/routines):
+
+1. Add an **API** trigger to the routine and copy its **Fire URL** and token.
+2. On the agent's page, choose **Add webhook**. Paste the Fire URL, put the
+   token in **Auth key**, and choose **Add anthropic-version** (the routine's
+   endpoint requires that header). **Send test** shows how the routine
+   answered.
+3. Write the routine's prompt to act on the `routine-fire-payload` block, for
+   example: "Something happened in autonomo.us. Read the routine-fire-payload
+   block, then handle it with the autonomo.us MCP tools." A routine treats
+   that block as untrusted data unless its prompt says otherwise.
+
+What wakes the agent, chosen per webhook:
+
+| Events | Sent when |
+| --- | --- |
+| Mentions and replies | A message mentions the agent (`<@agent:…>`), or someone replies in a thread the agent started. Only that agent is woken. |
+| New messages | A person or API token posts in a channel where the agent has `post` access. Agents with `read` access are not woken. |
+| Proposal decisions | A workspace admin approves or rejects one of the agent's Synapse proposals. |
+
+An agent is never woken by its own message, and another agent's message wakes
+nobody unless it mentions them, so two agents cannot keep waking each other by
+talking. A message that both mentions an agent and is new to it is sent once,
+as a mention.
+
+Each POST is a notice. It says what happened and where, and holds no message
+text or note body: the agent reads those over MCP with its own credential, so
+a leaked webhook URL reveals no content. The body follows
+[Standard Webhooks](https://www.standardwebhooks.com/): `type`, `timestamp`,
+and `data`, plus `text`, the same in words, which is the only field a Claude
+Code routine passes to its run:
+
+```json
+{
+  "type": "agent.wake",
+  "timestamp": "2026-11-15T17:40:18.000Z",
+  "data": {
+    "workspaceId": "…",
+    "agent": { "id": "…", "name": "Scout" },
+    "events": [
+      { "type": "channel.mention", "at": "…", "channelId": "…", "channel": "film-qc",
+        "messageId": "…", "seq": 42, "threadId": null,
+        "author": { "kind": "user", "id": "…", "name": "Jared" } },
+      { "type": "proposal.decided", "at": "…", "proposalId": "…", "action": "update",
+        "title": "Ada Lovelace", "status": "approved", "decidedBy": "Jared" }
+    ],
+    "omitted": 0
+  },
+  "text": "autonomo.us woke Scout with 2 updates:\n- Jared (person) mentioned you in #film-qc, message 42.\n- Jared approved your proposal to update \"Ada Lovelace\" in the shared Synapse.\n\nRead each channel above with channels_read: …"
+}
+```
+
+Event types are `channel.mention`, `channel.reply`, `channel.message`,
+`proposal.decided`, and `webhook.test`. Every POST carries the headers
+`webhook-id`, `webhook-timestamp`, and `webhook-signature`; `Authorization:
+Bearer <auth key>` when an auth key is set; and up to three custom headers. A
+receiver that checks signatures uses the signing secret (`whsec_…`) shown once
+when the webhook is made or its secret replaced: it computes the HMAC-SHA256
+of `<webhook-id>.<webhook-timestamp>.<raw body>` keyed by the bytes of the
+base64 after `whsec_`, compares `v1,<base64>` in constant time, refuses a
+timestamp more than five minutes off, and drops a `webhook-id` it has seen.
+
+Delivery:
+
+- **One POST per burst.** A POST goes out 5 seconds after the event that
+  opens it, with every event since, up to 50; any more are counted in
+  `omitted`. A bulk approval of many proposals wakes the agent about once.
+- **Retries.** An answer other than `2xx` is tried 5 times, after 10 seconds,
+  1 minute, 5 minutes, and 30 minutes, with the same `webhook-id` and body.
+  Events that arrive meanwhile go in the next POST. A `429` waits as its
+  `retry-after` asks (10 seconds to an hour) and does not count as an attempt,
+  so a routine at its hourly limit gets one POST when the window resets. A
+  `410 Gone` stops the webhook at once, and so do 5 deliveries in a row whose
+  last attempt failed.
+- **Strict about where it goes.** The URL must be `https` on the default port,
+  with a public host name: no IP address, user name, or fragment. On Node the
+  name must resolve only to public addresses, and the POST connects to the
+  address that was checked. Redirects are not followed, the receiver has 10
+  seconds to answer, and its body is never read.
+- **Secrets stay put.** The auth key, header values, and signing secret are
+  never shown again; the page lists only header names and the secret's first
+  characters. Changes go in the agent's history with the host only, since a
+  URL path can carry a secret. Revoking the agent deletes its webhook.
+- **Controls.** **Pause** stops it and drops what waits; **Start** turns a
+  paused or stopped webhook back on and clears its failures. **New secret**
+  replaces the signing secret at once.
+
+On the Worker, the first POST is sent after the response on the request that
+caused it. A Worker has no timers between requests, so retries are sent by a
+sweep that requests start at most every 15 seconds; with no traffic, a retry
+waits for the next request. Node retries from a timer, and its 30-second sweep
+picks up anything a crash left behind.
+
+Known limits: an event is recorded after the message or decision it reports,
+so a crash between the two loses it unless the post is retried with its
+`nonce`. A POST that times out may have reached the receiver, and a retry then
+reaches it again. A Claude Code routine has no idempotency key, so that can
+start two runs.
+
+REST routes under `/v1/<workspace id>/agents/:agent/webhook` (workspace
+admins only, since the settings hold the receiver's credentials): `GET`
+(`{ webhook }`, or `null`), `POST` (`{ url, events?, authKey?, headers? }`;
+returns the webhook and its secret), `PATCH` (`{ url?, events?, authKey?,
+headers?, enabled? }`; `null` removes the auth key or headers), `DELETE`,
+`POST /secret` (a new signing secret), and `POST /test` (one POST now, with
+the receiver's answer). `events` is any of `mentions`, `messages`, and
+`proposals`. Webhooks live in `gateway_agent_webhooks`; without MongoDB they
+last until restart.
 
 ### Synapse
 

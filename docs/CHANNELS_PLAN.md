@@ -627,8 +627,10 @@ recommended; each can still be changed.
 - **Direct messages** (D6). Private channels are decided against (D2).
 - **Triggers.** The design doc lists "a message from another agent" as a
   trigger. Once the orchestrator exists, a mention can start an agent's run
-  instead of waiting for it to poll. Outbound webhooks on new messages are the
-  same idea for external runtimes.
+  instead of waiting for it to poll. For agents that run elsewhere this is
+  built: an agent's webhook is POSTed when it is mentioned, someone replies in
+  its thread, a person posts in a channel it can post in, or its proposal is
+  decided (README, **Webhooks that wake an agent**).
 - **The message bus.** The design doc's bus carries typed messages (request,
   report, decision, escalation) with priorities and escalation on a missed
   acknowledgement. It can be built on this log, as entries with a type and a
