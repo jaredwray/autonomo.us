@@ -365,7 +365,7 @@ it("creates an agent with instructions from the UI, edits and pauses it, and del
 	).toEqual([
 		"",
 		"With instructionsThe gateway runs it. It answers in channels when someone mentions it, using a model from this workspace.",
-		"OAuth sign-inAn MCP app such as Claude or Cursor signs in, and you approve it here. There is no token to copy.",
+		"OAuth sign-inYou add this gateway's address to an MCP app such as Claude or Cursor. When it signs in, you approve it, name the agent, and choose its permissions.",
 		"TokenYou copy an agent token into an MCP app or a script.",
 	]);
 	fireEvent.click(chooser.getByRole("button", { name: /^With instructions/ }));
@@ -1009,21 +1009,48 @@ it("forgets an unsaved token value when the person goes elsewhere or signs out",
 		expect(document.body.textContent).not.toContain(secret);
 });
 
-it("creates an agent that signs in with OAuth, lists its apps, and disconnects and revokes", async () => {
+it("starts an OAuth agent from its address alone, opens it once a sign-in makes it, and disconnects and revokes", async () => {
 	const running = await boot();
 	renderAt("#/agents");
+	await screen.findByText(/No agents yet\. Create one/);
 	await newAgent("OAuth sign-in");
-	const form = within(
+	const start = within(
 		screen.getByRole("region", { name: "New agent: oauth sign-in" }),
 	);
-	// A working agent by default; managing channels is asked for.
-	expect(checkbox(form, "MCP: Read").checked).toBe(true);
-	expect(checkbox(form, "MCP: Call").checked).toBe(true);
-	expect(checkbox(form, "Channels: Manage").checked).toBe(false);
-	expect(form.queryByLabelText("TTL")).toBeNull();
-	type(field(form, "Name"), "Claude");
-	type(field(form, "Description"), "Desktop app");
-	fireEvent.click(form.getByRole("button", { name: "Create agent" }));
+	// Only the address: the agent is named and given its grants on approval.
+	expect(start.queryByLabelText("Name")).toBeNull();
+	expect(start.queryByRole("checkbox")).toBeNull();
+	expect(start.queryByRole("button", { name: "Create agent" })).toBeNull();
+	expect((start.getByLabelText("MCP address") as HTMLInputElement).value).toBe(
+		`${running.url}/mcp`,
+	);
+	expect(start.getAllByRole("listitem")[2].textContent).toBe(
+		"Approve it as a new agent: give it a name and choose its permissions.",
+	);
+	const writeText = vi.fn(async () => {});
+	vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+	fireEvent.click(start.getByRole("button", { name: "Copy address" }));
+	expect(await start.findByText("Address copied.")).toBeDefined();
+	expect(writeText).toHaveBeenCalledWith(`${running.url}/mcp`);
+	vi.unstubAllGlobals();
+	expect(await running.agents()).toEqual([]);
+
+	// The app signs in and is approved as a new agent, in another tab.
+	const started = await running.startSignIn("Claude Desktop");
+	const decision = await running.api<OAuthSignInDecision>(
+		"POST",
+		`${running.base}/oauth/sign-ins/${started.id}/approve`,
+		{
+			agent: {
+				name: "Claude",
+				description: "Desktop app",
+				permissions: ["mcp:read", "mcp:call"],
+			},
+		},
+	);
+	const desktop = await running.exchange(started, decision.redirectTo);
+	// Coming back to this tab opens the agent that approval made.
+	fireEvent.focus(window);
 	expect(await screen.findByText("Created Claude.")).toBeDefined();
 	const [made] = await running.agents();
 	expect(made).toMatchObject({
@@ -1031,38 +1058,34 @@ it("creates an agent that signs in with OAuth, lists its apps, and disconnects a
 		name: "Claude",
 		description: "Desktop app",
 		permissions: ["mcp:read", "mcp:call"],
-		connections: 0,
+		connections: 1,
 	});
 	expect(window.location.hash).toBe(
 		`#/w/${running.workspaceId}/agents/${made.id}`,
 	);
-	// No token exists, and what to do next is on the page.
+	expect(
+		screen.queryByRole("region", { name: "New agent: oauth sign-in" }),
+	).toBeNull();
+	// No token exists, and another app connects the same way.
 	expect(screen.queryByLabelText("New agent token")).toBeNull();
 	const connectPanel = within(
 		await screen.findByRole("region", { name: "Connect an app" }),
 	);
-	expect(connectPanel.getByText(/Next: connect an app/)).toBeDefined();
 	expect(
 		(connectPanel.getByLabelText("MCP address") as HTMLInputElement).value,
 	).toBe(`${running.url}/mcp`);
-	expect(connectPanel.getAllByRole("listitem")).toHaveLength(3);
-	const writeText = vi.fn(async () => {});
-	vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
-	fireEvent.click(connectPanel.getByRole("button", { name: "Copy address" }));
-	expect(await connectPanel.findByText("Address copied.")).toBeDefined();
-	expect(writeText).toHaveBeenCalledWith(`${running.url}/mcp`);
-	vi.unstubAllGlobals();
-	const apps = () =>
-		within(screen.getByRole("region", { name: "Signed-in apps" }));
-	expect(await apps().findByText("No app is signed in.")).toBeDefined();
+	expect(connectPanel.getAllByRole("listitem")[2].textContent).toBe(
+		"Approve it and choose Claude. The app is then listed below.",
+	);
 	const view = () => within(screen.getByRole("region", { name: "Claude" }));
 	expect(view().queryByRole("button", { name: /^Roll/ })).toBeNull();
 
-	// Two apps sign in; the page is opened again and lists both.
-	const desktop = await running.connect(made.id, "Claude Desktop");
+	// A second app signs in; the page is opened again and lists both.
 	const cursor = await running.connect(made.id, "Cursor");
 	cleanup();
 	renderAt(`#/agents/${made.id}`);
+	const apps = () =>
+		within(screen.getByRole("region", { name: "Signed-in apps" }));
 	const rows = async () =>
 		(
 			await within(
@@ -1091,7 +1114,6 @@ it("creates an agent that signs in with OAuth, lists its apps, and disconnects a
 			"The app chose this name.",
 		),
 	).toHaveLength(2);
-	expect(screen.queryByText(/Next: connect an app/)).toBeNull();
 	expect(agentList().getByRole("link", { name: /^Claude/ }).textContent).toBe(
 		"ClaudeOAuth sign-inMCP: Read, MCP: Call · 2 apps signed in",
 	);

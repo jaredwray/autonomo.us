@@ -1263,6 +1263,7 @@ a.button { text-decoration: none; }
 .agent-kind-choice { display: grid; gap: 4px; width: 100%; padding: 14px 16px; border: 1px solid var(--hairline); border-radius: 8px; background: var(--page); color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .agent-kind-choice:hover { border-color: var(--series-1); }
 .agent-kind-choice:focus-visible { outline: 2px solid var(--series-1); outline-offset: 3px; }
+.agent-kind-choice:disabled { cursor: default; opacity: 0.6; border-color: var(--hairline); }
 .agent-kind-choice strong { font-size: 14px; font-weight: 600; }
 .agent-kind-choice span { color: var(--text-secondary); font-size: 12px; }
 .agent-kinds { display: grid; gap: 12px; margin: 16px 0 0; font-size: 13px; }

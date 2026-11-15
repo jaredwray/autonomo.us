@@ -20,8 +20,8 @@ import {
 	agentTokenConfig,
 	grantsText,
 	McpAgentFacts,
+	NewOAuthAgent,
 	OAuthAgent,
-	OAuthAgentForm,
 	TokenAgent,
 } from "./AgentMcp.js";
 import { agentsHash, parseAgentsRoute } from "./agents-route.js";
@@ -46,7 +46,7 @@ const KIND_CHOICES: ReadonlyArray<{
 	{
 		kind: "oauth",
 		title: "OAuth sign-in",
-		text: "An MCP app such as Claude or Cursor signs in, and you approve it here. There is no token to copy.",
+		text: "You add this gateway's address to an MCP app such as Claude or Cursor. When it signs in, you approve it, name the agent, and choose its permissions.",
 	},
 	{
 		kind: "token",
@@ -184,6 +184,49 @@ export function AgentsView({
 		},
 		[refresh],
 	);
+
+	/**
+	 * An OAuth agent is made when its app's sign-in is approved, usually in
+	 * another tab. While the person waits, the list is read more often and
+	 * again when they come back, and the first new OAuth agent is opened.
+	 * The OAuth choice waits for the first list, so the agents there were
+	 * before the wait are always known.
+	 */
+	const before = useRef<Set<string> | null>(null);
+	useEffect(() => {
+		if (creating !== "oauth") {
+			before.current = null;
+			return;
+		}
+		if (!list) return;
+		if (!before.current) {
+			before.current = new Set(list.agents.map((item) => item.id));
+			return;
+		}
+		const known = before.current;
+		const made = list.agents.find(
+			(item) => item.kind === "oauth" && !known.has(item.id),
+		);
+		// Its details come in a separate read; wait until both have it.
+		const ready = settings?.tokens.some((token) => token.id === made?.id);
+		if (!made || !ready) return;
+		setCreating(null);
+		setNotice(`Created ${made.name}.`);
+		navigate(made.id);
+	}, [creating, list, navigate, settings]);
+	useEffect(() => {
+		if (creating !== "oauth") return;
+		const check = () => {
+			if (!document.hidden) void refresh();
+		};
+		const timer = setInterval(check, 5_000);
+		window.addEventListener("focus", check);
+		return () => {
+			clearInterval(timer);
+			window.removeEventListener("focus", check);
+		};
+	}, [creating, refresh]);
+
 	const open = (next: string | null) => {
 		setCreating(null);
 		setNotice("");
@@ -315,6 +358,7 @@ export function AgentsView({
 										<button
 											type="button"
 											className="agent-kind-choice"
+											disabled={choice.kind === "oauth" && !list}
 											onClick={() => setCreating(choice.kind)}
 										>
 											<strong>{choice.title}</strong>
@@ -372,16 +416,7 @@ export function AgentsView({
 									}
 								/>
 							) : (
-								<>
-									<p className="card-note">
-										After this, give the app this gateway's MCP address. It
-										signs in, and you approve it and choose this agent.
-									</p>
-									<OAuthAgentForm
-										onCancel={() => setCreating("choose")}
-										onSaved={(next) => added(summaryOf(next), next)}
-									/>
-								</>
+								<NewOAuthAgent onBack={() => setCreating("choose")} />
 							)}
 						</section>
 					) : agent?.kind === "instructions" ? (
@@ -413,7 +448,6 @@ export function AgentsView({
 							key={agent.id}
 							token={token}
 							actions={history}
-							created={created === agent.id}
 							onChanged={changed}
 						/>
 					) : agent && (!admin || error) ? (

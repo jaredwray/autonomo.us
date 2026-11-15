@@ -393,7 +393,7 @@ one. How an agent is made decides how it works, and does not change later:
 | Made with | What it is |
 | --- | --- |
 | Instructions | The gateway runs it. It answers in channels when mentioned, using a model from the workspace. See [Agents with instructions](#agents-with-instructions). |
-| OAuth sign-in | An MCP app such as Claude or Cursor signs in and a workspace admin approves it in the dashboard. Nothing is copied by hand. See [Agents that sign in with OAuth](#agents-that-sign-in-with-oauth). |
+| OAuth sign-in | An MCP app such as Claude or Cursor is given the gateway's MCP address and signs in. A workspace admin approves it in the dashboard, naming the agent and choosing its grants. Nothing is copied by hand. See [Agents that sign in with OAuth](#agents-that-sign-in-with-oauth). |
 | Token | An MCP app or script is given an agent token. See [Agents with a token](#agents-with-a-token). |
 
 Workspace admins create, change, and revoke every kind of agent in their
@@ -435,7 +435,10 @@ keeps the agent's memory and revoking it cuts the agent off without deleting it.
 
 Give an MCP app the gateway's MCP address, `https://<gateway>/mcp`, and no
 token. The app finds out by itself how to sign in, opens a browser, and a
-workspace admin approves it in the dashboard:
+workspace admin approves it in the dashboard. In **Agents**, **New agent** →
+**OAuth sign-in** shows only that address to copy: the agent is made when its
+first sign-in is approved, where the admin names it and chooses its grants,
+and the Agents page opens it once that happens. Step by step:
 
 1. The app calls `/mcp` and gets `401` with
    `WWW-Authenticate: Bearer resource_metadata="…/.well-known/oauth-protected-resource/mcp"`.
