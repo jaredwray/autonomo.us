@@ -1,8 +1,15 @@
 import {
 	OVERVIEW_BUDGET_WARNING,
+	type UsageAnalytics,
 	type WorkspaceOverview,
 } from "@autonomo.us/common";
-import { formatMoney, plain, plural, shortDate } from "./dashboard-format.js";
+import {
+	formatMoney,
+	percent,
+	plain,
+	plural,
+	shortDate,
+} from "./dashboard-format.js";
 
 /** Something on a workspace's overview that a person should look at. */
 export type AttentionItem = {
@@ -13,23 +20,63 @@ export type AttentionItem = {
 	href: string;
 	/** True when the signed-in person can act on it, not only see it. */
 	yours: boolean;
+	/** True for the whole team (invites), the same in every workspace. */
+	org?: boolean;
 	severity: "info" | "warning" | "critical";
 };
+
+/** A connection is failing once this many calls in the period failed, at this share. */
+const FAILING_CALLS = 5;
+const FAILING_SHARE = 0.5;
 
 const workspaceHref = (workspaceId: string, path: string) =>
 	`#/w/${encodeURIComponent(workspaceId)}/${path}`;
 
+const rank = { critical: 0, warning: 1, info: 2 };
+const bySeverity = (items: AttentionItem[]) =>
+	items
+		.map((item, index) => ({ item, index }))
+		.sort(
+			(a, b) =>
+				rank[a.item.severity] - rank[b.item.severity] || a.index - b.index,
+		)
+		.map(({ item }) => item);
+
 /**
  * What is waiting in a workspace, most severe first. Items the person may
- * act on are `yours`; the rest wait on a workspace admin.
+ * act on are `yours`; the rest wait on a workspace admin. With the period's
+ * analytics, model connections that keep failing are listed too.
  */
 export function attentionItems(
 	overview: WorkspaceOverview,
 	workspaceId: string,
+	analytics?: UsageAnalytics | null,
 ): AttentionItem[] {
 	const { waiting, can, budget } = overview;
 	const href = (path: string) => workspaceHref(workspaceId, path);
 	const items: AttentionItem[] = [];
+	for (const row of analytics?.byProvider ?? [])
+		if (
+			row.errors >= FAILING_CALLS &&
+			row.errors >= row.requests * FAILING_SHARE
+		)
+			items.push({
+				id: `connection:${row.id}`,
+				text: `Connection ${row.name} failed ${percent(row.errors, row.requests)} of its calls`,
+				detail: `${plural(row.errors, "failed call")} of ${plain.format(row.requests)} in this period. Check its key and models.`,
+				href: href("models"),
+				yours: can.manageAgents,
+				severity: "critical",
+			});
+	for (const bot of waiting.failingBots)
+		items.push({
+			id: `failing:${bot.id}`,
+			text: `${bot.name} failed ${bot.failed} of its last ${plural(bot.replies, "reply", "replies")}`,
+			detail: "Its model call keeps failing. The error is on its replies.",
+			href: href(`agents/${bot.id}`),
+			yours: can.manageAgents,
+			severity: "critical",
+		});
 	for (const problem of waiting.proxyProblems)
 		items.push({
 			id: `proxy:${problem.name}`,
@@ -39,7 +86,7 @@ export function attentionItems(
 			yours: can.editProxies,
 			severity: "critical",
 		});
-	if (budget.limitUsd > 0 && budget.spentUsd >= budget.limitUsd)
+	if (budget && budget.limitUsd > 0 && budget.spentUsd >= budget.limitUsd)
 		items.push({
 			id: "budget",
 			text: "The proxy budget for this month is used up",
@@ -49,6 +96,7 @@ export function attentionItems(
 			severity: "critical",
 		});
 	else if (
+		budget &&
 		budget.limitUsd > 0 &&
 		budget.spentUsd >= budget.limitUsd * OVERVIEW_BUDGET_WARNING
 	)
@@ -119,18 +167,13 @@ export function attentionItems(
 		items.push({
 			id: "invites",
 			text: `${plural(waiting.invites, "invite link")} not used yet`,
+			detail: "For the whole team.",
 			href: "#/team",
 			yours: true,
+			org: true,
 			severity: "info",
 		});
-	const rank = { critical: 0, warning: 1, info: 2 };
-	return items
-		.map((item, index) => ({ item, index }))
-		.sort(
-			(a, b) =>
-				rank[a.item.severity] - rank[b.item.severity] || a.index - b.index,
-		)
-		.map(({ item }) => item);
+	return bySeverity(items);
 }
 
 /** Counts for the sidebar: what the person can act on in Synapse and Agents. */
@@ -145,4 +188,14 @@ export function overviewBadges(overview: WorkspaceOverview | null) {
 				)
 			: 0,
 	};
+}
+
+/** The newer of two overviews of the same workspace, or whichever exists. */
+export function newerOverview(
+	a: WorkspaceOverview | null | undefined,
+	b: WorkspaceOverview | null | undefined,
+): WorkspaceOverview | null {
+	if (!a) return b ?? null;
+	if (!b) return a;
+	return b.generatedAt > a.generatedAt ? b : a;
 }

@@ -22,12 +22,14 @@ import {
 	formatMoney,
 	percent,
 	plain,
+	plural,
 } from "./dashboard-format.js";
 import {
 	type DashboardTab,
 	dashboardHash,
 	parseDashboardTab,
 } from "./dashboard-route.js";
+import { newerOverview } from "./overview-items.js";
 import { PageTabs } from "./PageTabs.js";
 
 const ranges = {
@@ -552,6 +554,14 @@ function WebUsage({
 						? "Filtered by caller; the model and connection filters do not apply."
 						: "The model and connection filters do not apply."}
 				</p>
+				{web.legacyFetches > 0 && (
+					<p className="analytics-notice" role="status">
+						{plural(web.legacyFetches, "fetch", "fetches")} in this period
+						{web.legacyFetches === 1 ? " was" : " were"} recorded before the
+						gateway kept how fetches end and what they cost. They are not in
+						these numbers.
+					</p>
+				)}
 				{totals.fetches ? (
 					<>
 						<dl className="web-stats">
@@ -691,8 +701,43 @@ function WebUsage({
 }
 
 /**
- * Usage analytics for a period, refreshed every 30 seconds while the tab is
- * visible. A report for other filters is never shown as this one's.
+ * Runs `refresh` now, then every 30 seconds while the page is visible, and at
+ * once when it becomes visible again, never two at a time. Returns the stop.
+ */
+function poll(refresh: () => Promise<void>): () => void {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	let running = false;
+	let stopped = false;
+	const run = async () => {
+		if (running || stopped) return;
+		clearTimeout(timer);
+		running = true;
+		try {
+			await refresh();
+		} finally {
+			running = false;
+			if (!stopped) timer = setTimeout(tick, POLL_MS);
+		}
+	};
+	const tick = () => {
+		if (!document.hidden) void run();
+		else timer = setTimeout(tick, POLL_MS);
+	};
+	const visible = () => {
+		if (!document.hidden) void run();
+	};
+	document.addEventListener("visibilitychange", visible);
+	void run();
+	return () => {
+		stopped = true;
+		clearTimeout(timer);
+		document.removeEventListener("visibilitychange", visible);
+	};
+}
+
+/**
+ * Usage analytics for a period, refreshed while the page is visible. A
+ * report for other filters is never shown as this one's.
  */
 function useAnalytics(range: Range, filters: Filters, refreshKey: number) {
 	const [data, setData] = useState<UsageAnalytics | null>(null);
@@ -703,10 +748,9 @@ function useAnalytics(range: Range, filters: Filters, refreshKey: number) {
 	// biome-ignore lint/correctness/useExhaustiveDependencies: refreshKey deliberately triggers a manual refresh without clearing the last successful report; filterKey stands for range and filters.
 	useEffect(() => {
 		const controller = new AbortController();
-		let timer: ReturnType<typeof setTimeout>;
 		let stopped = false;
 		const query = (): AnalyticsQuery => ({ ...windowFor(range), ...filters });
-		const refresh = async () => {
+		const stop = poll(async () => {
 			setLoading(true);
 			try {
 				const result = await fetchDashboardData(query(), controller.signal);
@@ -721,21 +765,13 @@ function useAnalytics(range: Range, filters: Filters, refreshKey: number) {
 						err instanceof Error ? err.message : "Could not load analytics.",
 					);
 			} finally {
-				if (!stopped) {
-					setLoading(false);
-					timer = setTimeout(poll, POLL_MS);
-				}
+				if (!stopped) setLoading(false);
 			}
-		};
-		const poll = () => {
-			if (!document.hidden) void refresh();
-			else timer = setTimeout(poll, POLL_MS);
-		};
-		void refresh();
+		});
 		return () => {
 			stopped = true;
+			stop();
 			controller.abort();
-			clearTimeout(timer);
 		};
 	}, [filterKey, refreshKey]);
 	return {
@@ -745,7 +781,12 @@ function useAnalytics(range: Range, filters: Filters, refreshKey: number) {
 	};
 }
 
-/** The workspace overview for a period, while the Overview tab is open. */
+/**
+ * The workspace overview for a period, while the Overview tab is open. What
+ * is waiting does not depend on the period, so the last overview stays on
+ * screen while another period loads; `runsCurrent` says whether its reply
+ * counts are for the period shown.
+ */
 function useWorkspaceOverview(
 	range: Range,
 	refreshKey: number,
@@ -764,9 +805,8 @@ function useWorkspaceOverview(
 	useEffect(() => {
 		if (!enabled) return;
 		const controller = new AbortController();
-		let timer: ReturnType<typeof setTimeout>;
 		let stopped = false;
-		const refresh = async () => {
+		const stop = poll(async () => {
 			setState((current) => ({ ...current, loading: true }));
 			try {
 				const overview = await fetchWorkspaceOverview(
@@ -787,23 +827,17 @@ function useWorkspaceOverview(
 								? err.message
 								: "The overview could not be loaded.",
 					}));
-			} finally {
-				if (!stopped) timer = setTimeout(poll, POLL_MS);
 			}
-		};
-		const poll = () => {
-			if (!document.hidden) void refresh();
-			else timer = setTimeout(poll, POLL_MS);
-		};
-		void refresh();
+		});
 		return () => {
 			stopped = true;
+			stop();
 			controller.abort();
-			clearTimeout(timer);
 		};
 	}, [range, refreshKey, enabled]);
 	return {
-		current: state.key === range ? state.overview : null,
+		current: state.overview,
+		runsCurrent: state.key === range,
 		error: state.error,
 		loading: state.loading,
 	};
@@ -812,7 +846,8 @@ function useWorkspaceOverview(
 type Chip = {
 	tone: "good" | "warning" | "critical" | "muted";
 	text: string;
-	title?: string;
+	/** Why, shown under the header for anything that is not good. */
+	explanation?: string;
 };
 
 /** What the header says about the gateway, worst first. */
@@ -820,47 +855,46 @@ function healthChips(
 	analyticsError: string | null,
 	overviewError: string | null,
 	health: WorkspaceOverview["health"] | null,
-	loaded: boolean,
 ): Chip[] {
 	const chips: Chip[] = [];
 	if (analyticsError)
 		chips.push({
 			tone: "critical",
 			text: "Analytics unavailable",
-			title: analyticsError,
+			explanation: `Usage could not be read: ${analyticsError}`,
 		});
 	if (overviewError)
 		chips.push({
 			tone: "critical",
 			text: "Overview unavailable",
-			title: overviewError,
+			explanation: `The overview could not be read: ${overviewError}`,
 		});
 	if (health?.telemetry === "failing")
 		chips.push({
 			tone: "critical",
 			text: "Usage history failing",
-			title:
+			explanation:
 				"Writing usage to MongoDB is failing. Reports show what this gateway process still holds.",
 		});
 	if (health?.persistence === "memory")
 		chips.push({
 			tone: "warning",
 			text: "Not saved to a database",
-			title:
+			explanation:
 				"Settings and history last until the API restarts. Connect MongoDB to keep them.",
 		});
 	if (health && !health.webAvailable)
 		chips.push({
 			tone: "warning",
 			text: "Web access off",
-			title:
+			explanation:
 				"The gateway's operator turned web access off. Agents cannot fetch pages.",
 		});
 	if (!chips.length)
 		chips.push(
-			loaded
+			health
 				? { tone: "good", text: "Gateway healthy" }
-				: { tone: "muted", text: "Connecting…" },
+				: { tone: "muted", text: "Checking health…" },
 		);
 	return chips;
 }
@@ -1247,14 +1281,21 @@ export function Dashboard({
 		onOverview,
 	);
 	const workspaceId = workspace?.id ?? currentWorkspaceId() ?? "";
-	const health = (overview.current ?? shellOverview)?.health ?? null;
+	// The newest overview either this page or the shell read: on Usage this
+	// page stops reading it, and the shell keeps it current.
+	const health = newerOverview(overview.current, shellOverview)?.health ?? null;
 	const chips = healthChips(
 		analytics.error,
 		tab === "overview" ? overview.error : null,
 		health,
-		Boolean(analytics.current || overview.current),
 	);
-	const loading = analytics.loading || (tab === "overview" && overview.loading);
+	const explained = chips.filter((chip) => chip.explanation);
+	// Background reads do not disable Refresh; only waiting for a first answer does.
+	const waitingFirst =
+		!analytics.current && (tab === "usage" || !overview.current);
+	const loading =
+		waitingFirst &&
+		(analytics.loading || (tab === "overview" && overview.loading));
 	const retry = () => setRefreshKey((key) => key + 1);
 	return (
 		<div className="dashboard analytics-dashboard">
@@ -1268,8 +1309,8 @@ export function Dashboard({
 				</div>
 				<div className="status-chips">
 					{chips.map((chip) => (
-						<span className="chip" key={chip.text} title={chip.title}>
-							<span className={`dot dot-${chip.tone}`} />
+						<span className="chip" key={chip.text}>
+							<span className={`dot dot-${chip.tone}`} aria-hidden="true" />
 							{chip.text}
 						</span>
 					))}
@@ -1283,6 +1324,13 @@ export function Dashboard({
 					</button>
 				</div>
 			</header>
+			<ul className="health-notes" aria-label="Gateway health" role="status">
+				{explained.map((chip) => (
+					<li key={chip.text} className={chip.tone}>
+						<strong>{chip.text}.</strong> {chip.explanation}
+					</li>
+				))}
+			</ul>
 			<PageTabs
 				label="Dashboard sections"
 				idPrefix="dashboard"
@@ -1335,6 +1383,8 @@ export function Dashboard({
 							<OverviewPanel
 								overview={overview.current}
 								analytics={analytics.current}
+								analyticsError={analytics.error}
+								runsCurrent={overview.runsCurrent}
 								channels={channels}
 								workspaceId={workspaceId}
 							>

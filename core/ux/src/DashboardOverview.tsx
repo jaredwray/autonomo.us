@@ -3,6 +3,7 @@ import {
 	type ChannelSummary,
 	OVERVIEW_BUDGET_WARNING,
 	type OverviewAgent,
+	type OverviewSection,
 	type UsageAnalytics,
 	type WorkspaceOverview,
 } from "@autonomo.us/common";
@@ -10,6 +11,7 @@ import type { ReactNode } from "react";
 import {
 	ago,
 	count,
+	dateTime,
 	formatMoney,
 	percent,
 	plural,
@@ -24,6 +26,15 @@ const SEVERITY_LABELS: Record<AttentionItem["severity"], string> = {
 	critical: "Urgent",
 	warning: "Soon",
 	info: "To do",
+};
+const SECTION_LABELS: Record<OverviewSection, string> = {
+	synapse: "Synapse",
+	channels: "channels",
+	proxies: "proxies",
+	"site-requests": "site requests",
+	connections: "signed-in apps",
+	team: "invites",
+	"api-tokens": "API tokens",
 };
 
 function AttentionList({ items }: { items: AttentionItem[] }) {
@@ -54,12 +65,14 @@ function AttentionList({ items }: { items: AttentionItem[] }) {
 
 function NeedsYou({
 	overview,
+	analytics,
 	workspaceId,
 }: {
 	overview: WorkspaceOverview;
+	analytics: UsageAnalytics | null;
 	workspaceId: string;
 }) {
-	const items = attentionItems(overview, workspaceId);
+	const items = attentionItems(overview, workspaceId, analytics);
 	const yours = items.filter((item) => item.yours);
 	const others = items.filter((item) => !item.yours);
 	return (
@@ -92,21 +105,36 @@ function Tile(props: { label: string; value: string; detail: string }) {
 	);
 }
 
-/** A ratio against a limit. The fill turns amber near the limit and red at it. */
+/**
+ * A ratio against a limit. The fill turns amber near the limit and red at
+ * it. The native meter carries the value for assistive technology; the
+ * visible bar and text are for the eye. A zero limit is a switch that is
+ * off, not a meter.
+ */
 export function Meter({
 	label,
 	used,
 	limit,
 	format = count,
+	off,
 }: {
 	label: string;
 	used: number;
 	limit: number;
 	format?: (value: number) => string;
+	/** What a zero limit means here. */
+	off?: string;
 }) {
-	const share = limit > 0 ? Math.min(used / limit, 1) : 0;
+	if (limit <= 0)
+		return (
+			<div className="meter-row meter-off">
+				<span className="meter-label">{label}</span>
+				<span className="meter-off-text">{off ?? "None allowed"}</span>
+			</div>
+		);
+	const share = Math.min(used / limit, 1);
 	const tone =
-		limit > 0 && used >= limit
+		used >= limit
 			? "critical"
 			: share >= OVERVIEW_BUDGET_WARNING
 				? "warning"
@@ -114,7 +142,6 @@ export function Meter({
 	const text = `${format(used)} of ${format(limit)}${tone === "critical" ? ", at the limit" : ""}`;
 	return (
 		<div className="meter-row">
-			<span className="meter-label">{label}</span>
 			<meter
 				className="visually-hidden"
 				aria-label={label}
@@ -123,13 +150,16 @@ export function Meter({
 				value={Math.min(used, limit)}
 				aria-valuetext={text}
 			/>
+			<span className="meter-label" aria-hidden="true">
+				{label}
+			</span>
 			<span className="meter" aria-hidden="true" title={`${label}: ${text}`}>
 				<span
 					className={`meter-fill ${tone}`}
 					style={{ width: `${share * 100}%` }}
 				/>
 			</span>
-			<span className="meter-value">
+			<span className="meter-value" aria-hidden="true">
 				{format(used)} / {format(limit)}
 				{tone === "critical" && <em> · at limit</em>}
 			</span>
@@ -170,6 +200,10 @@ function AgentsCard({
 		const web = analytics?.web.byCaller.find(
 			(row) => row.id === `agent:${agent.id}`,
 		);
+		const seen = [model?.lastSeen, web?.lastSeen]
+			.filter((value): value is string => Boolean(value))
+			.sort()
+			.at(-1);
 		return {
 			calls: model?.requests ?? 0,
 			fetches: web?.fetches ?? 0,
@@ -177,6 +211,7 @@ function AgentsCard({
 			// Unpriced calls cost something unknown, not nothing.
 			known: Boolean(model?.pricedRequests || web?.fetches),
 			unpriced: model ? model.requests - model.pricedRequests : 0,
+			seen,
 		};
 	};
 	const rows = overview.agents
@@ -193,8 +228,8 @@ function AgentsCard({
 				<div>
 					<h2 id="overview-agents-heading">Agents</h2>
 					<p className="card-note">
-						Spend and calls in the period. Limits reset hourly and at midnight
-						UTC.
+						Spend, calls, and last activity in the period. Limits reset hourly
+						and at midnight UTC.
 					</p>
 				</div>
 				<a className="button" href={href(workspaceId, "agents")}>
@@ -210,61 +245,73 @@ function AgentsCard({
 								<th>Status</th>
 								<th>Limits</th>
 								<th className="num">Spend</th>
+								<th>Last active</th>
 							</tr>
 						</thead>
 						<tbody>
-							{rows.map(({ agent, calls, fetches, spend, known, unpriced }) => (
-								<tr key={agent.id}>
-									<td>
-										<a
-											className="analytics-link"
-											href={href(workspaceId, `agents/${agent.id}`)}
-										>
-											{agent.name}
-										</a>
-										<span className="analytics-subtext">
-											{agentLine(agent)}
-										</span>
-									</td>
-									<td>
-										<span
-											className={`token-status ${agent.replying ? "active" : agent.status}`}
-										>
-											{agent.replying
-												? "Replying…"
-												: STATUS_LABELS[agent.status]}
-										</span>
-									</td>
-									<td className="overview-limits">
-										{agent.replies && agent.tokens ? (
-											<>
-												<Meter
-													label="Replies this hour"
-													used={agent.replies.used}
-													limit={agent.replies.limit}
-												/>
-												<Meter
-													label="Tokens today"
-													used={agent.tokens.used}
-													limit={agent.tokens.limit}
-												/>
-											</>
-										) : (
+							{rows.map(
+								({ agent, calls, fetches, spend, known, unpriced, seen }) => (
+									<tr key={agent.id}>
+										<td>
+											<a
+												className="analytics-link"
+												href={href(workspaceId, `agents/${agent.id}`)}
+											>
+												{agent.name}
+											</a>
 											<span className="analytics-subtext">
-												Set by the app that signs in
+												{agentLine(agent)}
 											</span>
-										)}
-									</td>
-									<td className="num">
-										{known ? formatMoney(spend) : "—"}
-										<span className="analytics-subtext">
-											{plural(calls, "call")} ·{" "}
-											{plural(fetches, "fetch", "fetches")}
-											{unpriced > 0 && ` · ${count(unpriced)} unpriced`}
-										</span>
-									</td>
-								</tr>
-							))}
+										</td>
+										<td data-label="Status">
+											<span
+												className={`token-status ${agent.replying ? "active" : agent.status}`}
+											>
+												{agent.replying
+													? "Replying…"
+													: STATUS_LABELS[agent.status]}
+											</span>
+										</td>
+										<td className="overview-limits" data-label="Limits">
+											{agent.replies && agent.tokens ? (
+												<>
+													<Meter
+														label="Replies this hour"
+														used={agent.replies.used}
+														limit={agent.replies.limit}
+													/>
+													<Meter
+														label="Tokens today"
+														used={agent.tokens.used}
+														limit={agent.tokens.limit}
+													/>
+												</>
+											) : (
+												<span className="analytics-subtext">
+													Set by the app that signs in
+												</span>
+											)}
+										</td>
+										<td className="num" data-label="Spend">
+											{!analytics ? "—" : known ? formatMoney(spend) : "—"}
+											<span className="analytics-subtext">
+												{analytics
+													? `${plural(calls, "call")} · ${plural(fetches, "fetch", "fetches")}${unpriced > 0 ? ` · ${count(unpriced)} unpriced` : ""}`
+													: "Usage unavailable"}
+											</span>
+										</td>
+										<td className="analytics-date" data-label="Last active">
+											{seen ? (
+												<span title={dateTime(seen)}>{ago(seen)}</span>
+											) : analytics ? (
+												"Not in this period"
+											) : (
+												"—"
+											)}
+										</td>
+									</tr>
+								),
+							)}
 						</tbody>
 					</table>
 				</div>
@@ -315,12 +362,14 @@ function SpendBySource({
 	].sort((a, b) => b.costUsd - a.costUsd || a.name.localeCompare(b.name));
 	const max = Math.max(0, ...rows.map((row) => row.costUsd));
 	const total = rows.reduce((sum, row) => sum + row.costUsd, 0);
+	const budget = overview.budget;
 	return (
 		<section className="card" aria-labelledby="spend-source-heading">
 			<h2 id="spend-source-heading">Spend by source</h2>
 			<p className="card-note">
-				{formatMoney(total)} in the period. Model spend is estimated; proxies
-				report theirs.
+				{analytics
+					? `${formatMoney(total)} in the period. Model spend is estimated; proxies report theirs.`
+					: "Usage could not be loaded, so spending is unavailable."}
 			</p>
 			{rows.length ? (
 				<>
@@ -362,15 +411,20 @@ function SpendBySource({
 					</ul>
 				</>
 			) : (
-				<p className="empty-state">No spending in this period.</p>
+				analytics && <p className="empty-state">No spending in this period.</p>
 			)}
 			<div className="budget-meter">
-				<Meter
-					label={`Proxy budget, ${overview.budget.month}`}
-					used={overview.budget.spentUsd}
-					limit={overview.budget.limitUsd}
-					format={formatMoney}
-				/>
+				{budget ? (
+					<Meter
+						label={`Proxy budget, ${budget.month}`}
+						used={budget.spentUsd}
+						limit={budget.limitUsd}
+						format={formatMoney}
+						off="No budget: fetches that need a proxy are refused"
+					/>
+				) : (
+					<p className="card-note">The proxy budget could not be read.</p>
+				)}
 				<a href={href(workspaceId, "proxies")}>Change the budget</a>
 			</div>
 		</section>
@@ -387,6 +441,7 @@ function Recent({
 	workspaceId: string;
 }) {
 	const channelName = new Map(channels?.map((item) => [item.id, item.name]));
+	const agents = new Set(overview.agents.map((agent) => agent.id));
 	const unread = (channels ?? []).filter(
 		(channel) => channel.unread && !channel.mentions,
 	);
@@ -403,20 +458,25 @@ function Recent({
 				<>
 					<h3 className="recent-heading">Replies that failed</h3>
 					<ul className="recent-list">
-						{overview.failedRuns.map((run) => (
-							<li key={run.id}>
-								<a href={href(workspaceId, `agents/${run.botId}`)}>
-									{run.name} could not reply
-									{channelName.get(run.channelId)
-										? ` in #${channelName.get(run.channelId)}`
-										: ""}
-								</a>
-								<small>
-									{ago(run.createdAt)}
-									{run.detail ? ` · ${run.detail}` : ""}
-								</small>
-							</li>
-						))}
+						{overview.failedRuns.map((run) => {
+							const where = channelName.get(run.channelId);
+							const text = `${run.name} could not reply${where ? ` in #${where}` : ""}`;
+							return (
+								<li key={run.id}>
+									{agents.has(run.botId) ? (
+										<a href={href(workspaceId, `agents/${run.botId}`)}>
+											{text}
+										</a>
+									) : (
+										<span>{text}</span>
+									)}
+									<small>
+										{ago(run.createdAt)}
+										{run.detail ? ` · ${run.detail}` : ""}
+									</small>
+								</li>
+							);
+						})}
 					</ul>
 				</>
 			)}
@@ -447,7 +507,7 @@ function Recent({
 					<h3 className="recent-heading">Shared notes</h3>
 					<ul className="recent-list">
 						{overview.recentNotes.map((note) => (
-							<li key={note.title}>
+							<li key={`${note.global ? "global" : "shared"}:${note.title}`}>
 								<a
 									href={href(
 										workspaceId,
@@ -468,18 +528,32 @@ function Recent({
 				<>
 					<h3 className="recent-heading">Proposals decided</h3>
 					<ul className="recent-list">
-						{overview.recentDecisions.map((decision) => (
-							<li key={decision.id}>
-								<span>
-									{decision.status === "approved" ? "Approved" : "Rejected"} “
-									{decision.title}” from {decision.author}
-								</span>
-								<small>
-									{decision.decidedBy ? `${decision.decidedBy} · ` : ""}
-									{ago(decision.decidedAt)}
-								</small>
-							</li>
-						))}
+						{overview.recentDecisions.map((decision) => {
+							const text = `${decision.status === "approved" ? "Approved" : "Rejected"} “${decision.title}” from ${decision.author}`;
+							// An approved change has a note to open, unless it deleted it.
+							const note =
+								decision.status === "approved" && decision.action !== "delete";
+							return (
+								<li key={decision.id}>
+									{note ? (
+										<a
+											href={href(
+												workspaceId,
+												`synapse/shared/${encodeURIComponent(decision.title)}`,
+											)}
+										>
+											{text}
+										</a>
+									) : (
+										<span>{text}</span>
+									)}
+									<small>
+										{decision.decidedBy ? `${decision.decidedBy} · ` : ""}
+										{ago(decision.decidedAt)}
+									</small>
+								</li>
+							);
+						})}
 					</ul>
 				</>
 			)}
@@ -491,12 +565,18 @@ function Recent({
 export function OverviewPanel({
 	overview,
 	analytics,
+	analyticsError,
+	runsCurrent = true,
 	channels,
 	workspaceId,
 	children,
 }: {
 	overview: WorkspaceOverview;
 	analytics: UsageAnalytics | null;
+	/** Why usage could not be loaded, when it could not. */
+	analyticsError?: string | null;
+	/** False while the period changed and its reply counts are on their way. */
+	runsCurrent?: boolean;
 	channels: ChannelSummary[] | null;
 	workspaceId: string;
 	/** The activity chart, which the Usage tab shares. */
@@ -511,9 +591,39 @@ export function OverviewPanel({
 	const unpriced = analytics
 		? analytics.totals.requests - analytics.totals.pricedRequests
 		: 0;
+	const usageMissing = analyticsError ? "Usage unavailable" : "Loading usage…";
 	return (
 		<>
-			<NeedsYou overview={overview} workspaceId={workspaceId} />
+			{overview.unavailable.length > 0 && (
+				<p className="analytics-notice" role="status">
+					Could not read{" "}
+					{overview.unavailable.map((name) => SECTION_LABELS[name]).join(", ")}{" "}
+					just now, so they are missing below. Everything else is current.
+				</p>
+			)}
+			{analytics && (analytics.partial || analytics.durableUnavailable) && (
+				<p className="analytics-notice" role="status">
+					{analytics.durableUnavailable
+						? "Durable analytics are unavailable. "
+						: ""}
+					Spend and calls use retained activity from this gateway process
+					{analytics.coverageFrom
+						? ` since ${dateTime(analytics.coverageFrom)}`
+						: ""}
+					. Earlier activity in the period may be missing.
+				</p>
+			)}
+			{!analytics && analyticsError && (
+				<p className="analytics-notice" role="status">
+					Usage could not be loaded, so spend, calls, and fetches are
+					unavailable. What is waiting below is current.
+				</p>
+			)}
+			<NeedsYou
+				overview={overview}
+				analytics={analytics}
+				workspaceId={workspaceId}
+			/>
 			<section
 				className="tile-row overview-tiles"
 				aria-label="Workspace totals"
@@ -524,7 +634,7 @@ export function OverviewPanel({
 					detail={
 						analytics
 							? `${formatMoney(modelSpend)} models · ${formatMoney(webSpend)} proxies${unpriced ? ` · ${plural(unpriced, "call")} unpriced` : ""}`
-							: "Loading usage…"
+							: usageMissing
 					}
 				/>
 				<Tile
@@ -533,21 +643,27 @@ export function OverviewPanel({
 					detail={
 						analytics
 							? `${percent(analytics.totals.requests - analytics.totals.errors, analytics.totals.requests)} succeeded`
-							: "Loading usage…"
+							: usageMissing
 					}
 				/>
 				<Tile
 					label="Agent replies"
-					value={count(replies)}
-					detail={`${count(runs.failed)} failed · ${count(runs.skipped)} skipped`}
+					value={runsCurrent ? count(replies) : "—"}
+					detail={
+						runsCurrent
+							? `${count(runs.failed)} failed${replies ? ` (${percent(runs.failed, replies)})` : ""} · ${count(runs.skipped)} skipped`
+							: "Loading the period…"
+					}
 				/>
 				<Tile
 					label="Web fetches"
 					value={analytics ? count(analytics.web.totals.fetches) : "—"}
 					detail={
-						analytics?.web.totals.fetches
-							? `${percent(analytics.web.totals.proxied, analytics.web.totals.fetches)} needed a proxy`
-							: "None in this period"
+						!analytics
+							? usageMissing
+							: analytics.web.totals.fetches
+								? `${percent(analytics.web.totals.proxied, analytics.web.totals.fetches)} needed a proxy`
+								: "None in this period"
 					}
 				/>
 				<Tile

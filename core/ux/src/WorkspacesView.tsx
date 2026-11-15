@@ -555,15 +555,20 @@ type Attention = { yours: AttentionItem[] } | "error";
 
 /**
  * What waits on the person in each open workspace, read from each one's
- * overview, so an owner sees across workspaces without opening each.
+ * overview, so an owner sees across workspaces without opening each. Read
+ * again whenever `version` changes (the page's Refresh). Items for the whole
+ * team, such as invites, are the same in every workspace: they are returned
+ * once, as `team`, and left out of each workspace's.
  */
-function useWorkspaceAttention(ids: string[]) {
+function useWorkspaceAttention(ids: string[], version: number) {
 	const [attention, setAttention] = useState<Record<string, Attention>>({});
+	const [team, setTeam] = useState<AttentionItem[]>([]);
 	const key = ids.join("\n");
-	// biome-ignore lint/correctness/useExhaustiveDependencies: key stands for ids.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: key stands for ids; version asks for a fresh read.
 	useEffect(() => {
 		const controller = new AbortController();
 		const queue = [...ids];
+		let teamSeen = false;
 		const worker = async () => {
 			for (let id = queue.shift(); id; id = queue.shift()) {
 				const workspace = id;
@@ -574,11 +579,14 @@ function useWorkspaceAttention(ids: string[]) {
 						controller.signal,
 						workspace,
 					);
-					result = {
-						yours: attentionItems(overview, workspace).filter(
-							(item) => item.yours,
-						),
-					};
+					const items = attentionItems(overview, workspace).filter(
+						(item) => item.yours,
+					);
+					result = { yours: items.filter((item) => !item.org) };
+					if (!teamSeen && !controller.signal.aborted) {
+						teamSeen = true;
+						setTeam(items.filter((item) => item.org));
+					}
 				} catch {
 					if (controller.signal.aborted) return;
 					result = "error";
@@ -589,8 +597,8 @@ function useWorkspaceAttention(ids: string[]) {
 		};
 		for (let i = 0; i < OVERVIEW_CONCURRENCY; i++) void worker();
 		return () => controller.abort();
-	}, [key]);
-	return attention;
+	}, [key, version]);
+	return { attention, team };
 }
 
 function AttentionCell({
@@ -641,9 +649,12 @@ export function WorkspacesView({
 	const [creating, setCreating] = useState(false);
 	const [selected, setSelected] = useState<string | null>(null);
 	const sequence = useRef(0);
+	/** Counts the page's refreshes, so what needs the person is read again too. */
+	const [version, setVersion] = useState(0);
 	const refresh = useCallback(async () => {
 		const request = ++sequence.current;
 		setLoading(true);
+		setVersion((current) => current + 1);
 		try {
 			const result = await fetchWorkspaces();
 			if (request === sequence.current) {
@@ -668,10 +679,11 @@ export function WorkspacesView({
 		void refresh();
 		onChanged?.();
 	};
-	const attention = useWorkspaceAttention(
+	const { attention, team } = useWorkspaceAttention(
 		(data?.workspaces ?? [])
 			.filter((workspace) => !workspace.archivedAt)
 			.map((workspace) => workspace.id),
+		version,
 	);
 	return (
 		<div className="dashboard tokens-view workspaces-view">
@@ -726,6 +738,19 @@ export function WorkspacesView({
 						changed(`${workspace.name} was created.`);
 					}}
 				/>
+			)}
+			{team.length > 0 && (
+				<ul
+					className="workspace-team-attention"
+					aria-label="For the whole team"
+				>
+					{team.map((item) => (
+						<li key={item.id}>
+							<a href={item.href}>{item.text}</a>
+							{item.detail && <small> {item.detail}</small>}
+						</li>
+					))}
+				</ul>
 			)}
 			<section className="card" aria-labelledby="workspaces-heading">
 				<div className="section-heading">

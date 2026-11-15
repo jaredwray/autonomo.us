@@ -65,7 +65,7 @@ const noWeb = (): WebAnalytics => ({
 	byConnection: [],
 	byOutcome: [],
 	byHost: [],
-	series: [],
+	legacyFetches: 0,
 });
 const report = (requests = 10): UsageAnalytics => ({
 	query: { from: "2026-11-01T00:00:00Z", to: "2026-11-02T00:00:00Z" },
@@ -115,6 +115,7 @@ const overview = (
 		siteRequests: [],
 		proxyProblems: [],
 		expiringAgents: [],
+		failingBots: [],
 		botsAtLimit: [],
 		mentions: [],
 		invites: 0,
@@ -126,6 +127,7 @@ const overview = (
 	failedRuns: [],
 	recentNotes: [],
 	recentDecisions: [],
+	unavailable: [],
 	health: { persistence: "mongodb", telemetry: "healthy", webAvailable: true },
 	...changes,
 });
@@ -529,7 +531,7 @@ describe("Overview tab", () => {
 		await waitFor(() => expect(totals.textContent).toContain("$2.00"));
 		expect(totals.textContent).toContain("$1.50 models · $0.50 proxies");
 		expect(totals.textContent).toContain("6");
-		expect(totals.textContent).toContain("1 failed · 2 skipped");
+		expect(totals.textContent).toContain("1 failed (16.7%) · 2 skipped");
 		expect(totals.textContent).toContain("25% needed a proxy");
 		expect(totals.textContent).toContain("1 replying now");
 
@@ -608,6 +610,241 @@ describe("Overview tab", () => {
 	});
 });
 
+describe("Overview tab, when something is missing or failing", () => {
+	it("says usage is unavailable instead of showing zeros", async () => {
+		vi.mocked(fetchDashboardData).mockRejectedValue(new Error("offline"));
+		vi.mocked(fetchWorkspaceOverview).mockResolvedValue(
+			overview({
+				agents: [
+					{
+						id: AGENT,
+						kind: "token",
+						name: "Alice",
+						status: "active",
+						model: null,
+						connections: 0,
+						replying: false,
+						replies: null,
+						tokens: null,
+						expiresAt: null,
+					},
+				],
+			}),
+		);
+		render(<Dashboard workspace={WORKSPACE} />);
+		expect(
+			await screen.findByText(/Usage could not be loaded, so spend, calls/),
+		).toBeDefined();
+		const totals = screen.getByRole("region", { name: "Workspace totals" });
+		expect(totals.textContent).toContain("Usage unavailable");
+		expect(totals.textContent).not.toContain("$0.00");
+		expect(
+			screen.getByRole("region", { name: "Agents" }).textContent,
+		).toContain("Usage unavailable");
+		expect(screen.getByText("Analytics unavailable")).toBeDefined();
+	});
+
+	it("warns when spend covers only part of the period, and names missing sections", async () => {
+		const data = report();
+		data.partial = true;
+		data.coverageFrom = "2026-11-01T06:00:00Z";
+		vi.mocked(fetchDashboardData).mockResolvedValue(data);
+		vi.mocked(fetchWorkspaceOverview).mockResolvedValue(
+			overview({ unavailable: ["synapse", "proxies"], budget: null }),
+		);
+		render(<Dashboard workspace={WORKSPACE} />);
+		expect(
+			await screen.findByText(/Earlier activity in the period may be missing/),
+		).toBeDefined();
+		expect(
+			screen.getByText(/Could not read Synapse, proxies just now/),
+		).toBeDefined();
+		expect(
+			screen.getByText("The proxy budget could not be read."),
+		).toBeDefined();
+	});
+
+	it("lists failing bots and connections as urgent", async () => {
+		const data = report();
+		data.byProvider = [
+			{
+				...metrics,
+				id: "anthropic",
+				name: "anthropic",
+				requests: 8,
+				errors: 6,
+				lastSeen: "2026-11-01T12:00:00Z",
+			},
+			{
+				...metrics,
+				id: "openai",
+				name: "openai",
+				requests: 8,
+				errors: 2,
+				lastSeen: "2026-11-01T12:00:00Z",
+			},
+		];
+		vi.mocked(fetchDashboardData).mockResolvedValue(data);
+		vi.mocked(fetchWorkspaceOverview).mockResolvedValue(
+			overview({
+				waiting: {
+					...overview().waiting,
+					failingBots: [{ id: AGENT, name: "Herald", failed: 3, replies: 3 }],
+					mentions: [{ channelId: "c1", name: "general", count: 1 }],
+				},
+			}),
+		);
+		render(<Dashboard workspace={WORKSPACE} />);
+		const needs = await screen.findByRole("region", { name: "Needs you" });
+		await waitFor(() =>
+			expect(needs.textContent).toContain(
+				"Connection anthropic failed 75% of its calls",
+			),
+		);
+		const links = within(needs).getAllByRole("link");
+		expect(links[0].textContent).toContain("Connection anthropic failed");
+		expect(links[0].getAttribute("href")).toBe("#/w/ws-1/models");
+		expect(links[1].textContent).toContain(
+			"Herald failed 3 of its last 3 replies",
+		);
+		expect(needs.textContent).not.toContain("Connection openai");
+		expect(links.at(-1)?.textContent).toContain("1 unread mention in #general");
+	});
+
+	it("says a zero budget turns proxies off, and links only what still exists", async () => {
+		vi.mocked(fetchDashboardData).mockResolvedValue(report());
+		vi.mocked(fetchWorkspaceOverview).mockResolvedValue(
+			overview({
+				budget: { month: "2026-11", spentUsd: 0, limitUsd: 0 },
+				failedRuns: [
+					{
+						id: "r1",
+						botId: AGENT,
+						name: "Removed agent",
+						channelId: "c1",
+						detail: null,
+						createdAt: new Date().toISOString(),
+					},
+				],
+				recentDecisions: [
+					{
+						id: "p1",
+						action: "create",
+						title: "Brand voice",
+						status: "approved",
+						author: "Alice",
+						decidedAt: new Date().toISOString(),
+						decidedBy: "Founder",
+					},
+					{
+						id: "p2",
+						action: "delete",
+						title: "Old note",
+						status: "approved",
+						author: "Alice",
+						decidedAt: new Date().toISOString(),
+						decidedBy: "Founder",
+					},
+				],
+			}),
+		);
+		render(<Dashboard workspace={WORKSPACE} />);
+		const spend = await screen.findByRole("region", {
+			name: "Spend by source",
+		});
+		expect(spend.textContent).toContain(
+			"No budget: fetches that need a proxy are refused",
+		);
+		expect(within(spend).queryByRole("meter")).toBeNull();
+		const recent = screen.getByRole("region", { name: "Recent" });
+		expect(recent.textContent).toContain("Removed agent could not reply");
+		expect(
+			within(recent).queryByRole("link", { name: /Removed agent/ }),
+		).toBeNull();
+		expect(
+			within(recent)
+				.getByRole("link", { name: /Approved “Brand voice”/ })
+				.getAttribute("href"),
+		).toBe("#/w/ws-1/synapse/shared/Brand%20voice");
+		expect(within(recent).queryByRole("link", { name: /Old note/ })).toBeNull();
+	});
+
+	it("keeps what is waiting on screen while another period loads", async () => {
+		vi.mocked(fetchDashboardData).mockResolvedValue(report());
+		let resolve!: (value: WorkspaceOverview) => void;
+		vi.mocked(fetchWorkspaceOverview)
+			.mockResolvedValueOnce(
+				overview({ waiting: { ...overview().waiting, proposals: 2 } }),
+			)
+			.mockImplementationOnce(
+				() =>
+					new Promise((done) => {
+						resolve = done;
+					}),
+			);
+		render(<Dashboard workspace={WORKSPACE} />);
+		const needs = await screen.findByRole("region", { name: "Needs you" });
+		expect(needs.textContent).toContain("2 Synapse proposals to review");
+		fireEvent.change(screen.getByLabelText("Period"), {
+			target: { value: "7d" },
+		});
+		expect(
+			screen.getByRole("region", { name: "Needs you" }).textContent,
+		).toContain("2 Synapse proposals to review");
+		expect(
+			screen.getByRole("region", { name: "Workspace totals" }).textContent,
+		).toContain("Loading the period…");
+		resolve(overview());
+		await waitFor(() =>
+			expect(
+				screen.getByRole("region", { name: "Needs you" }).textContent,
+			).toContain("Nothing needs you."),
+		);
+	});
+});
+
+describe("Usage tab health and history", () => {
+	beforeEach(() => {
+		window.location.hash = "#/w/ws-1/dashboard/usage";
+	});
+
+	it("reports health from the shell's overview and explains it in words", async () => {
+		vi.mocked(fetchDashboardData).mockResolvedValue(report());
+		render(
+			<Dashboard
+				workspace={WORKSPACE}
+				overview={overview({
+					health: {
+						persistence: "mongodb",
+						telemetry: "failing",
+						webAvailable: true,
+					},
+				})}
+			/>,
+		);
+		expect(await screen.findByText("Usage history failing")).toBeDefined();
+		expect(
+			screen.getByRole("status", { name: "Gateway health" }).textContent,
+		).toContain("Writing usage to MongoDB is failing.");
+		expect(fetchWorkspaceOverview).not.toHaveBeenCalled();
+	});
+
+	it("says older fetches are left out rather than counting them", async () => {
+		const data = report();
+		data.web = {
+			...noWeb(),
+			legacyFetches: 3,
+		};
+		vi.mocked(fetchDashboardData).mockResolvedValue(data);
+		render(<Dashboard workspace={WORKSPACE} />);
+		expect(
+			await screen.findByText(
+				/3 fetches in this period were recorded before the gateway kept/,
+			),
+		).toBeDefined();
+	});
+});
+
 describe("overview items", () => {
 	it("counts only what the person can act on for the sidebar", () => {
 		const waiting = {
@@ -679,5 +916,7 @@ describe("overview items", () => {
 			["Reader asked to fetch 1 new site", `#/w/ws%201/agents/${AGENT}`],
 			["2 invite links not used yet", "#/team"],
 		]);
+		expect(items.find((item) => item.id === "invites")?.org).toBe(true);
+		expect(items.filter((item) => item.org)).toHaveLength(1);
 	});
 });

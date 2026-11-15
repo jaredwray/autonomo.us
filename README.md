@@ -960,11 +960,13 @@ usage history is being written, and whether web access is on.
 costs:
 
 - **Needs you** lists, most severe first, each with a link to where it is
-  dealt with: proxy problems, a proxy budget at 80% or used up, your unread
-  mentions, Synapse proposals to review, sites bots asked to fetch, bots at
-  their hourly or daily limit, agent tokens that expire within 7 days, and for
-  org owners and admins, unused invite links and expiring API tokens. What
-  only a workspace admin can act on is listed apart for members.
+  dealt with: model connections that failed at least half of their calls in
+  the period (five or more), bots whose replies keep failing, proxy problems,
+  a proxy budget at 80% or used up, your unread mentions, Synapse proposals
+  to review, sites bots asked to fetch, bots at their hourly or daily limit,
+  agent tokens that expire within 7 days, and for org owners and admins,
+  expiring API tokens and the team's unused invite links. What only a
+  workspace admin can act on is listed apart for members.
 - **Totals** for the period: spend (models and proxies), model calls, agent
   replies by outcome, web fetches and the share that needed a proxy, and
   active agents.
@@ -974,9 +976,14 @@ costs:
   shared notes, and decided proposals; and the activity chart.
 
 It reads `GET /v1/:workspace/overview`, which answers what is waiting for
-everyone and says in `can` what the signed-in person may act on. The sidebar
-reads it too, to count the Synapse proposals and site requests the person can
-decide, and **Workspaces** shows what needs you in each workspace.
+everyone and says in `can` what the signed-in person may act on. A section
+whose store cannot be read (Synapse, channels, proxies, and so on) is named
+in `unavailable` and shown as missing, not as empty; the rest still loads.
+When usage covers only part of the period, or cannot be loaded, the Overview
+says so instead of showing zeros. The sidebar reads the overview too, to
+count the Synapse proposals and site requests the person can decide, and
+**Workspaces** shows what needs you in each workspace, with team-wide items
+such as invites listed once above the table.
 
 **Usage** (`#/w/<workspace id>/dashboard/usage`) reports model calls, token
 usage, estimated spending, active callers, success rates, and successful-call
@@ -985,8 +992,11 @@ connection/model/caller, inspect hourly or daily trends, sort and page the
 model/caller tables, or export the filtered report as CSV. Below them, web
 fetches are reported apart from model calls: totals, requests and cost by
 connection, how fetches ended (blocked, needed JavaScript, and so on), the
-sites fetched most (hosts only), and who fetched. Configuration, including
-failover, remains on the Models page's Models and Routing tabs.
+sites fetched most (hosts only), and who fetched. A proxy step that was
+skipped (a spent budget, a missing key) made no request and is not counted.
+Fetches recorded before the gateway kept their outcome and cost are left out
+and counted separately. Configuration, including failover, remains on the
+Models page's Models and Routing tabs.
 
 Calls include chat completions, decisions, routing selectors, and failed
 fallback attempts; they are not a count of end-user requests. Caller attribution
@@ -1008,7 +1018,8 @@ Estimates exclude cache discounts, pricing tiers, and other provider fees.
 
 With MongoDB, analytics aggregate durable records (including prior gateway
 processes) with deduplication. Otherwise the report uses up to 50,000 retained
-events from this process, independently of the short recent-event feed. The
+events from this process (model calls and web fetches together), independently
+of the short recent-event feed. The
 response and dashboard disclose memory coverage and durable-storage failures;
 missing history is never silently presented as complete. Durable queries that
 exceed 100,000 time/model/caller/operation groups also fall back with this notice.

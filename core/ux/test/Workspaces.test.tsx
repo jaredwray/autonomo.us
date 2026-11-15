@@ -176,8 +176,8 @@ it("shows what needs the owner in each workspace, without opening it", async () 
 		body: JSON.stringify({ name: "Quiet" }),
 	});
 	const quiet = (await made.json()) as { id: string };
-	// An invite waits in every workspace an org owner sees; the default
-	// workspace also has an agent token that expires within a week.
+	// An invite waits for the whole team; the default workspace also has an
+	// agent token that expires within a week.
 	await fetch(`${url}/v1/team/invites`, {
 		method: "POST",
 		headers,
@@ -200,20 +200,37 @@ it("shows what needs the owner in each workspace, without opening it", async () 
 		[...table.querySelectorAll("tr")].find(
 			(tr) => tr.querySelector("strong")?.textContent === name,
 		) as HTMLElement;
+	// The invite is the team's: listed once above the table, in no row.
+	expect(
+		(await screen.findByRole("list", { name: "For the whole team" }))
+			.textContent,
+	).toContain("1 invite link not used yet");
 	await waitFor(async () =>
-		expect((await row("Default")).textContent).toContain(
-			"2 things, starting with: Alice's token expires",
-		),
+		expect((await row("Default")).textContent).toMatch(/Alice's token expires/),
 	);
+	expect((await row("Default")).textContent).not.toContain("invite");
 	expect(
 		within(await row("Default"))
 			.getByRole("link", { name: /Alice's token expires/ })
 			.getAttribute("href"),
 	).toBe(`#/w/${defaultId}/dashboard`);
 	await waitFor(async () =>
-		expect((await row("Quiet")).textContent).toContain(
-			"1 invite link not used yet",
-		),
+		expect((await row("Quiet")).textContent).toContain("Nothing"),
+	);
+	// Refresh reads what needs the owner again.
+	await fetch(`${url}/v1/${quiet.id}/agent-tokens`, {
+		method: "POST",
+		headers,
+		body: JSON.stringify({
+			name: "Bob",
+			description: "",
+			ttlDays: 7,
+			permissions: ["mcp:read"],
+		}),
+	});
+	fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+	await waitFor(async () =>
+		expect((await row("Quiet")).textContent).toMatch(/Bob's token expires/),
 	);
 	expect(quiet.id).toBeTruthy();
 });
