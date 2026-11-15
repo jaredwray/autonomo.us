@@ -59,6 +59,7 @@ function stored(extra: Partial<StoredAgentWebhook> = {}): StoredAgentWebhook {
 		leaseId: null,
 		leaseUntil: null,
 		recentKeys: [],
+		channelSeqs: {},
 		version: 1,
 		...extra,
 	};
@@ -92,6 +93,31 @@ describe("webhook state", () => {
 		expect(
 			enqueued(switched(webhook, false), message(3), "k3", NOW, timing),
 		).toBeNull();
+	});
+
+	it("recognizes a retried post long after its key was forgotten", () => {
+		const wide = { ...timing, eventsPerDelivery: 1000 };
+		let webhook = enqueued(stored(), message(1), "channel:c1:1", NOW, wide);
+		if (!webhook) throw new Error("not enqueued");
+		// 250 later messages push the first one's key out of the recent keys.
+		for (let seq = 2; seq <= 251; seq++)
+			webhook =
+				enqueued(webhook, message(seq), `channel:c1:${seq}`, NOW, wide) ??
+				webhook;
+		expect(webhook.recentKeys).not.toContain("channel:c1:1");
+		expect(webhook.channelSeqs).toEqual({ c1: 251 });
+		expect(enqueued(webhook, message(1), "channel:c1:1", NOW, wide)).toBeNull();
+		// Posts that land together may be reported a little out of order.
+		const late = { ...message(240), messageId: "m240b" };
+		expect(
+			enqueued(
+				{ ...webhook, recentKeys: [] },
+				late,
+				"channel:c1:240",
+				NOW,
+				wide,
+			),
+		).not.toBeNull();
 	});
 
 	it("keeps mentions when the queue is full, counting what it drops", () => {

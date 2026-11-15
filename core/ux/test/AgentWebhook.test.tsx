@@ -75,7 +75,17 @@ async function boot() {
 		}),
 	});
 	const agent = ((await response.json()) as AgentTokenSecret).token;
-	return { received, answers, agent };
+	/** Sets up a webhook through the API, as another admin might have. */
+	const hook = (body: object) =>
+		fetch(`${url}/v1/${workspaceId}/agents/${agent.id}/webhook`, {
+			method: "POST",
+			headers: {
+				authorization: `Bearer ${owner}`,
+				"content-type": "application/json",
+			},
+			body: JSON.stringify(body),
+		});
+	return { received, answers, agent, hook };
 }
 
 const type = (element: HTMLElement, value: string) =>
@@ -197,5 +207,35 @@ it("adds a webhook for a Claude Code routine, tests, pauses, edits, and deletes 
 	).toBeDefined();
 	expect(
 		await screen.findByText("Deleted the webhook of Scout."),
+	).toBeDefined();
+});
+
+it("keeps saved headers when a routine webhook is edited", async () => {
+	const { agent, hook } = await boot();
+	expect(
+		(
+			await hook({
+				url: "https://api.anthropic.com/v1/claude_code/routines/trig_01ABC/fire",
+				headers: [{ name: "X-Api-Key", value: "kept" }],
+			})
+		).status,
+	).toBe(201);
+	window.history.replaceState(null, "", `#/agents/${agent.id}`);
+	render(
+		<StrictMode>
+			<App />
+		</StrictMode>,
+	);
+	await screen.findByRole("region", { name: "Webhook" });
+	const card = () => within(screen.getByRole("region", { name: "Webhook" }));
+	fireEvent.click(await card().findByRole("button", { name: "Edit webhook" }));
+	// Adding the routine's header here would drop X-Api-Key, whose value is hidden.
+	expect(
+		card().queryByRole("button", { name: "Add anthropic-version" }),
+	).toBeNull();
+	expect(card().getByText(/To add it, choose/)).toBeDefined();
+	fireEvent.click(card().getByRole("button", { name: "Replace headers" }));
+	expect(
+		card().getByRole("button", { name: "Add anthropic-version" }),
 	).toBeDefined();
 });

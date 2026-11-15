@@ -39,6 +39,13 @@ export const DEFAULT_TIMING: WebhookTiming = {
 
 /** Keys kept to recognize an event that is reported twice. */
 const RECENT_KEYS = 200;
+/**
+ * How far below a channel's highest reported message an event may be and
+ * still count as new. Posts that land together can be reported out of order,
+ * but never this far apart; anything older is a retried post being settled
+ * again, however long ago it was first reported.
+ */
+const REPLAY_SLACK = 100;
 
 /** The dashboard group an event belongs to. */
 export function eventGroup(
@@ -86,6 +93,13 @@ export function enqueued(
 ): StoredAgentWebhook | null {
 	if (webhook.status !== "active" || webhook.recentKeys.includes(key))
 		return null;
+	let channelSeqs = webhook.channelSeqs ?? {};
+	if ("seq" in event) {
+		const highest = channelSeqs[event.channelId] ?? 0;
+		if (event.seq <= highest - REPLAY_SLACK) return null;
+		if (event.seq > highest)
+			channelSeqs = { ...channelSeqs, [event.channelId]: event.seq };
+	}
 	let queue = webhook.queue;
 	let omitted = webhook.omitted;
 	if (queue.length < timing.eventsPerDelivery) queue = [...queue, event];
@@ -100,6 +114,7 @@ export function enqueued(
 		queue,
 		omitted,
 		recentKeys: [...webhook.recentKeys, key].slice(-RECENT_KEYS),
+		channelSeqs,
 		// A delivery that is waiting or being sent keeps its own time.
 		dueAt: webhook.dueAt ?? iso(now + timing.gapMs),
 	};

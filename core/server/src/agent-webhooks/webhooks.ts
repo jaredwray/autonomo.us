@@ -213,6 +213,7 @@ export class AgentWebhooks {
 			leaseId: null,
 			leaseUntil: null,
 			recentKeys: [],
+			channelSeqs: {},
 			version: 1,
 		};
 		if (!(await this.options.repository.insert(webhook)))

@@ -238,21 +238,31 @@ function WebhookForm({
 						Its prompt should say to act on the{" "}
 						<code>routine-fire-payload</code> block, which carries what
 						happened.
-						{!routineHeader && (
-							<>
-								{" "}
-								<button
-									className="button"
-									type="button"
-									onClick={() => {
-										setReplaceHeaders(true);
-										addHeader({ ...CLAUDE_ROUTINE_HEADER });
-									}}
-								>
-									Add {CLAUDE_ROUTINE_HEADER.name}
-								</button>
-							</>
-						)}
+						{!routineHeader &&
+							// Saved header values are hidden, so adding one here would
+							// drop the others: that takes Replace headers, on purpose.
+							(replaceHeaders || !webhook?.headerNames.length ? (
+								<>
+									{" "}
+									<button
+										className="button"
+										type="button"
+										onClick={() => {
+											setReplaceHeaders(true);
+											addHeader({ ...CLAUDE_ROUTINE_HEADER });
+										}}
+									>
+										Add {CLAUDE_ROUTINE_HEADER.name}
+									</button>
+								</>
+							) : (
+								<>
+									{" "}
+									To add it, choose <strong>Replace headers</strong> below and
+									enter the saved headers again with it, since their values are
+									hidden.
+								</>
+							))}
 					</p>
 				)}
 				<div className="form-field">

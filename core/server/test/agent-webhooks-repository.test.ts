@@ -54,6 +54,7 @@ function webhook(
 		leaseId: null,
 		leaseUntil: null,
 		recentKeys: [],
+		channelSeqs: {},
 		version: 1,
 		...extra,
 	};
