@@ -27,6 +27,7 @@ const decided = (agentId: string): SynapseProposal => ({
 
 function setUp(options: {
 	repository?: MemoryAgentWebhookRepository;
+	agentStatus?: () => "active" | "expired" | "revoked";
 	transport?: WebhookTransport;
 	resolver?: () => Promise<Array<{ address: string; family: 4 | 6 }>>;
 	log?: (message: string, details: Record<string, unknown>) => void;
@@ -45,11 +46,13 @@ function setUp(options: {
 	const webhooks = new AgentWebhooks({
 		repository,
 		agents: {
-			find: async () => ({
-				name: "Scout",
-				workspaceId: WORKSPACE,
-				status: "active",
-			}),
+			find: async () => {
+				const status = options.agentStatus?.() ?? "active";
+				// A revoked agent is not found at all.
+				return status === "revoked"
+					? null
+					: { name: "Scout", workspaceId: WORKSPACE, status };
+			},
 		},
 		workspaces: {
 			get: async () => ({ archivedAt: null }),
@@ -122,6 +125,41 @@ describe("agent webhook delivery in process", () => {
 			pendingEvents: 0,
 			nextAttemptAt: null,
 		});
+		await webhooks.close();
+	});
+
+	it("sends nothing when the agent is revoked while its host is being looked up", async () => {
+		let status: "active" | "revoked" = "active";
+		let lookedUp: () => void = () => {};
+		const lookup = new Promise<void>((resolve) => {
+			lookedUp = resolve;
+		});
+		let release: () => void = () => {};
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const { webhooks, sent } = setUp({
+			agentStatus: () => status,
+			resolver: async () => {
+				lookedUp();
+				await gate;
+				return [{ address: "93.184.215.14", family: 4 }];
+			},
+		});
+		const agentId = randomUUID();
+		await webhooks.create(
+			WORKSPACE,
+			agentId,
+			{ url: "https://hooks.example.com/x" },
+			"Jared",
+		);
+		await webhooks.onProposalDecided(WORKSPACE, decided(agentId));
+		await lookup;
+		// The token is revoked; its webhook has not been deleted yet.
+		status = "revoked";
+		release();
+		await webhooks.idle();
+		expect(sent).toEqual([]);
 		await webhooks.close();
 	});
 

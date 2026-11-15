@@ -543,14 +543,18 @@ export class AgentWebhooks {
 				{ id: webhook.agentId, name: delivery.agentName ?? agent.name },
 				delivery,
 				controller.signal,
-				// Paused, deleted (as revoking the agent does), or taken over
-				// while the lookup ran: send nothing. A new secret or key is used.
+				// The agent revoked or expired, or the webhook paused, deleted,
+				// or taken over since the checks above: send nothing. The agent
+				// is read again too, since revoking a token comes before its
+				// webhook is deleted. A new secret or key is used.
 				async () => {
-					const current = await this.options.repository.get(
-						webhook.workspaceId,
-						webhook.agentId,
-					);
-					return current?.status === "active" && current.leaseId === leaseId
+					const [current, now] = await Promise.all([
+						this.options.repository.get(webhook.workspaceId, webhook.agentId),
+						this.options.agents.find(webhook.agentId),
+					]);
+					return now?.status === "active" &&
+						current?.status === "active" &&
+						current.leaseId === leaseId
 						? current
 						: null;
 				},
