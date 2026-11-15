@@ -193,6 +193,8 @@ export function modelToolSet(chat: ChatDependencies): McpToolSet {
 						workspace: agent.workspace,
 						body: {
 							model,
+							// Analytics attribute an agent's calls by agentId.
+							agentId: agent.token.id,
 							messages,
 							...(args.temperature !== undefined
 								? { temperature: args.temperature as number }

@@ -153,8 +153,10 @@ describe("models for agents over MCP", () => {
 		});
 
 		const usage = await ok<{
-			events: Array<{ data: Record<string, unknown> }>;
+			events: Array<{ agentId?: string; data: Record<string, unknown> }>;
 		}>("GET", "/v1/telemetry/events");
+		// Analytics group an agent's calls by agentId.
+		expect(usage.events[0].agentId).toBe(caller.id);
 		expect(usage.events[0].data).toMatchObject({
 			model: "stub/echo-model",
 			callerId: `agent:${caller.id}`,

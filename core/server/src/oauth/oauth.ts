@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import {
+	AGENT_TOKEN_PERMISSIONS,
 	type AgentConnection,
 	isLoopbackUrl,
 	OAUTH_LIMITS,
@@ -70,7 +71,8 @@ const CHALLENGE = /^[A-Za-z0-9_-]{43}$/;
 const VERIFIER = /^[A-Za-z0-9._~-]{43,128}$/;
 /** A refresh token seen again this soon after it was replaced is a retry. */
 const REUSE_GRACE_MS = 60_000;
-export const OAUTH_SCOPES = ["mcp:read", "mcp:call", "channels:manage"];
+/** An OAuth agent can hold every agent grant; discovery lists them all. */
+export const OAUTH_SCOPES = Object.keys(AGENT_TOKEN_PERMISSIONS);
 
 const text = (value: unknown) => (typeof value === "string" ? value : "");
 function secret(kind: "oac" | "oat" | "ort", grantId: string) {

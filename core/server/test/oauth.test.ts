@@ -169,6 +169,13 @@ describe("OAuth sign-in to the MCP endpoint", () => {
 				resource: `${origin}/mcp`,
 				authorization_servers: [origin],
 				bearer_methods_supported: ["header"],
+				scopes_supported: [
+					"mcp:read",
+					"mcp:call",
+					"channels:manage",
+					"web:fetch",
+					"models:chat",
+				],
 			});
 		for (const path of [
 			"/.well-known/oauth-authorization-server",
@@ -183,6 +190,7 @@ describe("OAuth sign-in to the MCP endpoint", () => {
 				grant_types_supported: ["authorization_code", "refresh_token"],
 				code_challenge_methods_supported: ["S256"],
 				token_endpoint_auth_methods_supported: ["none"],
+				scopes_supported: expect.arrayContaining(["models:chat"]),
 			});
 		// A token that is not one says so, and still points at the metadata.
 		const wrong = await fetch(`${origin}/mcp`, {
