@@ -1,8 +1,9 @@
-import type {
-	ChannelDetails,
-	ChannelEntryList,
-	ChannelList,
-	ChannelMessage,
+import {
+	CHANNEL_LIMITS,
+	type ChannelDetails,
+	type ChannelEntryList,
+	type ChannelList,
+	type ChannelMessage,
 } from "@autonomo.us/common";
 import { createServer } from "@autonomo.us/server";
 import {
@@ -18,6 +19,7 @@ import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../src/App.js";
 import { clearCredential } from "../src/api.js";
+import { Composer, writeMentions } from "../src/ChannelComposer.js";
 import { MessageBody, memberIndex } from "../src/ChannelMessages.js";
 import { parseChannelsRoute } from "../src/channels-route.js";
 import {
@@ -427,11 +429,17 @@ it("adds an agent from the details panel, changes its access, and edits the chan
 	);
 	expect(options.getByRole("option").textContent).toContain("Captain");
 	enter(box);
-	expect(box.value).toBe(`<@agent:${captain.token.id}> `);
+	// The box shows the name; the post carries the mention.
+	expect(box.value).toBe("@Captain ");
 	type(box, `${box.value}status?`);
 	enter(box);
 	const asked = await row(view, "status?");
-	expect(asked.getByText("@Captain")).toBeDefined();
+	expect(asked.getByText("@Captain").className).toContain("channel-mention");
+	await waitFor(async () =>
+		expect((await running.messages(channel)).at(-1)?.body).toBe(
+			`<@agent:${captain.token.id}> status?`,
+		),
+	);
 
 	// Topic and name are edited in place; a rename moves the link.
 	type(panel.getByLabelText("Topic"), "Ship talk");
@@ -672,7 +680,7 @@ it("picks a mention with the keyboard and closes the picker with Escape", async 
 	type(box, "Hi @gr");
 	expect(names()).toEqual([["Grace", "true"]]);
 	enter(box);
-	expect(box.value).toBe(`Hi <@user:${grace.user.id}> `);
+	expect(box.value).toBe("Hi @Grace ");
 	expect(screen.queryByRole("listbox")).toBeNull();
 	enter(box);
 	const sent = await row(view, "@Grace");
@@ -952,6 +960,108 @@ describe("channel helpers", () => {
 			"#/models",
 		])
 			expect(parseChannelsRoute(hash)).toEqual({ name: null });
+	});
+
+	it("writes the mention for each picked name still where it was written", () => {
+		const picks = [
+			{ start: 0, label: "@Ada Lovelace", mention: "<@user:al>" },
+			{ start: 18, label: "@agent", mention: "<@agent:x>" },
+		];
+		// Only the picked spots change: not a name typed by hand, not a token.
+		expect(
+			writeMentions("@Ada Lovelace and @agent, <@agent:y> and @agent", picks),
+		).toBe("<@user:al> and <@agent:x>, <@agent:y> and @agent");
+		// A name no longer where it was picked is left as written.
+		expect(writeMentions("@Ada Lovelace and @agen", picks)).toBe(
+			"<@user:al> and @agen",
+		);
+		expect(writeMentions("@Ada", [])).toBe("@Ada");
+	});
+
+	it("shows picked names in the box and sends their mentions", () => {
+		const sent: string[] = [];
+		const member = (kind: "user" | "agent", id: string, name: string) => ({
+			kind,
+			id,
+			name,
+			mention: `<@${kind}:${id}>`,
+		});
+		render(
+			<Composer
+				label="Message"
+				placeholder=""
+				members={[
+					member("user", "u1", "Sam"),
+					member("agent", "a1", "Sam"),
+					member("user", "u2", "Ada"),
+					member("user", "u3", "Ada Lovelace"),
+				]}
+				onSend={(body) => sent.push(body)}
+			/>,
+		);
+		const box = screen.getByLabelText("Message") as HTMLTextAreaElement;
+		const pick = (value: string, downs = 0) => {
+			type(box, value);
+			for (let step = 0; step < downs; step++) {
+				fireEvent.keyDown(box, { key: "ArrowDown" });
+			}
+			fireEvent.keyDown(box, { key: "Tab" });
+		};
+		pick("@ada");
+		pick(`${box.value}and @ada`, 1);
+		pick(`${box.value}and @sa`);
+		expect(box.value).toBe("@Ada and @Ada Lovelace and @Sam ");
+		// Editing a name makes it plain text; it never falls back to a shorter one.
+		type(box, box.value.replace("Lovelace", "LovelaceX"));
+		type(box, `Hi ${box.value}`);
+		enter(box);
+		expect(sent.at(-1)).toBe("Hi <@user:u2> and @Ada LovelaceX and <@user:u1>");
+		expect(box.value).toBe("");
+
+		// Members with the same name are told apart by where they were picked.
+		pick("@sa");
+		pick(`${box.value}@sa`, 1);
+		expect(box.value).toBe("@Sam @Sam ");
+		// The same name typed by hand is not a mention.
+		type(box, `${box.value}and @Sam by hand`);
+		enter(box);
+		expect(sent.at(-1)).toBe("<@user:u1> <@agent:a1> and @Sam by hand");
+
+		// Punctuation after a name keeps the mention; a hyphen continues the name.
+		pick("@ada");
+		pick(`${box.value}and @ada`);
+		type(box, "@Ada, and @Ada ");
+		type(box, "@Ada, and @Ada-B ");
+		enter(box);
+		expect(sent.at(-1)).toBe("<@user:u2>, and @Ada-B");
+	});
+
+	it("keeps a draft that mentions would push over the length limit", () => {
+		const sent: string[] = [];
+		render(
+			<Composer
+				label="Message"
+				placeholder=""
+				members={[
+					{ kind: "user", id: "u1", name: "Ada", mention: "<@user:u1>" },
+				]}
+				onSend={(body) => sent.push(body)}
+			/>,
+		);
+		const box = screen.getByLabelText("Message") as HTMLTextAreaElement;
+		type(box, "@ad");
+		fireEvent.keyDown(box, { key: "Tab" });
+		// "@Ada " plus filler fills the box; "<@user:u1>" is 6 longer than "@Ada".
+		type(box, `${box.value}${"x".repeat(CHANNEL_LIMITS.bodyLength - 5)}`);
+		enter(box);
+		expect(sent).toEqual([]);
+		expect(box.value).toHaveLength(CHANNEL_LIMITS.bodyLength);
+		expect(screen.getByText(/Shorten this by 6 characters/)).toBeDefined();
+		const sendButton = screen.getByRole("button", { name: "Send" });
+		expect(sendButton.hasAttribute("disabled")).toBe(true);
+		type(box, box.value.slice(0, -6));
+		enter(box);
+		expect(sent[0]).toHaveLength(CHANNEL_LIMITS.bodyLength);
 	});
 
 	it("shows a mention of someone who is no longer a member as unknown", () => {

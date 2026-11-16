@@ -11,10 +11,60 @@ function mentionAt(text: string, caret: number): Picker | null {
 }
 const PICKER_SIZE = 8;
 
+/** A name the picker wrote into the box, where it sits, and who it mentions. */
+export type Picked = { start: number; label: string; mention: string };
+type Draft = { text: string; picks: Picked[] };
+const EMPTY: Draft = { text: "", picks: [] };
+/** Text at [from, to) was replaced by `text`. */
+type Edit = { from: number; to: number; text: string };
+
+/** The one stretch where `after` differs from `before`. */
+function editBetween(before: string, after: string): Edit {
+	const most = Math.min(before.length, after.length);
+	let from = 0;
+	while (from < most && before[from] === after[from]) from++;
+	const room = most - from;
+	let tail = 0;
+	while (tail < room && before.at(-1 - tail) === after.at(-1 - tail)) tail++;
+	const to = before.length - tail;
+	return { from, to, text: after.slice(from, after.length - tail) };
+}
+/** Typed straight after a name, this continues the name, as in `Ada-B`. */
+const NAME_CHAR = /^[\p{L}\p{M}\p{N}_-]/u;
+
+/**
+ * Keeps picked names in step with an edit. Text typed before a name moves
+ * it; an edit that changes the name itself, including letters typed straight
+ * after it, makes it plain text. A space or `,` after a name leaves it be.
+ */
+function movePicks(picks: Picked[], { from, to, text }: Edit): Picked[] {
+	const shift = text.length - (to - from);
+	return picks.flatMap((pick) => {
+		const end = pick.start + pick.label.length;
+		if (from > end || (from === end && !NAME_CHAR.test(text))) return [pick];
+		if (to <= pick.start) return [{ ...pick, start: pick.start + shift }];
+		return [];
+	});
+}
+
+/**
+ * The text to post: each picked name still where it was written becomes the
+ * mention the gateway understands. A name typed by hand stays as written.
+ */
+export function writeMentions(text: string, picks: Picked[]): string {
+	let body = text;
+	for (const pick of [...picks].sort((a, b) => b.start - a.start)) {
+		const end = pick.start + pick.label.length;
+		if (body.slice(pick.start, end) !== pick.label) continue;
+		body = body.slice(0, pick.start) + pick.mention + body.slice(end);
+	}
+	return body;
+}
+
 /**
  * The message box. Enter sends and Shift+Enter adds a line. Typing `@` opens
- * a picker of the channel's people and agents; choosing one writes the
- * mention the gateway understands.
+ * a picker of the channel's people and agents; choosing one writes `@Name`,
+ * which becomes the mention the gateway understands when the message is sent.
  */
 export function Composer({
 	label,
@@ -30,7 +80,8 @@ export function Composer({
 	disabledNote?: string;
 	onSend(body: string): void;
 }) {
-	const [text, setText] = useState("");
+	const [draft, setDraft] = useState(EMPTY);
+	const { text, picks } = draft;
 	const [picker, setPicker] = useState<Picker | null>(null);
 	const [active, setActive] = useState(0);
 	/** Where the picker was dismissed, so Escape keeps it closed for that `@`. */
@@ -56,8 +107,16 @@ export function Composer({
 	const choose = (member: ChannelMember) => {
 		if (!picker) return;
 		const end = input.current?.selectionStart ?? text.length;
-		const before = `${text.slice(0, picker.start)}${member.mention} `;
-		setText(before + text.slice(end));
+		const label = `@${member.name}`;
+		const before = `${text.slice(0, picker.start)}${label} `;
+		const edit = { from: picker.start, to: end, text: `${label} ` };
+		setDraft({
+			text: before + text.slice(end),
+			picks: [
+				...movePicks(picks, edit),
+				{ start: picker.start, label, mention: member.mention },
+			],
+		});
 		caret.current = before.length;
 		setPicker(null);
 	};
@@ -69,11 +128,17 @@ export function Composer({
 		input.current?.setSelectionRange(caret.current, caret.current);
 		caret.current = null;
 	}, [text]);
+	const body = writeMentions(text, picks).trim();
+	/** Mentions are longer than the names shown, so a full box can overflow. */
+	const over = body.length - CHANNEL_LIMITS.bodyLength;
+	const hint =
+		over > 0
+			? `Mentions take more room once sent. Shorten this by ${over} ${over === 1 ? "character" : "characters"}.`
+			: "Enter to send, Shift+Enter for a new line, @ to mention. Markdown and [[wikilinks]] work.";
 	const send = () => {
-		const body = text.trim();
-		if (!body || disabledNote) return;
+		if (!body || disabledNote || over > 0) return;
 		onSend(body);
-		setText("");
+		setDraft(EMPTY);
 		setPicker(null);
 	};
 	const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -156,8 +221,12 @@ export function Composer({
 				rows={Math.min(8, Math.max(1, text.split("\n").length))}
 				disabled={Boolean(disabledNote)}
 				onChange={(event) => {
-					setText(event.target.value);
-					sync(event.target.value, event.target.selectionStart);
+					const value = event.target.value;
+					setDraft((current) => ({
+						text: value,
+						picks: movePicks(current.picks, editBetween(current.text, value)),
+					}));
+					sync(value, event.target.selectionStart);
 				}}
 				onSelect={(event) =>
 					sync(event.currentTarget.value, event.currentTarget.selectionStart)
@@ -168,14 +237,11 @@ export function Composer({
 			<button
 				className="button primary"
 				type="submit"
-				disabled={Boolean(disabledNote) || !text.trim()}
+				disabled={Boolean(disabledNote) || !body || over > 0}
 			>
 				Send
 			</button>
-			<p className="field-hint channel-composer-hint">
-				{disabledNote ??
-					"Enter to send, Shift+Enter for a new line, @ to mention. Markdown and [[wikilinks]] work."}
-			</p>
+			<p className="field-hint channel-composer-hint">{disabledNote ?? hint}</p>
 		</form>
 	);
 }
