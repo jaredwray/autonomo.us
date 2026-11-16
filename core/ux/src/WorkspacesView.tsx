@@ -23,6 +23,7 @@ import {
 } from "./api.js";
 import { Dropdown } from "./Dropdown.js";
 import { Icon } from "./Icons.js";
+import { LoadingBanner } from "./LoadingBanner.js";
 import { type AttentionItem, attentionItems } from "./overview-items.js";
 
 const date = (value: string) => new Date(value).toLocaleString();
@@ -848,9 +849,11 @@ export function WorkspacesView({
 					</div>
 				) : (
 					<p className="empty-state">
-						{loading
-							? "Loading workspaces…"
-							: "You don't have access to a workspace yet. Ask an owner or admin to add you."}
+						{loading ? (
+							<LoadingBanner>Loading workspaces…</LoadingBanner>
+						) : (
+							"You don't have access to a workspace yet. Ask an owner or admin to add you."
+						)}
 					</p>
 				)}
 			</section>

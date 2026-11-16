@@ -43,6 +43,7 @@ import {
 	type ThreadState,
 } from "./channels-state.js";
 import { Icon } from "./Icons.js";
+import { LoadingBanner } from "./LoadingBanner.js";
 
 /** Resolves after `ms`, or at once when the signal aborts. */
 const sleep = (ms: number, signal: AbortSignal) =>
@@ -602,9 +603,7 @@ export function ChannelRoom({
 					}}
 				>
 					{!state.loaded ? (
-						<p className="card-note" role="status">
-							Loading messages…
-						</p>
+						<LoadingBanner>Loading messages…</LoadingBanner>
 					) : (
 						<>
 							{state.hasEarlier ? (

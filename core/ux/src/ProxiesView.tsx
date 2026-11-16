@@ -33,6 +33,7 @@ import {
 } from "./api.js";
 import { Dropdown } from "./Dropdown.js";
 import { Icon } from "./Icons.js";
+import { LoadingBanner } from "./LoadingBanner.js";
 
 const PROVIDER_HELP: Record<ProxyKind, string> = {
 	zenrows:
@@ -1400,7 +1401,7 @@ export function ProxiesView({
 			<section
 				className="card active-models"
 				aria-labelledby="proxy-connections-heading"
-				aria-busy={loading}
+				aria-busy={loading && Boolean(list)}
 			>
 				<div className="section-heading">
 					<div>
@@ -1426,7 +1427,11 @@ export function ProxiesView({
 				)}
 				{!list ? (
 					<div className="models-empty">
-						{loading ? "Loading proxies…" : "Proxies could not be loaded."}
+						{loading ? (
+							<LoadingBanner>Loading proxies…</LoadingBanner>
+						) : (
+							"Proxies could not be loaded."
+						)}
 					</div>
 				) : connections.length === 0 ? (
 					<div className="models-empty">

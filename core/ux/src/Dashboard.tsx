@@ -30,6 +30,7 @@ import {
 	dashboardHash,
 	parseDashboardTab,
 } from "./dashboard-route.js";
+import { LoadingBanner } from "./LoadingBanner.js";
 import { newerOverview } from "./overview-items.js";
 import { PageTabs } from "./PageTabs.js";
 
@@ -1045,10 +1046,12 @@ function UsagePanel({
 				</div>
 			)}
 			{!current ? (
-				<div className="card empty-state" role="status">
-					{loading
-						? "Loading usage analytics…"
-						: "Analytics could not be loaded."}
+				<div className="card empty-state">
+					{loading ? (
+						<LoadingBanner>Loading usage analytics…</LoadingBanner>
+					) : (
+						"Analytics could not be loaded."
+					)}
 				</div>
 			) : (
 				<>
@@ -1403,10 +1406,12 @@ export function Dashboard({
 								)}
 							</OverviewPanel>
 						) : (
-							<div className="card empty-state" role="status">
-								{overview.loading
-									? "Loading the overview…"
-									: "The overview could not be loaded."}
+							<div className="card empty-state">
+								{overview.loading ? (
+									<LoadingBanner>Loading the overview…</LoadingBanner>
+								) : (
+									"The overview could not be loaded."
+								)}
 							</div>
 						)}
 					</>

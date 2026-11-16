@@ -14,6 +14,7 @@ import {
 import { CHANNEL_NAME_INPUT_PATTERN } from "./channels-route.js";
 import { Dropdown } from "./Dropdown.js";
 import { Icon } from "./Icons.js";
+import { LoadingBanner } from "./LoadingBanner.js";
 
 const date = (value: string) => new Date(value).toLocaleString();
 /** A gateway bot is told from an agent token, and is paused, never revoked. */
@@ -190,9 +191,7 @@ export function ChannelDetailsPanel({
 				</button>
 			</div>
 			{!channel ? (
-				<p className="card-note" role="status">
-					Loading details…
-				</p>
+				<LoadingBanner compact>Loading details…</LoadingBanner>
 			) : (
 				<div className="channel-scroll">
 					<p className="card-note">

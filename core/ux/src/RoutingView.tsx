@@ -7,6 +7,7 @@ import type {
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { fetchModels, fetchRouting, sendChat, updateRouting } from "./api.js";
 import { Dropdown } from "./Dropdown.js";
+import { LoadingBanner } from "./LoadingBanner.js";
 import { modelsHash } from "./models-route.js";
 
 function ModelSelect({
@@ -244,7 +245,7 @@ export function RoutingView({ onShowModels }: { onShowModels(): void }) {
 				</div>
 			) : null}
 			{!config ? (
-				<p>Loading routing settings…</p>
+				!error && <LoadingBanner>Loading routing settings…</LoadingBanner>
 			) : (
 				<>
 					<p className="card-note">

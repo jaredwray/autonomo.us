@@ -11,6 +11,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Dropdown } from "./Dropdown.js";
 import { Icon } from "./Icons.js";
+import { LoadingBanner } from "./LoadingBanner.js";
 
 export type TokenPanel<Permission extends string> =
 	| { kind: "create" }
@@ -649,11 +650,13 @@ export function TokensView<Permission extends string>({
 					</div>
 				) : (
 					<div className="empty-state">
-						{loading
-							? "Loading tokens…"
-							: error
-								? "Tokens could not be loaded. Try refreshing."
-								: config.emptyMessage}
+						{loading ? (
+							<LoadingBanner>Loading tokens…</LoadingBanner>
+						) : error ? (
+							"Tokens could not be loaded. Try refreshing."
+						) : (
+							config.emptyMessage
+						)}
 					</div>
 				)}
 			</section>
@@ -696,11 +699,13 @@ export function TokensView<Permission extends string>({
 					</div>
 				) : (
 					<div className="empty-state">
-						{loading
-							? "Loading actions…"
-							: error
-								? "Action history is unavailable."
-								: "No token actions yet."}
+						{loading ? (
+							<LoadingBanner>Loading actions…</LoadingBanner>
+						) : error ? (
+							"Action history is unavailable."
+						) : (
+							"No token actions yet."
+						)}
 					</div>
 				)}
 			</section>

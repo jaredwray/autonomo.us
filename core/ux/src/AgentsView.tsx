@@ -27,6 +27,7 @@ import {
 import { agentsHash, parseAgentsRoute } from "./agents-route.js";
 import { fetchAgents, fetchAgentTokens } from "./api.js";
 import { Icon } from "./Icons.js";
+import { LoadingBanner } from "./LoadingBanner.js";
 import { TokenForm } from "./TokensView.js";
 
 const errorText = (cause: unknown, fallback: string) =>
@@ -321,14 +322,21 @@ export function AgentsView({
 							))}
 						</ul>
 					) : (
-						<p className="card-note" role={list ? undefined : "status"}>
-							{list
-								? admin
-									? "No agents yet. Create one to take part in your channels."
-									: "No agents yet. A workspace admin can create one."
-								: error
-									? "Agents could not be loaded."
-									: "Loading agents…"}
+						<p
+							className="card-note"
+							role={list || !error ? undefined : "status"}
+						>
+							{list ? (
+								admin ? (
+									"No agents yet. Create one to take part in your channels."
+								) : (
+									"No agents yet. A workspace admin can create one."
+								)
+							) : error ? (
+								"Agents could not be loaded."
+							) : (
+								<LoadingBanner compact>Loading agents…</LoadingBanner>
+							)}
 						</p>
 					)}
 				</aside>

@@ -24,6 +24,7 @@ import {
 } from "./api.js";
 import { Dropdown } from "./Dropdown.js";
 import { Icon } from "./Icons.js";
+import { LoadingBanner } from "./LoadingBanner.js";
 
 type Panel =
 	| { kind: "add" }
@@ -728,9 +729,11 @@ export function TeamView({
 					</div>
 				) : (
 					<div className="empty-state">
-						{loading
-							? "Loading members…"
-							: "The team could not be loaded. Try refreshing."}
+						{loading ? (
+							<LoadingBanner>Loading members…</LoadingBanner>
+						) : (
+							"The team could not be loaded. Try refreshing."
+						)}
 					</div>
 				)}
 			</section>
@@ -803,7 +806,11 @@ export function TeamView({
 					</div>
 				) : (
 					<div className="empty-state">
-						{loading ? "Loading invites…" : "No invite links yet."}
+						{loading ? (
+							<LoadingBanner>Loading invites…</LoadingBanner>
+						) : (
+							"No invite links yet."
+						)}
 					</div>
 				)}
 			</section>
