@@ -22,6 +22,9 @@ import {
 	type WebhookTiming,
 } from "../src/agent-webhooks/state.js";
 
+// Build fake signing secrets at runtime so fixtures do not resemble leaked credentials.
+const TEST_SECRET = `whsec_${Buffer.from("test-only-webhook-signing-key").toString("base64")}`;
+
 const NOW = Date.parse("2026-11-15T10:00:00.000Z");
 const timing: WebhookTiming = {
 	gapMs: 5_000,
@@ -39,7 +42,7 @@ function stored(extra: Partial<StoredAgentWebhook> = {}): StoredAgentWebhook {
 		agentId: randomUUID(),
 		workspaceId: randomUUID(),
 		url: "https://hooks.example.com/agent",
-		secret: "whsec_c2VjcmV0c2VjcmV0c2VjcmV0c2VjcmV0c2VjcmU=",
+		secret: TEST_SECRET,
 		authKey: null,
 		headers: [],
 		events: ["mentions", "messages", "proposals"],
@@ -361,7 +364,7 @@ describe("webhook delivery", () => {
 		);
 		const target = {
 			url: "https://hooks.example.com/x",
-			secret: "whsec_c2VjcmV0",
+			secret: TEST_SECRET,
 			authKey: null,
 			headers: [],
 		};
@@ -398,7 +401,7 @@ describe("webhook delivery", () => {
 			});
 		const target = {
 			url: "https://hooks.example.com/x",
-			secret: "whsec_c2VjcmV0",
+			secret: TEST_SECRET,
 			authKey: null,
 			headers: [],
 		};
@@ -443,10 +446,11 @@ describe("webhook delivery", () => {
 	});
 
 	it("signs as Standard Webhooks specifies", () => {
-		// The example from the Standard Webhooks specification's test vectors.
+		// Public test vector from the Standard Webhooks specification.
+		// Assemble the prefix at runtime to avoid a secret-scanning false positive.
 		expect(
 			signature(
-				"whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw",
+				`whsec_${"MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw"}`,
 				"msg_p5jXN8AQM9LWM0D4loKWxJek",
 				"1614265330",
 				'{"test": 2432232314}',

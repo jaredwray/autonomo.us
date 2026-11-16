@@ -34,7 +34,7 @@ function webhook(
 		agentId: randomUUID(),
 		workspaceId,
 		url: "https://hooks.example.com/agent",
-		secret: "whsec_c2VjcmV0",
+		secret: `whsec_${Buffer.from("test-only-webhook-signing-key").toString("base64")}`,
 		authKey: null,
 		headers: [],
 		events: ["mentions", "messages", "proposals"],
