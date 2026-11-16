@@ -74,6 +74,20 @@ jobs:
 
   docker:
     runs-on: ubuntu-latest
+    services:
+      mongo:
+        image: mongo:8
+        env:
+          MONGO_INITDB_ROOT_USERNAME: autonomous
+          MONGO_INITDB_ROOT_PASSWORD: autonomous
+          GLIBC_TUNABLES: glibc.pthread.rseq=1
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet -u autonomous -p autonomous --eval 'db.adminCommand({ping:1}).ok'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -84,7 +98,21 @@ jobs:
         with:
           mode: firewall-free
           firewall-version: "1.15.0"
-      - run: docker compose build server
+      - run: docker build --tag autonomous-container-ci -f core/server/Dockerfile .
+      - name: Exercise the built Node image with synthetic data
+        run: |
+          docker run -d --network host --name autonomous-container-test \
+            -e CONTAINER_MODE=true \
+            -e PUBLIC_URL=https://gateway.example.invalid \
+            -e CONTAINER_CONTROL_TOKEN=synthetic-ci-only-control-token-0000000000 \
+            -e MONGODB_URI='mongodb://autonomous:autonomous@127.0.0.1:27017/container_smoke?authSource=admin' \
+            autonomous-container-ci
+          docker exec -i autonomous-container-test node --input-type=module < core/server/scripts/check-container-image.ts
+          docker stop --time 20 autonomous-container-test
+          test "$(docker inspect --format '{{.State.ExitCode}}' autonomous-container-test)" = 0
+      - name: Remove smoke-test container
+        if: always()
+        run: docker rm -f autonomous-container-test || true
 
   dropdown-browser:
     runs-on: ubuntu-latest
