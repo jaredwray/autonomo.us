@@ -1366,11 +1366,16 @@ export class SynapseService {
 		if (result.created.length || result.updated.length)
 			await this.afterWrite(space, actor, [...categories]);
 		if (imported.length) {
-			const lint = linkLinter((await this.repository.scanNotes(space)).map((note) => note.title));
+			const lint = linkLinter(
+				(await this.repository.scanNotes(space)).map((note) => note.title),
+			);
 			result.warnings = [];
 			// Bound response size even for imports full of unique missing links.
 			outer: for (const note of imported)
-				for (const warning of lint([note.body, ...propertyStrings(note.properties)])) {
+				for (const warning of lint([
+					note.body,
+					...propertyStrings(note.properties),
+				])) {
 					if (result.warnings.length === 100) {
 						result.warningsTruncated = true;
 						break outer;
