@@ -1817,3 +1817,40 @@ describe("global inheritance", () => {
 		expect((await service.getNote(games, "Pricing")).body).toBe("Free tier.");
 	});
 });
+
+
+describe("import link diagnostics", () => {
+	it("checks successful writes after the batch, including properties, and keeps breadcrumbs", async () => {
+		const { service } = synapse();
+		const body = "[[Remit: Dev Manager]] [[References/Later.md]] [[Future Topic]]";
+		const result = await service.importSpace(agentSpace, { files: [
+			{ path: "Index.md", content: `---\nrelated: "[[Property Breadcrumb]]"\n---\n${body}` },
+			{ path: "Remit — Dev Manager.md", content: "Remit" },
+			{ path: "Later.md", content: "Later" },
+			{ path: "Index.md", content: "[[Skipped Target]]" },
+		] }, agent);
+		expect(result.created).toHaveLength(3);
+		expect(result.warnings?.map((warning) => warning.target)).toEqual([
+			"Remit: Dev Manager", "Future Topic", "Property Breadcrumb",
+		]);
+		expect(result.warnings?.[0].suggestions).toEqual(["Remit — Dev Manager"]);
+		expect(result.warnings?.every((warning) => warning.source === "Index")).toBe(true);
+		const exported = await service.exportSpace(agentSpace);
+		expect(exported.files.find((file) => file.path.endsWith("Index.md"))?.content).toContain(body);
+		const overwritten = await service.importSpace(agentSpace, {
+			files: [{ path: "Index.md", content: "[[New Breadcrumb]]" }], overwrite: true,
+		}, agent);
+		expect(overwritten.warnings?.[0].target).toBe("New Breadcrumb");
+	});
+
+	it("caps warnings without rejecting notes", async () => {
+		const { service } = synapse();
+		const result = await service.importSpace(agentSpace, { files: [{
+			path: "Index.md",
+			content: Array.from({ length: 101 }, (_, i) => `[[Future ${i}]]`).join(" "),
+		}] }, agent);
+		expect(result.created).toEqual(["Index"]);
+		expect(result.warnings).toHaveLength(100);
+		expect(result.warningsTruncated).toBe(true);
+	});
+});

@@ -3,6 +3,7 @@ import {
 	extractCategories,
 	extractLinks,
 	extractTags,
+	linkLinter,
 	parseMarkdown,
 	plainText,
 	renderFrontmatter,
@@ -71,6 +72,45 @@ describe("wikilinks", () => {
 			"Evergreen",
 		]);
 		expect(extractCategories({})).toEqual([]);
+	});
+});
+
+describe("link diagnostics", () => {
+	it("suggests punctuation variants without resolving or rewriting them", () => {
+		const lint = linkLinter(["Remit — Dev Manager", "Remit - Dev Manager"]);
+		expect([...lint(["[[Remit: Dev Manager|remit]] [[remit: dev manager]]"])])
+			.toEqual([{
+				target: "Remit: Dev Manager",
+				interpretedTarget: "Remit: Dev Manager",
+				reason: "invalid-target",
+				suggestions: ["Remit — Dev Manager", "Remit - Dev Manager"],
+			}]);
+	});
+
+	it("preserves full malformed slash targets even if the basename exists", () => {
+		const target = "Handoff: Calendar Manager → Captain (sched-today/Upcoming)";
+		expect([...linkLinter(["Upcoming)"])([`[[${target}#Heading|handoff]]`])])
+			.toEqual([{
+				target,
+				interpretedTarget: "Upcoming)",
+				reason: "invalid-target",
+				suggestions: [],
+			}]);
+	});
+
+	it("keeps folder links, aliases, headings, embeds and code semantics", () => {
+		const lint = linkLinter(["Ada", "Node.js"]);
+		expect([...lint([
+			"[[References/Ada.md#Heading|Ada]] ![[../Ada]] [[Node.js]]",
+			"![[photo.jpg]] [[#Heading]] `[[Code]]`\n```\n[[Fenced]]\n```",
+		])]).toEqual([]);
+		expect([...lint(["[[Future Topic]]", "[[future topic]]"])])
+			.toEqual([{
+				target: "Future Topic",
+				interpretedTarget: "Future Topic",
+				reason: "unresolved",
+				suggestions: [],
+			}]);
 	});
 });
 

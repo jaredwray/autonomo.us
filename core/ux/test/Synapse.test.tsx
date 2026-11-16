@@ -1455,3 +1455,24 @@ it("keeps the way out of full screen when the expanded space has nothing to draw
 	expect(notes()).not.toBeNull();
 	expect(screen.getByRole("tablist")).toBeDefined();
 });
+
+
+it("shows advisory import link warnings with the full target and suggestions", async () => {
+	await start();
+	await screen.findByText(/No notes yet/);
+	fireEvent.click(screen.getByRole("button", { name: "Import" }));
+	fireEvent.change(screen.getByLabelText("Markdown files"), {
+		target: { files: [
+			new File(["[[Remit: Dev Manager]] [[Handoff: Calendar (sched/Upcoming)]]"], "Index.md"),
+			new File(["Remit"], "Remit — Dev Manager.md"),
+		] },
+	});
+	const form = within(screen.getByRole("region", { name: "Import into the shared space" }));
+	fireEvent.click(form.getByRole("button", { name: "Import" }));
+	await screen.findByText("Imported: 2 created, 0 updated, 0 skipped.");
+	expect(form.getByText("Link warnings (2)")).toBeDefined();
+	expect(form.getByText("Handoff: Calendar (sched/Upcoming)")).toBeDefined();
+	expect(form.getByText("Upcoming)")).toBeDefined();
+	expect(form.getByText(/Possible titles: Remit — Dev Manager/)).toBeDefined();
+	expect(form.getByText(/Unresolved links can be intentional breadcrumbs/)).toBeDefined();
+});

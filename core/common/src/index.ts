@@ -163,6 +163,7 @@ export {
 	type SynapseGraphNode,
 	type SynapseImportRequest,
 	type SynapseImportResult,
+	type SynapseLinkWarning,
 	type SynapseNote,
 	type SynapseNoteList,
 	type SynapseNoteSort,

@@ -286,10 +286,23 @@ export type SynapseImportRequest = {
 	overwrite?: boolean;
 };
 
+/** Advisory only: unresolved links may be intentional breadcrumbs. */
+export type SynapseLinkWarning = {
+	source: string;
+	/** Full written target, before folder interpretation. */
+	target: string;
+	interpretedTarget: string;
+	reason: "invalid-target" | "unresolved";
+	suggestions: string[];
+};
+
 export type SynapseImportResult = {
 	created: string[];
 	updated: string[];
 	skipped: Array<{ path: string; reason: string }>;
+	/** Snapshot after this batch; later imports can resolve these links. */
+	warnings?: SynapseLinkWarning[];
+	warningsTruncated?: boolean;
 };
 
 export type SynapseProposalAction = "create" | "update" | "append" | "delete";
