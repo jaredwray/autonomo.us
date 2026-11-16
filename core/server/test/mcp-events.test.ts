@@ -18,7 +18,7 @@ import {
 	validSecret,
 } from "../src/mcp-events/callback.js";
 import { McpEvents, subscriptionId } from "../src/mcp-events/events.js";
-import { MemoryEventRepository } from "../src/mcp-events/repository.js";
+import { MemoryEventRepository, mutate } from "../src/mcp-events/repository.js";
 import { settleBackgroundWork } from "../src/server.js";
 import { startChannels } from "./channel-helpers.js";
 
@@ -475,6 +475,37 @@ describe("MCP Events", () => {
 			await restarted.sweep();
 		}
 		expect(f.requests).toHaveLength(7); // verification plus six attempts
+	});
+	it("coordinates overlapping scheduled replicas and recovers an expired crash lease", async () => {
+		const f = fixture();
+		const result = (await f.events.handle(
+			agent,
+			"events/subscribe",
+			params(),
+		)) as { id: string };
+		// Persist without starting delivery, as if the process died after enqueue.
+		vi.spyOn(f.events, "catchUp").mockImplementation(() => {});
+		await f.events.onMessage(channel, message("queued-1"));
+		await f.events.onMessage(channel, message("queued-2"));
+		await mutate(f.repository, result.id, (row) => ({
+			...row,
+			leaseId: "crashed-owner",
+			leaseUntil: Date.parse("2026-11-16T00:01:00Z"),
+		}));
+		const first = new McpEvents(f.options);
+		const second = new McpEvents(f.options);
+		await Promise.all([first.sweep(1), second.sweep(1)]);
+		expect(f.requests).toHaveLength(1); // challenge only while lease is held
+		f.advance(60_001);
+		await Promise.all([first.sweep(1), second.sweep(1)]);
+		expect(f.requests).toHaveLength(2);
+		expect((await f.repository.get(result.id))?.queue).toHaveLength(1);
+		await first.sweep(1);
+		expect(f.requests).toHaveLength(3);
+		expect((await f.repository.get(result.id))?.queue).toHaveLength(0);
+		await first.onMessage(channel, message("queued-1"));
+		await first.idle();
+		expect(f.requests).toHaveLength(3); // durable producer dedup after restart
 	});
 	it.each([
 		410, 413, 400,

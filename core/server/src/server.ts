@@ -595,6 +595,9 @@ export function createServer(options: CreateServerOptions = {}) {
 		return initialized;
 	};
 	initializers.set(server, initialize);
+	eventSweepers.set(server, async () => {
+		await mcpEvents?.sweep(1);
+	});
 	if (!options.deferPersistence)
 		server.addHook("onReady", async () => {
 			await initialize();
@@ -719,4 +722,13 @@ export async function initializePersistence(
 	onError?: PersistenceErrorHandler,
 ): Promise<boolean> {
 	return (await initializers.get(server)?.(onError)) ?? false;
+}
+
+// The control-port sweep is bounded to one attempt per due subscription.
+const eventSweepers = new WeakMap<
+	ReturnType<typeof Fastify>,
+	() => Promise<void>
+>();
+export async function sweepMcpEvents(server: ReturnType<typeof Fastify>) {
+	await eventSweepers.get(server)?.();
 }

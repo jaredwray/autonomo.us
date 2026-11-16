@@ -383,12 +383,16 @@ export class McpEvents {
 			.finally(() => this.working.delete(work));
 		this.working.add(work);
 	}
-	async sweep() {
+	async sweep(maxPerSubscription = 50) {
 		if (this.closing) return;
 		const due = await this.options.repository.due(this.now());
 		await Promise.all(
 			due.map(async (row) => {
-				for (let count = 0; count < 50 && !this.closing; count++) {
+				for (
+					let count = 0;
+					count < maxPerSubscription && !this.closing;
+					count++
+				) {
 					await this.deliver(row.id);
 					const current = await this.options.repository.get(row.id);
 					if (

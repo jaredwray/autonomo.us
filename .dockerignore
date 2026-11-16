@@ -6,3 +6,11 @@
 media
 logo.ai
 *.md
+
+**/.env*
+**/.dev.vars*
+**/*.pem
+**/*.key
+**/test
+**/test-results
+**/.wrangler

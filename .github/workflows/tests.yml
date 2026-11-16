@@ -57,9 +57,15 @@ jobs:
       - run: sfw pnpm install --frozen-lockfile
       - run: pnpm lint
       - run: pnpm build
-      - name: Check development Worker config
+      - name: Typecheck the native Container API
+        run: |
+          pnpm exec wrangler types "$RUNNER_TEMP/container-runtime.d.ts" -c core/server/wrangler.jsonc
+          pnpm exec tsc --ignoreConfig --noEmit --strict --skipLibCheck --target esnext --module esnext --moduleResolution bundler core/server/src/container-worker.ts "$RUNNER_TEMP/container-runtime.d.ts"
+      - name: Validate Container configuration and edge bundle
         # The dashboard assets come from core/ux/dist, built by pnpm build above.
         run: pnpm exec wrangler deploy -c core/server/wrangler.jsonc --dry-run --outdir "$RUNNER_TEMP/server"
+      - name: Check retained Worker rollback config
+        run: pnpm exec wrangler deploy -c core/server/wrangler.legacy.jsonc --dry-run --outdir "$RUNNER_TEMP/legacy"
       # Suites that need MongoDB default to the service above. Leaving
       # MONGODB_URI unset keeps createServer() in-memory for the other tests.
       - run: pnpm test:ci
