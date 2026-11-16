@@ -197,9 +197,7 @@ test("app gate clears its status when setup is ready", async ({ page }) => {
 	release();
 	await expect(page.locator(".loading-banner")).toHaveCount(0);
 	await expect(
-		page
-			.getByRole("heading", { name: /owner|workspace|setup|started/i })
-			.first(),
+		page.getByRole("heading", { name: "Create your account", exact: true }),
 	).toBeVisible();
 });
 
