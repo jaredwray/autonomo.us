@@ -50,8 +50,8 @@ Same Vite version and dependencies, compared with main `174e666`:
 
 | Production asset | Main | With dropdown kit |
 | --- | ---: | ---: |
-| JavaScript minified | 535.37 kB | 650.94 kB |
-| JavaScript gzip | 148.72 kB | 189.29 kB |
+| JavaScript minified | 535.37 kB | 651.11 kB |
+| JavaScript gzip | 148.72 kB | 189.30 kB |
 | CSS gzip | 14.62 kB | 14.65 kB |
 
 The roughly 40.6 kB gzip increase is a real cost. Both builds already exceed
