@@ -1461,3 +1461,91 @@ a.button { text-decoration: none; }
 @media (prefers-reduced-motion: reduce) { .dropdown-trigger { transition: none; } }
 
 @media (max-width: 420px) { .analytics-filters label { flex-basis: 100%; } }
+
+/* Aurora accents echo the brand mark; content stays still and readable. */
+.loading-banner {
+ position: relative;
+ display: flex;
+ align-items: center;
+ gap: 16px;
+ width: 100%;
+ min-width: 0;
+ min-height: 104px;
+ padding: 24px;
+ overflow: hidden;
+ isolation: isolate;
+ border: 1px solid var(--border);
+ border-radius: 12px;
+ background: var(--surface-1);
+ color: var(--text-secondary);
+ text-align: left;
+ font-size: 14px;
+ font-weight: 500;
+}
+.loading-banner-label { min-width: 0; overflow-wrap: anywhere; }
+.loading-banner-orbit {
+ position: relative;
+ flex: 0 0 32px;
+ width: 32px;
+ height: 32px;
+ border: 1px solid var(--hairline);
+ border-radius: 50%;
+}
+.loading-banner-orbit::before {
+ content: "";
+ position: absolute;
+ inset: -1px;
+ border: 2px solid transparent;
+ border-top-color: var(--series-1);
+ border-right-color: #7c3aed;
+ border-radius: 50%;
+ transform: rotate(-35deg);
+}
+.loading-banner-orbit span {
+ position: absolute;
+ inset: 10px;
+ border-radius: 50%;
+ background: linear-gradient(135deg, #2ad6ff, #7c3aed);
+ opacity: 0.75;
+}
+.loading-banner-track { position: absolute; inset: auto 24px 0; height: 2px; overflow: hidden; }
+.loading-banner-track span {
+ display: block;
+ width: 45%;
+ height: 100%;
+ background: linear-gradient(90deg, transparent, #2ad6ff, #7c3aed, transparent);
+ opacity: 0.5;
+ transform: translateX(60%);
+}
+.loading-banner--compact { min-height: 72px; padding: 16px 12px; gap: 10px; font-size: 13px; }
+.loading-banner--compact .loading-banner-orbit { flex-basis: 24px; width: 24px; height: 24px; }
+.loading-banner--compact .loading-banner-orbit span { inset: 7px; }
+.auth-shell > .loading-banner { max-width: 420px; }
+@keyframes loading-orbit { to { transform: rotate(325deg); } }
+@keyframes loading-glide {
+ 0% { transform: translateX(-110%); opacity: 0; }
+ 20%, 70% { opacity: 0.6; }
+ 100% { transform: translateX(325%); opacity: 0; }
+}
+/* Opt in to motion; reduced-motion users get a complete static indicator. */
+@media (prefers-reduced-motion: no-preference) {
+ .loading-banner-orbit::before { animation: loading-orbit 2.4s linear infinite; }
+ .loading-banner-track span { animation: loading-glide 3.6s ease-in-out infinite; }
+}
+@media (max-width: 480px) {
+ .loading-banner { padding: 20px 16px; gap: 12px; }
+ .loading-banner--compact { padding: 14px 10px; gap: 10px; }
+}
+@media (forced-colors: active) {
+ .loading-banner-orbit::before { border-top-color: Highlight; border-right-color: Highlight; }
+ .loading-banner-orbit span { background: CanvasText; }
+ .loading-banner-track { display: none; }
+}
+
+/* Empty proposals are a calm destination, with room for the explanation. */
+.proposal-empty { display: flex; align-items: flex-start; gap: 16px; padding: 28px; }
+.proposal-empty-icon { display: grid; place-items: center; flex: 0 0 36px; height: 36px; border: 1px solid var(--hairline); border-radius: 50%; color: var(--text-secondary); }
+.proposal-empty-icon svg { width: 18px; height: 18px; }
+.proposal-empty h3 { margin: 0 0 6px; font-size: 15px; font-weight: 600; color: var(--text-primary); }
+.proposal-empty p { margin: 0; max-width: 58ch; line-height: 1.6; color: var(--text-secondary); }
+@media (max-width: 480px) { .proposal-empty { gap: 12px; padding: 20px 16px; } }

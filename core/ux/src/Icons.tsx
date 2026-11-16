@@ -21,9 +21,11 @@ export function Icon({
 		| "fullscreen"
 		| "exit-fullscreen"
 		| "search"
-		| "close";
+		| "close"
+		| "check";
 }) {
 	const paths = {
+		check: "m5 12 4 4 10-10",
 		dashboard: "M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z",
 		models: "m12 3 9 5-9 5-9-5 9-5z M3 12l9 5 9-5 M3 16l9 5 9-5",
 		proxies:

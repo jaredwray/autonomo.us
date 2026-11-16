@@ -16,6 +16,7 @@ import {
 } from "./api.js";
 import { Dropdown } from "./Dropdown.js";
 import { Icon } from "./Icons.js";
+import { LoadingBanner } from "./LoadingBanner.js";
 import { ModelCombobox } from "./ModelCombobox.js";
 import { type ModelsTab, modelsHash, parseModelsTab } from "./models-route.js";
 import { PageTabs } from "./PageTabs.js";
@@ -478,7 +479,7 @@ export function ModelsView({
 			<section
 				className="card active-models"
 				aria-labelledby="active-models-heading"
-				aria-busy={loading}
+				aria-busy={loading && Boolean(data)}
 			>
 				<div className="section-heading">
 					<div>
@@ -506,7 +507,11 @@ export function ModelsView({
 				</label>
 				{!data ? (
 					<div className="models-empty">
-						{loading ? "Loading models…" : "Models could not be loaded."}
+						{loading ? (
+							<LoadingBanner>Loading models…</LoadingBanner>
+						) : (
+							"Models could not be loaded."
+						)}
 					</div>
 				) : data.models.length === 0 ? (
 					<div className="models-empty">

@@ -11,6 +11,8 @@ import {
 	fetchSynapseNote,
 	fetchSynapseProposals,
 } from "./api.js";
+import { Icon } from "./Icons.js";
+import { LoadingBanner } from "./LoadingBanner.js";
 import { attentionChanged } from "./overview-state.js";
 import { shortDate } from "./SynapseNote.js";
 import { noteHash } from "./synapse-route.js";
@@ -495,13 +497,25 @@ export function SynapseProposals({
 						}}
 					/>
 				))
-			) : (
-				<div className="card empty-state">
-					{loading && !proposals
-						? "Loading proposals…"
-						: "No pending proposals. Agents file them with the synapse_propose tool when they want to change the shared space."}
-				</div>
-			)}
+			) : loading && !proposals ? (
+				<LoadingBanner>Loading proposals…</LoadingBanner>
+			) : !error ? (
+				<section
+					className="card proposal-empty"
+					aria-labelledby="proposal-empty-heading"
+				>
+					<span className="proposal-empty-icon" aria-hidden="true">
+						<Icon name="check" />
+					</span>
+					<div>
+						<h3 id="proposal-empty-heading">No pending proposals</h3>
+						<p>
+							You're all caught up. Changes suggested by your agents will appear
+							here for review.
+						</p>
+					</div>
+				</section>
+			) : null}
 		</div>
 	);
 }

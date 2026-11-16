@@ -10,6 +10,7 @@ import {
 	fetchSynapseNote,
 	updateSynapseNote,
 } from "./api.js";
+import { LoadingBanner } from "./LoadingBanner.js";
 import {
 	type InlineOptions,
 	Markdown,
@@ -289,12 +290,7 @@ export function SynapseNote({
 			</div>
 		);
 	}
-	if (!view)
-		return (
-			<p className="empty-state" role="status">
-				Loading note…
-			</p>
-		);
+	if (!view) return <LoadingBanner>Loading note…</LoadingBanner>;
 	const { note } = view;
 	// A note from Global seen in a workspace's Shared space is read-only there.
 	const inherited = note.space !== space;

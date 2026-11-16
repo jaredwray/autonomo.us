@@ -32,6 +32,7 @@ import { ChannelsView } from "./ChannelsView.js";
 import { channelAttention, useChannelList } from "./channels-list.js";
 import { Dashboard } from "./Dashboard.js";
 import { Icon } from "./Icons.js";
+import { LoadingBanner } from "./LoadingBanner.js";
 import { ModelsView } from "./ModelsView.js";
 import { overviewBadges } from "./overview-items.js";
 import { useOverview } from "./overview-state.js";
@@ -383,8 +384,8 @@ export function App() {
 
 	if (gate.state === "loading")
 		return (
-			<main className="auth-shell" aria-busy="true">
-				<p role="status">Loading…</p>
+			<main className="auth-shell">
+				<LoadingBanner>Loading…</LoadingBanner>
 			</main>
 		);
 	if (gate.state === "error")

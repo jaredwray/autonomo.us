@@ -15,6 +15,7 @@ import {
 	parseChannelsRoute,
 } from "./channels-route.js";
 import { Icon } from "./Icons.js";
+import { LoadingBanner } from "./LoadingBanner.js";
 
 const byName = (a: ChannelSummary, b: ChannelSummary) =>
 	a.name.localeCompare(b.name);
@@ -352,9 +353,7 @@ export function ChannelsView({
 					)}
 					{open === null ? (
 						!list.error && (
-							<p className="card-note" role="status">
-								Loading channels…
-							</p>
+							<LoadingBanner compact>Loading channels…</LoadingBanner>
 						)
 					) : open.length ? (
 						<ChannelLinks
@@ -379,9 +378,7 @@ export function ChannelsView({
 					</label>
 					{archivedShown &&
 						(archived === null ? (
-							<p className="card-note" role="status">
-								Loading archived channels…
-							</p>
+							<LoadingBanner compact>Loading archived channels…</LoadingBanner>
 						) : archived.length ? (
 							<ChannelLinks
 								channels={archived}
@@ -410,11 +407,7 @@ export function ChannelsView({
 						aria-label="Channel"
 					>
 						{open === null || (unknown && archived === null) ? (
-							!list.error && (
-								<p className="card-note" role="status">
-									Loading…
-								</p>
-							)
+							!list.error && <LoadingBanner compact>Loading…</LoadingBanner>
 						) : named ? (
 							<>
 								<h2>No channel named #{named}</h2>
