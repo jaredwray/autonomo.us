@@ -12,8 +12,12 @@ import { controlPlaneConnection } from "../src/mongo.js";
 import { mongoAvailable, uniqueMongoUrl } from "./mongo-env.js";
 
 const available = await mongoAvailable();
-const url = uniqueMongoUrl("mcp_events");
+const url = uniqueMongoUrl("mcpevents");
 const mongo = controlPlaneConnection(url);
+it("keeps the integration database name within MongoDB's 63-byte limit", () => {
+	const name = decodeURIComponent(new URL(url).pathname.slice(1));
+	expect(Buffer.byteLength(name, "utf8")).toBeLessThanOrEqual(63);
+});
 afterAll(async () => {
 	await mongo.close();
 	if (available) {
