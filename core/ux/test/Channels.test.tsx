@@ -28,6 +28,7 @@ import {
 	roomReducer,
 	setChannelTimings,
 } from "../src/channels-state.js";
+import { changeControl, dropdownOptions } from "./controls.js";
 import {
 	defaultWorkspaceId,
 	PASSWORD,
@@ -195,7 +196,7 @@ const channelList = () =>
 const composer = (name: string) =>
 	screen.getByLabelText(`Message #${name}`) as HTMLTextAreaElement;
 const type = (box: HTMLElement, value: string) =>
-	fireEvent.change(box, { target: { value } });
+	changeControl(box, { target: { value } });
 const enter = (box: HTMLElement) => fireEvent.keyDown(box, { key: "Enter" });
 /** The message row that shows `text`. */
 const row = async (scope: HTMLElement, text: string) => {
@@ -383,7 +384,13 @@ it("adds an agent from the details panel, changes its access, and edits the chan
 	expect(
 		await panel.findByText(/No agents are in this channel yet/),
 	).toBeDefined();
-	await panel.findByRole("option", { name: "Captain" });
+	await waitFor(() =>
+		expect(
+			dropdownOptions(panel.getByLabelText("Add agent")).map(
+				(option) => option.textContent,
+			),
+		).toContain("Captain"),
+	);
 	type(panel.getByLabelText("Add agent"), captain.token.id);
 	fireEvent.click(panel.getByRole("button", { name: "Add agent" }));
 	expect((await panel.findByRole("status")).textContent).toBe(
@@ -392,9 +399,14 @@ it("adds an agent from the details panel, changes its access, and edits the chan
 	const access = panel.getByLabelText(
 		"Access for Captain",
 	) as HTMLSelectElement;
-	expect(access.value).toBe("post");
-	// An agent already in the channel is not offered again.
-	expect(panel.queryByRole("option", { name: "Captain" })).toBeNull();
+	expect(access.textContent).toBe("Post");
+	// With no remaining agents, the picker is disabled and explains why.
+	expect(
+		(panel.getByLabelText("Add agent") as HTMLButtonElement).disabled,
+	).toBe(true);
+	expect(panel.getByLabelText("Add agent").textContent).toBe(
+		"No agents to add",
+	);
 	expect(panel.queryByText(/No agents are in this channel yet/)).toBeNull();
 	expect(
 		panel.getByText(/Added Captain with post access\./).textContent,
@@ -456,7 +468,13 @@ it("adds an agent from the details panel, changes its access, and edits the chan
 	await waitFor(() =>
 		expect(panel.queryByLabelText("Access for Captain")).toBeNull(),
 	);
-	expect(await panel.findByRole("option", { name: "Captain" })).toBeDefined();
+	await waitFor(() =>
+		expect(
+			dropdownOptions(panel.getByLabelText("Add agent")).map(
+				(option) => option.textContent,
+			),
+		).toContain("Captain"),
+	);
 });
 
 it("shows a failed post as failed and retries it without posting twice", async () => {

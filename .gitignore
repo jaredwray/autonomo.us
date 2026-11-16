@@ -140,3 +140,7 @@ vite.config.ts.timestamp-*
 
 # Wrangler local state
 .wrangler/
+
+# Browser test artifacts
+playwright-report/
+test-results/

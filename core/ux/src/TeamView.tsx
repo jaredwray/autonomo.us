@@ -22,6 +22,7 @@ import {
 	revokeTeamInvite,
 	updateTeamMember,
 } from "./api.js";
+import { Dropdown } from "./Dropdown.js";
 import { Icon } from "./Icons.js";
 
 type Panel =
@@ -57,10 +58,10 @@ function RoleSelect({
 	return (
 		<div className="form-field">
 			<label htmlFor="team-role">Role</label>
-			<select
+			<Dropdown
 				id="team-role"
 				value={value}
-				onChange={(event) => onChange(event.target.value as TeamRole)}
+				onValueChange={(value) => onChange(value as TeamRole)}
 			>
 				{(Object.keys(TEAM_ROLES) as TeamRole[])
 					.filter((role) => allowOwner || role !== "owner" || value === "owner")
@@ -69,7 +70,7 @@ function RoleSelect({
 							{TEAM_ROLES[role]}
 						</option>
 					))}
-			</select>
+			</Dropdown>
 			<span className="field-hint">
 				Owners and admins manage the team and can open every workspace. Members
 				open the workspaces they are added to. Only owners can grant or change
@@ -111,10 +112,10 @@ function WorkspaceAccessFields({
 		<div className="form-row">
 			<div className="form-field">
 				<label htmlFor="team-workspace">Workspace</label>
-				<select
+				<Dropdown
 					id="team-workspace"
 					value={workspaceId}
-					onChange={(event) => onWorkspace(event.target.value)}
+					onValueChange={(value) => onWorkspace(value)}
 				>
 					<option value="">No workspace yet</option>
 					{workspaces.map((workspace) => (
@@ -122,25 +123,25 @@ function WorkspaceAccessFields({
 							{workspace.name}
 						</option>
 					))}
-				</select>
+				</Dropdown>
 				<span className="field-hint">
 					Members see only the workspaces they belong to.
 				</span>
 			</div>
 			<div className="form-field">
 				<label htmlFor="team-workspace-role">Workspace role</label>
-				<select
+				<Dropdown
 					id="team-workspace-role"
 					value={role}
 					disabled={!workspaceId}
-					onChange={(event) => onRole(event.target.value as WorkspaceRole)}
+					onValueChange={(value) => onRole(value as WorkspaceRole)}
 				>
 					{(Object.keys(WORKSPACE_ROLES) as WorkspaceRole[]).map((item) => (
 						<option key={item} value={item}>
 							{WORKSPACE_ROLES[item]}
 						</option>
 					))}
-				</select>
+				</Dropdown>
 				<span className="field-hint">
 					Workspace admins add connections and manage members.
 				</span>
@@ -354,11 +355,11 @@ function TeamForm({
 						<>
 							<div className="form-field token-ttl">
 								<label htmlFor="team-invite-ttl">Link expires after</label>
-								<select
+								<Dropdown
 									id="team-invite-ttl"
 									value={ttl}
-									onChange={(event) =>
-										setTtl(Number(event.target.value) as TeamInviteTtl)
+									onValueChange={(value) =>
+										setTtl(Number(value) as TeamInviteTtl)
 									}
 								>
 									{TEAM_INVITE_TTLS.map((days) => (
@@ -366,7 +367,7 @@ function TeamForm({
 											{days} {days === 1 ? "day" : "days"}
 										</option>
 									))}
-								</select>
+								</Dropdown>
 							</div>
 							<p className="card-note">
 								Anyone with the link can create one account with this role. It

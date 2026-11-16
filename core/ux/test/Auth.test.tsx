@@ -11,6 +11,7 @@ import { StrictMode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { App } from "../src/App.js";
 import { clearCredential } from "../src/api.js";
+import { changeControl } from "./controls.js";
 import { PASSWORD, setUpOwner, stopServer } from "./session.js";
 
 const closers: Array<() => Promise<void>> = [];
@@ -41,7 +42,7 @@ function renderApp() {
 	);
 }
 const change = (label: string, value: string) =>
-	fireEvent.change(screen.getByLabelText(label), { target: { value } });
+	changeControl(screen.getByLabelText(label), { target: { value } });
 
 it("defaults a fresh gateway to first-run setup and keeps the owner signed in", async () => {
 	await start();
@@ -274,7 +275,7 @@ it("invites a member with a one-time link that creates their account", async () 
 	const form = within(
 		screen.getByRole("region", { name: "Create an invite link" }),
 	);
-	fireEvent.change(form.getByLabelText("Role"), {
+	changeControl(form.getByLabelText("Role"), {
 		target: { value: "admin" },
 	});
 	fireEvent.click(form.getByRole("button", { name: "Create link" }));
@@ -374,14 +375,14 @@ it("adds, edits, resets, and removes members and changes your own password", asy
 	renderApp();
 	fireEvent.click(await screen.findByRole("button", { name: "Add member" }));
 	let form = within(screen.getByRole("region", { name: "Add a member" }));
-	fireEvent.change(form.getByLabelText("Email"), {
+	changeControl(form.getByLabelText("Email"), {
 		target: { value: "linus@example.com" },
 	});
-	fireEvent.change(form.getByLabelText("Name"), { target: { value: "Linus" } });
-	fireEvent.change(form.getByLabelText("Initial password"), {
+	changeControl(form.getByLabelText("Name"), { target: { value: "Linus" } });
+	changeControl(form.getByLabelText("Initial password"), {
 		target: { value: PASSWORD },
 	});
-	fireEvent.change(form.getByLabelText("Confirm password"), {
+	changeControl(form.getByLabelText("Confirm password"), {
 		target: { value: PASSWORD },
 	});
 	fireEvent.click(form.getByRole("button", { name: "Add member" }));
@@ -395,7 +396,7 @@ it("adds, edits, resets, and removes members and changes your own password", asy
 
 	fireEvent.click(screen.getByRole("button", { name: "Edit Linus" }));
 	form = within(screen.getByRole("region", { name: "Edit Linus" }));
-	fireEvent.change(form.getByLabelText("Role"), {
+	changeControl(form.getByLabelText("Role"), {
 		target: { value: "admin" },
 	});
 	fireEvent.click(form.getByRole("button", { name: "Save changes" }));
@@ -412,10 +413,10 @@ it("adds, edits, resets, and removes members and changes your own password", asy
 	form = within(
 		screen.getByRole("region", { name: "Reset password for Linus" }),
 	);
-	fireEvent.change(form.getByLabelText("New password"), {
+	changeControl(form.getByLabelText("New password"), {
 		target: { value: "a reset passphrase" },
 	});
-	fireEvent.change(form.getByLabelText("Confirm password"), {
+	changeControl(form.getByLabelText("Confirm password"), {
 		target: { value: "a reset passphrase" },
 	});
 	fireEvent.click(form.getByRole("button", { name: "Reset password" }));
@@ -437,20 +438,20 @@ it("adds, edits, resets, and removes members and changes your own password", asy
 
 	fireEvent.click(screen.getByRole("button", { name: "Change password" }));
 	form = within(screen.getByRole("region", { name: "Change your password" }));
-	fireEvent.change(form.getByLabelText("Current password"), {
+	changeControl(form.getByLabelText("Current password"), {
 		target: { value: "wrong password" },
 	});
-	fireEvent.change(form.getByLabelText("New password"), {
+	changeControl(form.getByLabelText("New password"), {
 		target: { value: "my new passphrase" },
 	});
-	fireEvent.change(form.getByLabelText("Confirm password"), {
+	changeControl(form.getByLabelText("Confirm password"), {
 		target: { value: "my new passphrase" },
 	});
 	fireEvent.click(form.getByRole("button", { name: "Change password" }));
 	expect((await form.findByRole("alert")).textContent).toBe(
 		"Your current password is incorrect.",
 	);
-	fireEvent.change(form.getByLabelText("Current password"), {
+	changeControl(form.getByLabelText("Current password"), {
 		target: { value: PASSWORD },
 	});
 	fireEvent.click(form.getByRole("button", { name: "Change password" }));

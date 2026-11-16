@@ -21,6 +21,7 @@ import {
 	setWorkspaceMember,
 	updateWorkspace,
 } from "./api.js";
+import { Dropdown } from "./Dropdown.js";
 import { Icon } from "./Icons.js";
 import { type AttentionItem, attentionItems } from "./overview-items.js";
 
@@ -215,17 +216,17 @@ function MembersPanel({
 										{member.implicit ? (
 											"Admin (from team role)"
 										) : (
-											<select
+											<Dropdown
 												className="workspace-role-select"
 												aria-label={`Workspace role for ${member.name || member.email}`}
 												value={member.role}
 												disabled={busy}
-												onChange={(event) =>
+												onValueChange={(value) =>
 													void change(() =>
 														setWorkspaceMember(
 															workspace.id,
 															member.id,
-															event.target.value as WorkspaceRole,
+															value as WorkspaceRole,
 														),
 													)
 												}
@@ -237,7 +238,7 @@ function MembersPanel({
 														</option>
 													),
 												)}
-											</select>
+											</Dropdown>
 										)}
 									</td>
 									<td>
@@ -284,11 +285,11 @@ function MembersPanel({
 				>
 					<div className="form-field">
 						<label htmlFor="workspace-candidate">Add a team member</label>
-						<select
+						<Dropdown
 							id="workspace-candidate"
 							value={candidate}
 							disabled={busy}
-							onChange={(event) => setCandidate(event.target.value)}
+							onValueChange={(value) => setCandidate(value)}
 						>
 							<option value="">Choose a member…</option>
 							{candidates.map((member) => (
@@ -298,22 +299,22 @@ function MembersPanel({
 										: member.email}
 								</option>
 							))}
-						</select>
+						</Dropdown>
 					</div>
 					<div className="form-field">
 						<label htmlFor="workspace-candidate-role">Role</label>
-						<select
+						<Dropdown
 							id="workspace-candidate-role"
 							value={role}
 							disabled={busy}
-							onChange={(event) => setRole(event.target.value as WorkspaceRole)}
+							onValueChange={(value) => setRole(value as WorkspaceRole)}
 						>
 							{(Object.keys(WORKSPACE_ROLES) as WorkspaceRole[]).map((item) => (
 								<option key={item} value={item}>
 									{WORKSPACE_ROLES[item]}
 								</option>
 							))}
-						</select>
+						</Dropdown>
 					</div>
 					<button
 						type="submit"

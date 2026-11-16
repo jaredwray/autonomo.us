@@ -16,6 +16,7 @@ import {
 	fetchAgents,
 	fetchOAuthSignIn,
 } from "./api.js";
+import { Dropdown } from "./Dropdown.js";
 import { browser } from "./navigation.js";
 import { PermissionFields } from "./TokensView.js";
 
@@ -281,17 +282,17 @@ export function AuthorizeView({
 					<fieldset className="routing-fields" disabled={busy}>
 						<div className="form-field">
 							<label htmlFor={`${fields}-workspace`}>Workspace</label>
-							<select
+							<Dropdown
 								id={`${fields}-workspace`}
 								value={workspaceId}
-								onChange={(event) => setWorkspaceId(event.target.value)}
+								onValueChange={(value) => setWorkspaceId(value)}
 							>
 								{eligible.map((item) => (
 									<option key={item.id} value={item.id}>
 										{item.name}
 									</option>
 								))}
-							</select>
+							</Dropdown>
 							<span className="field-hint">
 								The agent works in this workspace only. You can approve in
 								workspaces you are an admin of.
@@ -330,11 +331,11 @@ export function AuthorizeView({
 									{choice === "existing" ? (
 										<div className="form-field">
 											<label htmlFor={`${fields}-agent`}>Sign in as</label>
-											<select
+											<Dropdown
 												id={`${fields}-agent`}
 												required
 												value={agentId}
-												onChange={(event) => setAgentId(event.target.value)}
+												onValueChange={(value) => setAgentId(value)}
 											>
 												<option value="">Choose an agent…</option>
 												{agents.map((agent) => (
@@ -342,7 +343,7 @@ export function AuthorizeView({
 														{agent.name} ({grantsText(agent.permissions)})
 													</option>
 												))}
-											</select>
+											</Dropdown>
 											<span className="field-hint">
 												Agents of this workspace that sign in with OAuth. The
 												app gets the agent's grants and its channels.

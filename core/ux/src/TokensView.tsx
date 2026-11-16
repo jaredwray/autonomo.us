@@ -9,6 +9,7 @@ import {
 	type UpdateApiTokenRequest,
 } from "@autonomo.us/common";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Dropdown } from "./Dropdown.js";
 import { Icon } from "./Icons.js";
 
 export type TokenPanel<Permission extends string> =
@@ -248,14 +249,14 @@ export function TokenForm<Permission extends string>({
 							<label htmlFor="token-ttl">
 								{panel.kind === "roll" ? "New token TTL" : "TTL"}
 							</label>
-							<select
+							<Dropdown
 								id="token-ttl"
 								value={ttl}
-								onChange={(event) =>
+								onValueChange={(value) =>
 									setTtl(
-										event.target.value === "never"
+										value === "never"
 											? "never"
-											: (Number(event.target.value) as ApiTokenTtl),
+											: (Number(value) as ApiTokenTtl),
 									)
 								}
 							>
@@ -264,7 +265,7 @@ export function TokenForm<Permission extends string>({
 										{ttlLabel(value)}
 									</option>
 								))}
-							</select>
+							</Dropdown>
 							<span className="field-hint">
 								Starts when the new token is issued.
 							</span>
@@ -288,17 +289,17 @@ export function TokenForm<Permission extends string>({
 								<label htmlFor="token-overlap">
 									Keep previous token alive for
 								</label>
-								<select
+								<Dropdown
 									id="token-overlap"
 									value={overlap}
-									onChange={(event) => setOverlap(event.target.value)}
+									onValueChange={(value) => setOverlap(value)}
 								>
 									<option value="0">Revoke immediately</option>
 									<option value="3600">1 hour</option>
 									<option value="86400">24 hours</option>
 									<option value="604800">7 days</option>
 									<option value="custom">Custom duration</option>
-								</select>
+								</Dropdown>
 							</div>
 							{overlap === "custom" && (
 								<div className="form-field">

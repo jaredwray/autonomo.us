@@ -13,6 +13,7 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "../src/App.js";
 import { clearCredential } from "../src/api.js";
+import { changeControl } from "./controls.js";
 import { defaultWorkspaceId, setUpOwner } from "./session.js";
 
 // The model field renders against a real gateway API server (no fetch mocks)
@@ -87,7 +88,7 @@ async function openForm(provider = "openai") {
 	render(<App />);
 	await screen.findByText("openai/gpt-beta");
 	fireEvent.click(screen.getByRole("button", { name: "Add model" }));
-	fireEvent.change(screen.getByLabelText("Provider"), {
+	changeControl(screen.getByLabelText("Provider"), {
 		target: { value: provider },
 	});
 	return {
@@ -143,14 +144,14 @@ describe("Model field", () => {
 
 	it("narrows the list while typing and adds the model picked with the keyboard", async () => {
 		const { field, models } = await openForm();
-		fireEvent.change(field, { target: { value: "ALPHA mini" } });
+		changeControl(field, { target: { value: "ALPHA mini" } });
 		expect(options()).toHaveLength(1);
 		expect(options()[0]?.textContent).toContain("GPT Alpha mini");
 		expect(screen.getByRole("status").textContent).toBe("1 of 4 models");
 		// The closest id comes first, whatever the catalog's order.
-		fireEvent.change(field, { target: { value: "gpt-alpha-m" } });
+		changeControl(field, { target: { value: "gpt-alpha-m" } });
 		expect(options()).toHaveLength(1);
-		fireEvent.change(field, { target: { value: "gpt" } });
+		changeControl(field, { target: { value: "gpt" } });
 		expect(options()).toHaveLength(3);
 		fireEvent.keyDown(field, { key: "ArrowDown" });
 		fireEvent.keyDown(field, { key: "ArrowDown" });
@@ -181,7 +182,7 @@ describe("Model field", () => {
 		expect(highlighted()?.textContent).toContain("Open Weights");
 		fireEvent.keyDown(field, { key: "Escape" });
 		expect(screen.queryByRole("listbox")).toBeNull();
-		fireEvent.change(field, { target: { value: "gpt-alpha-mini" } });
+		changeControl(field, { target: { value: "gpt-alpha-mini" } });
 		fireEvent.keyDown(field, { key: "Escape" });
 		// The whole catalog is back, with the chosen model highlighted.
 		const toggle = screen.getByRole("button", {
@@ -207,14 +208,14 @@ describe("Model field", () => {
 	it("opens above the field when there is no room below, however it is opened", async () => {
 		const { field } = await openForm();
 		const popover = () => document.querySelector(".model-combobox-popover");
-		fireEvent.change(field, { target: { value: "gpt" } });
+		changeControl(field, { target: { value: "gpt" } });
 		expect(popover()?.classList.contains("above")).toBe(false);
 		fireEvent.keyDown(field, { key: "Escape" });
 		// The field now sits at the bottom of the window.
 		const bottom = window.innerHeight - 20;
 		field.getBoundingClientRect = () =>
 			({ top: bottom - 40, bottom }) as DOMRect;
-		fireEvent.change(field, { target: { value: "gpt-" } });
+		changeControl(field, { target: { value: "gpt-" } });
 		expect(popover()?.classList.contains("above")).toBe(true);
 		fireEvent.keyDown(field, { key: "Escape" });
 		fireEvent.click(field);
@@ -223,7 +224,7 @@ describe("Model field", () => {
 
 	it("takes a model id the catalog does not list", async () => {
 		const { field } = await openForm();
-		fireEvent.change(field, { target: { value: "my-fine-tune" } });
+		changeControl(field, { target: { value: "my-fine-tune" } });
 		expect(screen.queryByRole("listbox")).toBeNull();
 		expect(
 			screen.getByText(/No suggestions match “my-fine-tune”/),
@@ -237,7 +238,7 @@ describe("Model field", () => {
 				"Not in the suggested list. It is sent to OpenAI as entered.",
 			),
 		).toBeDefined();
-		fireEvent.change(field, { target: { value: "gpt-beta" } });
+		changeControl(field, { target: { value: "gpt-beta" } });
 		expect(screen.getByText("This model is already active.")).toBeDefined();
 	});
 
@@ -265,7 +266,7 @@ describe("Model field", () => {
 		).toBeNull();
 		fireEvent.click(field);
 		fireEvent.keyDown(field, { key: "ArrowDown" });
-		fireEvent.change(field, { target: { value: "llama" } });
+		changeControl(field, { target: { value: "llama" } });
 		expect(screen.queryByRole("listbox")).toBeNull();
 		expect(field.getAttribute("aria-expanded")).toBe("false");
 		expect(

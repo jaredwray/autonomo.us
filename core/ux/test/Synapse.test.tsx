@@ -11,6 +11,7 @@ import { StrictMode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { App } from "../src/App.js";
 import { clearCredential, setSessionToken } from "../src/api.js";
+import { changeControl, dropdownOptions } from "./controls.js";
 import {
 	defaultWorkspaceId,
 	PASSWORD,
@@ -73,7 +74,7 @@ const expectHash = (path: string) =>
 		`#/w/${window.location.hash.split("/")[2]}/${path}`,
 	);
 const change = (label: string, value: string) =>
-	fireEvent.change(screen.getByLabelText(label), { target: { value } });
+	changeControl(screen.getByLabelText(label), { target: { value } });
 const noteRegion = () => screen.getByRole("region", { name: "Note" });
 /**
  * Picks a space once the list of spaces has it, as a person would. Before
@@ -84,12 +85,14 @@ const pickSpace = async (id: string) => {
 	const select = screen.getByLabelText("Space") as HTMLSelectElement;
 	await waitFor(
 		() =>
-			expect(Array.from(select.options, (option) => option.value)).toContain(
-				id,
-			),
+			expect(
+				dropdownOptions(select).map((option) =>
+					option.getAttribute("data-value"),
+				),
+			).toContain(id),
 		{ timeout: 3000 },
 	);
-	fireEvent.change(select, { target: { value: id } });
+	changeControl(select, { target: { value: id } });
 };
 const graphRegion = () => screen.getByRole("region", { name: "Graph" });
 /** The graph's drawing; its name counts the notes and links it shows. */
@@ -182,13 +185,19 @@ it("navigates to Synapse and creates a note from a template with its properties"
 	// The space list is a separate request from the notes list.
 	await screen.findByText(/Notes are temporary until MongoDB/);
 	expect(
-		within(screen.getByLabelText("Space"))
-			.getAllByRole("option")
-			.map((option) => option.textContent),
+		dropdownOptions(screen.getByLabelText("Space")).map(
+			(option) => option.textContent,
+		),
 	).toEqual(["Global (0 notes)", "Shared (0 notes, inherits Global)"]);
 	fireEvent.click(screen.getByRole("button", { name: "New note" }));
 	change("Title", "Ada Lovelace");
-	await screen.findByRole("option", { name: "People" });
+	await waitFor(() =>
+		expect(
+			dropdownOptions(screen.getByLabelText("Template")).map(
+				(option) => option.textContent,
+			),
+		).toContain("People"),
+	);
 	change("Template", "People");
 	expect(screen.getByText(/Properties: .*role.*created/)).toBeDefined();
 	fireEvent.click(screen.getByRole("button", { name: "Create note" }));
@@ -366,7 +375,7 @@ it("keeps an open draft when the space refreshes, and still detects conflicts", 
 	change("Markdown source", "v2 draft");
 	// An import elsewhere refreshes the space while the editor is open.
 	fireEvent.click(screen.getByRole("button", { name: "Import" }));
-	fireEvent.change(screen.getByLabelText("Markdown files"), {
+	changeControl(screen.getByLabelText("Markdown files"), {
 		target: { files: [new File(["Other body."], "Other.md")] },
 	});
 	await screen.findByText(/1 Markdown file/);
@@ -391,7 +400,7 @@ it("keeps an open draft when the space refreshes, and still detects conflicts", 
 	});
 	expect(patched.statusCode, patched.body).toBe(200);
 	// The import form is still open from the first round.
-	fireEvent.change(screen.getByLabelText("Markdown files"), {
+	changeControl(screen.getByLabelText("Markdown files"), {
 		target: { files: [new File(["Third."], "Third.md")] },
 	});
 	await screen.findByText(/1 Markdown file/);
@@ -441,7 +450,7 @@ it("imports a vault past one request's limit and says when the list is capped", 
 	await start();
 	await screen.findByText(/No notes yet/);
 	fireEvent.click(screen.getByRole("button", { name: "Import" }));
-	fireEvent.change(screen.getByLabelText("Markdown files"), {
+	changeControl(screen.getByLabelText("Markdown files"), {
 		target: {
 			files: Array.from(
 				{ length: 501 },
@@ -533,8 +542,7 @@ it("searches, filters by category, renames with link rewriting, and deletes", as
 	// Categories load separately from the notes list.
 	await waitFor(() =>
 		expect(
-			within(screen.getByLabelText("Category"))
-				.getAllByRole("option")
+			dropdownOptions(screen.getByLabelText("Category"))
 				.map((option) => option.textContent)
 				.sort(),
 		).toEqual(["All categories", "People (2)", "Projects (1)"]),
@@ -657,7 +665,7 @@ it("lets owners approve and reject agent proposals, surfacing conflicts", async 
 			}) as HTMLButtonElement
 		).disabled,
 	).toBe(true);
-	fireEvent.change(append.getByLabelText("Rejection reason"), {
+	changeControl(append.getByLabelText("Rejection reason"), {
 		target: { value: "The note was rewritten; propose against the new text." },
 	});
 	fireEvent.click(append.getByRole("button", { name: "Confirm rejection" }));
@@ -685,9 +693,9 @@ it("lets owners approve and reject agent proposals, surfacing conflicts", async 
 	fireEvent.click(screen.getByRole("tab", { name: "Notes" }));
 	await waitFor(() =>
 		expect(
-			within(screen.getByLabelText("Space"))
-				.getAllByRole("option")
-				.map((option) => option.textContent),
+			dropdownOptions(screen.getByLabelText("Space")).map(
+				(option) => option.textContent,
+			),
 		).toEqual([
 			"Global (0 notes)",
 			"Shared (3 notes, inherits Global)",
@@ -875,7 +883,7 @@ it("shows members the proposals read-only", async () => {
 	fireEvent.click(screen.getByRole("tab", { name: "Notes" }));
 	expect(screen.getByRole("button", { name: "New note" })).toBeDefined();
 	// Global is read-only for members.
-	fireEvent.change(await screen.findByLabelText("Space"), {
+	changeControl(await screen.findByLabelText("Space"), {
 		target: { value: "global" },
 	});
 	await screen.findByText(/owners and admins change it/);
@@ -887,7 +895,7 @@ it("shows members the proposals read-only", async () => {
 	expect(canvas.queryByRole("button")).toBeNull();
 	fireEvent.click(canvas.getByText("Missing"));
 	expect(screen.queryByLabelText("Title")).toBeNull();
-	fireEvent.change(screen.getByLabelText("Space"), {
+	changeControl(screen.getByLabelText("Space"), {
 		target: { value: "shared" },
 	});
 	await screen.findByRole("button", { name: "New note" });
@@ -924,7 +932,7 @@ it("shows global notes in Shared as read-only until the workspace overrides them
 	expect(screen.queryByText(/Inherited from the global Synapse/)).toBeNull();
 	expect(screen.getByRole("button", { name: "Edit" })).toBeDefined();
 	// Global keeps its note, and owners can edit it there.
-	fireEvent.change(screen.getByLabelText("Space"), {
+	changeControl(screen.getByLabelText("Space"), {
 		target: { value: "global" },
 	});
 	fireEvent.click(
@@ -953,7 +961,7 @@ it("imports Markdown files and a vault folder, then exports the space as a zip",
 		"Ada Lovelace.md",
 		{ type: "text/markdown" },
 	);
-	fireEvent.change(screen.getByLabelText("Markdown files"), {
+	changeControl(screen.getByLabelText("Markdown files"), {
 		target: {
 			files: [
 				ada,
@@ -971,7 +979,7 @@ it("imports Markdown files and a vault folder, then exports the space as a zip",
 		Object.defineProperty(file, "webkitRelativePath", { value: path });
 		return file;
 	};
-	fireEvent.change(screen.getByLabelText("Vault folder"), {
+	changeControl(screen.getByLabelText("Vault folder"), {
 		target: {
 			files: [
 				folderFile("My Vault/References/Charles Babbage.md", "Engines."),
@@ -992,12 +1000,12 @@ it("imports Markdown files and a vault folder, then exports the space as a zip",
 			list.getByRole("link", { name: new RegExp(`^${title}`) }),
 		).toBeDefined();
 	// Existing titles are skipped unless overwrite is on.
-	fireEvent.change(screen.getByLabelText("Markdown files"), {
+	changeControl(screen.getByLabelText("Markdown files"), {
 		target: { files: [new File(["Updated body."], "Ada Lovelace.md")] },
 	});
 	fireEvent.click(form().getByRole("button", { name: "Import" }));
 	await screen.findByText("Imported: 0 created, 0 updated, 1 skipped.");
-	fireEvent.change(screen.getByLabelText("Markdown files"), {
+	changeControl(screen.getByLabelText("Markdown files"), {
 		target: { files: [new File(["Updated body."], "Ada Lovelace.md")] },
 	});
 	fireEvent.click(screen.getByLabelText("Overwrite existing notes"));
@@ -1270,7 +1278,10 @@ it("says so when the graph is empty, capped, or cannot load, and settles at once
 	expect(canvas.querySelectorAll("[data-index]:not([transform])")).toHaveLength(
 		0,
 	);
-	expect(frames).not.toHaveBeenCalled();
+	// Dropdown positioning also uses animation frames; the graph must not animate.
+	expect(
+		frames.mock.calls.filter(([callback]) => callback.name === "step"),
+	).toHaveLength(0);
 	// Zoomed out to fit, only the dozen best-linked notes are labelled.
 	expect(canvas.hasAttribute("data-zoomed")).toBe(false);
 	expect(canvas.querySelectorAll("[data-index].major")).toHaveLength(12);
@@ -1460,7 +1471,7 @@ it("shows advisory import link warnings with the full target and suggestions", a
 	await start();
 	await screen.findByText(/No notes yet/);
 	fireEvent.click(screen.getByRole("button", { name: "Import" }));
-	fireEvent.change(screen.getByLabelText("Markdown files"), {
+	changeControl(screen.getByLabelText("Markdown files"), {
 		target: {
 			files: [
 				new File(

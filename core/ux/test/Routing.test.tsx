@@ -12,6 +12,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { startOpenAIStub } from "../../server/test/openai-stub.js";
 import { App } from "../src/App.js";
 import { clearCredential } from "../src/api.js";
+import { changeControl } from "./controls.js";
 import {
 	defaultWorkspaceId,
 	routeToWorkspace,
@@ -84,7 +85,7 @@ async function start({
 	return server;
 }
 function change(label: string, value: string) {
-	fireEvent.change(screen.getByLabelText(label), { target: { value } });
+	changeControl(screen.getByLabelText(label), { target: { value } });
 }
 
 it("saves a weighted account pool, uses it for a real request, and restores it when navigating back", async () => {
@@ -175,11 +176,11 @@ it("saves an ordered model failover rule independently of the default", async ()
 	const rule = within(
 		screen.getByRole("region", { name: "Failover for work/chat" }),
 	);
-	fireEvent.change(rule.getByLabelText("Fallback model"), {
+	changeControl(rule.getByLabelText("Fallback model"), {
 		target: { value: "personal/chat" },
 	});
 	fireEvent.click(rule.getByRole("button", { name: "Add fallback" }));
-	fireEvent.change(rule.getByLabelText("Attempt timeout (ms)"), {
+	changeControl(rule.getByLabelText("Attempt timeout (ms)"), {
 		target: { value: "5000" },
 	});
 	fireEvent.click(screen.getByRole("button", { name: "Save routing" }));

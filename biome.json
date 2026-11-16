@@ -6,6 +6,8 @@
 	"files": {
 		"includes": [
 			"**/src/**/*.ts",
+			"**/browser/**/*.ts",
+			"**/browser/**/*.tsx",
 			"**/src/**/*.tsx",
 			"**/scripts/**/*.ts",
 			"**/test/**/*.ts",
@@ -25,8 +27,22 @@
 	"linter": {
 		"enabled": true,
 		"rules": {
-			"recommended": true
+			"recommended": true,
+			"a11y": {
+				"noLabelWithoutControl": {
+					"level": "error",
+					"options": {
+						"inputComponents": ["Dropdown"]
+					}
+				}
+			}
 		}
 	},
-	"assist": { "actions": { "source": { "organizeImports": "on" } } }
+	"assist": {
+		"actions": {
+			"source": {
+				"organizeImports": "on"
+			}
+		}
+	}
 }
