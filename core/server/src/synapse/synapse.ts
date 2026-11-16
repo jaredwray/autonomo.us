@@ -37,6 +37,7 @@ import {
 	extractCategories,
 	extractLinks,
 	extractTags,
+	linkLinter,
 	parseMarkdown,
 	propertyStrings,
 	renderMarkdown,
@@ -1271,6 +1272,7 @@ export class SynapseService {
 			updated: [],
 			skipped: [],
 		};
+		const imported: StoredNote[] = [];
 		const seen = new Set<string>();
 		const categories = new Set<string>();
 		let count = await this.repository.countNotes({ space });
@@ -1340,6 +1342,7 @@ export class SynapseService {
 					skip("This note changed during the import.");
 					continue;
 				}
+				imported.push(next);
 				(placeholder ? result.created : result.updated).push(existing.title);
 				for (const category of next.categories) categories.add(category);
 				continue;
@@ -1356,11 +1359,30 @@ export class SynapseService {
 				continue;
 			}
 			count++;
+			imported.push(note);
 			result.created.push(title);
 			for (const category of note.categories) categories.add(category);
 		}
 		if (result.created.length || result.updated.length)
 			await this.afterWrite(space, actor, [...categories]);
+		if (imported.length) {
+			const lint = linkLinter(
+				(await this.repository.scanNotes(space)).map((note) => note.title),
+			);
+			result.warnings = [];
+			// Bound response size even for imports full of unique missing links.
+			outer: for (const note of imported)
+				for (const warning of lint([
+					note.body,
+					...propertyStrings(note.properties),
+				])) {
+					if (result.warnings.length === 100) {
+						result.warningsTruncated = true;
+						break outer;
+					}
+					result.warnings.push({ source: note.title, ...warning });
+				}
+		}
 		return result;
 	}
 

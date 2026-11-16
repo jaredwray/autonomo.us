@@ -261,6 +261,11 @@ function ImportForm({
 								outcome.created.push(...part.created);
 								outcome.updated.push(...part.updated);
 								outcome.skipped.push(...part.skipped);
+								outcome.warnings = [
+									...(outcome.warnings ?? []),
+									...(part.warnings ?? []),
+								];
+								outcome.warningsTruncated ||= part.warningsTruncated;
 							}
 							setFiles([]);
 						} finally {
@@ -329,6 +334,44 @@ function ImportForm({
 								{result.updated.length} updated, {result.skipped.length}{" "}
 								skipped.
 							</p>
+							{Boolean(result.warnings?.length) && (
+								<details>
+									<summary>Link warnings ({result.warnings?.length})</summary>
+									<p>
+										Links were kept. These warnings reflect each imported batch;
+										later batches may resolve them. Unresolved links can be
+										intentional breadcrumbs.
+									</p>
+									<ul>
+										{result.warnings?.map((warning, index) => (
+											// biome-ignore lint/suspicious/noArrayIndexKey: batch warnings are an immutable result
+											<li key={index}>
+												{warning.source}: <code>{warning.target}</code> —{" "}
+												{warning.reason === "invalid-target"
+													? "invalid title or folder characters"
+													: "no matching note"}
+												.
+												{warning.target !== warning.interpretedTarget && (
+													<>
+														{" "}
+														Interpreted as{" "}
+														<code>{warning.interpretedTarget}</code>.
+													</>
+												)}
+												{Boolean(warning.suggestions.length) && (
+													<>
+														{" "}
+														Possible titles: {warning.suggestions.join(", ")}.
+													</>
+												)}
+											</li>
+										))}
+									</ul>
+									{result.warningsTruncated && (
+										<p>Only the first 100 warnings per batch are shown.</p>
+									)}
+								</details>
+							)}
 							{result.skipped.length > 0 && (
 								<ul>
 									{result.skipped.map((item) => (

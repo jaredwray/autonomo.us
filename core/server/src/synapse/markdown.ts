@@ -1,5 +1,6 @@
 import {
 	SYNAPSE_ATTACHMENT_EXTENSIONS,
+	type SynapseLinkWarning,
 	type SynapseProperties,
 	type SynapsePropertyValue,
 } from "@autonomo.us/common";
@@ -168,6 +169,65 @@ export function extractLinks(texts: string[]): string[] {
 					seen.set(titleKey(target), target);
 			}
 	return [...seen.values()];
+}
+
+/** Build a batch linter without changing resolution or rewriting breadcrumbs. */
+export function linkLinter(titles: string[]) {
+	const known = new Set(titles.map(titleKey));
+	// Suggestions only: never resolve punctuation variants automatically.
+	const suggestionKey = (title: string) =>
+		title
+			.toLowerCase()
+			.replace(/[:–—-]+/g, " ")
+			.replace(/\s+/g, " ")
+			.trim();
+	const candidates = new Map<string, string[]>();
+	for (const title of titles) {
+		const key = suggestionKey(title);
+		const group = candidates.get(key) ?? [];
+		if (group.length < 5) group.push(title);
+		candidates.set(key, group);
+	}
+	return function* lint(
+		texts: string[],
+	): Generator<Omit<SynapseLinkWarning, "source">> {
+		const seen = new Set<string>();
+		for (const text of texts)
+			for (const prose of proseOf(text))
+				for (const match of prose.matchAll(LINK)) {
+					const interpretedTarget = linkTarget(match[2]);
+					if (!interpretedTarget) continue;
+					const target = match[2]
+						.split("|")[0]
+						.replace(/\\$/, "")
+						.split("#")[0]
+						.trim();
+					if (seen.has(titleKey(target))) continue;
+					seen.add(titleKey(target));
+					// Validate each folder component too: a colon before a slash
+					// otherwise disappears, hiding a malformed handoff title.
+					const invalid = target
+						.split("/")
+						.filter(Boolean)
+						.some(
+							(part) =>
+								part !== "." &&
+								part !== ".." &&
+								titleProblem(part.replace(/\.md$/i, "")) !== null,
+						);
+					if (!invalid && known.has(titleKey(interpretedTarget))) continue;
+					yield {
+						target,
+						interpretedTarget,
+						reason: invalid ? "invalid-target" : "unresolved",
+						suggestions: (
+							candidates.get(suggestionKey(interpretedTarget)) ?? []
+						).filter(
+							(title) => titleKey(title) !== titleKey(interpretedTarget),
+						),
+					};
+				}
+	};
 }
 
 const TAG_CHARS = "[\\p{L}\\p{N}_\\-/\\p{Extended_Pictographic}\\u200d\\ufe0f]";
