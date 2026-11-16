@@ -32,6 +32,7 @@ import {
 	updateBot,
 } from "./api.js";
 import { channelsHash } from "./channels-route.js";
+import { Dropdown } from "./Dropdown.js";
 import { attentionChanged } from "./overview-state.js";
 
 const date = (value: string) => new Date(value).toLocaleString();
@@ -233,19 +234,17 @@ function WebScopeFields({
 				<label htmlFor={`${id}-follow-ups`}>
 					Follow-up fetches in one reply
 				</label>
-				<select
+				<Dropdown
 					id={`${id}-follow-ups`}
 					value={followUps}
-					onChange={(event) =>
-						onFollowUps(event.target.value as BotWebFollowUps)
-					}
+					onValueChange={(value) => onFollowUps(value as BotWebFollowUps)}
 				>
 					{BOT_WEB_FOLLOW_UPS.map((value) => (
 						<option key={value} value={value}>
 							{WEB_FOLLOW_UP_LABELS[value]}
 						</option>
 					))}
-				</select>
+				</Dropdown>
 				<span className="field-hint">
 					Fetches after a reply's first one. Limiting them keeps a page from
 					steering the agent to other sites.
@@ -469,11 +468,11 @@ export function InstructionsForm({
 				</div>
 				<div className="form-field">
 					<label htmlFor={`${id}-model`}>Model</label>
-					<select
+					<Dropdown
 						id={`${id}-model`}
 						required
 						value={model}
-						onChange={(event) => setModel(event.target.value)}
+						onValueChange={(value) => setModel(value)}
 					>
 						{!model && (
 							<option value="">
@@ -493,7 +492,7 @@ export function InstructionsForm({
 								{choice.label}
 							</option>
 						))}
-					</select>
+					</Dropdown>
 					<span className="field-hint">
 						A model, a pool, or auto from this workspace's routing. Replies
 						spend this workspace's provider keys.
@@ -551,10 +550,10 @@ export function InstructionsForm({
 				)}
 				<div className="form-field bot-hops">
 					<label htmlFor={`${id}-hops`}>Agent-to-agent replies</label>
-					<select
+					<Dropdown
 						id={`${id}-hops`}
 						value={agentHops}
-						onChange={(event) => setAgentHops(Number(event.target.value))}
+						onValueChange={(value) => setAgentHops(Number(value))}
 					>
 						{Array.from({ length: BOT_LIMITS.maxAgentHops + 1 }, (_, hops) => (
 							// biome-ignore lint/suspicious/noArrayIndexKey: the options are the numbers themselves
@@ -562,7 +561,7 @@ export function InstructionsForm({
 								{hops}
 							</option>
 						))}
-					</select>
+					</Dropdown>
 					<span className="field-hint">
 						0 answers people only. Higher values let a chain of agents answer
 						each other that many steps.

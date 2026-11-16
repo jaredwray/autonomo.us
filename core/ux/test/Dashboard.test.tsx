@@ -17,6 +17,7 @@ import { fetchDashboardData, fetchWorkspaceOverview } from "../src/api.js";
 import { analyticsCsv, Dashboard } from "../src/Dashboard.js";
 import { parseDashboardTab } from "../src/dashboard-route.js";
 import { attentionItems, overviewBadges } from "../src/overview-items.js";
+import { changeControl } from "./controls.js";
 
 vi.mock("../src/api.js", () => ({
 	fetchDashboardData: vi.fn(),
@@ -180,7 +181,7 @@ describe("Usage tab", () => {
 					}),
 			);
 		render(<Dashboard />);
-		fireEvent.change(screen.getByLabelText("Period"), {
+		changeControl(screen.getByLabelText("Period"), {
 			target: { value: "7d" },
 		});
 		expect(screen.queryByRole("region", { name: "Usage totals" })).toBeNull();
@@ -802,7 +803,7 @@ describe("Overview tab, when something is missing or failing", () => {
 		const needs = await screen.findByRole("region", { name: "Needs you" });
 		expect(needs.textContent).toContain("2 Synapse proposals to review");
 		expect(needs.textContent).toContain("Herald failed 2");
-		fireEvent.change(screen.getByLabelText("Period"), {
+		changeControl(screen.getByLabelText("Period"), {
 			target: { value: "7d" },
 		});
 		expect(

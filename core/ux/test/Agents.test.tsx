@@ -33,6 +33,7 @@ import { clearCredential, setSessionToken } from "../src/api.js";
 import { replyingLine } from "../src/ChannelRoom.js";
 import { setChannelTimings } from "../src/channels-state.js";
 import { browser } from "../src/navigation.js";
+import { changeControl, dropdownOptions } from "./controls.js";
 import {
 	defaultWorkspaceId,
 	PASSWORD,
@@ -307,7 +308,7 @@ function renderAt(hash: string) {
 	);
 }
 const type = (element: HTMLElement, value: string) =>
-	fireEvent.change(element, { target: { value } });
+	changeControl(element, { target: { value } });
 const agentList = () =>
 	within(screen.getByRole("complementary", { name: "Agent list" }));
 const checkbox = (scope: ReturnType<typeof within>, name: string) =>
@@ -377,22 +378,20 @@ it("creates an agent with instructions from the UI, edits and pauses it, and del
 	expect(form.getByText("15 / 20,000 characters")).toBeDefined();
 	// The workspace's chat models, then auto and its pools from routing.
 	await waitFor(() =>
-		expect(field(form, "Model").value).toBe("stub/chat-model"),
+		expect(field(form, "Model").textContent).toBe("stub/chat-model"),
 	);
 	expect(
-		within(field(form, "Model"))
-			.getAllByRole("option")
-			.map((option) => [
-				option.textContent,
-				(option as HTMLOptionElement).disabled,
-			]),
+		dropdownOptions(field(form, "Model")).map((option) => [
+			option.textContent,
+			option.getAttribute("aria-disabled") === "true",
+		]),
 	).toEqual([
 		["stub/chat-model", false],
 		["stub/slow-model", false],
 		["stub/broken-model", false],
 		["auto (Auto routing is off)", true],
 	]);
-	expect(field(form, "Model").value).toBe("stub/chat-model");
+	expect(field(form, "Model").textContent).toBe("stub/chat-model");
 	// The limits start from the gateway's defaults.
 	expect(
 		[
@@ -416,9 +415,9 @@ it("creates an agent with instructions from the UI, edits and pauses it, and del
 		),
 	).toBeDefined();
 	expect(
-		within(field(form, "Agent-to-agent replies"))
-			.getAllByRole("option")
-			.map((option) => option.textContent),
+		dropdownOptions(field(form, "Agent-to-agent replies")).map(
+			(option) => option.textContent,
+		),
 	).toEqual(["0", "1", "2", "3"]);
 	expect(
 		form.getByText(
@@ -634,9 +633,17 @@ it("adds a bot to a channel, shows it replying to a mention, and records the run
 	const panel = within(
 		await screen.findByRole("complementary", { name: "Channel details" }),
 	);
-	await panel.findByRole("option", { name: "Slow (Gateway bot)" });
+	await waitFor(() =>
+		expect(
+			dropdownOptions(panel.getByLabelText("Add agent")).map(
+				(option) => option.textContent,
+			),
+		).toContain("Slow (Gateway bot)"),
+	);
 	expect(
-		panel.getByRole("option", { name: "Sleepy (Gateway bot, paused)" }),
+		dropdownOptions(panel.getByLabelText("Add agent")).find(
+			(option) => option.textContent === "Sleepy (Gateway bot, paused)",
+		),
 	).toBeDefined();
 	type(panel.getByLabelText("Add agent"), slow.id);
 	fireEvent.click(panel.getByRole("button", { name: "Add agent" }));
@@ -1192,9 +1199,9 @@ it("asks a signed-out person to sign in, then lets them approve an app as a new 
 		"No. This app registration has never been approved here.",
 	);
 	expect(
-		within(field(view, "Workspace"))
-			.getAllByRole("option")
-			.map((option) => option.textContent),
+		dropdownOptions(field(view, "Workspace")).map(
+			(option) => option.textContent,
+		),
 	).toEqual(["Default"]);
 	// No agent to choose yet: a new one, named after the app, that can work.
 	expect(view.queryByRole("radio")).toBeNull();
@@ -1255,9 +1262,9 @@ it("signs an app in to an existing agent, refuses another, and says when a sign-
 	})) as HTMLInputElement;
 	expect(existing.checked).toBe(true);
 	expect(
-		within(field(view, "Sign in as"))
-			.getAllByRole("option")
-			.map((option) => option.textContent),
+		dropdownOptions(field(view, "Sign in as")).map(
+			(option) => option.textContent,
+		),
 	).toEqual(["Choose an agent…", "Shared agent (MCP: Read)"]);
 	const approve = view.getByRole("button", {
 		name: "Approve",
@@ -1327,9 +1334,9 @@ it("lets only a workspace's admins approve there, and anyone refuse", async () =
 	renderAt(`#/authorize/${started.id}`);
 	const view = await consent();
 	expect(
-		within(field(view, "Workspace"))
-			.getAllByRole("option")
-			.map((option) => option.textContent),
+		dropdownOptions(field(view, "Workspace")).map(
+			(option) => option.textContent,
+		),
 	).toEqual(["Default"]);
 	await waitFor(() => expect(field(view, "Agent name").value).toBe("Claude"));
 	fireEvent.click(checkbox(view, "Channels: Manage"));
@@ -1357,9 +1364,9 @@ it("lets only a workspace's admins approve there, and anyone refuse", async () =
 	const owner = await consent();
 	await owner.findByRole("radio", { name: "An existing agent" });
 	expect(
-		within(field(owner, "Workspace"))
-			.getAllByRole("option")
-			.map((option) => option.textContent),
+		dropdownOptions(field(owner, "Workspace")).map(
+			(option) => option.textContent,
+		),
 	).toEqual(["Default", "Film"]);
 	// Film has no agent that signs in with OAuth, so a new one is offered.
 	type(field(owner, "Workspace"), film.id);

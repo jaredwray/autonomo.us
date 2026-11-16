@@ -14,6 +14,7 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "../src/App.js";
 import { clearCredential } from "../src/api.js";
+import { changeControl } from "./controls.js";
 import { defaultWorkspaceId, setUpOwner, stopServer } from "./session.js";
 
 // The dashboard renders against a real gateway API server (no fetch mocks):
@@ -108,19 +109,17 @@ describe("App", () => {
 		render(<App />);
 		await screen.findByText("openai/gpt-test");
 		fireEvent.click(screen.getByRole("button", { name: "Add model" }));
-		fireEvent.change(screen.getByLabelText("Provider"), {
+		changeControl(screen.getByLabelText("Provider"), {
 			target: { value: "openai" },
 		});
-		expect(
-			(screen.getByLabelText("Connection") as HTMLSelectElement).value,
-		).toBe("openai");
-		fireEvent.change(screen.getByLabelText("Connection"), {
+		expect(screen.getByLabelText("Connection").textContent).toBe("openai");
+		changeControl(screen.getByLabelText("Connection"), {
 			target: { value: "" },
 		});
-		fireEvent.change(screen.getByLabelText("Connection name"), {
+		changeControl(screen.getByLabelText("Connection name"), {
 			target: { value: "openai-work" },
 		});
-		fireEvent.change(screen.getByLabelText("Model"), {
+		changeControl(screen.getByLabelText("Model"), {
 			target: { value: "gpt-test" },
 		});
 		const submit = () =>
@@ -129,7 +128,7 @@ describe("App", () => {
 				{ name: "Add model" },
 			);
 		expect((submit() as HTMLButtonElement).disabled).toBe(true);
-		fireEvent.change(screen.getByLabelText("API key"), {
+		changeControl(screen.getByLabelText("API key"), {
 			target: { value: "work-secret" },
 		});
 		fireEvent.click(submit());
@@ -139,16 +138,16 @@ describe("App", () => {
 		);
 		expect(screen.getByText("openai/gpt-test")).toBeDefined();
 		fireEvent.click(screen.getByRole("button", { name: "Add model" }));
-		fireEvent.change(screen.getByLabelText("Provider"), {
+		changeControl(screen.getByLabelText("Provider"), {
 			target: { value: "openai" },
 		});
-		fireEvent.change(screen.getByLabelText("Connection"), {
+		changeControl(screen.getByLabelText("Connection"), {
 			target: { value: "openai-work" },
 		});
 		expect((screen.getByLabelText(/API key/) as HTMLInputElement).value).toBe(
 			"",
 		);
-		fireEvent.change(screen.getByLabelText("Model"), {
+		changeControl(screen.getByLabelText("Model"), {
 			target: { value: "second-model" },
 		});
 		fireEvent.click(submit());
@@ -166,7 +165,7 @@ describe("App", () => {
 			"openai-work/gpt-test",
 			"openai-work/second-model",
 		]);
-		fireEvent.change(screen.getByRole("searchbox"), {
+		changeControl(screen.getByRole("searchbox"), {
 			target: { value: "openai-work" },
 		});
 		expect(screen.queryByText("openai/gpt-test")).toBeNull();
@@ -322,12 +321,12 @@ describe("App", () => {
 		window.history.replaceState(null, "", "#/models");
 		render(<App />);
 		expect(await screen.findByText("local/llama3.3")).toBeDefined();
-		fireEvent.change(screen.getByRole("searchbox"), {
+		changeControl(screen.getByRole("searchbox"), {
 			target: { value: "qwen" },
 		});
 		expect(screen.getByText("local/qwen3")).toBeDefined();
 		expect(screen.queryByText("local/llama3.3")).toBeNull();
-		fireEvent.change(screen.getByRole("searchbox"), {
+		changeControl(screen.getByRole("searchbox"), {
 			target: { value: "missing" },
 		});
 		expect(screen.getByText("No matching models")).toBeDefined();
@@ -354,17 +353,17 @@ describe("App", () => {
 			fireEvent.click(
 				screen.getByRole("button", { name: "Add your first model" }),
 			);
-			fireEvent.change(screen.getByLabelText("Provider"), {
+			changeControl(screen.getByLabelText("Provider"), {
 				target: { value: provider },
 			});
-			fireEvent.change(screen.getByLabelText("Model"), {
+			changeControl(screen.getByLabelText("Model"), {
 				target: { value: "test-model" },
 			});
 			if (provider === "cloudflare")
-				fireEvent.change(screen.getByLabelText("Cloudflare Account ID"), {
+				changeControl(screen.getByLabelText("Cloudflare Account ID"), {
 					target: { value: "a".repeat(32) },
 				});
-			fireEvent.change(
+			changeControl(
 				screen.getByLabelText(
 					provider === "cloudflare" ? "API token" : "API key",
 				),
@@ -386,13 +385,13 @@ describe("App", () => {
 				expect(screen.getByRole("button", { name: "Refresh" })).toBeDefined(),
 			);
 			fireEvent.click(screen.getByRole("button", { name: "Add model" }));
-			fireEvent.change(screen.getByLabelText("Provider"), {
+			changeControl(screen.getByLabelText("Provider"), {
 				target: { value: provider },
 			});
 			expect(
 				(screen.getByLabelText(/API (key|token)/) as HTMLInputElement).value,
 			).toBe("");
-			fireEvent.change(screen.getByLabelText("Model"), {
+			changeControl(screen.getByLabelText("Model"), {
 				target: { value: "second-model" },
 			});
 			fireEvent.click(
@@ -452,7 +451,7 @@ describe("App", () => {
 		render(<App />);
 		await openUsage();
 		await screen.findByRole("region", { name: "Usage totals" });
-		fireEvent.change(screen.getByLabelText("Caller"), {
+		changeControl(screen.getByLabelText("Caller"), {
 			target: { value: "agent:support-agent" },
 		});
 		await waitFor(() =>
@@ -469,7 +468,7 @@ describe("App", () => {
 				screen.getByRole("region", { name: "Usage by model" }).textContent,
 			).toContain("local/llama3.3"),
 		);
-		fireEvent.change(screen.getByLabelText("Model"), {
+		changeControl(screen.getByLabelText("Model"), {
 			target: { value: "local/llama3.3" },
 		});
 		await waitFor(() =>
@@ -501,7 +500,7 @@ describe("App", () => {
 		render(<App />);
 		await openUsage();
 		await screen.findByRole("heading", { name: "No activity in this period" });
-		fireEvent.change(screen.getByLabelText("Period"), {
+		changeControl(screen.getByLabelText("Period"), {
 			target: { value: "7d" },
 		});
 		await waitFor(() =>

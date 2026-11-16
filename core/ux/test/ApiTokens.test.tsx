@@ -11,6 +11,7 @@ import { StrictMode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { App } from "../src/App.js";
 import { clearCredential } from "../src/api.js";
+import { changeControl, dropdownOptions } from "./controls.js";
 import {
 	defaultWorkspaceId,
 	PASSWORD,
@@ -49,7 +50,7 @@ async function start({ signIn = true } = {}) {
 	return server;
 }
 const change = (label: string, value: string) =>
-	fireEvent.change(screen.getByLabelText(label), { target: { value } });
+	changeControl(screen.getByLabelText(label), { target: { value } });
 
 it("creates, edits, rolls with custom overlap, and revokes a token with a bottom action log", async () => {
 	const server = await start();
@@ -71,9 +72,9 @@ it("creates, edits, rolls with custom overlap, and revokes a token with a bottom
 			.disabled,
 	).toBe(true);
 	expect(
-		within(screen.getByLabelText("TTL"))
-			.getAllByRole("option")
-			.map((option) => option.textContent),
+		dropdownOptions(screen.getByLabelText("TTL")).map(
+			(option) => option.textContent,
+		),
 	).toEqual(["1 day", "7 days", "30 days", "180 days", "Never"]);
 	change("Name", "Production");
 	change("Description", "My gateway client");

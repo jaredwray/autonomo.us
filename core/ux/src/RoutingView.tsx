@@ -6,6 +6,7 @@ import type {
 } from "@autonomo.us/common";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { fetchModels, fetchRouting, sendChat, updateRouting } from "./api.js";
+import { Dropdown } from "./Dropdown.js";
 import { modelsHash } from "./models-route.js";
 
 function ModelSelect({
@@ -23,10 +24,10 @@ function ModelSelect({
 	return (
 		<div className="form-field">
 			<label htmlFor={id}>{label}</label>
-			<select
+			<Dropdown
 				id={id}
 				value={value}
-				onChange={(event) => onChange(event.target.value)}
+				onValueChange={(value) => onChange(value)}
 			>
 				<option value="">Choose a model or pool…</option>
 				{value && !models.includes(value) ? (
@@ -37,7 +38,7 @@ function ModelSelect({
 						{model}
 					</option>
 				))}
-			</select>
+			</Dropdown>
 		</div>
 	);
 }
@@ -649,19 +650,19 @@ function PoolEditor({
 			</div>
 			<label className="form-field">
 				Balancing strategy
-				<select
+				<Dropdown
 					aria-label="Balancing strategy"
 					value={pool.strategy}
-					onChange={(event) =>
+					onValueChange={(value) =>
 						onChange({
 							...pool,
-							strategy: event.target.value as typeof pool.strategy,
+							strategy: value as typeof pool.strategy,
 						})
 					}
 				>
 					<option value="weighted-round-robin">Weighted round robin</option>
 					<option value="least-requests">Least requests</option>
-				</select>
+				</Dropdown>
 			</label>
 			<label className="failover-enable">
 				<input
@@ -786,10 +787,10 @@ function RoutingTrial({
 				<fieldset className="routing-fields" disabled={running || disabled}>
 					<label className="form-field">
 						Routing mode
-						<select
+						<Dropdown
 							aria-label="Routing mode"
 							value={model}
-							onChange={(event) => setModel(event.target.value)}
+							onValueChange={(value) => setModel(value)}
 						>
 							<option value="auto" disabled={!config.auto.enabled}>
 								Auto{!config.auto.enabled ? " (disabled)" : ""}
@@ -802,7 +803,7 @@ function RoutingTrial({
 									{id}
 								</option>
 							))}
-						</select>
+						</Dropdown>
 					</label>
 					<label className="form-field">
 						Request

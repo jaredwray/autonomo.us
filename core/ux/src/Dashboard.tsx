@@ -14,6 +14,7 @@ import {
 	fetchWorkspaceOverview,
 } from "./api.js";
 import { OverviewPanel } from "./DashboardOverview.js";
+import { Dropdown } from "./Dropdown.js";
 import {
 	cost,
 	costLabel,
@@ -390,11 +391,11 @@ function BreakdownTable({
 				</div>
 				<label className="analytics-sort">
 					Sort by
-					<select
+					<Dropdown
 						aria-label={`Sort ${title.toLowerCase()}`}
 						value={sort}
-						onChange={(event) => {
-							setSort(event.target.value as typeof sort);
+						onValueChange={(value) => {
+							setSort(value as typeof sort);
 							setPage(0);
 						}}
 					>
@@ -403,7 +404,7 @@ function BreakdownTable({
 						<option value="totalTokens">Tokens</option>
 						<option value="errors">Errors</option>
 						<option value="avgLatencyMs">Latency</option>
-					</select>
+					</Dropdown>
 				</label>
 			</div>
 			{rows.length ? (
@@ -909,16 +910,16 @@ function PeriodSelect({
 	return (
 		<label>
 			Period
-			<select
+			<Dropdown
 				value={range}
-				onChange={(event) => onChange(event.target.value as Range)}
+				onValueChange={(value) => onChange(value as Range)}
 			>
 				{Object.entries(ranges).map(([key, name]) => (
 					<option key={key} value={key}>
 						{name}
 					</option>
 				))}
-			</select>
+			</Dropdown>
 		</label>
 	);
 }
@@ -954,12 +955,12 @@ function UsagePanel({
 				<PeriodSelect range={range} onChange={setRange} />
 				<label>
 					Connection
-					<select
+					<Dropdown
 						value={filters.provider}
-						onChange={(event) =>
+						onValueChange={(value) =>
 							setFilters({
 								...filters,
-								provider: event.target.value,
+								provider: value,
 								model: "",
 							})
 						}
@@ -972,15 +973,13 @@ function UsagePanel({
 						{current?.options.providers.map((provider) => (
 							<option key={provider}>{provider}</option>
 						))}
-					</select>
+					</Dropdown>
 				</label>
 				<label>
 					Model
-					<select
+					<Dropdown
 						value={filters.model}
-						onChange={(event) =>
-							setFilters({ ...filters, model: event.target.value })
-						}
+						onValueChange={(value) => setFilters({ ...filters, model: value })}
 					>
 						<option value="">All models</option>
 						{filters.model &&
@@ -995,15 +994,13 @@ function UsagePanel({
 							.map((model) => (
 								<option key={model.id}>{model.id}</option>
 							))}
-					</select>
+					</Dropdown>
 				</label>
 				<label>
 					Caller
-					<select
+					<Dropdown
 						value={filters.caller}
-						onChange={(event) =>
-							setFilters({ ...filters, caller: event.target.value })
-						}
+						onValueChange={(value) => setFilters({ ...filters, caller: value })}
 					>
 						<option value="">All callers</option>
 						{filters.caller &&
@@ -1015,7 +1012,7 @@ function UsagePanel({
 								{caller.name} ({caller.kind})
 							</option>
 						))}
-					</select>
+					</Dropdown>
 				</label>
 				{hasFilters && (
 					<button

@@ -14,6 +14,7 @@ import {
 	InstructionsForm,
 } from "../src/AgentInstructions.js";
 import { setCurrentWorkspace } from "../src/api.js";
+import { changeControl } from "./controls.js";
 
 // The web scope of an agent with instructions against a fake gateway: each
 // test holds the bot and its approval requests and answers the dashboard's
@@ -146,36 +147,38 @@ describe("an agent's web scope", () => {
 		expect(screen.getByText("Web scope")).toBeDefined();
 		// A new agent starts with links people post and same-site follow-ups.
 		expect(radio("Only links people post").checked).toBe(true);
-		expect(field("Follow-up fetches in one reply").value).toBe("same-site");
+		expect(field("Follow-up fetches in one reply").textContent).toBe(
+			"Only the same site",
+		);
 		expect(screen.getByText("No approved sites yet.")).toBeDefined();
 
 		fireEvent.click(radio("Only approved sites"));
-		fireEvent.change(field("Follow-up fetches in one reply"), {
+		changeControl(field("Follow-up fetches in one reply"), {
 			target: { value: "none" },
 		});
 		const site = field("Site to approve");
 		const add = () =>
 			fireEvent.click(screen.getByRole("button", { name: "Add site" }));
-		fireEvent.change(site, { target: { value: "https://example.org/page" } });
+		changeControl(site, { target: { value: "https://example.org/page" } });
 		add();
 		expect(screen.getByRole("alert").textContent).toMatch(/without https:\/\//);
-		fireEvent.change(site, { target: { value: " Docs.Example.com. " } });
+		changeControl(site, { target: { value: " Docs.Example.com. " } });
 		add();
 		expect(screen.queryByRole("alert")).toBeNull();
 		expect(screen.getByText("docs.example.com")).toBeDefined();
-		fireEvent.change(site, { target: { value: "docs.example.com" } });
+		changeControl(site, { target: { value: "docs.example.com" } });
 		add();
 		expect(screen.getByRole("alert").textContent).toBe(
 			"docs.example.com is already approved.",
 		);
-		fireEvent.change(site, { target: { value: "example.org" } });
+		changeControl(site, { target: { value: "example.org" } });
 		fireEvent.keyDown(site, { key: "Enter" });
 		fireEvent.click(
 			screen.getByRole("button", { name: "Remove docs.example.com" }),
 		);
 		expect(screen.queryByText("docs.example.com")).toBeNull();
 
-		fireEvent.change(field("Name"), { target: { value: "Scout" } });
+		changeControl(field("Name"), { target: { value: "Scout" } });
 		fireEvent.click(screen.getByRole("button", { name: "Create agent" }));
 		await waitFor(() => expect(saved).toHaveBeenCalled());
 		const created = calls.find((call) => call.method === "POST")?.body;
@@ -298,7 +301,9 @@ describe("an agent's web scope", () => {
 		);
 		await screen.findByText("Web scope");
 		expect(radio("Only links people post").checked).toBe(true);
-		expect(field("Follow-up fetches in one reply").value).toBe("same-site");
+		expect(field("Follow-up fetches in one reply").textContent).toBe(
+			"Only the same site",
+		);
 		// Nothing has changed yet, so there is nothing to save.
 		expect(
 			(

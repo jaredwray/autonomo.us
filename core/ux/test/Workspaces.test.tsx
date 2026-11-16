@@ -11,6 +11,7 @@ import { StrictMode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { App } from "../src/App.js";
 import { clearCredential } from "../src/api.js";
+import { changeControl } from "./controls.js";
 import {
 	defaultWorkspaceId,
 	PASSWORD,
@@ -66,7 +67,7 @@ it("creates a workspace, switches to it, and scopes every view to it", async () 
 	const form = within(
 		screen.getByRole("region", { name: "Create a workspace" }),
 	);
-	fireEvent.change(form.getByLabelText("Name"), {
+	changeControl(form.getByLabelText("Name"), {
 		target: { value: "Hyphen" },
 	});
 	fireEvent.click(form.getByRole("button", { name: "Create workspace" }));
@@ -136,21 +137,19 @@ it("adds a member to a workspace from Team and lists their access", async () => 
 	expect(created.status).toBe(201);
 	fireEvent.click(await screen.findByRole("button", { name: "Add member" }));
 	const form = within(screen.getByRole("region", { name: "Add a member" }));
-	fireEvent.change(form.getByLabelText("Email"), {
+	changeControl(form.getByLabelText("Email"), {
 		target: { value: "grace@example.com" },
 	});
-	fireEvent.change(form.getByLabelText("Name"), {
+	changeControl(form.getByLabelText("Name"), {
 		target: { value: "Grace" },
 	});
 	// Members join the current workspace unless another is chosen.
-	expect(
-		(form.getByLabelText("Workspace") as HTMLSelectElement).value,
-	).not.toBe("");
-	fireEvent.change(form.getByLabelText("Workspace role"), {
+	expect(form.getByLabelText("Workspace").textContent).not.toBe("");
+	changeControl(form.getByLabelText("Workspace role"), {
 		target: { value: "admin" },
 	});
 	for (const label of ["Initial password", "Confirm password"])
-		fireEvent.change(form.getByLabelText(label), {
+		changeControl(form.getByLabelText(label), {
 			target: { value: PASSWORD },
 		});
 	fireEvent.click(form.getByRole("button", { name: "Add member" }));

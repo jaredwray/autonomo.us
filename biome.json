@@ -25,8 +25,22 @@
 	"linter": {
 		"enabled": true,
 		"rules": {
-			"recommended": true
+			"recommended": true,
+			"a11y": {
+				"noLabelWithoutControl": {
+					"level": "error",
+					"options": {
+						"inputComponents": ["Dropdown"]
+					}
+				}
+			}
 		}
 	},
-	"assist": { "actions": { "source": { "organizeImports": "on" } } }
+	"assist": {
+		"actions": {
+			"source": {
+				"organizeImports": "on"
+			}
+		}
+	}
 }

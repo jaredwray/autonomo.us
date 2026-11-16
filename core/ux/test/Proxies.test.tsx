@@ -22,6 +22,7 @@ import {
 	policyProblem,
 	usd,
 } from "../src/ProxiesView.js";
+import { changeControl } from "./controls.js";
 import { defaultWorkspaceId, setUpOwner, stopServer } from "./session.js";
 
 // The Proxies view against a fake gateway: each test holds the workspace's
@@ -113,7 +114,7 @@ function type(
 	value: string,
 	scope: HTMLElement = document.body,
 ) {
-	fireEvent.change(within(scope).getByLabelText(label), {
+	changeControl(within(scope).getByLabelText(label), {
 		target: { value },
 	});
 }
@@ -236,9 +237,7 @@ describe("Proxies view", () => {
 		await screen.findByText("No proxies yet");
 		fireEvent.click(screen.getByRole("button", { name: "Add proxy" }));
 		const form = screen.getByRole("region", { name: "Add a proxy" });
-		expect(
-			(within(form).getByLabelText("Provider") as HTMLSelectElement).value,
-		).toBe("zenrows");
+		expect(within(form).getByLabelText("Provider").textContent).toBe("ZenRows");
 		expect(
 			(within(form).getByLabelText("Name") as HTMLInputElement).value,
 		).toBe("zenrows");
@@ -493,7 +492,7 @@ describe("Proxies view", () => {
 		type("Domain", "https://Example.com/pricing");
 		type("Rule", "start-at-proxy");
 		fireEvent.click(editor.getByRole("button", { name: "Add rule" }));
-		fireEvent.change(editor.getByLabelText("Proxied requests a day"), {
+		changeControl(editor.getByLabelText("Proxied requests a day"), {
 			target: { value: "10" },
 		});
 		expect(editor.getByText("Unsaved changes")).toBeDefined();

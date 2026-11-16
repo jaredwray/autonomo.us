@@ -31,6 +31,7 @@ import {
 	updateWebPolicy,
 	webFetch,
 } from "./api.js";
+import { Dropdown } from "./Dropdown.js";
 import { Icon } from "./Icons.js";
 
 const PROVIDER_HELP: Record<ProxyKind, string> = {
@@ -187,7 +188,7 @@ function ProxyForm({
 	const [addToLadder, setAddToLadder] = useState(true);
 	const [saving, setSaving] = useState(false);
 	const [error, setError] = useState("");
-	const kindInput = useRef<HTMLSelectElement>(null);
+	const kindInput = useRef<HTMLButtonElement>(null);
 	const keyInput = useRef<HTMLInputElement>(null);
 	useEffect(() => {
 		(kindInput.current ?? keyInput.current)?.focus();
@@ -293,12 +294,12 @@ function ProxyForm({
 							<>
 								<div className="form-field">
 									<label htmlFor={`${id}-kind`}>Provider</label>
-									<select
+									<Dropdown
 										id={`${id}-kind`}
 										ref={kindInput}
 										value={kind}
-										onChange={(event) => {
-											const next = event.target.value as ProxyKind;
+										onValueChange={(value) => {
+											const next = value as ProxyKind;
 											if (!nameTouched) setName(SUGGESTED_NAMES[next]);
 											setKind(next);
 											setError("");
@@ -309,7 +310,7 @@ function ProxyForm({
 												{PROXY_KIND_LABELS[item]}
 											</option>
 										))}
-									</select>
+									</Dropdown>
 								</div>
 								<div className="form-field">
 									<label htmlFor={`${id}-name`}>Name</label>
@@ -648,19 +649,17 @@ function TestPanel({
 						{levels.length > 1 && (
 							<div className="form-field">
 								<label htmlFor={`${id}-level`}>Level</label>
-								<select
+								<Dropdown
 									id={`${id}-level`}
 									value={level}
-									onChange={(event) =>
-										setLevel(event.target.value as ProxyLevel)
-									}
+									onValueChange={(value) => setLevel(value as ProxyLevel)}
 								>
 									{levels.map((item) => (
 										<option key={item} value={item}>
 											{LEVEL_LABELS[item]}
 										</option>
 									))}
-								</select>
+								</Dropdown>
 							</div>
 						)}
 						<button className="button primary" type="submit">
@@ -912,10 +911,10 @@ function PolicyEditor({
 					<div className="routing-add">
 						<div className="form-field">
 							<label htmlFor={`${id}-step`}>Step to add</label>
-							<select
+							<Dropdown
 								id={`${id}-step`}
 								value={step}
-								onChange={(event) => setStep(event.target.value)}
+								onValueChange={(value) => setStep(value)}
 							>
 								<option value="">
 									{choices.length ? "Choose a step…" : "Every step is added"}
@@ -925,7 +924,7 @@ function PolicyEditor({
 										{choice.label}
 									</option>
 								))}
-							</select>
+							</Dropdown>
 						</div>
 						<button
 							className="button"
@@ -959,18 +958,17 @@ function PolicyEditor({
 								<code>{item.match}</code>
 								{canEdit ? (
 									<>
-										<select
+										<Dropdown
 											aria-label={`Rule for ${item.match}`}
 											value={item.rule}
-											onChange={(event) =>
+											onValueChange={(value) =>
 												onChange({
 													...policy,
 													domains: policy.domains.map((other) =>
 														other.match === item.match
 															? {
 																	...other,
-																	rule: event.target
-																		.value as WebDomainRule["rule"],
+																	rule: value as WebDomainRule["rule"],
 																}
 															: other,
 													),
@@ -982,7 +980,7 @@ function PolicyEditor({
 													{label}
 												</option>
 											))}
-										</select>
+										</Dropdown>
 										<button
 											className="button"
 											type="button"
@@ -1024,11 +1022,11 @@ function PolicyEditor({
 						</div>
 						<div className="form-field">
 							<label htmlFor={`${id}-rule`}>Rule</label>
-							<select
+							<Dropdown
 								id={`${id}-rule`}
 								value={rule}
-								onChange={(event) =>
-									setRule(event.target.value as WebDomainRule["rule"])
+								onValueChange={(value) =>
+									setRule(value as WebDomainRule["rule"])
 								}
 							>
 								{Object.entries(RULE_LABELS).map(([value, label]) => (
@@ -1036,7 +1034,7 @@ function PolicyEditor({
 										{label}
 									</option>
 								))}
-							</select>
+							</Dropdown>
 						</div>
 						<button
 							className="button"

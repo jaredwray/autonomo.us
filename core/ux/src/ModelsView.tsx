@@ -14,6 +14,7 @@ import {
 	type ModelCatalog,
 	type ModelsData,
 } from "./api.js";
+import { Dropdown } from "./Dropdown.js";
 import { Icon } from "./Icons.js";
 import { ModelCombobox } from "./ModelCombobox.js";
 import { type ModelsTab, modelsHash, parseModelsTab } from "./models-route.js";
@@ -45,7 +46,7 @@ function AddModelForm(props: {
 	const [accountId, setAccountId] = useState("");
 	const [saving, setSaving] = useState(false);
 	const [error, setError] = useState<string | null>(null);
-	const providerInput = useRef<HTMLSelectElement>(null);
+	const providerInput = useRef<HTMLButtonElement>(null);
 	useEffect(() => {
 		providerInput.current?.focus();
 	}, []);
@@ -130,17 +131,17 @@ function AddModelForm(props: {
 					<div className="model-form-grid">
 						<div className="form-field">
 							<label htmlFor="model-provider">Provider</label>
-							<select
+							<Dropdown
 								id="model-provider"
 								ref={providerInput}
 								value={provider}
-								onChange={(event) => {
-									setProvider(event.target.value as ManagedProvider);
+								onValueChange={(value) => {
+									setProvider(value as ManagedProvider);
 									const existing = props.settings.connections.find(
-										(item) => item.provider === event.target.value,
+										(item) => item.provider === value,
 									);
 									setConnection(existing?.id ?? "");
-									setConnectionName(event.target.value);
+									setConnectionName(value);
 									setAccountId(existing?.accountId ?? "");
 									setModel("");
 									setApiKey("");
@@ -152,20 +153,20 @@ function AddModelForm(props: {
 										{item.name}
 									</option>
 								))}
-							</select>
+							</Dropdown>
 						</div>
 						<div className="form-field">
 							<label htmlFor="provider-connection">Connection</label>
-							<select
+							<Dropdown
 								id="provider-connection"
 								value={connection}
-								onChange={(event) => {
-									setConnection(event.target.value);
+								onValueChange={(value) => {
+									setConnection(value);
 									setConnectionName(connections.length ? "" : provider);
 									setApiKey("");
 									setAccountId(
-										connections.find((item) => item.id === event.target.value)
-											?.accountId ?? "",
+										connections.find((item) => item.id === value)?.accountId ??
+											"",
 									);
 									setError(null);
 								}}
@@ -176,7 +177,7 @@ function AddModelForm(props: {
 									</option>
 								))}
 								<option value="">New connection…</option>
-							</select>
+							</Dropdown>
 						</div>
 						{!connection ? (
 							<div className="form-field">

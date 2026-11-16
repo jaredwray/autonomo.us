@@ -423,7 +423,7 @@ table.events .model-cell {
 
 .failover input[type="number"],
 .failover input[type="text"],
-.failover select {
+.failover .dropdown-trigger {
 	background: var(--page);
 	border: 1px solid var(--hairline);
 	border-radius: 6px;
@@ -622,8 +622,8 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .add-model-card fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
 .model-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 14px; }
 .form-field { display: flex; flex-direction: column; gap: 7px; font-size: 12px; font-weight: 500; color: var(--text-primary); }
-.form-field input, .form-field select { width: 100%; min-width: 0; border: 1px solid var(--hairline); padding: 10px 12px; border-radius: 6px; background: var(--page); color: var(--text-primary); font: inherit; font-weight: 400; }
-.form-field select, .failover select {
+.form-field input, .form-field .dropdown-trigger { width: 100%; min-width: 0; border: 1px solid var(--hairline); padding: 10px 12px; border-radius: 6px; background: var(--page); color: var(--text-primary); font: inherit; font-weight: 400; }
+.form-field .dropdown-trigger, .failover .dropdown-trigger {
 	appearance: none;
 	min-height: 42px;
 	padding: 10px 40px 10px 12px;
@@ -640,41 +640,10 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 	cursor: pointer;
 	transition: border-color 120ms ease, box-shadow 120ms ease;
 }
-.form-field select:enabled:hover, .failover select:enabled:hover { border-color: var(--text-muted); }
-.form-field select:focus-visible, .failover select:focus-visible { border-color: var(--series-1); outline-offset: 2px; }
-.form-field select:disabled, .failover select:disabled { background-color: var(--page); color: var(--text-muted); box-shadow: none; cursor: not-allowed; opacity: 0.65; }
+.form-field .dropdown-trigger:enabled:hover, .failover .dropdown-trigger:enabled:hover { border-color: var(--text-muted); }
+.form-field .dropdown-trigger:focus-visible, .failover .dropdown-trigger:focus-visible { border-color: var(--series-1); outline-offset: 2px; }
+.form-field .dropdown-trigger:disabled, .failover .dropdown-trigger:disabled { background-color: var(--page); color: var(--text-muted); box-shadow: none; cursor: not-allowed; opacity: 0.65; }
 
-/* Enhance native menus where supported; other browsers keep their native picker. */
-@supports (appearance: base-select) {
-	.form-field select, .failover select, select::picker(select) { appearance: base-select; }
-	.form-field select, .failover select { background-image: none; padding-inline-end: 12px; gap: 16px; }
-	select::picker-icon { content: ""; width: 8px; height: 8px; margin: 0 3px 3px auto; flex-shrink: 0; border-right: 1.5px solid var(--text-muted); border-bottom: 1.5px solid var(--text-muted); rotate: 45deg; }
-	select:open::picker-icon { rotate: 225deg; margin-block: 3px 0; }
-	.form-field select:enabled:open, .failover select:enabled:open { border-color: var(--series-1); box-shadow: 0 0 0 3px color-mix(in srgb, var(--series-1) 15%, transparent); }
-	select::picker(select) {
-		margin-block: 6px;
-		padding: 4px;
-		border: 1px solid var(--hairline);
-		border-radius: 10px;
-		background: var(--surface-1);
-		color: var(--text-primary);
-		box-shadow: 0 12px 30px #0002, 0 2px 6px #0001;
-		min-inline-size: anchor-size(self-inline);
-		max-block-size: min(320px, 60vh);
-		position-try-order: normal;
-		overflow: auto;
-		font: inherit;
-	}
-	select option { display: flex; align-items: center; gap: 12px; min-height: 40px; padding: 10px 12px; border-radius: 6px; white-space: normal; overflow-wrap: anywhere; cursor: pointer; }
-	select option:checked { background: color-mix(in srgb, var(--series-1) 10%, var(--surface-1)); font-weight: 600; }
-	select option:hover:not(:disabled), select option:focus { background: color-mix(in srgb, var(--series-1) 16%, var(--surface-1)); }
-	select option:focus-visible { outline: 2px solid var(--series-1); outline-offset: -2px; }
-	select option:disabled { color: var(--text-muted); cursor: not-allowed; }
-	select option::checkmark { order: 1; margin-inline-start: auto; color: var(--series-1); }
-}
-@media (prefers-reduced-motion: reduce) {
-	.form-field select, .failover select { transition: none; }
-}
 /* Model field: free text with the provider's catalog as a searchable list. */
 .model-combobox { position: relative; }
 .form-field .model-combobox input { min-height: 42px; padding-right: 40px; border-radius: 8px; font-size: 13px; }
@@ -800,7 +769,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .analytics-filters { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin: 0 0 16px; padding: 0; border: 0; min-width: 0; }
 .analytics-filters label, .analytics-sort { display: flex; flex-direction: column; gap: 6px; color: var(--text-secondary); font-size: 12px; }
 .analytics-filters label { flex: 1 1 150px; min-width: 0; }
-.analytics-filters select, .analytics-sort select { width: 100%; max-width: 100%; padding: 9px 28px 9px 10px; border: 1px solid var(--hairline); border-radius: 7px; background: var(--surface-1); color: var(--text-primary); font: inherit; }
+.analytics-filters .dropdown-trigger, .analytics-sort .dropdown-trigger { width: 100%; max-width: 100%; padding: 9px 28px 9px 10px; border: 1px solid var(--hairline); border-radius: 7px; background: var(--surface-1); color: var(--text-primary); font: inherit; }
 .analytics-meta { font-size: 12px; color: var(--text-secondary); margin: 14px 0; }
 .analytics-notice { padding: 12px 14px; background: var(--surface-1); border: 1px solid var(--hairline); border-left: 3px solid var(--series-1); border-radius: 6px; font-size: 12px; color: var(--text-secondary); margin: 0 0 20px; }
 .analytics-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -934,7 +903,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 	.analytics-tiles .value { font-size: 23px; }
 	.analytics-card-heading { align-items: stretch; }
 	.analytics-sort { flex-direction: row; align-items: center; }
-	.analytics-sort select { width: auto; }
+	.analytics-sort .dropdown-trigger { width: auto; }
 	.analytics-filters label { flex-basis: calc(50% - 12px); }
 }
 
@@ -1473,3 +1442,20 @@ a.button { text-decoration: none; }
 	.bot-web-add { flex-wrap: wrap; }
 	.bot-web-actions { flex-wrap: wrap; }
 }
+
+/* Shared Base UI single-select: token-based styling, portaled and viewport bounded. */
+.dropdown-trigger { display: inline-flex; align-items: center; justify-content: space-between; gap: 16px; min-width: 0; max-width: 100%; min-height: 42px; padding: 10px 12px; border: 1px solid var(--hairline); border-radius: 8px; background: var(--surface-1); color: var(--text-primary); font: inherit; text-align: start; cursor: pointer; }
+.dropdown-trigger.dropdown-trigger { min-height: 44px; background-image: none; padding-inline-end: 12px; }
+.dropdown-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dropdown-icon { display: flex; flex: none; color: var(--text-muted); }
+.dropdown-trigger[data-popup-open] { border-color: var(--series-1); }
+.dropdown-trigger[data-disabled] { opacity: .65; cursor: not-allowed; }
+.dropdown-positioner { z-index: 100; max-width: var(--available-width); }
+.dropdown-popup { width: var(--anchor-width); max-width: var(--available-width); border: 1px solid var(--hairline); border-radius: 10px; background: var(--surface-1); color: var(--text-primary); box-shadow: 0 12px 30px #0002, 0 2px 6px #0001; font-size: 13px; }
+.dropdown-list { max-height: min(320px, var(--available-height)); overflow-y: auto; overscroll-behavior: contain; padding: 4px; }
+.dropdown-option { display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 10px 12px; border-radius: 6px; overflow-wrap: anywhere; cursor: pointer; }
+.dropdown-option[data-selected] { background: color-mix(in srgb, var(--series-1) 10%, var(--surface-1)); font-weight: 600; }
+.dropdown-option[data-highlighted] { background: color-mix(in srgb, var(--series-1) 16%, var(--surface-1)); outline: 2px solid var(--series-1); outline-offset: -2px; }
+.dropdown-option[data-disabled] { color: var(--text-muted); cursor: not-allowed; }
+.dropdown-check { margin-inline-start: auto; flex: none; color: var(--series-1); }
+@media (prefers-reduced-motion: reduce) { .dropdown-trigger { transition: none; } }

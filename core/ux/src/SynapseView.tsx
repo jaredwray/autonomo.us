@@ -20,6 +20,7 @@ import {
 	fetchSynapseTemplates,
 	importSynapseNotes,
 } from "./api.js";
+import { Dropdown } from "./Dropdown.js";
 import { Icon } from "./Icons.js";
 import { PageTabs } from "./PageTabs.js";
 import { SynapseGraph } from "./SynapseGraph.js";
@@ -139,10 +140,10 @@ function NewNoteForm({
 					</div>
 					<div className="form-field">
 						<label htmlFor="synapse-new-template">Template</label>
-						<select
+						<Dropdown
 							id="synapse-new-template"
 							value={template}
-							onChange={(event) => setTemplate(event.target.value)}
+							onValueChange={(value) => setTemplate(value)}
 						>
 							<option value="">No template (blank note)</option>
 							{templates.map((item) => (
@@ -150,7 +151,7 @@ function NewNoteForm({
 									{item.name}
 								</option>
 							))}
-						</select>
+						</Dropdown>
 						<span className="field-hint">
 							{chosen
 								? `${chosen.description} Properties: ${Object.keys(chosen.properties).join(", ")}.`
@@ -488,10 +489,10 @@ function NotesList({
 			</div>
 			<div className="form-field">
 				<label htmlFor="synapse-category">Category</label>
-				<select
+				<Dropdown
 					id="synapse-category"
 					value={category}
-					onChange={(event) => setCategory(event.target.value)}
+					onValueChange={(value) => setCategory(value)}
 				>
 					<option value="">All categories</option>
 					{categories.map((item) => (
@@ -499,7 +500,7 @@ function NotesList({
 							{item.title} ({item.count})
 						</option>
 					))}
-				</select>
+				</Dropdown>
 			</div>
 			<p className="card-note synapse-list-count" role="status">
 				{loading && !notes
@@ -838,13 +839,13 @@ export function SynapseView({
 							<div className="synapse-side" hidden={expanded}>
 								<div className="form-field synapse-space-field">
 									<label htmlFor="synapse-space">Space</label>
-									<select
+									<Dropdown
 										id="synapse-space"
 										value={route.space}
-										onChange={(event) =>
+										onValueChange={(value) =>
 											navigate({
 												tab: "notes",
-												space: event.target.value,
+												space: value,
 												title: null,
 											})
 										}
@@ -854,7 +855,7 @@ export function SynapseView({
 												{spaceLabel(space)}
 											</option>
 										))}
-									</select>
+									</Dropdown>
 									<span className="field-hint">
 										{spaceHint(route.space)}
 										{spaces && ` Dates and daily notes use ${spaces.timeZone}.`}

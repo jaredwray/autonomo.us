@@ -12,6 +12,7 @@ import {
 	updateChannel,
 } from "./api.js";
 import { CHANNEL_NAME_INPUT_PATTERN } from "./channels-route.js";
+import { Dropdown } from "./Dropdown.js";
 import { Icon } from "./Icons.js";
 
 const date = (value: string) => new Date(value).toLocaleString();
@@ -242,13 +243,13 @@ export function ChannelDetailsPanel({
 										</strong>
 										<small>Added by {agent.addedBy}</small>
 									</span>
-									<select
+									<Dropdown
 										className="workspace-role-select"
 										aria-label={`Access for ${agent.name}`}
 										value={agent.access}
 										disabled={busy || archived}
-										onChange={(event) => {
-											const next = event.target.value as ChannelAgentAccess;
+										onValueChange={(value) => {
+											const next = value as ChannelAgentAccess;
 											void run(
 												() =>
 													setChannelAgent(channel.id, agent.agentTokenId, next),
@@ -258,7 +259,7 @@ export function ChannelDetailsPanel({
 									>
 										<option value="read">{ACCESS.read}</option>
 										<option value="post">{ACCESS.post}</option>
-									</select>
+									</Dropdown>
 									<button
 										className="button danger"
 										type="button"
@@ -302,11 +303,11 @@ export function ChannelDetailsPanel({
 						>
 							<div className="form-field">
 								<label htmlFor="channel-add-agent">Add agent</label>
-								<select
+								<Dropdown
 									id="channel-add-agent"
 									value={agentId}
 									disabled={busy || !available.length}
-									onChange={(event) => setAgentId(event.target.value)}
+									onValueChange={(value) => setAgentId(value)}
 								>
 									<option value="">
 										{options === null
@@ -323,21 +324,21 @@ export function ChannelDetailsPanel({
 											{optionLabel(option)}
 										</option>
 									))}
-								</select>
+								</Dropdown>
 							</div>
 							<div className="form-field">
 								<label htmlFor="channel-add-access">Access</label>
-								<select
+								<Dropdown
 									id="channel-add-access"
 									value={access}
 									disabled={busy || !available.length}
-									onChange={(event) =>
-										setAccess(event.target.value as ChannelAgentAccess)
+									onValueChange={(value) =>
+										setAccess(value as ChannelAgentAccess)
 									}
 								>
 									<option value="post">{ACCESS.post}</option>
 									<option value="read">{ACCESS.read}</option>
-								</select>
+								</Dropdown>
 							</div>
 							<button
 								className="button"
