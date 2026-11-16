@@ -72,7 +72,7 @@ Run:
 ```sh
 pnpm --filter @autonomo.us/common build
 pnpm --filter @autonomo.us/server build
-pnpm exec vitest run core/server/test/mcp-events.test.ts core/server/test/mcp-events-repository.test.ts
+pnpm exec vitest run core/server/test/mcp-events.test.ts core/server/test/mcp-events-repository.test.ts core/server/test/mcp-events-transport.test.ts
 ```
 
 The integration suite uses the real authenticated HTTP gateway and a real TLS callback receiver with independent HMAC verification, then posts and reads a channel message, retries its nonce, and unsubscribes. Its test adapter maps the validated public destination to the local fixture receiver; production never makes that mapping. The PEM key under `test/fixtures/mcp-events` is a public test-only key. Security tests separately exercise private and mixed DNS addresses, rebinding, challenge failures, URL validation, and key validation. Lifecycle tests cover restart, rotation, expiry, bounded retries, permanent failures, OAuth disconnection and channel membership removal. MongoDB contract tests run when the standard test MongoDB is available (including CI) and otherwise report skipped tests.

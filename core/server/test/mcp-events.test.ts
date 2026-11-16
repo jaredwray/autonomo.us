@@ -588,7 +588,7 @@ describe("callback security", () => {
 		).rejects.toMatchObject({ code: -32015 });
 		expect(f.requests).toHaveLength(1);
 	});
-	it("refuses redirects, bad challenges and excessive responses", async () => {
+	it("refuses redirects, bad challenges and invalid response bodies", async () => {
 		for (const response of [
 			{ status: 302, body: "{}" },
 			{ status: 200, body: '{"challenge":"wrong"}' },
