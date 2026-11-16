@@ -21,6 +21,14 @@ test("keyboard, focus, typeahead, empty choice, disabled items and required vali
 		page.getByRole("option", { name: "Alpha", exact: true }),
 	).toBeFocused();
 	await page.keyboard.press("ArrowDown");
+	// Base UI keeps unavailable choices discoverable, but never commits them.
+	await expect(
+		page.getByRole("option", { name: "Disabled", exact: true }),
+	).toBeFocused();
+	await page.keyboard.press("Enter");
+	await expect(page.getByLabel("Choice", { exact: true })).toHaveText("");
+	await expect(page.getByRole("listbox")).toBeVisible();
+	await page.keyboard.press("ArrowDown");
 	await expect(
 		page.getByRole("option", { name: "Beta", exact: true }),
 	).toBeFocused();

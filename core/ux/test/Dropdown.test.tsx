@@ -26,7 +26,7 @@ function Example() {
 	);
 }
 
-it("supports keyboard selection, skips disabled options, and restores focus on Escape", async () => {
+it("supports keyboard selection, refuses disabled options, and restores focus on Escape", async () => {
 	const user = userEvent.setup();
 	render(<Example />);
 	const trigger = screen.getByRole("combobox", { name: "Period" });
@@ -39,9 +39,14 @@ it("supports keyboard selection, skips disabled options, and restores focus on E
 	await user.keyboard("{End}{Enter}");
 	expect(screen.getByLabelText("Selection").textContent).toBe("week");
 	expect(document.activeElement).toBe(trigger);
-	await user.keyboard("{ArrowDown}{Home}{ArrowDown}{ArrowDown}{Enter}");
+	await user.keyboard("{ArrowDown}{Home}{ArrowDown}{ArrowDown}");
+	expect(document.activeElement).toBe(
+		screen.getByRole("option", { name: "Unavailable" }),
+	);
+	await user.keyboard("{Enter}");
+	expect(screen.getByRole("listbox")).toBeDefined();
 	expect(screen.getByLabelText("Selection").textContent).toBe("week");
-	await user.keyboard("{ArrowDown}{Home}{Escape}");
+	await user.keyboard("{Home}{Escape}");
 	expect(screen.queryByRole("listbox")).toBeNull();
 	expect(document.activeElement).toBe(trigger);
 	expect(screen.getByLabelText("Selection").textContent).toBe("week");

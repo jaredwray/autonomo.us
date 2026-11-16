@@ -40,7 +40,9 @@ are the current call sites; it is not a general native-select replacement.
 Popups use a portal, available-viewport bounds, scrolling and wrapping for long
 labels. Triggers truncate long values and reserve space for the chevron. Both
 use existing light/dark tokens. Targets are at least 44px tall. Base UI owns the
-keyboard interaction; navigation alone does not run business callbacks. Escape
+keyboard interaction. Disabled options remain keyboard-focusable so their labels
+and unavailable state can be discovered, but Enter/pointer activation cannot select
+them. Navigation alone does not run business callbacks. Escape
 cancels and returns focus. Tab closes and moves onward rather than committing a
 highlighted, unconfirmed value (important for access/role selectors).
 
