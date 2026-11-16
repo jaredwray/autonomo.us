@@ -48,10 +48,17 @@ export class GatewayContainer extends DurableObject<Env> {
 				info?.labels.configuration !== configuration)
 		) {
 			container.signal(15);
-			await Promise.race([
-				container.monitor().catch(() => {}),
-				new Promise((resolve) => setTimeout(resolve, 20_000)),
-			]);
+			let timer: ReturnType<typeof setTimeout> | undefined;
+			try {
+				await Promise.race([
+					container.monitor().catch(() => {}),
+					new Promise((resolve) => {
+						timer = setTimeout(resolve, 20_000);
+					}),
+				]);
+			} finally {
+				clearTimeout(timer);
+			}
 			if (container.running) await container.destroy();
 		}
 		if (!container.running)

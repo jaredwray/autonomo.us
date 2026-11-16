@@ -58,11 +58,13 @@ describe("Container deployment boundary", () => {
 		).toThrow();
 		const env = containerEnvironment({
 			...bindings,
-			CLOUDFLARE_API_TOKEN: "deployment-secret",
+			CLOUDFLARE_API_TOKEN: "runtime-workers-ai-key",
+			DEPLOYMENT_API_TOKEN: "excluded",
 			UNRELATED_SECRET: "excluded",
 			OPENAI_API_KEY: "synthetic-provider",
 		});
-		expect(env.CLOUDFLARE_API_TOKEN).toBeUndefined();
+		expect(env.CLOUDFLARE_API_TOKEN).toBe("runtime-workers-ai-key");
+		expect(env.DEPLOYMENT_API_TOKEN).toBeUndefined();
 		expect(env.UNRELATED_SECRET).toBeUndefined();
 		expect(env.OPENAI_API_KEY).toBe("synthetic-provider");
 	});

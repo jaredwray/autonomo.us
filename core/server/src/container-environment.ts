@@ -19,6 +19,7 @@ const SETTINGS = [
 	"OPENAI_COMPAT_NAME",
 	"GEMINI_API_KEY",
 	"GOOGLE_GENERATIVE_AI_API_KEY",
+	"GOOGLE_API_KEY",
 	"GOOGLE_BASE_URL",
 	"GEMINI_MODELS",
 	"XAI_API_KEY",
@@ -32,6 +33,7 @@ const SETTINGS = [
 	"BRIGHTDATA_BASE_URL",
 	"BRIGHTDATA_ZONE",
 	"BRIGHTDATA_PRICE_PER_1000",
+	"CLOUDFLARE_API_TOKEN",
 	"CLOUDFLARE_ACCOUNT_ID",
 	"CLOUDFLARE_BASE_URL",
 	"CLOUDFLARE_MODELS",
@@ -74,7 +76,8 @@ export function containerEnvironment(
 	};
 	for (const name of SETTINGS)
 		if (typeof bindings[name] === "string") env[name] = bindings[name];
-	// A runtime Workers AI key is deliberately distinct from a deploy token.
+	// Optional explicitly named runtime alias. These are Worker bindings, never
+	// the deployment runner environment; preserve the existing runtime key too.
 	if (typeof bindings.CLOUDFLARE_AI_API_TOKEN === "string")
 		env.CLOUDFLARE_API_TOKEN = bindings.CLOUDFLARE_AI_API_TOKEN;
 	return env;

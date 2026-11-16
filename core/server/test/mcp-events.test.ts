@@ -507,6 +507,30 @@ describe("MCP Events", () => {
 		await first.idle();
 		expect(f.requests).toHaveLength(3); // durable producer dedup after restart
 	});
+	it("drains an explicit control sweep before closing persistence", async () => {
+		const f = fixture();
+		await f.events.handle(agent, "events/subscribe", params());
+		vi.spyOn(f.events, "catchUp").mockImplementation(() => {});
+		await f.events.onMessage(channel, message());
+		let release!: () => void;
+		f.transport.mockImplementationOnce(async () => {
+			await new Promise<void>((resolve) => {
+				release = resolve;
+			});
+			return { status: 200, retryAfter: null, body: "{}" };
+		});
+		const sweep = f.events.sweep(1);
+		await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+		let closed = false;
+		const closing = f.events.close().then(() => {
+			closed = true;
+		});
+		await Promise.resolve();
+		expect(closed).toBe(false);
+		release();
+		await Promise.all([sweep, closing]);
+		expect(closed).toBe(true);
+	});
 	it.each([
 		410, 413, 400,
 	])("never retries permanent HTTP %s", async (status) => {
