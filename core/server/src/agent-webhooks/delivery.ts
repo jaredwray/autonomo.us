@@ -163,8 +163,14 @@ export type WebhookRequest = {
 	headers: Record<string, string>;
 	body: string;
 	signal: AbortSignal;
+	/** Opt in to a bounded response body for MCP callback verification. */
+	responseLimit?: number;
 };
-export type WebhookResponse = { status: number; retryAfter: string | null };
+export type WebhookResponse = {
+	status: number;
+	retryAfter: string | null;
+	body?: string;
+};
 /**
  * Sends one POST without following redirects and without reading the body.
  * `pinsAddress`: the transport connects to the address it is given, so the
@@ -207,12 +213,32 @@ export function nodeWebhookTransport(): WebhookTransport {
 				},
 				(response) => {
 					const retryAfter = response.headers["retry-after"];
-					resolve({
+					const result = {
 						status: response.statusCode ?? 0,
 						retryAfter: typeof retryAfter === "string" ? retryAfter : null,
+					};
+					if (!request.responseLimit) {
+						resolve(result);
+						response.destroy();
+						return;
+					}
+					const chunks: Buffer[] = [];
+					let size = 0;
+					response.on("error", reject);
+					response.on("data", (chunk: Buffer) => {
+						size += chunk.length;
+						if (size > (request.responseLimit ?? 0)) {
+							response.destroy(new Error("Webhook response too large"));
+							return;
+						}
+						chunks.push(chunk);
 					});
-					// The body is never read.
-					response.destroy();
+					response.on("end", () =>
+						resolve({
+							...result,
+							body: Buffer.concat(chunks).toString("utf8"),
+						}),
+					);
 				},
 			);
 			client.on("error", reject);

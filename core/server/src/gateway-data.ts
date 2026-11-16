@@ -7,6 +7,7 @@ import {
 	CHANNEL_READS_COLLECTION,
 	CHANNELS_COLLECTION,
 } from "./channels/mongo-repository.js";
+import { EVENTS_COLLECTION } from "./mcp-events/repository.js";
 import { MongoConnection, mongoOperationDeadlines } from "./mongo.js";
 import {
 	OAUTH_CLIENTS_COLLECTION,
@@ -32,6 +33,7 @@ export const GATEWAY_COLLECTIONS = [
 	"gateway_agent_tokens",
 	// An agent's webhook holds the receiver's credentials: it goes with the agent.
 	AGENT_WEBHOOKS_COLLECTION,
+	EVENTS_COLLECTION,
 	"gateway_providers",
 	"gateway_proxies",
 	"gateway_bot_web_requests",

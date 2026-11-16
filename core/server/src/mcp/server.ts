@@ -79,6 +79,8 @@ export type McpCallContext = {
 };
 /** The agent a request authenticated as, in its workspace. */
 export type McpAgent = {
+	/** OAuth connection identity, never an access token. */
+	grantId?: string;
 	/** An agent that uses MCP, or the identity of one the gateway runs. */
 	token: Pick<
 		AuthenticatedToken<AgentTokenPermission>,
@@ -163,6 +165,7 @@ export class RpcError extends Error {
 	constructor(
 		readonly code: number,
 		message: string,
+		readonly data?: { reason: string },
 	) {
 		super(message);
 	}
@@ -182,6 +185,9 @@ export function requireGrant(
 
 export type McpRouteOptions = {
 	toolSets: McpToolSet[];
+	events?: {
+		handle(agent: McpAgent, method: string, params: unknown): Promise<unknown>;
+	};
 	agentTokens: AgentTokenStore;
 	/** Access tokens of apps that signed in to an agent with OAuth. */
 	oauth: Pick<OAuthService, "authenticate">;
@@ -287,11 +293,23 @@ export async function mcpRoutes(
 					).includes(requested)
 						? requested
 						: LATEST_PROTOCOL,
-					capabilities: { tools: { listChanged: false } },
+					capabilities: {
+						tools: { listChanged: false },
+						...(options.events ? { events: {} } : {}),
+					},
 					serverInfo: { name: "autonomo.us", version: options.version },
 					instructions,
 				};
 			}
+			case "events/list":
+			case "events/subscribe":
+			case "events/unsubscribe":
+				if (!options.events)
+					throw new RpcError(
+						RPC.methodNotFound,
+						"Events are unavailable on this deployment.",
+					);
+				return options.events.handle(agent, method, params);
 			case "ping":
 				return {};
 			case "tools/list":
@@ -335,7 +353,9 @@ export async function mcpRoutes(
 		if (!identity || !agent || agent.auth !== "oauth") return null;
 		const workspaceId =
 			agent.workspaceId ?? (await options.workspaces.defaultWorkspaceId());
-		return workspaceId === identity.workspaceId ? agent : null;
+		return workspaceId === identity.workspaceId
+			? { agent, grantId: identity.grantId }
+			: null;
 	};
 
 	/**
@@ -354,11 +374,13 @@ export async function mcpRoutes(
 			return undefined;
 		}
 		let token: AuthenticatedToken<AgentTokenPermission> | null;
+		let grantId: string | undefined;
 		try {
-			token =
-				match[2].toLowerCase() === "oat"
-					? await signedIn(match[1])
-					: await options.agentTokens.authenticate(match[1]);
+			if (match[2].toLowerCase() === "oat") {
+				const identity = await signedIn(match[1]);
+				token = identity?.agent ?? null;
+				grantId = identity?.grantId;
+			} else token = await options.agentTokens.authenticate(match[1]);
 		} catch (error) {
 			if (!(error instanceof ApiTokenError || error instanceof ServiceError))
 				throw error;
@@ -386,6 +408,7 @@ export async function mcpRoutes(
 		}
 		return {
 			token,
+			...(grantId ? { grantId } : {}),
 			actor: { kind: "agent", id: token.id, name: token.name },
 			workspace,
 		};
@@ -397,10 +420,13 @@ export async function mcpRoutes(
 		id: unknown,
 		code: number,
 		message: string,
+		data?: { reason: string },
 	) =>
-		reply
-			.code(status)
-			.send({ jsonrpc: "2.0", id: id ?? null, error: { code, message } });
+		reply.code(status).send({
+			jsonrpc: "2.0",
+			id: id ?? null,
+			error: { code, message, ...(data ? { data } : {}) },
+		});
 
 	server.route({
 		method: ["GET", "DELETE"],
@@ -486,7 +512,7 @@ export async function mcpRoutes(
 			return reply.send({ jsonrpc: "2.0", id, result });
 		} catch (error) {
 			if (error instanceof RpcError)
-				return rpcError(reply, 200, id, error.code, error.message);
+				return rpcError(reply, 200, id, error.code, error.message, error.data);
 			if (error instanceof ServiceError)
 				return rpcError(reply, 200, id, RPC.internal, error.message);
 			request.log.error(error);

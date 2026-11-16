@@ -29,6 +29,12 @@ import { registerDashboard } from "./dashboard.js";
 import { FailoverPolicyStore } from "./failover.js";
 import { GatewayData } from "./gateway-data.js";
 import { mcpRoutes } from "./mcp/server.js";
+import { Callback } from "./mcp-events/callback.js";
+import { McpEvents } from "./mcp-events/events.js";
+import {
+	type EventRepository,
+	MongoEventRepository,
+} from "./mcp-events/repository.js";
 import { ModelCatalogService } from "./model-catalog-service.js";
 import { modelToolSet } from "./models/mcp.js";
 import { controlPlaneConnection, mongoErrorDetails } from "./mongo.js";
@@ -99,6 +105,12 @@ const initializers = new WeakMap<
 >();
 
 export type CreateServerOptions = {
+	/** Explicit adapters for event integration tests. Production requires durable MongoDB and pinned HTTPS. */
+	mcpEvents?: {
+		repository: EventRepository;
+		transport: WebhookTransport;
+		resolver?: Resolver;
+	};
 	config?: ApiConfig;
 	registry?: ProviderRegistry;
 	telemetry?: TelemetryService;
@@ -265,6 +277,7 @@ export function createServer(options: CreateServerOptions = {}) {
 			await Promise.allSettled([
 				botRunner.onMessage(channel, message),
 				agentWebhooks.onMessage(channel, message, context),
+				mcpEvents?.onMessage(channel, message),
 			]);
 		},
 		directory: {
@@ -320,6 +333,67 @@ export function createServer(options: CreateServerOptions = {}) {
 		? new MongoOAuthRepository(mongo)
 		: new MemoryOAuthRepository();
 	const oauth = new OAuthService(oauthRepository, oauthAgents);
+	const eventTransport = options.mcpEvents?.transport ?? webhookTransport;
+	const eventRepository =
+		options.mcpEvents?.repository ??
+		(mongo ? new MongoEventRepository(mongo) : undefined);
+	const mcpEvents =
+		eventRepository && eventTransport.pinsAddress
+			? new McpEvents({
+					repository: eventRepository,
+					callback: new Callback(
+						eventTransport,
+						options.mcpEvents?.resolver ?? systemResolver,
+					),
+					authorized: async (subscription) => {
+						const agent = await agentTokens.find(subscription.agentId);
+						if (
+							!agent ||
+							agent.status !== "active" ||
+							!agent.permissions.includes("mcp:read") ||
+							!agent.permissions.includes("mcp:call") ||
+							(agent.workspaceId ?? (await workspaces.defaultWorkspaceId())) !==
+								subscription.workspaceId
+						)
+							return false;
+						const workspace = await workspaces.get(subscription.workspaceId);
+						if (!workspace || workspace.archivedAt) return false;
+						if (subscription.grantId) {
+							const grant = await oauthRepository.getGrant(
+								subscription.grantId,
+							);
+							if (
+								!grant ||
+								grant.agentId !== subscription.agentId ||
+								grant.workspaceId !== subscription.workspaceId ||
+								!grant.refresh ||
+								Date.parse(grant.refresh.expiresAt) <= Date.now()
+							)
+								return false;
+						}
+						const channel = await channelRepository.getChannel(
+							subscription.workspaceId,
+							subscription.arguments.channel_id,
+						);
+						return (
+							!!channel &&
+							!channel.archivedAt &&
+							channel.agents.some(
+								(member) => member.agentTokenId === subscription.agentId,
+							)
+						);
+					},
+					threadAuthor: async (workspaceId, channelId, messageId) => {
+						const entry = await channelRepository.getEntry(
+							workspaceId,
+							channelId,
+							messageId,
+						);
+						return entry?.type === "message" ? entry.author : null;
+					},
+				})
+			: undefined;
+
 	const origin = (request: Parameters<typeof publicOrigin>[0]) =>
 		publicOrigin(request, {
 			publicUrl: config.publicUrl,
@@ -473,6 +547,7 @@ export function createServer(options: CreateServerOptions = {}) {
 	});
 	// Agents reach their workspace through their token: one tool set per feature.
 	server.register(mcpRoutes, {
+		events: mcpEvents,
 		toolSets,
 		agentTokens,
 		oauth,
@@ -559,24 +634,40 @@ export function createServer(options: CreateServerOptions = {}) {
 			sweeper = setInterval(() => {
 				botRunner.sweep().catch(() => {});
 				agentWebhooks.sweep().catch(() => {});
+				mcpEvents?.catchUp();
 			}, BOT_SWEEP_INTERVAL_MS);
 			sweeper.unref();
 		});
 	backgrounds.set(server, {
 		settle: async () => {
-			await Promise.all([botRunner.idle(), agentWebhooks.idle()]);
+			await Promise.all([
+				botRunner.idle(),
+				agentWebhooks.idle(),
+				mcpEvents?.idle(),
+			]);
 		},
 		sweep: async () => {
-			await Promise.all([botRunner.sweep(), agentWebhooks.sweep()]);
+			await Promise.all([
+				botRunner.sweep(),
+				agentWebhooks.sweep(),
+				mcpEvents?.sweep(),
+			]);
 		},
-		catchUp: () => agentWebhooks.catchUp(),
+		catchUp: () => {
+			agentWebhooks.catchUp();
+			mcpEvents?.catchUp();
+		},
 	});
 	server.addHook("onClose", async () => {
 		clearInterval(sweeper);
 		// Replies in progress stop before their database client closes; one
 		// that was waiting on a model is retried by the next sweep. A webhook
 		// POST in flight is handed back the same way.
-		await Promise.all([botRunner.close(), agentWebhooks.close()]);
+		await Promise.all([
+			botRunner.close(),
+			agentWebhooks.close(),
+			mcpEvents?.close(),
+		]);
 		modelCatalog.stop();
 		await closeAll();
 	});
