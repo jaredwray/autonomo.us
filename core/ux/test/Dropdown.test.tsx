@@ -39,7 +39,13 @@ it("supports keyboard selection, refuses disabled options, and restores focus on
 	await user.keyboard("{End}{Enter}");
 	expect(screen.getByLabelText("Selection").textContent).toBe("week");
 	expect(document.activeElement).toBe(trigger);
-	await user.keyboard("{ArrowDown}{Home}{ArrowDown}{ArrowDown}");
+	await user.keyboard("{ArrowDown}");
+	await waitFor(() =>
+		expect(document.activeElement).toBe(
+			screen.getByRole("option", { name: "Last week" }),
+		),
+	);
+	await user.keyboard("{Home}{ArrowDown}{ArrowDown}");
 	expect(document.activeElement).toBe(
 		screen.getByRole("option", { name: "Unavailable" }),
 	);
