@@ -6,6 +6,8 @@
 	"files": {
 		"includes": [
 			"**/src/**/*.ts",
+			"**/browser/**/*.ts",
+			"**/browser/**/*.tsx",
 			"**/src/**/*.tsx",
 			"**/scripts/**/*.ts",
 			"**/test/**/*.ts",

@@ -1459,3 +1459,5 @@ a.button { text-decoration: none; }
 .dropdown-option[data-disabled] { color: var(--text-muted); cursor: not-allowed; }
 .dropdown-check { margin-inline-start: auto; flex: none; color: var(--series-1); }
 @media (prefers-reduced-motion: reduce) { .dropdown-trigger { transition: none; } }
+
+@media (max-width: 420px) { .analytics-filters label { flex-basis: 100%; } }
