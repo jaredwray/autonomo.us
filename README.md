@@ -1172,7 +1172,7 @@ exceed 100,000 time/model/caller/operation groups also fall back with this notic
 
 The development configuration serves static dashboard assets at the edge and forwards API routes to a full Node gateway in Cloudflare Containers at <https://dev.autonomo.us>. OAuth, MCP, API paths and the existing MongoDB remain unchanged. A Cron Trigger wakes the container every minute for durable MCP delivery retries, independently of user traffic.
 
-Deployment is **manual** through `deploy-development`; merging does not deploy. Read [Cloudflare Containers deployment, migration and rollback](docs/CLOUDFLARE-CONTAINERS.md) before provisioning secrets or deploying. The retained `wrangler.legacy.jsonc` runs the previous Worker implementation, which intentionally does not advertise MCP Events.
+Deployment runs automatically through `deploy-development` on **every push to `main`, including PR merges**. Manual `workflow_dispatch` remains available, and the existing `development` environment protections still apply. Read [Cloudflare Containers deployment, migration and rollback](docs/CLOUDFLARE-CONTAINERS.md) before provisioning secrets or deploying. The retained `wrangler.legacy.jsonc` runs the previous Worker implementation, which intentionally does not advertise MCP Events.
 
 ## Testing
 

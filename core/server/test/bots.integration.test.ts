@@ -15,7 +15,10 @@ afterEach(async () => {
 });
 
 describe.skipIf(!available)("bots with MongoDB", () => {
-	it("hands a reply interrupted by shutdown to another server", async () => {
+	it.each([
+		false,
+		true,
+	])("hands a reply interrupted during a maintenance drain to another server (disconnected=%s)", async (disconnected) => {
 		const url = uniqueMongoUrl("botstop");
 		const client = new MongoClient(url);
 		cleanups.push(async () => {
@@ -39,7 +42,11 @@ describe.skipIf(!available)("bots with MongoDB", () => {
 				},
 			],
 		};
-		const one = await startChannels(cleanups, config);
+		const controlToken = "synthetic-shutdown-control-".repeat(3);
+		const one = await startChannels(cleanups, config, {
+			maintenanceToken: controlToken,
+			backgroundTimers: false,
+		});
 		const two = await startChannels(cleanups, config);
 		const channel = await one.createChannel("general");
 		const bot = await one.ok<BotDetails>(
@@ -53,7 +60,23 @@ describe.skipIf(!available)("bots with MongoDB", () => {
 		// The first server stops while its reply waits on the model.
 		while (!models.length)
 			await new Promise((resolve) => setTimeout(resolve, 20));
+		const controller = new AbortController();
+		const observed = new Promise<void>((resolve) =>
+			one.server.server.once("request", () => resolve()),
+		);
+		const drain = fetch(`${one.origin}/_internal/maintenance/drain`, {
+			method: "POST",
+			headers: { authorization: `Bearer ${controlToken}` },
+			signal: controller.signal,
+		}).catch(() => null);
+		await observed;
+		await new Promise((resolve) => setImmediate(resolve));
+		if (disconnected) {
+			controller.abort();
+			await drain;
+		}
 		await one.server.close();
+		await drain;
 		const runs = client.db().collection("channel_bot_runs");
 		expect(await runs.findOne()).toMatchObject({
 			status: "running",

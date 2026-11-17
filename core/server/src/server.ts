@@ -28,6 +28,7 @@ import { type ApiConfig, configFromEnv } from "./config.js";
 import { registerDashboard } from "./dashboard.js";
 import { FailoverPolicyStore } from "./failover.js";
 import { GatewayData } from "./gateway-data.js";
+import { registerMaintenanceRoutes } from "./maintenance-control.js";
 import { mcpRoutes } from "./mcp/server.js";
 import { Callback } from "./mcp-events/callback.js";
 import { McpEvents } from "./mcp-events/events.js";
@@ -109,6 +110,8 @@ const initializers = new WeakMap<
 >();
 
 export type CreateServerOptions = {
+	/** Enables dedicated-token internal maintenance routes on this server. */
+	maintenanceToken?: string;
 	/** Containers use durable platform invocations instead of detached interval sweeps. */
 	backgroundTimers?: boolean;
 	/** Explicit adapters for event integration tests. Production requires durable MongoDB and pinned HTTPS. */
@@ -453,6 +456,16 @@ export function createServer(options: CreateServerOptions = {}) {
 				: { redact: ["req.headers.authorization"] },
 	});
 
+	const maintenance =
+		options.maintenanceToken === undefined
+			? undefined
+			: registerMaintenanceRoutes(server, {
+					token: options.maintenanceToken,
+					ready: () => initializePersistence(server),
+					sweep: () => sweepBackgroundWork(server, 1),
+					drain: () => settleBackgroundWork(server),
+				});
+
 	// Before any route: a /v1 route without a declared scope fails to register.
 	requireRouteScopes(server);
 	server.register(cors, {
@@ -664,18 +677,30 @@ export function createServer(options: CreateServerOptions = {}) {
 			mcpEvents?.catchUp();
 		},
 	});
-	server.addHook("onClose", async () => {
-		clearInterval(sweeper);
-		// Replies in progress stop before their database client closes; one
-		// that was waiting on a model is retried by the next sweep. A webhook
-		// POST in flight is handed back the same way.
-		await Promise.all([
+	let backgroundClosing: Promise<PromiseSettledResult<void>[]> | undefined;
+	const stopBackground = () => {
+		backgroundClosing ??= Promise.allSettled([
 			botRunner.close(),
 			agentWebhooks.close(),
 			mcpEvents?.close(),
 		]);
+		return backgroundClosing;
+	};
+	server.addHook("preClose", async () => {
+		clearInterval(sweeper);
+		// Fastify waits for active HTTP handlers before onClose. Cancel producers
+		// now so maintenance drains can finish and interrupted leases are handed back.
+		// Await maintenance before closing the HTTP listener, including callers that
+		// disconnected. allSettled observes failures; stores stay open until onClose.
+		void stopBackground();
+		await maintenance?.close();
+	});
+	server.addHook("onClose", async () => {
+		const stopped = await stopBackground();
 		modelCatalog.stop();
 		await closeAll();
+		const failed = stopped.find((result) => result.status === "rejected");
+		if (failed?.status === "rejected") throw failed.reason;
 	});
 
 	if (options.releaseMongoPerRequest) releases.set(server, closeAll);

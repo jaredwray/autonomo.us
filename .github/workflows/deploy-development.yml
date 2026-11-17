@@ -1,9 +1,11 @@
 name: deploy-development
 
-# Operator-triggered migration. Do not deploy this topology merely by merging.
+# Pushes to main (including merges) deploy through the protected environment.
 # Requires Workers Paid, Containers write, registry write, Workers Scripts Edit,
 # and the existing domain/DNS permissions. See docs/CLOUDFLARE-CONTAINERS.md.
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:

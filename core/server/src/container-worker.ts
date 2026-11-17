@@ -1,5 +1,9 @@
 import { DurableObject } from "cloudflare:workers";
 import { containerEnvironment } from "./container-environment.js";
+import {
+	MAINTENANCE_PATHS,
+	PUBLIC_INGRESS_HEADER,
+} from "./maintenance-protocol.js";
 
 interface Env extends Record<string, unknown> {
 	GATEWAY: DurableObjectNamespace<GatewayContainer>;
@@ -70,13 +74,16 @@ export class GatewayContainer extends DurableObject<Env> {
 				labels: { configuration },
 			});
 		await container.setInactivityTimeout(INACTIVITY_MS);
-		const control = container.getTcpPort(3001);
+		const control = container.getTcpPort(3000);
 		for (let attempt = 0; attempt < 12; attempt++) {
 			try {
-				const response = await control.fetch("http://container/ready", {
-					headers: { authorization: `Bearer ${env.CONTAINER_CONTROL_TOKEN}` },
-					signal: AbortSignal.timeout(10_000),
-				});
+				const response = await control.fetch(
+					`http://container${MAINTENANCE_PATHS.ready}`,
+					{
+						headers: { authorization: `Bearer ${env.CONTAINER_CONTROL_TOKEN}` },
+						signal: AbortSignal.timeout(10_000),
+					},
+				);
 				await response.body?.cancel();
 				if (response.ok) return;
 			} catch {
@@ -99,8 +106,8 @@ export class GatewayContainer extends DurableObject<Env> {
 		// A stopped/crashed instance is recovered by the independent cron invocation.
 		if (!this.container.running) return;
 		const response = await this.container
-			.getTcpPort(3001)
-			.fetch("http://container/drain", {
+			.getTcpPort(3000)
+			.fetch(`http://container${MAINTENANCE_PATHS.drain}`, {
 				method: "POST",
 				headers: {
 					authorization: `Bearer ${this.env.CONTAINER_CONTROL_TOKEN}`,
@@ -111,6 +118,11 @@ export class GatewayContainer extends DurableObject<Env> {
 		if (!response.ok) throw new Error("Container background drain failed");
 	}
 	async fetch(request: Request) {
+		if (new URL(request.url).pathname.startsWith("/_internal"))
+			return new Response(null, {
+				status: 404,
+				headers: { "cache-control": "no-store" },
+			});
 		await this.ready();
 		const canStartWork = !["GET", "HEAD", "OPTIONS"].includes(request.method);
 		if (canStartWork) await this.armDrain();
@@ -127,6 +139,9 @@ export class GatewayContainer extends DurableObject<Env> {
 			"x-forwarded-for",
 		])
 			forwarded.headers.delete(name);
+		// Force this marker on EVERY public request, even encoded path aliases.
+		// Maintenance handlers reject its presence; only fixed internal calls omit it.
+		forwarded.headers.set(PUBLIC_INGRESS_HEADER, "1");
 		// Never retry an application request: the first attempt may have committed.
 		const response = await this.container.getTcpPort(3000).fetch(forwarded);
 		// The first alarm may have run during a slow request, before it enqueued work.
@@ -144,8 +159,8 @@ export class GatewayContainer extends DurableObject<Env> {
 		const deadline = Date.now() + 14 * 60_000;
 		await this.ready();
 		const response = await this.container
-			.getTcpPort(3001)
-			.fetch("http://container/sweep", {
+			.getTcpPort(3000)
+			.fetch(`http://container${MAINTENANCE_PATHS.sweep}`, {
 				method: "POST",
 				headers: {
 					authorization: `Bearer ${this.env.CONTAINER_CONTROL_TOKEN}`,
