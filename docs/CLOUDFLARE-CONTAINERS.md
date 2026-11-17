@@ -72,7 +72,7 @@ cross-host maintenance calls, inject the token from a secret manager, and never
 put it in a URL or log. The header is a denial marker, not authentication; a
 client cannot gain maintenance access by omitting it because the token is still
 required. Do not expose the Node listener directly to the Internet. Public load
-balancers should probe `/healthz`; trusted schedulers can use private readiness.
+balancers should probe `/health`; trusted schedulers can use private readiness.
 
 Deploy the edge adapter and its selected image together when moving from the
 old two-port revision. Keep the existing token and MongoDB intact. Mixed old/new
@@ -172,10 +172,12 @@ Do not claim end-to-end success before those observations. Provisioning, deploye
 ## Diagnosing Synapse storage failures
 
 A successful MongoDB ping does not prove that Synapse can initialize its indexes
-or read its collections. `/health` and `/healthz` retain their liveness HTTP 200
-and existing `mongodb` fields, and now also return
+or read its collections. `/health` retains its existing lightweight liveness
+check and does not wait for Synapse; use it for Docker Compose and load balancers.
+`/healthz` retains HTTP 200 and existing `mongodb` fields, and additionally returns
 `"synapse": { "configured": true, "ready": false }` when that separate check
-fails. The check uses the same Synapse repository as REST and MCP, ensures the
+fails. This deeper diagnostic endpoint can take longer than a liveness deadline.
+The check uses the same Synapse repository as REST and MCP, ensures the
 existing indexes, and reads at most one projected `_id` from each of notes,
 spaces and proposals. It never returns those IDs or note contents. Reads have a
 three-second server execution limit and the existing driver deadlines. Native

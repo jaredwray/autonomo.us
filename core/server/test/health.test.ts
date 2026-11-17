@@ -47,7 +47,7 @@ afterEach(async () => {
 async function health(env: Record<string, string> = {}) {
 	const server = createServer({ config: configFromEnv(env), logger: false });
 	servers.push(server);
-	const response = await server.inject("/health");
+	const response = await server.inject("/healthz");
 	expect(response.statusCode).toBe(200);
 	return response.json();
 }
@@ -162,7 +162,7 @@ it("does not share pending probes when request-scoped Worker clients are used", 
 		synapseCacheMs: 0,
 	});
 	try {
-		await Promise.all([server.inject("/health"), server.inject("/healthz")]);
+		await Promise.all([server.inject("/healthz"), server.inject("/healthz")]);
 		expect(probe).toHaveBeenCalledTimes(2);
 	} finally {
 		await server.close();
@@ -200,4 +200,43 @@ it("the API reports an actual Synapse index failure while Mongo remains healthy 
 	);
 	expect(JSON.stringify(log.mock.calls)).not.toContain("secret");
 	expect(response.body).not.toContain("secret");
+});
+
+it("keeps liveness responsive while the diagnostic Synapse probe is stalled", async () => {
+	let release: () => void = () => {};
+	const probe = vi.fn(
+		() =>
+			new Promise<void>((resolve) => {
+				release = resolve;
+			}),
+	);
+	const server = Fastify();
+	await server.register(healthRoutes, {
+		config: configFromEnv(configuredEnv),
+		persistenceInitialized: () => true,
+		synapseProbe: probe,
+		synapseCacheMs: 5000,
+	});
+	const diagnostic = server.inject("/healthz");
+	let live: Awaited<ReturnType<typeof server.inject>> | undefined;
+	let request: Promise<unknown> | undefined;
+	try {
+		await vi.waitFor(() => expect(probe).toHaveBeenCalledTimes(1));
+		request = server.inject("/health").then((response) => {
+			live = response;
+		});
+		await vi.waitFor(() => expect(live?.statusCode).toBe(200), {
+			timeout: 1000,
+		});
+		expect(live?.json()).toMatchObject({
+			mongodb: { connected: true, initialized: true },
+		});
+		expect(live?.json()).not.toHaveProperty("synapse");
+		expect(probe).toHaveBeenCalledTimes(1);
+	} finally {
+		release();
+		await diagnostic;
+		await request;
+		await server.close();
+	}
 });

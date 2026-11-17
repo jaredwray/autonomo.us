@@ -69,16 +69,16 @@ export async function healthRoutes(
 			});
 		return pending;
 	};
-	const report = async () => {
+	const report = async (includeSynapse: boolean) => {
 		const [mongodb, synapse] = await Promise.all([
 			check(pingMongo),
-			synapseHealth(),
+			includeSynapse ? synapseHealth() : undefined,
 		]);
 		return {
 			// This remains a liveness endpoint; an optional database outage
 			// does not prevent the dashboard from starting in Docker Compose.
 			status: "ok",
-			synapse,
+			...(synapse === undefined ? {} : { synapse }),
 			timestamp: new Date().toISOString(),
 			mongodb: {
 				...mongodb,
@@ -86,6 +86,7 @@ export async function healthRoutes(
 			},
 		};
 	};
-	server.get("/health", report);
-	server.get("/healthz", report);
+	// Compose and load balancers use /health: never wait on Synapse here.
+	server.get("/health", () => report(false));
+	server.get("/healthz", () => report(true));
 }
