@@ -1,4 +1,8 @@
-import { request as httpRequest } from "node:http";
+import {
+	createServer as createHttpServer,
+	request as httpRequest,
+} from "node:http";
+import type { BotDetails } from "@autonomo.us/common";
 import cors from "@fastify/cors";
 import Fastify from "fastify";
 import { afterEach, expect, it, vi } from "vitest";
@@ -8,6 +12,7 @@ import {
 	MAINTENANCE_PATHS as paths,
 } from "../src/maintenance-protocol.js";
 import { createServer } from "../src/server.js";
+import { startChannels } from "./channel-helpers.js";
 
 const token = "synthetic-control-".repeat(4);
 const headers = { authorization: `Bearer ${token}` };
@@ -238,3 +243,73 @@ it("registers on the actual API server without relying on /v1 auth or changing p
 		}),
 	).toThrow();
 });
+
+it.each([
+	false,
+	true,
+])("cancels an indefinitely waiting model before maintenance shutdown (disconnected=%s)", async (disconnected) => {
+	let modelStarted = false;
+	let modelAborted = false;
+	const provider = createHttpServer((request, response) => {
+		request.resume();
+		modelStarted = true;
+		response.on("close", () => {
+			modelAborted = true;
+		});
+	});
+	await new Promise<void>((resolve) =>
+		provider.listen(0, "127.0.0.1", resolve),
+	);
+	const address = provider.address();
+	if (!address || typeof address === "string")
+		throw new Error("No provider port");
+	const api = await startChannels(
+		[],
+		{
+			providers: [
+				{
+					name: "stub",
+					kind: "openai-compatible",
+					baseURL: `http://127.0.0.1:${address.port}/v1`,
+					models: ["blocked"],
+				},
+			],
+		},
+		{ maintenanceToken: token, backgroundTimers: false },
+	);
+	servers.push(api.server);
+	try {
+		const channel = await api.createChannel("general");
+		const bot = await api.ok<BotDetails>(
+			"POST",
+			"/v1/bots",
+			{ body: { name: "Blocked", instructions: "", model: "stub/blocked" } },
+			201,
+		);
+		await api.addAgent(channel.id, bot.id);
+		await api.post(channel.id, `<@agent:${bot.id}> wait`);
+		await vi.waitFor(() => expect(modelStarted).toBe(true));
+		const controller = new AbortController();
+		const seen = new Promise<void>((resolve) =>
+			api.server.server.once("request", () => resolve()),
+		);
+		const draining = fetch(api.origin + paths.drain, {
+			method: "POST",
+			headers,
+			signal: controller.signal,
+		}).catch(() => null);
+		await seen;
+		await new Promise((resolve) => setImmediate(resolve));
+		if (disconnected) {
+			controller.abort();
+			await draining;
+		}
+		const closing = api.server.close();
+		await vi.waitFor(() => expect(modelAborted).toBe(true), { timeout: 2000 });
+		await closing;
+		await draining;
+	} finally {
+		provider.closeAllConnections();
+		await new Promise<void>((resolve) => provider.close(() => resolve()));
+	}
+}, 15000);

@@ -50,8 +50,10 @@ Their own `onRequest` guard runs before CORS and body parsing, requires the
 control bearer token, and checks the exact raw URL and verb. Queries, suffixes,
 encoded aliases and unsupported verbs are rejected. Responses are empty,
 non-cacheable 204/404/503; errors and credentials are not returned. Routes are
-absent unless maintenance is explicitly enabled. Shutdown closes the shared
-listener and awaits maintenance work even if its caller already disconnected,
+absent unless maintenance is explicitly enabled. Shutdown starts background
+cancellation in `preClose` so long model calls and webhooks hand back leases
+before Fastify waits for maintenance HTTP handlers.
+It then awaits maintenance work even if its caller already disconnected,
 before closing MongoDB; the existing 15-second process deadline still applies.
 
 The Cloudflare adapter rejects literal `/_internal` paths and forces

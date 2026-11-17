@@ -677,19 +677,30 @@ export function createServer(options: CreateServerOptions = {}) {
 			mcpEvents?.catchUp();
 		},
 	});
-	server.addHook("onClose", async () => {
-		clearInterval(sweeper);
-		await maintenance?.close();
-		// Replies in progress stop before their database client closes; one
-		// that was waiting on a model is retried by the next sweep. A webhook
-		// POST in flight is handed back the same way.
-		await Promise.all([
+	let backgroundClosing: Promise<PromiseSettledResult<void>[]> | undefined;
+	const stopBackground = () => {
+		backgroundClosing ??= Promise.allSettled([
 			botRunner.close(),
 			agentWebhooks.close(),
 			mcpEvents?.close(),
 		]);
+		return backgroundClosing;
+	};
+	server.addHook("preClose", async () => {
+		clearInterval(sweeper);
+		// Fastify waits for active HTTP handlers before onClose. Cancel producers
+		// now so maintenance drains can finish and interrupted leases are handed back.
+		// Await maintenance before closing the HTTP listener, including callers that
+		// disconnected. allSettled observes failures; stores stay open until onClose.
+		void stopBackground();
+		await maintenance?.close();
+	});
+	server.addHook("onClose", async () => {
+		const stopped = await stopBackground();
 		modelCatalog.stop();
 		await closeAll();
+		const failed = stopped.find((result) => result.status === "rejected");
+		if (failed?.status === "rejected") throw failed.reason;
 	});
 
 	if (options.releaseMongoPerRequest) releases.set(server, closeAll);
