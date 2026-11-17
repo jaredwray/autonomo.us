@@ -22,9 +22,13 @@ export async function healthRoutes(
 	{
 		config,
 		persistenceInitialized,
+		synapseProbe,
+		synapseCacheMs = 0,
 	}: {
 		config: ApiConfig;
 		persistenceInitialized: () => boolean;
+		synapseProbe?: () => Promise<void>;
+		synapseCacheMs?: number;
 	},
 ) {
 	const pingMongo = config.mongodbUrl
@@ -44,12 +48,37 @@ export async function healthRoutes(
 			}
 		: undefined;
 
+	let cached: { configured: boolean; ready: boolean } | undefined;
+	let until = 0;
+	let pending: Promise<{ configured: boolean; ready: boolean }> | undefined;
+	const probeSynapse = async () => {
+		const result = await check(synapseProbe);
+		return { configured: result.configured, ready: result.connected };
+	};
+	const synapseHealth = () => {
+		if (!synapseCacheMs) return probeSynapse();
+		if (cached && Date.now() < until) return Promise.resolve(cached);
+		pending ??= probeSynapse()
+			.then((result) => {
+				cached = result;
+				until = Date.now() + synapseCacheMs;
+				return result;
+			})
+			.finally(() => {
+				pending = undefined;
+			});
+		return pending;
+	};
 	const report = async () => {
-		const mongodb = await check(pingMongo);
+		const [mongodb, synapse] = await Promise.all([
+			check(pingMongo),
+			synapseHealth(),
+		]);
 		return {
 			// This remains a liveness endpoint; an optional database outage
 			// does not prevent the dashboard from starting in Docker Compose.
 			status: "ok",
+			synapse,
 			timestamp: new Date().toISOString(),
 			mongodb: {
 				...mongodb,

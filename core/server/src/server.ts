@@ -219,7 +219,18 @@ export function createServer(options: CreateServerOptions = {}) {
 	});
 	const gatewayData = new GatewayData(config.mongodbUrl);
 	const synapseRepository = config.mongodbUrl
-		? new MongoSynapseRepository(config.mongodbUrl)
+		? new MongoSynapseRepository(config.mongodbUrl, (details) => {
+				// Repository-level logging covers REST, MCP and health probes equally.
+				if (options.releaseMongoPerRequest) {
+					const log =
+						details.event === "synapse.storage_failed"
+							? console.error
+							: console.info;
+					log(details.event, details);
+				} else if (details.event === "synapse.storage_failed")
+					server.log.error(details, details.event);
+				else server.log.info(details, details.event);
+			})
 		: new MemorySynapseRepository();
 	const synapse = new SynapseService(synapseRepository, {
 		timeZone: config.synapseTimeZone ?? "UTC",
@@ -479,6 +490,12 @@ export function createServer(options: CreateServerOptions = {}) {
 	server.register(healthRoutes, {
 		config,
 		persistenceInitialized: () => persistenceInitialized,
+		synapseProbe:
+			synapseRepository instanceof MongoSynapseRepository
+				? () => synapseRepository.check()
+				: undefined,
+		// Worker clients belong to one request; never share pending I/O across them.
+		synapseCacheMs: options.releaseMongoPerRequest ? 0 : 5000,
 	});
 	server.register(authRoutes, {
 		accounts,

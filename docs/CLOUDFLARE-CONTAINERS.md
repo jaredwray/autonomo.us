@@ -168,3 +168,48 @@ After an approved deployment, collect credential-free evidence:
 - OAuth/token revocation or channel membership removal stops queued delivery. Invalid signatures and failed callbacks behave as specified.
 
 Do not claim end-to-end success before those observations. Provisioning, deployed network validation and ChatGPT/dot wake testing remain operator acceptance work until performed.
+
+## Diagnosing Synapse storage failures
+
+A successful MongoDB ping does not prove that Synapse can initialize its indexes
+or read its collections. `/health` and `/healthz` retain their liveness HTTP 200
+and existing `mongodb` fields, and now also return
+`"synapse": { "configured": true, "ready": false }` when that separate check
+fails. The check uses the same Synapse repository as REST and MCP, ensures the
+existing indexes, and reads at most one projected `_id` from each of notes,
+spaces and proposals. It never returns those IDs or note contents. Reads have a
+three-second server execution limit and the existing driver deadlines. Native
+Node coalesces probes and caches success or failure for five seconds; the
+retained Worker does not share probe I/O between request scopes.
+
+The deployment check now requires `synapse.ready: true`, and the built-image
+smoke verifies it before and after restart. Container routing readiness remains
+independent: a Synapse outage does not disable otherwise-working channels or
+authentication. Health readiness does not prove every query, write or permission
+works; it is a bounded collection/initialization check.
+
+In Cloudflare **Container logs** (the Node process), filter for
+`synapse.storage_failed`. Repository diagnostics cover REST, MCP and health
+checks, even when the public response contains only the generic Synapse error.
+The retained Worker emits the same events in Worker logs. Each failure includes:
+
+- `stage`: `connect` (initial client connection and ping), `indexes.notes`,
+  `indexes.proposals`, `read.notes`, `read.spaces`, `read.proposals` (health), or
+  `operation` (a normal repository method).
+- `operation`: a fixed method name such as `findNotes` or `getProposal`;
+  initialization uses `initialize` and health reads use `check`.
+- `durationMs` and `errors`: bounded summaries of allowlisted error types,
+  numeric MongoDB codes and allowlisted DNS/network/TLS codes, including nested
+  causes and errors inside server-selection topology descriptions.
+
+Initialization success emits `synapse.storage_ready` for each completed stage.
+No raw error message, stack, database URI/name, topology hostname, query,
+workspace/agent ID, note title/body or credentials are included. A diagnostic
+sink failure cannot change a successful storage operation. Index errors are
+still errors: diagnostics do not drop/rebuild conflicting indexes, suppress
+permission failures or change timeout/retry semantics.
+
+For the current incident, capture the failed stage, timing and `errors` array
+from a fresh failed Synapse request or health probe. Do not infer the production
+cause from a healthy ping or a synthetic test. These changes add evidence; they
+do not claim to fix the underlying live database failure.
