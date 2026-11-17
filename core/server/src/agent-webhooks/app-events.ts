@@ -9,7 +9,11 @@ import type {
 } from "@autonomo.us/common";
 import type { ChannelChange } from "../channels/channels.js";
 import type { SynapseChange } from "../synapse/synapse.js";
-import type { AgentWebhooks, WebhookAgent } from "./webhooks.js";
+import type {
+	AgentNoticeFor,
+	AgentWebhooks,
+	WebhookAgent,
+} from "./webhooks.js";
 
 export type AppEventsOptions = {
 	webhooks: Pick<AgentWebhooks, "notify" | "broadcast">;
@@ -34,6 +38,8 @@ type Draft = Timeless<AgentWakeEvent>;
 
 /** The default workspace's shared space; another's is `shared-<workspace id>`. */
 const SHARED = "shared";
+/** The grants an agent needs to read anything over MCP: list tools, and call one. */
+const MCP_GRANTS = ["mcp:read", "mcp:call"];
 const sameActor = (
 	actor: { kind: string; id: string },
 	agentId: string,
@@ -43,7 +49,10 @@ const sameActor = (
  * Everything in the app that an agent's webhook can report, besides messages
  * and proposal decisions (see `AgentWebhooks`): each method takes what a
  * service says changed and tells the agents it concerns. An agent is never
- * told about its own doing, and only about what it could read over MCP.
+ * told about its own doing. What happens in channels, Synapse, and the
+ * workspace reaches only agents whose grants let them read it over MCP
+ * (`readers`), so a webhook never tells an agent more than its credential
+ * could; what happens to the agent itself reaches it whatever its grants.
  * Nothing here throws: the change it reports has already happened.
  */
 export class AppEvents {
@@ -59,6 +68,21 @@ export class AppEvents {
 		return {
 			event: { ...event, at } as AgentWakeEvent,
 			key: `${event.type}:${randomUUID()}`,
+		};
+	}
+	/**
+	 * `notice`, for the agents that can read what it reports: those holding
+	 * the MCP grants and any `permission` the resource needs besides. An
+	 * agent that cannot is not told, whatever its webhook chose.
+	 */
+	private readers(notice: AgentNoticeFor, permission?: string): AgentNoticeFor {
+		return async (agentId) => {
+			const grants =
+				(await this.options.agents.find(agentId))?.permissions ?? [];
+			return MCP_GRANTS.every((grant) => grants.includes(grant)) &&
+				(permission === undefined || grants.includes(permission))
+				? notice(agentId)
+				: null;
 		};
 	}
 	private async quietly(work: () => Promise<void>): Promise<void> {
@@ -116,7 +140,7 @@ export class AppEvents {
 			await this.options.webhooks.notify(
 				channel.workspaceId,
 				targets,
-				(agentId) => ({
+				this.readers((agentId) => ({
 					event:
 						change.kind === "edited"
 							? {
@@ -130,7 +154,7 @@ export class AppEvents {
 									own: sameActor(message.author, agentId),
 								},
 					key: `channel-change:${channel.id}:${change.seq}`,
-				}),
+				})),
 			);
 		});
 	}
@@ -170,10 +194,11 @@ export class AppEvents {
 									}
 								: null;
 				if (event)
-					await webhooks.notify(channel.workspaceId, [target.id], () => ({
-						event,
-						key: key(event.type),
-					}));
+					await webhooks.notify(
+						channel.workspaceId,
+						[target.id],
+						this.readers(() => ({ event, key: key(event.type) })),
+					);
 				return;
 			}
 			const members = channel.agents
@@ -181,21 +206,26 @@ export class AppEvents {
 				.filter((id) => !sameActor(change.actor, id));
 			if (change.lifecycle) {
 				const type = `channel.${change.lifecycle}` as const;
-				await webhooks.notify(channel.workspaceId, members, () => ({
-					event: { ...place, type },
-					key: key(type),
-				}));
+				await webhooks.notify(
+					channel.workspaceId,
+					members,
+					this.readers(() => ({ event: { ...place, type }, key: key(type) })),
+				);
 			}
 			if (change.fields?.length)
-				await webhooks.notify(channel.workspaceId, members, () => ({
-					event: {
-						...place,
-						type: "channel.updated",
-						changes: change.fields ?? [],
-						previousName: change.previousName ?? null,
-					},
-					key: key("channel.updated"),
-				}));
+				await webhooks.notify(
+					channel.workspaceId,
+					members,
+					this.readers(() => ({
+						event: {
+							...place,
+							type: "channel.updated",
+							changes: change.fields ?? [],
+							previousName: change.previousName ?? null,
+						},
+						key: key("channel.updated"),
+					})),
+				);
 		});
 	}
 
@@ -226,16 +256,18 @@ export class AppEvents {
 							previousTitle: change.previousTitle,
 							by: change.actor,
 						};
-			const notice = (space: AgentWakeSpace) => (agentId: string) =>
-				sameActor(change.actor, agentId)
-					? null
-					: {
-							event: { ...draft(space), at: change.at } as AgentWakeEvent,
-							key:
-								change.kind === "imported"
-									? `import:${change.space}:${randomUUID()}`
-									: `note:${change.note.id}:${change.note.revision}:${change.kind}`,
-						};
+			const notice = (space: AgentWakeSpace) =>
+				this.readers((agentId) =>
+					sameActor(change.actor, agentId)
+						? null
+						: {
+								event: { ...draft(space), at: change.at } as AgentWakeEvent,
+								key:
+									change.kind === "imported"
+										? `import:${change.space}:${randomUUID()}`
+										: `note:${change.note.id}:${change.note.revision}:${change.kind}`,
+							},
+				);
 			if (change.space === "global")
 				return webhooks.broadcast(null, "shared-notes", notice("global"));
 			if (change.space.startsWith("agent-")) {
@@ -351,18 +383,16 @@ export class AppEvents {
 		workspaceId: string,
 		group: "workspace" | "models" | "web",
 		event: Draft,
-		/** Only agents that hold this grant can use what changed. */
+		/** Only agents that hold this grant too can use what changed. */
 		permission?: string,
 	): Promise<void> {
 		const at = this.at();
 		return this.quietly(() =>
-			this.options.webhooks.broadcast(workspaceId, group, async (agentId) => {
-				if (permission) {
-					const agent = await this.options.agents.find(agentId);
-					if (!agent?.permissions.includes(permission)) return null;
-				}
-				return this.once(event, at);
-			}),
+			this.options.webhooks.broadcast(
+				workspaceId,
+				group,
+				this.readers(() => this.once(event, at), permission),
+			),
 		);
 	}
 

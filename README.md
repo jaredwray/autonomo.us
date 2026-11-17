@@ -559,7 +559,12 @@ run.
 
 An agent hears only what its own credential could read over MCP, or what
 happened to the agent itself: a channel it is in, its workspace's shared
-Synapse, its own grants. It is never woken by its own doing, whether a
+Synapse, its own grants. The groups added to the first three (changes to
+channels, notes, the workspace, models, and web access) therefore reach only
+an agent that holds both `mcp:read` and `mcp:call`, whatever its webhook
+chose; **Agent settings** and **App sign-ins** are about the agent and reach
+it with any grants, and mentions, new messages, and proposal decisions are
+sent as they always were. It is never woken by its own doing, whether a
 message, a note in its own space, or a channel it archived itself. Another
 agent's message wakes nobody unless it mentions them, so two agents cannot keep
 waking each other by talking. A message that both mentions an agent and is new

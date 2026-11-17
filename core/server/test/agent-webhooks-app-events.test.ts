@@ -539,6 +539,76 @@ describe("agent and workspace events", () => {
 		expect(await types(fetches)).toEqual(["web.changed"]);
 	});
 
+	it("tells an agent that cannot read over MCP only about itself", async () => {
+		const { events, agent, types } = setUp();
+		const everything: AgentWebhookEventGroup[] = [
+			"message-changes",
+			"membership",
+			"channels",
+			"shared-notes",
+			"own-notes",
+			"agent",
+			"workspace",
+			"web",
+		];
+		// A new agent holds no grants; one with only a feature grant, or only
+		// one of the MCP grants, can read nothing over MCP either.
+		const blind = await agent(everything, { permissions: [] });
+		const partial = await agent(everything, {
+			permissions: ["mcp:read", "web:fetch"],
+		});
+		const room = channel([
+			[blind, "post"],
+			[partial, "post"],
+		]);
+		await events.onMessageChanged(room, message(), {
+			kind: "edited",
+			seq: 9,
+			at: AT,
+			by: jared,
+		});
+		await events.onChannelChanged(room, {
+			action: "agent-added",
+			actor: jared,
+			at: AT,
+			revision: 5,
+			agent: { id: blind, access: "post", previousAccess: null },
+		});
+		await events.onChannelChanged(room, {
+			action: "archived",
+			actor: jared,
+			at: AT,
+			revision: 6,
+			lifecycle: "archived",
+		});
+		for (const space of ["shared", "global", `agent-${blind}`] as const)
+			await events.onSynapseChanged({
+				space,
+				actor: by,
+				at: AT,
+				kind: "created",
+				note: { id: `n-${space}`, title: "Ada Lovelace", revision: 1 },
+				previousTitle: null,
+			});
+		await events.onWorkspaceUpdated(
+			WORKSPACE,
+			{ name: "Default", description: "" },
+			{ name: "Studio", description: "" },
+			by,
+		);
+		await events.onWebChanged(WORKSPACE, "policy", by);
+		// What happens to the agent itself is not the app's content.
+		await events.onAgentUpdated(
+			WORKSPACE,
+			blind,
+			{ name: "Scout", description: "", permissions: [] },
+			{ name: "Scout", description: "", permissions: ["mcp:read"] },
+			by,
+		);
+		expect(await types(blind)).toEqual(["agent.permissions_changed"]);
+		expect(await types(partial)).toEqual([]);
+	});
+
 	it("never fails the change it reports", async () => {
 		const failing = {
 			notify: async () => {
