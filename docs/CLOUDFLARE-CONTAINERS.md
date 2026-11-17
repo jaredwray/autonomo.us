@@ -215,3 +215,32 @@ For the current incident, capture the failed stage, timing and `errors` array
 from a fresh failed Synapse request or health probe. Do not infer the production
 cause from a healthy ping or a synthetic test. These changes add evidence; they
 do not claim to fix the underlying live database failure.
+
+### A storage failure that lasts until the container restarts
+
+MongoDB driver 7.8.0 closes a client whose first connection attempt cannot find
+the primary within `serverSelectionTimeoutMS`, and does not reopen it. Every
+later call on that client fails at once with `MongoTopologyClosedError`, even
+after the database is reachable. The Worker never saw this, because each request
+opened its own clients. The container keeps one client per store for the life of
+the process, so one slow first connection on a cold start left that store broken
+until the container next slept or was replaced:
+
+- Synapse's own client: `synapse.storage_failed` with `MongoTopologyClosedError`
+  and a `durationMs` near zero, while Channels and the MongoDB ping succeed.
+- The control-plane client: readiness never passes, and the edge answers every
+  API request with 503 "The API is temporarily unavailable."
+- The telemetry client: usage stays in memory and the dashboard reports
+  durable analytics as unavailable.
+
+Stores now drop a client that the driver has closed, so the next call connects
+again (`SharedMongoClient` in `core/server/src/mongo.ts`). A failed first
+connection costs one request, not the process. Container mode also allows five
+seconds, not 1.5, for a new client to find the primary, and gives the `/health`
+ping the same budget: a `lite` instance has a fraction of a CPU and its first
+TLS connections to a remote database are slow. Standalone Node keeps the
+existing deadlines.
+
+A longer inactivity timeout means fewer cold starts, but it does not replace
+this: an always-running container that was poisoned once would have stayed
+broken for longer, not shorter.

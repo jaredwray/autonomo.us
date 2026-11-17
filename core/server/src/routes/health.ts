@@ -24,11 +24,14 @@ export async function healthRoutes(
 		persistenceInitialized,
 		synapseProbe,
 		synapseCacheMs = 0,
+		pingTimeoutMs = 1000,
 	}: {
 		config: ApiConfig;
 		persistenceInitialized: () => boolean;
 		synapseProbe?: () => Promise<void>;
 		synapseCacheMs?: number;
+		/** Budget for the ping's fresh client to connect and answer. */
+		pingTimeoutMs?: number;
 	},
 ) {
 	const pingMongo = config.mongodbUrl
@@ -37,8 +40,8 @@ export async function healthRoutes(
 				// and a malformed URL should report disconnected rather than
 				// prevent the API from starting.
 				const mongo = new MongoClient(config.mongodbUrl as string, {
-					serverSelectionTimeoutMS: 1000,
-					...mongoOperationDeadlines(1000),
+					serverSelectionTimeoutMS: pingTimeoutMs,
+					...mongoOperationDeadlines(pingTimeoutMs),
 				});
 				try {
 					await mongo.db().command({ ping: 1 });

@@ -34,6 +34,8 @@ const server = createServer({
 	dashboardDir,
 	assumeHttps: containerMode,
 	backgroundTimers: !containerMode,
+	// A container starts cold on a fraction of a CPU, and its database is remote.
+	mongoSelectionTimeoutMs: containerMode ? 5000 : undefined,
 	maintenanceToken: containerMode
 		? process.env.CONTAINER_CONTROL_TOKEN
 		: undefined,
