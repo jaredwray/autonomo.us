@@ -34,6 +34,10 @@ vi.mock("mongodb", () => ({
 			};
 		}
 		close = mocks.mongoClose;
+		// Stores listen for the driver closing a client.
+		once() {
+			return this;
+		}
 	},
 	MongoBulkWriteError: class MongoBulkWriteError extends Error {},
 }));

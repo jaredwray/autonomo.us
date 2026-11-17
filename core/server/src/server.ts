@@ -144,6 +144,12 @@ export type CreateServerOptions = {
 	/** Workers compile routes at module startup, before database I/O is allowed. */
 	deferPersistence?: boolean;
 	/**
+	 * How long a new MongoDB client may take to find the primary. The default
+	 * suits a nearby database; a cold container with a fraction of a CPU needs
+	 * longer for its first TLS connections to a remote one.
+	 */
+	mongoSelectionTimeoutMs?: number;
+	/**
 	 * How `web_fetch` makes a plain request. Node pins the address it checked;
 	 * the Worker uses `fetch`, which cannot, and gives bot replies less time.
 	 */
@@ -181,7 +187,7 @@ export function createServer(options: CreateServerOptions = {}) {
 	// workspace's overlay. The settings store copies it and never writes into it.
 	const registry = options.registry ?? registryFromConfig(config);
 	const mongo = config.mongodbUrl
-		? controlPlaneConnection(config.mongodbUrl)
+		? controlPlaneConnection(config.mongodbUrl, options.mongoSelectionTimeoutMs)
 		: undefined;
 	const workspaces = new WorkspaceStore(mongo);
 	const providers = new ProviderSettingsStore(config, registry, mongo);
@@ -217,20 +223,27 @@ export function createServer(options: CreateServerOptions = {}) {
 		defaultWorkspaceId: () => workspaces.defaultWorkspaceId(),
 		setupToken: config.setupToken,
 	});
-	const gatewayData = new GatewayData(config.mongodbUrl);
+	const gatewayData = new GatewayData(
+		config.mongodbUrl,
+		options.mongoSelectionTimeoutMs,
+	);
 	const synapseRepository = config.mongodbUrl
-		? new MongoSynapseRepository(config.mongodbUrl, (details) => {
-				// Repository-level logging covers REST, MCP and health probes equally.
-				if (options.releaseMongoPerRequest) {
-					const log =
-						details.event === "synapse.storage_failed"
-							? console.error
-							: console.info;
-					log(details.event, details);
-				} else if (details.event === "synapse.storage_failed")
-					server.log.error(details, details.event);
-				else server.log.info(details, details.event);
-			})
+		? new MongoSynapseRepository(
+				config.mongodbUrl,
+				(details) => {
+					// Repository-level logging covers REST, MCP and health probes equally.
+					if (options.releaseMongoPerRequest) {
+						const log =
+							details.event === "synapse.storage_failed"
+								? console.error
+								: console.info;
+						log(details.event, details);
+					} else if (details.event === "synapse.storage_failed")
+						server.log.error(details, details.event);
+					else server.log.info(details, details.event);
+				},
+				options.mongoSelectionTimeoutMs,
+			)
 		: new MemorySynapseRepository();
 	const synapse = new SynapseService(synapseRepository, {
 		timeZone: config.synapseTimeZone ?? "UTC",
@@ -496,6 +509,7 @@ export function createServer(options: CreateServerOptions = {}) {
 				: undefined,
 		// Worker clients belong to one request; never share pending I/O across them.
 		synapseCacheMs: options.releaseMongoPerRequest ? 0 : 5000,
+		pingTimeoutMs: options.mongoSelectionTimeoutMs,
 	});
 	server.register(authRoutes, {
 		accounts,

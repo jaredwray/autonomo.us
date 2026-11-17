@@ -39,6 +39,43 @@ export function withMongoRequestScope<T>(
 	);
 }
 
+/** How long a new client waits to find the primary: the stores' long-standing budget. */
+export const MONGO_SELECTION_TIMEOUT_MS = 1500;
+
+/**
+ * The client a store uses: the request's own on Workers, otherwise one kept
+ * for the life of the process.
+ *
+ * Driver 7.8.0 closes a client whose first connection attempt cannot find a
+ * server in time, and never reopens it: every later operation rejects at once
+ * with MongoTopologyClosedError, even after the database is reachable. A
+ * Worker request discards its clients anyway. A process drops the closed
+ * client here, so the next operation connects again instead of failing until
+ * the process restarts.
+ */
+export class SharedMongoClient {
+	private client?: MongoClient;
+	constructor(private readonly create: () => MongoClient) {}
+	current(): MongoClient {
+		const scoped = requestMongoClient(this, this.create);
+		if (scoped) return scoped;
+		if (!this.client) {
+			const client = this.create();
+			// The driver has already released the closed client's resources.
+			client.once("topologyClosed", () => {
+				if (this.client === client) this.client = undefined;
+			});
+			this.client = client;
+		}
+		return this.client;
+	}
+	async close(): Promise<void> {
+		const client = this.client;
+		this.client = undefined;
+		await client?.close();
+	}
+}
+
 /**
  * One MongoDB client shared by the control-plane stores (accounts, tokens,
  * workspaces, providers, routing). On Workers every request opens its own
@@ -47,27 +84,18 @@ export function withMongoRequestScope<T>(
  * per-request connection limit.
  */
 export class MongoConnection {
-	private client?: MongoClient;
+	private readonly shared: SharedMongoClient;
 	constructor(
 		readonly url: string,
-		private readonly create: (url: string) => MongoClient,
-	) {}
-	private current(): MongoClient {
-		const create = () => this.create(this.url);
-		let client = requestMongoClient(this, create);
-		if (!client) {
-			this.client ??= create();
-			client = this.client;
-		}
-		return client;
+		create: (url: string) => MongoClient,
+	) {
+		this.shared = new SharedMongoClient(() => create(url));
 	}
 	collection<T extends Document = Document>(name: string): Collection<T> {
-		return this.current().db().collection<T>(name);
+		return this.shared.current().db().collection<T>(name);
 	}
 	async close(): Promise<void> {
-		const client = this.client;
-		this.client = undefined;
-		await client?.close();
+		await this.shared.close();
 	}
 }
 
@@ -120,12 +148,15 @@ export function mongoOperationDeadlines(
 }
 
 /** The shared control-plane connection, with the deadlines the stores have always used. */
-export function controlPlaneConnection(url: string): MongoConnection {
+export function controlPlaneConnection(
+	url: string,
+	selectionTimeoutMs = MONGO_SELECTION_TIMEOUT_MS,
+): MongoConnection {
 	return new MongoConnection(
 		url,
 		(target) =>
 			new MongoClient(target, {
-				serverSelectionTimeoutMS: 1500,
+				serverSelectionTimeoutMS: selectionTimeoutMs,
 				...mongoOperationDeadlines(3000),
 				readPreference: "primary",
 			}),

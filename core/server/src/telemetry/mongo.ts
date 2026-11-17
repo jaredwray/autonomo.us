@@ -5,7 +5,7 @@ import type {
 	UsageSummary,
 } from "@autonomo.us/common";
 import { type Collection, MongoBulkWriteError, MongoClient } from "mongodb";
-import { mongoOperationDeadlines, requestMongoClient } from "../mongo.js";
+import { mongoOperationDeadlines, SharedMongoClient } from "../mongo.js";
 import { type WorkspaceRef, workspaceFilter } from "../workspaces/store.js";
 import {
 	type AnalyticsFact,
@@ -160,26 +160,27 @@ function duplicateKeysOnly(error: unknown): boolean {
 export class MongoTelemetrySink {
 	/** False after a failed request until the next successful one. */
 	healthy = true;
-	private client?: MongoClient;
+	private readonly mongo: SharedMongoClient;
 	private schemaReady = false;
 
 	constructor(
 		readonly url: string,
-		private readonly timeoutMs = 3000,
-	) {}
+		timeoutMs = 3000,
+	) {
+		this.mongo = new SharedMongoClient(
+			() =>
+				new MongoClient(url, {
+					serverSelectionTimeoutMS: timeoutMs,
+					...mongoOperationDeadlines(timeoutMs),
+				}),
+		);
+	}
 
 	private collection(): Collection<TelemetryDocument> {
-		const create = () =>
-			new MongoClient(this.url, {
-				serverSelectionTimeoutMS: this.timeoutMs,
-				...mongoOperationDeadlines(this.timeoutMs),
-			});
-		let client = requestMongoClient(this, create);
-		if (!client) {
-			this.client ??= create();
-			client = this.client;
-		}
-		return client.db().collection<TelemetryDocument>(TELEMETRY_COLLECTION);
+		return this.mongo
+			.current()
+			.db()
+			.collection<TelemetryDocument>(TELEMETRY_COLLECTION);
 	}
 
 	private fail(error: unknown): never {
@@ -598,9 +599,7 @@ export class MongoTelemetrySink {
 	async close(): Promise<void> {
 		// Drop the reference first so the next call opens a fresh client even
 		// when closing this one fails.
-		const client = this.client;
-		this.client = undefined;
-		await client?.close();
+		await this.mongo.close();
 	}
 }
 

@@ -28,6 +28,10 @@ vi.mock("mongodb", () => ({
 			};
 		}
 		close = mock.close;
+		// Stores listen for the driver closing a client.
+		once() {
+			return this;
+		}
 	},
 }));
 beforeEach(() => {

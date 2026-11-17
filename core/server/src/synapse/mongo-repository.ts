@@ -1,6 +1,10 @@
 import type { SynapseProposal, SynapseSpaceId } from "@autonomo.us/common";
 import { type Document, MongoClient } from "mongodb";
-import { mongoOperationDeadlines, requestMongoClient } from "../mongo.js";
+import {
+	MONGO_SELECTION_TIMEOUT_MS,
+	mongoOperationDeadlines,
+	SharedMongoClient,
+} from "../mongo.js";
 import { mongoFailureDetails, type SynapseDiagnostic } from "./diagnostics.js";
 import { SynapseError, synapseUnavailable } from "./errors.js";
 import type {
@@ -98,25 +102,24 @@ function sortSpec(sort: FindOptions["sort"]): Document {
 /** Notes, space records, and proposals in MongoDB; see docs/SYNAPSE.md §11. */
 export class MongoSynapseRepository implements SynapseRepository {
 	readonly persistence = "mongodb" as const;
-	private client?: MongoClient;
+	private readonly mongo: SharedMongoClient;
 	constructor(
 		private readonly mongodbUrl: string,
 		private readonly diagnostic?: (details: SynapseDiagnostic) => void,
-	) {}
+		selectionTimeoutMs = MONGO_SELECTION_TIMEOUT_MS,
+	) {
+		this.mongo = new SharedMongoClient(
+			() =>
+				new MongoClient(mongodbUrl, {
+					serverSelectionTimeoutMS: selectionTimeoutMs,
+					...mongoOperationDeadlines(5000),
+					readPreference: "primary",
+				}),
+		);
+	}
 
 	private database() {
-		const create = () =>
-			new MongoClient(this.mongodbUrl, {
-				serverSelectionTimeoutMS: 1500,
-				...mongoOperationDeadlines(5000),
-				readPreference: "primary",
-			});
-		let client = requestMongoClient(this, create);
-		if (!client) {
-			this.client ??= create();
-			client = this.client;
-		}
-		return client.db();
+		return this.mongo.current().db();
 	}
 	private notes() {
 		return this.database().collection<NoteDocument>(SYNAPSE_NOTES_COLLECTION);
@@ -466,8 +469,6 @@ export class MongoSynapseRepository implements SynapseRepository {
 		return result.matchedCount > 0;
 	}
 	async close() {
-		const client = this.client;
-		this.client = undefined;
-		await client?.close();
+		await this.mongo.close();
 	}
 }

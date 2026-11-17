@@ -8,7 +8,11 @@ import {
 	CHANNELS_COLLECTION,
 } from "./channels/mongo-repository.js";
 import { EVENTS_COLLECTION } from "./mcp-events/repository.js";
-import { MongoConnection, mongoOperationDeadlines } from "./mongo.js";
+import {
+	MONGO_SELECTION_TIMEOUT_MS,
+	MongoConnection,
+	mongoOperationDeadlines,
+} from "./mongo.js";
 import {
 	OAUTH_CLIENTS_COLLECTION,
 	OAUTH_GRANTS_COLLECTION,
@@ -67,13 +71,16 @@ export const CLEAR_TIMEOUT_MS = 120_000;
  */
 export class GatewayData {
 	private readonly mongo?: MongoConnection;
-	constructor(mongodbUrl?: string) {
+	constructor(
+		mongodbUrl?: string,
+		selectionTimeoutMs = MONGO_SELECTION_TIMEOUT_MS,
+	) {
 		this.mongo = mongodbUrl
 			? new MongoConnection(
 					mongodbUrl,
 					(url) =>
 						new MongoClient(url, {
-							serverSelectionTimeoutMS: 1500,
+							serverSelectionTimeoutMS: selectionTimeoutMs,
 							...mongoOperationDeadlines(CLEAR_TIMEOUT_MS),
 							readPreference: "primary",
 						}),
