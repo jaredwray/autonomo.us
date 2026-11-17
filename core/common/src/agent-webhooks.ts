@@ -98,17 +98,6 @@ export const AGENT_WEBHOOK_EVENT_GROUPS = {
 		hint: "An app signs in to the agent with OAuth, or is disconnected from it.",
 		types: ["agent.app_connected", "agent.app_disconnected"],
 	},
-	workspace: {
-		area: "workspace",
-		label: "Workspace and people",
-		hint: "The workspace is renamed or described anew, or a person is added to it, given another role, or removed.",
-		types: [
-			"workspace.updated",
-			"workspace.member_added",
-			"workspace.member_changed",
-			"workspace.member_removed",
-		],
-	},
 	models: {
 		area: "workspace",
 		label: "Models",
@@ -211,11 +200,6 @@ export function agentWakeEventGroup(
 		case "agent.app_connected":
 		case "agent.app_disconnected":
 			return "connections";
-		case "workspace.updated":
-		case "workspace.member_added":
-		case "workspace.member_changed":
-		case "workspace.member_removed":
-			return "workspace";
 		case "models.changed":
 			return "models";
 		case "web.changed":
@@ -613,30 +597,6 @@ export type AgentWakeEvent =
 			reason: string;
 			/** Who disconnected it; null when the app or the gateway did. */
 			by: string | null;
-	  }
-	| {
-			type: "workspace.updated";
-			at: string;
-			changes: Array<"name" | "description">;
-			name: string;
-			previousName: string | null;
-			by: AgentWakeActor;
-	  }
-	| {
-			type: "workspace.member_added" | "workspace.member_removed";
-			at: string;
-			member: { id: string; name: string };
-			/** The role given, or the role held until now. */
-			role: string;
-			by: AgentWakeActor;
-	  }
-	| {
-			type: "workspace.member_changed";
-			at: string;
-			member: { id: string; name: string };
-			role: string;
-			previousRole: string;
-			by: AgentWakeActor;
 	  }
 	| {
 			type: "models.changed";

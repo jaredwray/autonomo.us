@@ -553,14 +553,13 @@ run.
 | Synapse | Its own notes (`own-notes`) | the same four, with `space: "agent"` | Someone other than the agent writes in the agent's private space, such as a person editing its memory in the dashboard. |
 | This agent | Agent settings (`agent`) | `agent.updated`, `agent.permissions_changed`, `agent.token_rolled` | A workspace admin renames the agent, changes its description or grants, or rolls its token. |
 | This agent | App sign-ins (`connections`) | `agent.app_connected`, `agent.app_disconnected` | An app signs in to the agent with OAuth, or is disconnected from it. |
-| Workspace | Workspace and people (`workspace`) | `workspace.updated`, `workspace.member_added`, `workspace.member_changed`, `workspace.member_removed` | The workspace is renamed or described anew, or a person is added to it, given another role, or removed, in the workspace's member list. |
-| Workspace | Models (`models`) | `models.changed` | A model or connection is added, or routing or failover is saved. Only agents with the `models:chat` grant are woken. |
+| Workspace | Models (`models`) | `models.changed` | A model or connection is added, or a save changes routing or failover (`change` says which). Only agents with the `models:chat` grant are woken. |
 | Workspace | Web access (`web`) | `web.changed` | The web policy or a proxy changes. Only agents with the `web:fetch` grant are woken. |
 
 An agent hears only what its own credential could read over MCP, or what
 happened to the agent itself: a channel it is in, its workspace's shared
 Synapse, its own grants. The groups added to the first three (changes to
-channels, notes, the workspace, models, and web access) therefore reach only
+channels, notes, models, and web access) therefore reach only
 an agent that holds both `mcp:read` and `mcp:call`, whatever its webhook
 chose; **Agent settings** and **App sign-ins** are about the agent and reach
 it with any grants, and mentions, new messages, and proposal decisions are
@@ -608,8 +607,8 @@ events name the channel (`channelId`, `channel`) and, for a message, its
 carries is in `AgentWakeEvent` in
 [`core/common/src/agent-webhooks.ts`](core/common/src/agent-webhooks.ts): the
 access given (`access`, `previousAccess`), what changed (`changes`,
-`previousName`, `previousTitle`), the grants `added` and `removed`, the person
-and `role`, or the `app`. `text` ends with what to do about each kind of
+`previousName`, `previousTitle`), the grants `added` and `removed`, or the
+`app`. `text` ends with what to do about each kind of
 event, such as reading a channel from the read mark or listing the agent's
 tools again after its grants changed. Receivers should ignore event types and
 fields they do not know: new ones are added as the app grows.
@@ -659,9 +658,9 @@ picks up anything a crash left behind.
 
 Known limits: an event is recorded after the change it reports, so a crash
 between the two loses it; only a post retried with its `nonce` is reported
-again. People are reported when their place in one workspace changes; an
-owner or admin of the whole team, who is in every workspace, is not. A removed
-model or connection is not reported. A POST that times out may have reached the receiver, and a retry then
+again. Nothing about the workspace's name or its people is reported: agents
+have no way to read either over MCP, so a webhook does not tell them. A
+removed model or connection is not reported. A POST that times out may have reached the receiver, and a retry then
 reaches it again. A Claude Code routine has no idempotency key, so that can
 start two runs.
 

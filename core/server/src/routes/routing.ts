@@ -99,14 +99,31 @@ const schema = {
 	},
 };
 
+/** JSON with object keys in order, so equal settings compare equal however they were written. */
+const stable = (value: unknown): string =>
+	JSON.stringify(value, (_key, item: unknown) =>
+		item && typeof item === "object" && !Array.isArray(item)
+			? Object.fromEntries(
+					Object.entries(item).sort(([a], [b]) => (a < b ? -1 : 1)),
+				)
+			: item,
+	);
+
 /** Registered under `/v1/:workspace`. Targets resolve only within the workspace. */
 export async function routingRoutes(
 	server: FastifyInstance,
 	options: {
 		routing: RoutingSettingsStore;
 		providers: ProviderSettingsStore;
-		/** Called once routing is saved; the change stands whatever this does. */
-		onChanged?: (workspaceId: string, by: AgentWakeActor) => Promise<unknown>;
+		/**
+		 * Called once a save changes routing, the failover policy it carries,
+		 * or both, once for each. The change stands whatever this does.
+		 */
+		onChanged?: (
+			workspaceId: string,
+			change: "routing" | "failover",
+			by: AgentWakeActor,
+		) => Promise<unknown>;
 	},
 ) {
 	server.get("/routing", (request, reply) => {
@@ -118,14 +135,28 @@ export async function routingRoutes(
 		{ schema: { body: schema } },
 		async (request) => {
 			const workspace = requestWorkspace(request);
+			const before = options.onChanged
+				? await options.routing.config(workspace)
+				: null;
 			const updated = await options.routing.update(
 				workspace,
 				request.body,
 				await options.providers.registry(workspace),
 			);
-			await options
-				.onChanged?.(workspace.id, requestActor(request))
-				.catch(() => {});
+			if (before) {
+				// The dashboard saves failover inside the routing settings: say
+				// which of the two a save changed.
+				const { failover: wasFailover, ...wasRouting } = before;
+				const { failover, ...routing } = updated.config;
+				for (const [change, was, is] of [
+					["routing", wasRouting, routing],
+					["failover", wasFailover, failover],
+				] as const)
+					if (stable(was) !== stable(is))
+						await options
+							.onChanged?.(workspace.id, change, requestActor(request))
+							.catch(() => {});
+			}
 			return updated;
 		},
 	);

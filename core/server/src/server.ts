@@ -549,11 +549,7 @@ export function createServer(options: CreateServerOptions = {}) {
 		},
 	});
 	server.register(teamRoutes, { accounts, workspaces });
-	server.register(workspaceRoutes, {
-		workspaces,
-		onUpdated: (workspaceId, before, after, by) =>
-			appEvents.onWorkspaceUpdated(workspaceId, before, after, by),
-	});
+	server.register(workspaceRoutes, { workspaces });
 	server.register(oauthSignInRoutes, { oauth });
 	server.register(catalogRoutes, { catalog: modelCatalog });
 	// Everything a workspace owns lives under its id. The access hook resolves
@@ -574,8 +570,8 @@ export function createServer(options: CreateServerOptions = {}) {
 			scoped.register(routingRoutes, {
 				routing,
 				providers,
-				onChanged: (workspaceId, by) =>
-					appEvents.onModelsChanged(workspaceId, "routing", by),
+				onChanged: (workspaceId, change, by) =>
+					appEvents.onModelsChanged(workspaceId, change, by),
 			});
 			scoped.register(chatRoutes, {
 				providers,
@@ -599,24 +595,7 @@ export function createServer(options: CreateServerOptions = {}) {
 				agentTokens,
 				bots,
 			});
-			scoped.register(memberRoutes, {
-				accounts,
-				onChanged: (workspaceId, before, after, by) => {
-					// A person without a name is known by their email, as in channels.
-					const people = (members: typeof before) =>
-						members.map((member) => ({
-							id: member.id,
-							name: member.name || member.email,
-							role: member.role,
-						}));
-					return appEvents.onWorkspaceMembersChanged(
-						workspaceId,
-						people(before),
-						people(after),
-						by,
-					);
-				},
-			});
+			scoped.register(memberRoutes, { accounts });
 			scoped.register(synapseRoutes, {
 				synapse,
 				agentTokens: agentIds,

@@ -395,7 +395,7 @@ describe("Synapse events", () => {
 	});
 });
 
-describe("agent and workspace events", () => {
+describe("agent, models, and web events", () => {
 	const by = { kind: "user" as const, id: "u1", name: "Jared" };
 
 	it("tells an agent what changed in its settings", async () => {
@@ -462,69 +462,6 @@ describe("agent and workspace events", () => {
 		]);
 	});
 
-	it("tells a workspace's agents about its name and its people", async () => {
-		const { events, agent, heard, types } = setUp();
-		const scout = await agent(["workspace"]);
-		const abroad = await agent(["workspace"], {
-			workspaceId: OTHER_WORKSPACE,
-		});
-		const same = { name: "Default", description: "" };
-		await events.onWorkspaceUpdated(WORKSPACE, same, same, by);
-		await events.onWorkspaceUpdated(
-			WORKSPACE,
-			same,
-			{ name: "Studio", description: "Film." },
-			by,
-		);
-		await events.onWorkspaceMembersChanged(
-			WORKSPACE,
-			[
-				{ id: "u1", name: "Jared", role: "admin" },
-				{ id: "u2", name: "Ada", role: "member" },
-				{ id: "u3", name: "Grace", role: "member" },
-			],
-			[
-				{ id: "u1", name: "Jared", role: "admin" },
-				{ id: "u2", name: "Ada", role: "admin" },
-				{ id: "u4", name: "Linus", role: "member" },
-			],
-			by,
-		);
-		expect(await heard(scout)).toEqual([
-			{
-				type: "workspace.updated",
-				at: AT,
-				changes: ["name", "description"],
-				name: "Studio",
-				previousName: "Default",
-				by,
-			},
-			{
-				type: "workspace.member_changed",
-				at: AT,
-				member: { id: "u2", name: "Ada" },
-				role: "admin",
-				previousRole: "member",
-				by,
-			},
-			{
-				type: "workspace.member_added",
-				at: AT,
-				member: { id: "u4", name: "Linus" },
-				role: "member",
-				by,
-			},
-			{
-				type: "workspace.member_removed",
-				at: AT,
-				member: { id: "u3", name: "Grace" },
-				role: "member",
-				by,
-			},
-		]);
-		expect(await types(abroad)).toEqual([]);
-	});
-
 	it("tells only agents that hold the grant about models and web access", async () => {
 		const { events, agent, types } = setUp();
 		const chats = await agent(["models", "web"], {
@@ -548,7 +485,6 @@ describe("agent and workspace events", () => {
 			"shared-notes",
 			"own-notes",
 			"agent",
-			"workspace",
 			"web",
 		];
 		// A new agent holds no grants; one with only a feature grant, or only
@@ -590,12 +526,6 @@ describe("agent and workspace events", () => {
 				note: { id: `n-${space}`, title: "Ada Lovelace", revision: 1 },
 				previousTitle: null,
 			});
-		await events.onWorkspaceUpdated(
-			WORKSPACE,
-			{ name: "Default", description: "" },
-			{ name: "Studio", description: "" },
-			by,
-		);
 		await events.onWebChanged(WORKSPACE, "policy", by);
 		// What happens to the agent itself is not the app's content.
 		await events.onAgentUpdated(
@@ -666,18 +596,16 @@ describe("agent and workspace events", () => {
 			await webhooks.create(
 				WORKSPACE,
 				id,
-				{ url: "https://hooks.example.com/x", events: ["workspace"] },
+				{ url: "https://hooks.example.com/x", events: ["models"] },
 				"Founder",
 			);
 		const event: AgentWakeEvent = {
-			type: "workspace.updated",
+			type: "models.changed",
 			at: AT,
-			changes: ["name"],
-			name: "Studio",
-			previousName: "Default",
+			change: "routing",
 			by,
 		};
-		await webhooks.broadcast(WORKSPACE, "workspace", (agentId) => {
+		await webhooks.broadcast(WORKSPACE, "models", (agentId) => {
 			if (agentId === first) throw new Error("no such agent");
 			return { event, key: "k1" };
 		});

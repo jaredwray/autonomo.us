@@ -245,26 +245,6 @@ export function wakeText(
 					`- The app ${line(event.app)} was disconnected from you${event.by ? ` by ${line(event.by)}` : ""}. ${line(event.reason, 200)}`,
 				);
 				break;
-			case "workspace.updated":
-				lines.push(
-					`- ${who(event.by)} ${event.previousName ? `renamed the workspace from "${line(event.previousName)}" to "${line(event.name)}"` : `changed the description of the workspace "${line(event.name)}"`}.`,
-				);
-				break;
-			case "workspace.member_added":
-				lines.push(
-					`- ${who(event.by)} added ${line(event.member.name)} to the workspace as ${line(event.role)}.`,
-				);
-				break;
-			case "workspace.member_changed":
-				lines.push(
-					`- ${who(event.by)} changed ${line(event.member.name)} from ${line(event.previousRole)} to ${line(event.role)} in the workspace.`,
-				);
-				break;
-			case "workspace.member_removed":
-				lines.push(
-					`- ${who(event.by)} removed ${line(event.member.name)} from the workspace.`,
-				);
-				break;
 			case "models.changed":
 				next.add("models");
 				lines.push(

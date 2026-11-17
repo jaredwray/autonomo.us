@@ -29,9 +29,6 @@ export type AgentSettings = {
 	description: string;
 	permissions: readonly string[];
 };
-/** A person in a workspace, with their role there. */
-export type WorkspacePerson = { id: string; name: string; role: string };
-
 /** An event without its time, which `AppEvents` adds. */
 type Timeless<T> = T extends unknown ? Omit<T, "at"> : never;
 type Draft = Timeless<AgentWakeEvent>;
@@ -381,7 +378,7 @@ export class AppEvents {
 	/** Tells every agent of the workspace that chose `group`, once each. */
 	private toWorkspace(
 		workspaceId: string,
-		group: "workspace" | "models" | "web",
+		group: "models" | "web",
 		event: Draft,
 		/** Only agents that hold this grant too can use what changed. */
 		permission?: string,
@@ -394,70 +391,6 @@ export class AppEvents {
 				this.readers(() => this.once(event, at), permission),
 			),
 		);
-	}
-
-	/** The workspace was renamed or described anew. */
-	onWorkspaceUpdated(
-		workspaceId: string,
-		before: { name: string; description: string },
-		after: { name: string; description: string },
-		by: AgentWakeActor,
-	): Promise<void> {
-		const changes: Array<"name" | "description"> = [];
-		if (before.name !== after.name) changes.push("name");
-		if (before.description !== after.description) changes.push("description");
-		if (!changes.length) return Promise.resolve();
-		return this.toWorkspace(workspaceId, "workspace", {
-			type: "workspace.updated",
-			changes,
-			name: after.name,
-			previousName: changes.includes("name") ? before.name : null,
-			by,
-		});
-	}
-
-	/**
-	 * The people of a workspace before and after a change to its members:
-	 * whoever came, went, or changed role is reported.
-	 */
-	async onWorkspaceMembersChanged(
-		workspaceId: string,
-		before: readonly WorkspacePerson[],
-		after: readonly WorkspacePerson[],
-		by: AgentWakeActor,
-	): Promise<void> {
-		const was = new Map(before.map((person) => [person.id, person]));
-		const is = new Map(after.map((person) => [person.id, person]));
-		const events: Draft[] = [];
-		for (const person of after) {
-			const member = { id: person.id, name: person.name };
-			const earlier = was.get(person.id);
-			if (!earlier)
-				events.push({
-					type: "workspace.member_added",
-					member,
-					role: person.role,
-					by,
-				});
-			else if (earlier.role !== person.role)
-				events.push({
-					type: "workspace.member_changed",
-					member,
-					role: person.role,
-					previousRole: earlier.role,
-					by,
-				});
-		}
-		for (const person of before)
-			if (!is.has(person.id))
-				events.push({
-					type: "workspace.member_removed",
-					member: { id: person.id, name: person.name },
-					role: person.role,
-					by,
-				});
-		for (const event of events)
-			await this.toWorkspace(workspaceId, "workspace", event);
 	}
 
 	/** The workspace's models, routing, or failover changed. */

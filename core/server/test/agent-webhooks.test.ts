@@ -911,58 +911,62 @@ describe("what else in the app wakes an agent", () => {
 		);
 	});
 
-	it("reports the workspace's name, people, and web access to those it concerns", async () => {
-		const { agent, ok, join, workspaceId, hook, hooks, settle } = await start();
+	it("reports web access and routing to agents that hold the grant to use them", async () => {
+		const { agent, ok, hook, hooks, settle } = await start();
 		const scout = await agent("Scout");
 		const fetcher = await agent("Fetcher", [
 			"mcp:read",
 			"mcp:call",
 			"web:fetch",
 		]);
-		await hook(scout.id, {
-			url: "https://hooks.example.com/scout",
-			events: ["workspace", "web"],
-		});
-		await hook(fetcher.id, {
-			url: "https://hooks.example.com/fetcher",
-			events: ["web"],
-		});
-		const workspace = await ok<{ name: string; description: string }>(
-			"GET",
-			`/v1/workspaces/${workspaceId}`,
-		);
-		await ok("PATCH", `/v1/workspaces/${workspaceId}`, {
-			body: { name: "Studio", description: workspace.description },
-		});
-		const ada = await join("ada@example.com");
-		await ok("PUT", `/v1/members/${ada.user.id}`, { body: { role: "admin" } });
-		await ok("DELETE", `/v1/members/${ada.user.id}`);
+		const chatter = await agent("Chatter", [
+			"mcp:read",
+			"mcp:call",
+			"models:chat",
+		]);
+		for (const [who, id] of [
+			["scout", scout.id],
+			["fetcher", fetcher.id],
+			["chatter", chatter.id],
+		])
+			await hook(id, {
+				url: `https://hooks.example.com/${who}`,
+				events: ["models", "web"],
+			});
 		const policy = await ok<object>("GET", "/v1/web/policy");
 		await ok("PUT", "/v1/web/policy", { body: policy });
+		// The dashboard saves failover inside the routing settings: a save
+		// that changes only failover says so, and one that changes nothing
+		// says nothing.
+		const { config } = await ok<{
+			config: { failover: { timeoutMs: number } };
+		}>("GET", "/v1/routing");
+		await ok("PUT", "/v1/routing", { body: config });
+		await ok("PUT", "/v1/routing", {
+			body: {
+				...config,
+				failover: {
+					...config.failover,
+					timeoutMs: config.failover.timeoutMs + 100,
+				},
+			},
+		});
 		await settle();
 
-		const events = heard(hooks);
-		expect(events[0]).toMatchObject({
-			type: "workspace.updated",
-			changes: ["name"],
-			name: "Studio",
-			previousName: workspace.name,
-		});
-		// Ada is given the admin role, then loses her place in the workspace.
-		expect(events[1]).toMatchObject({
-			member: { id: ada.user.id, name: "ada" },
-			role: "admin",
-		});
-		expect(events[1].type).toMatch(/^workspace\.member_(added|changed)$/);
-		expect(events.at(-1)).toMatchObject({
-			type: "workspace.member_removed",
-			member: { id: ada.user.id },
-		});
-		// Web access concerns only an agent that holds the Web: Fetch grant.
-		expect(events.map((event) => event.type)).not.toContain("web.changed");
+		const by = expect.objectContaining({ kind: "user", name: "Founder" });
 		expect(heard(hooks, "https://hooks.example.com/fetcher")).toEqual([
-			expect.objectContaining({ type: "web.changed", change: "policy" }),
+			{ type: "web.changed", at: expect.any(String), change: "policy", by },
 		]);
+		expect(heard(hooks, "https://hooks.example.com/chatter")).toEqual([
+			{
+				type: "models.changed",
+				at: expect.any(String),
+				change: "failover",
+				by,
+			},
+		]);
+		// Neither concerns an agent that can neither fetch nor chat.
+		expect(heard(hooks)).toEqual([]);
 	});
 
 	it("refuses a group it does not know and lists a webhook's groups in order", async () => {

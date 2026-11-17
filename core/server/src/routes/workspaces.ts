@@ -1,5 +1,4 @@
 import {
-	type AgentWakeActor,
 	type CreateWorkspaceRequest,
 	type SetWorkspaceMemberRequest,
 	type TeamMember,
@@ -8,16 +7,9 @@ import {
 	type WorkspaceAccess,
 	type WorkspaceDetails,
 	type WorkspaceList,
-	type WorkspaceMember,
-	type WorkspaceMembers,
-	type WorkspaceRole,
 } from "@autonomo.us/common";
-import type { FastifyInstance, FastifyRequest } from "fastify";
-import {
-	requestActor,
-	requestWorkspace,
-	signedInMember,
-} from "../auth/access.js";
+import type { FastifyInstance } from "fastify";
+import { requestWorkspace, signedInMember } from "../auth/access.js";
 import { AccountError, AccountStore } from "../auth/accounts.js";
 import type { WorkspaceStore } from "../workspaces/store.js";
 
@@ -49,19 +41,7 @@ export async function accessibleWorkspaces(
 /** Workspace list, creation, and lifecycle. */
 export async function workspaceRoutes(
 	server: FastifyInstance,
-	{
-		workspaces,
-		onUpdated,
-	}: {
-		workspaces: WorkspaceStore;
-		/** Called once a workspace is renamed or described anew; the change stands whatever this does. */
-		onUpdated?: (
-			workspaceId: string,
-			before: { name: string; description: string },
-			after: { name: string; description: string },
-			by: AgentWakeActor,
-		) => Promise<unknown>;
-	},
+	{ workspaces }: { workspaces: WorkspaceStore },
 ) {
 	server.addHook("onRequest", async (_request, reply) => {
 		reply.header("cache-control", "no-store");
@@ -135,17 +115,11 @@ export async function workspaceRoutes(
 			},
 		},
 		async (request) => {
-			const { id } = requestWorkspace(request);
-			const before = onUpdated ? await workspaces.get(id) : null;
 			const updated = await workspaces.update(
-				id,
+				requestWorkspace(request).id,
 				request.body,
 				actorName(signedInMember(request)),
 			);
-			if (before && updated)
-				await onUpdated?.(id, before, updated, requestActor(request)).catch(
-					() => {},
-				);
 			return detail(access(updated, request));
 		},
 	);
@@ -167,23 +141,7 @@ export async function workspaceRoutes(
 /** Registered under `/v1/:workspace`: who can open the workspace, and with which role. */
 export async function memberRoutes(
 	server: FastifyInstance,
-	{
-		accounts,
-		onChanged,
-	}: {
-		accounts: AccountStore;
-		/**
-		 * Called once a person is added to the workspace, given another role,
-		 * or removed, with its people before and after. The change stands
-		 * whatever this does.
-		 */
-		onChanged?: (
-			workspaceId: string,
-			before: WorkspaceMember[],
-			after: WorkspaceMember[],
-			by: AgentWakeActor,
-		) => Promise<unknown>;
-	},
+	{ accounts }: { accounts: AccountStore },
 ) {
 	server.addHook("onRequest", async (_request, reply) => {
 		reply.header("cache-control", "no-store");
@@ -199,30 +157,6 @@ export async function memberRoutes(
 	server.get("/members", (request) =>
 		accounts.workspaceMembers(requestWorkspace(request)),
 	);
-	const setMember = async (
-		request: FastifyRequest,
-		userId: string,
-		role: WorkspaceRole | null,
-	): Promise<WorkspaceMembers> => {
-		const workspace = requestWorkspace(request);
-		const before = onChanged
-			? (await accounts.workspaceMembers(workspace)).members
-			: null;
-		const after = await accounts.setWorkspaceMember(
-			workspace.id,
-			userId,
-			role,
-			signedInMember(request),
-		);
-		if (before)
-			await onChanged?.(
-				workspace.id,
-				before,
-				after.members,
-				requestActor(request),
-			).catch(() => {});
-		return after;
-	};
 	server.put<{
 		Params: { userId: string };
 		Body: SetWorkspaceMemberRequest;
@@ -239,11 +173,23 @@ export async function memberRoutes(
 				},
 			},
 		},
-		(request) => setMember(request, request.params.userId, request.body.role),
+		(request) =>
+			accounts.setWorkspaceMember(
+				requestWorkspace(request).id,
+				request.params.userId,
+				request.body.role,
+				signedInMember(request),
+			),
 	);
 	server.delete<{ Params: { userId: string } }>(
 		"/members/:userId",
 		{ schema: { params } },
-		(request) => setMember(request, request.params.userId, null),
+		(request) =>
+			accounts.setWorkspaceMember(
+				requestWorkspace(request).id,
+				request.params.userId,
+				null,
+				signedInMember(request),
+			),
 	);
 }
