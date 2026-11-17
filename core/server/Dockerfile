@@ -2,8 +2,9 @@
 #   docker build -f core/server/Dockerfile .
 # One image runs the whole product: the Node process serves the API and the
 # dashboard build (core/ux/dist).
-FROM node:22.23.5-alpine@sha256:d6e6d1cae4ed0cda2dc336db1bbea6457c2b5d2a8bcd9ac1d80b909fe1c4f638 AS build
-RUN corepack enable
+FROM node:26.13.1-alpine@sha256:6bd9ab43c0ec0190ca7b2d193906cb8b7edf6e7f4afa43ddeccd6452710bffb5 AS build
+# Corepack is no longer bundled with Node 26.
+RUN npm install --global corepack@0.36.0 && corepack enable
 WORKDIR /repo
 
 # Manifests first so dependency installation caches across source changes.
@@ -22,8 +23,9 @@ RUN pnpm --filter @autonomo.us/common build \
 	&& pnpm --filter @autonomo.us/ux build
 
 # Runtime: production dependencies only, plus the built output.
-FROM node:22.23.5-alpine@sha256:d6e6d1cae4ed0cda2dc336db1bbea6457c2b5d2a8bcd9ac1d80b909fe1c4f638
-RUN corepack enable
+FROM node:26.13.1-alpine@sha256:6bd9ab43c0ec0190ca7b2d193906cb8b7edf6e7f4afa43ddeccd6452710bffb5
+# Corepack is no longer bundled with Node 26.
+RUN npm install --global corepack@0.36.0 && corepack enable
 WORKDIR /repo
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
 COPY core/server/package.json core/server/

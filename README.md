@@ -16,6 +16,28 @@ AI platform for gateway, agents, and management.
 - **@autonomo.us/common** — Shared types and utilities
 - **@autonomo.us/logo** — Animated AUTONOMOUS aurora logo (framework-agnostic SVG)
 
+## Runtime support — breaking change
+
+Only the current Node.js LTS major is supported: **Node 26**, starting at
+**26.13.1**. Node 22/24 and non-LTS majors are no longer supported by this
+revision. All workspace/published packages declare `>=26.13.1 <27`; pnpm
+installs fail on unsupported hosts. CI, release/deployment tooling and the
+container image use the version pinned in `.nvmrc` (the image also pins its digest).
+Future LTS transitions require an explicit reviewed update, not a floating `lts` tag.
+
+Existing host installations must upgrade Node before installing this revision,
+then reinstall dependencies and rebuild native modules/output. Rebuild Docker
+and development containers; an existing running image does not update itself.
+Keep MongoDB volumes, database names and runtime secrets unchanged: this runtime
+upgrade does not require a data migration. Retain the previous application/image
+for rollback; do not run this new revision on Node 22/24.
+
+Node 26 no longer bundles Corepack. Install the pinned Corepack 0.36.0 through
+your approved package-install protection, then run `corepack enable` to use the
+repository's pinned pnpm. Codespaces/Cloud Agents use the Safe Chain bootstrap;
+CI installs Corepack through Socket Firewall. Host setup with nvm starts with
+`nvm install && nvm use` in this directory. See [deployment migration and rollback](docs/CLOUDFLARE-CONTAINERS.md).
+
 ## Getting Started
 
 Run the whole platform with docker compose — one server container (API gateway

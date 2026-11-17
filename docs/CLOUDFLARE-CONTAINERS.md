@@ -2,7 +2,7 @@
 
 ## Architecture and security
 
-The development Worker keeps the same origin, static dashboard assets, SPA fallback, API routes, CORS and OAuth public URLs. API traffic now reaches the repository's full Node 22 Linux image through a Durable Object. Existing MongoDB data, sessions, bearer tokens, OAuth grants and collections remain in place. `PUBLIC_URL` is authoritative for HTTPS discovery even though internal container traffic is HTTP.
+The development Worker keeps the same origin, static dashboard assets, SPA fallback, API routes, CORS and OAuth public URLs. API traffic now reaches the repository's full Node 26.13.1 Linux image through a Durable Object. Existing MongoDB data, sessions, bearer tokens, OAuth grants and collections remain in place. `PUBLIC_URL` is authoritative for HTTPS discovery even though internal container traffic is HTTP.
 
 This uses the native `ctx.container` API, `scheduling_policy: durable_object`, a named digest-pinned image, and SQLite Durable Object exports. HTTP and cron target the fixed DO name `gateway-v1`. This is one routed instance, not autoscaling. Do not allocate a new name per request. Future pools must preserve shared MongoDB state and leases, bound connections, and test overlapping delivery. No application data or callback secrets live on ephemeral disk or in DO storage.
 
@@ -30,6 +30,26 @@ The control sweep attempts at most one queued event for each of up to 50 due sub
 The existing enqueue hook is not a transactional outbox: messages whose hook fails before queue persistence cannot be recovered by this migration. MCP Events has no replay cursor. Reconcile with `channels_read` after interruptions; the existing queue limit and bounded deduplication window still apply. See [MCP Events](MCP-EVENTS.md).
 
 The DO checks the running image digest and runtime-settings fingerprint. On a change it signals SIGTERM, waits up to 20 seconds, then forces termination if necessary. Node has a 15-second graceful-close deadline. Requests can see temporary 503s during replacement; the edge never retries application POSTs that might have committed. Secret changes replace the old process on its next invocation; raw settings are not stored or logged by the DO. Startup fails closed without MongoDB, HTTPS public origin and a control token. Readiness coalesces concurrent initialization, caches success for five seconds, and uses ten-second probes so successful database operations are not discarded by a shorter deadline. Public `/health` and `/healthz` retain their response contract.
+
+## Node LTS support change
+
+This revision drops Node 22/24 support. Only Node `>=26.13.1 <27` is supported,
+including published packages and build tools; pnpm enforces the engine range.
+The image pins the official Node 26.13.1 Alpine digest. Test, browser, release,
+model-update and deploy workflows read `.nvmrc`. Corepack 0.36.0 is installed
+explicitly because Node 26 no longer bundles it; pnpm remains pinned in
+`package.json` and the dependency lockfile is unchanged.
+
+Before merging, an administrator must replace required branch checks `test (22)`
+and `test (24)` with **`test (26)`**; the active repository ruleset currently requires both old checks. This PR does
+not change repository protections. Upgrade host runtimes and reinstall/rebuild;
+rebuild development and service images while preserving MongoDB volumes and
+secrets. Old installations are not upgraded automatically. No database migration
+is needed. For runtime rollback use the previous application/image revision;
+the current source and its legacy Worker build tools require Node 26.
+
+Sources: [Node 26.13.1 LTS security release](https://nodejs.org/en/blog/release/v26.13.1)
+and [Corepack installation](https://github.com/nodejs/corepack#installation).
 
 ## Operator prerequisites and migration
 

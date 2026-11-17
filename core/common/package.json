@@ -1,6 +1,7 @@
 {
 	"name": "@autonomo.us/common",
 	"version": "0.0.0",
+	"engines": { "node": ">=26.13.1 <27" },
 	"description": "Shared types and utilities for autonomo.us",
 	"license": "MIT",
 	"author": "Jared Wray",

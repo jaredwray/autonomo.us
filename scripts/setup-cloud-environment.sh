@@ -21,21 +21,6 @@ if [[ ! -f pnpm-lock.yaml ]]; then
   exit 1
 fi
 
-if [[ -f package.json ]] && grep -q '"packageManager"' package.json && command -v corepack >/dev/null; then
-  # Dev container images keep Node's bin directory root-owned while lifecycle
-  # commands run as the unprivileged remote user, so enable corepack via sudo.
-  if [[ -w "$(dirname "$(command -v corepack)")" ]]; then
-    corepack enable
-  else
-    sudo -n corepack enable
-  fi
-fi
-
-if ! command -v pnpm >/dev/null; then
-  echo "error: pnpm is required on PATH before Safe Chain can wrap it" >&2
-  exit 1
-fi
-
 installer=$(mktemp)
 trap 'rm -f "$installer"' EXIT
 
@@ -46,12 +31,24 @@ echo "${SAFE_CHAIN_INSTALLER_SHA256}  ${installer}" | sha256sum -c -
 # switch to the .nvmrc version and fails when nvm has not installed it.
 (cd / && sh "$installer" --ci)
 
-export PATH="${SAFE_CHAIN_SHIMS}:${SAFE_CHAIN_BIN}:${PATH}"
+# Node 26 no longer bundles Corepack. Bootstrap it only through the npm shim,
+# into a user-owned directory; do not require pnpm before installing Safe Chain.
+export PATH="${SAFE_CHAIN_SHIMS}:${SAFE_CHAIN_BIN}:${HOME}/.local/bin:${PATH}"
+if [[ "$(command -v npm)" != "${SAFE_CHAIN_SHIMS}/npm" ]]; then
+  echo "error: Safe Chain npm shim is required to bootstrap Corepack" >&2
+  exit 1
+fi
+npm install --global --prefix "${HOME}/.local" corepack@0.36.0
+corepack enable --install-directory "${HOME}/.local/bin"
+if [[ "$(command -v pnpm)" != "${SAFE_CHAIN_SHIMS}/pnpm" ]]; then
+  echo "error: Safe Chain pnpm shim is required" >&2
+  exit 1
+fi
 
 persist_shim_path() {
   local rc="$1"
-  local line="export PATH=\"${SAFE_CHAIN_SHIMS}:${SAFE_CHAIN_BIN}:\$PATH\""
-  if [[ -f "$rc" ]] && grep -Fq ".safe-chain/shims" "$rc"; then
+  local line="export PATH=\"${SAFE_CHAIN_SHIMS}:${SAFE_CHAIN_BIN}:${HOME}/.local/bin:\$PATH\""
+  if [[ -f "$rc" ]] && grep -Fq "$line" "$rc"; then
     return 0
   fi
   mkdir -p "$(dirname "$rc")"
@@ -65,6 +62,7 @@ persist_shim_path "${HOME}/.zshrc"
 if [[ -n "${GITHUB_PATH:-}" ]]; then
   printf '%s\n' "$SAFE_CHAIN_SHIMS" >> "$GITHUB_PATH"
   printf '%s\n' "$SAFE_CHAIN_BIN" >> "$GITHUB_PATH"
+  printf '%s\n' "${HOME}/.local/bin" >> "$GITHUB_PATH"
 fi
 
 pnpm safe-chain-verify

@@ -1,6 +1,7 @@
 {
 	"name": "@autonomo.us/ux",
 	"version": "0.0.0",
+	"engines": { "node": ">=26.13.1 <27" },
 	"description": "Management dashboard for autonomo.us",
 	"license": "MIT",
 	"author": "Jared Wray",

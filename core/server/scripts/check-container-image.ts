@@ -2,6 +2,12 @@
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
 
+assert.equal(
+	process.versions.node,
+	"26.13.1",
+	"Unexpected container Node runtime",
+);
+
 const headers = {
 	authorization: `Bearer ${process.env.CONTAINER_CONTROL_TOKEN}`,
 };

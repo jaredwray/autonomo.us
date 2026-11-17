@@ -1,6 +1,9 @@
 packages:
   - 'core/*'
 
+# Only the current LTS major is supported; fail before installing on older hosts.
+engineStrict: true
+
 # Supply-chain controls (see SECURITY.md — Supply chain security policy).
 # New versions must be at least 7 days old before pnpm will resolve to them;
 # resolution fails closed when no version qualifies or publish-time metadata

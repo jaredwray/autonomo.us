@@ -38,6 +38,9 @@ jobs:
         with:
           node-version-file: .nvmrc
           package-manager-cache: false
+      - name: Install Corepack (not bundled with Node 26)
+        # zizmor: ignore[adhoc-packages] pinned package-manager bootstrap through Socket Firewall
+        run: sfw npm install --global corepack@0.36.0
       - name: Enable Corepack
         run: corepack enable
       - name: Prepare pnpm

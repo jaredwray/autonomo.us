@@ -12,17 +12,9 @@ permissions:
 
 jobs:
   test:
-    # Named by Node major only, so required status checks ("test (22)",
-    # "test (24)") keep matching when an exact version below is bumped.
-    name: test (${{ matrix.node }})
+    # Branch protection must require test (26), replacing test (22)/(24).
+    name: test (26)
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - node: 22
-            node-version: '22.23.5'
-          - node: 24
-            node-version: '24'
     services:
       mongo:
         image: mongo:8
@@ -52,7 +44,11 @@ jobs:
       - name: Use Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: ${{ matrix.node-version }}
+          node-version-file: .nvmrc
+          package-manager-cache: false
+      - name: Install Corepack (not bundled with Node 26)
+        # zizmor: ignore[adhoc-packages] pinned package-manager bootstrap through Socket Firewall
+        run: sfw npm install --global corepack@0.36.0
       - run: corepack enable
       - run: sfw pnpm install --frozen-lockfile
       - run: pnpm lint
@@ -127,7 +123,10 @@ jobs:
           firewall-version: "1.15.0"
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
-          node-version: '24'
+          node-version-file: .nvmrc
+      - name: Install Corepack (not bundled with Node 26)
+        # zizmor: ignore[adhoc-packages] pinned package-manager bootstrap through Socket Firewall
+        run: sfw npm install --global corepack@0.36.0
       - run: corepack enable
       - run: sfw pnpm install --frozen-lockfile
       - run: pnpm --filter @autonomo.us/common build

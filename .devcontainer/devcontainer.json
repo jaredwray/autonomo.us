@@ -1,7 +1,7 @@
 {
 	"name": "Node.js",
 	// Node major matches .nvmrc and the service Dockerfiles.
-	"image": "mcr.microsoft.com/devcontainers/javascript-node:22-trixie",
+	"image": "mcr.microsoft.com/devcontainers/javascript-node:26-trixie",
 	"postCreateCommand": "bash ./scripts/setup-cloud-environment.sh",
 	"features": {
 		// Debian trixie has no Moby packages; the feature's default (moby: true)
