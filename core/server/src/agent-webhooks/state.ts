@@ -5,6 +5,8 @@ import {
 	type AgentWebhook,
 	type AgentWebhookDisabledReason,
 	type AgentWebhookEventGroup,
+	agentWakeEventGroup,
+	orderedAgentWebhookGroups,
 } from "@autonomo.us/common";
 import type { StoredAgentWebhook, StoredDelivery } from "./repository.js";
 
@@ -46,28 +48,11 @@ const RECENT_KEYS = 200;
  */
 const CHANNEL_WINDOW = 50;
 
-/** The dashboard group an event belongs to. */
-export function eventGroup(
-	type: AgentWakeEvent["type"],
-): AgentWebhookEventGroup | null {
-	switch (type) {
-		case "channel.mention":
-		case "channel.reply":
-			return "mentions";
-		case "channel.message":
-			return "messages";
-		case "proposal.decided":
-			return "proposals";
-		default:
-			return null;
-	}
-}
-
+/** Whether an active webhook chose this group of events. */
 export function wants(
 	webhook: Pick<StoredAgentWebhook, "status" | "events">,
-	type: AgentWakeEvent["type"],
+	group: AgentWebhookEventGroup | null,
 ): boolean {
-	const group = eventGroup(type);
 	return (
 		webhook.status === "active" &&
 		group !== null &&
@@ -75,13 +60,37 @@ export function wants(
 	);
 }
 
+/** A newly posted message, which a retried post can report twice. */
+type PostEvent = Extract<
+	AgentWakeEvent,
+	{ type: "channel.mention" | "channel.reply" | "channel.message" }
+>;
+const isPost = (event: AgentWakeEvent): event is PostEvent =>
+	event.type === "channel.mention" ||
+	event.type === "channel.reply" ||
+	event.type === "channel.message";
+
+/**
+ * Events that come in bulk and say little each: plain messages, edits, and
+ * note changes. A full queue drops the oldest of them to keep an event that
+ * asks something of the agent.
+ */
+const isBulk = (event: AgentWakeEvent) =>
+	event.type === "channel.message" ||
+	event.type === "channel.message_edited" ||
+	event.type === "channel.message_deleted" ||
+	event.type === "synapse.note_created" ||
+	event.type === "synapse.note_updated" ||
+	event.type === "synapse.note_deleted";
+
 const iso = (ms: number) => new Date(ms).toISOString();
 
 /**
- * Adds an event to the next POST, or null when the webhook is not active or
- * already has this event. The first event sets when the POST is due; later
- * ones join it. A full queue makes room for a mention or decision by dropping
- * its oldest plain message, and otherwise counts the new event as omitted.
+ * Adds an event to the next POST, or null when the webhook is not active, did
+ * not choose the event's group, or already has this event. The first event
+ * sets when the POST is due; later ones join it. A full queue makes room for
+ * an event that asks something of the agent by dropping its oldest bulk
+ * event, and otherwise counts the new event as omitted.
  */
 export function enqueued(
 	webhook: StoredAgentWebhook,
@@ -92,10 +101,13 @@ export function enqueued(
 	/** A retried post, settled again: it may have been reported already. */
 	replay = false,
 ): StoredAgentWebhook | null {
-	if (webhook.status !== "active" || webhook.recentKeys.includes(key))
+	if (
+		!wants(webhook, agentWakeEventGroup(event)) ||
+		webhook.recentKeys.includes(key)
+	)
 		return null;
 	let channelSeqs = webhook.channelSeqs ?? {};
-	if ("seq" in event) {
+	if (isPost(event)) {
 		// Ascending, so the first is the oldest remembered.
 		const seen = channelSeqs[event.channelId] ?? [];
 		if (
@@ -114,9 +126,9 @@ export function enqueued(
 	let omitted = webhook.omitted;
 	if (queue.length < timing.eventsPerDelivery) queue = [...queue, event];
 	else {
-		const plain = queue.findIndex((item) => item.type === "channel.message");
-		if (event.type !== "channel.message" && plain >= 0)
-			queue = [...queue.slice(0, plain), ...queue.slice(plain + 1), event];
+		const bulk = queue.findIndex(isBulk);
+		if (!isBulk(event) && bulk >= 0)
+			queue = [...queue.slice(0, bulk), ...queue.slice(bulk + 1), event];
 		omitted += 1;
 	}
 	return {
@@ -365,7 +377,7 @@ export function publicWebhook(webhook: StoredAgentWebhook): AgentWebhook {
 		agentId: webhook.agentId,
 		workspaceId: webhook.workspaceId,
 		url: webhook.url,
-		events: [...webhook.events],
+		events: orderedAgentWebhookGroups(webhook.events),
 		status: webhook.status,
 		disabledReason: webhook.disabledReason,
 		hasAuthKey: webhook.authKey !== null,

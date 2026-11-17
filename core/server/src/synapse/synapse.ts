@@ -320,22 +320,69 @@ function relevance(note: StoredNote, terms: string[], text: string) {
 	};
 }
 
+/**
+ * What a write did to a space, for whoever listens: one note created,
+ * updated, or deleted, or an import of many, reported once. `space` is the
+ * storage key, so a workspace's shared space is `shared` or `shared-<id>`.
+ */
+export type SynapseChange = {
+	space: SynapseSpaceId;
+	actor: SynapseActor;
+	at: string;
+} & (
+	| {
+			kind: "created" | "updated" | "deleted";
+			note: { id: string; title: string; revision: number };
+			/** The title before, when the note was renamed. */
+			previousTitle: string | null;
+	  }
+	| { kind: "imported"; created: number; updated: number }
+);
+
 export type SynapseServiceOptions = {
 	/** IANA time zone deciding "today" for templates, daily notes, and the log. */
 	timeZone: string;
 	now?: () => number;
+	/**
+	 * Called after a note is written or deleted, or notes are imported. A
+	 * failure here never fails the write. Notes Synapse writes for itself
+	 * (category notes, links rewritten by a rename) are not reported.
+	 */
+	onChange?: (change: SynapseChange) => unknown;
 };
 
 /** Synapse's behavior over a repository; see docs/SYNAPSE.md. */
 export class SynapseService {
 	readonly timeZone: string;
 	private readonly clock: () => number;
+	private readonly onChange: SynapseServiceOptions["onChange"];
 	constructor(
 		readonly repository: SynapseRepository,
 		options: SynapseServiceOptions,
 	) {
 		this.timeZone = options.timeZone;
 		this.clock = options.now ?? Date.now;
+		this.onChange = options.onChange;
+	}
+	/** Tells whoever listens what a write did. The write stands whatever they do. */
+	private async report(
+		note: StoredNote,
+		kind: "created" | "updated" | "deleted",
+		actor: SynapseActor,
+		previousTitle: string | null = null,
+	) {
+		try {
+			await this.onChange?.({
+				space: note.space,
+				actor,
+				at: this.now(),
+				kind,
+				note: { id: note.id, title: note.title, revision: note.revision },
+				previousTitle,
+			});
+		} catch {
+			// Whoever listens handles its own trouble.
+		}
 	}
 	private now() {
 		return new Date(this.clock()).toISOString();
@@ -641,6 +688,7 @@ export class SynapseService {
 		const note = this.newNote(space, title, properties, body, actor);
 		if (!(await this.repository.insertNote(note))) throw titleTaken(title);
 		await this.afterWrite(space, actor, note.categories);
+		await this.report(note, "created", actor);
 		return publicNote(note);
 	}
 
@@ -828,6 +876,7 @@ export class SynapseService {
 				await this.rewriteInheritedLinks(current.title, newTitle, actor);
 		}
 		await this.afterWrite(space, actor, next.categories);
+		await this.report(next, "updated", actor, renamed ? current.title : null);
 		return publicNote(next);
 	}
 
@@ -936,6 +985,7 @@ export class SynapseService {
 			);
 		});
 		await this.afterWrite(space, actor, next.categories);
+		await this.report(next, "updated", actor);
 		return { note: publicNote(next), created: false };
 	}
 
@@ -953,6 +1003,7 @@ export class SynapseService {
 		if (!(await this.repository.deleteNote(note.id, expectedRevision)))
 			throw expectedRevision === undefined ? notFound(title) : changed();
 		await this.touchSpace(space, actor);
+		await this.report(note, "deleted", actor);
 	}
 
 	async query(
@@ -1233,6 +1284,7 @@ export class SynapseService {
 			),
 		);
 		await this.afterWrite(space, actor, next.categories);
+		await this.report(next, "updated", actor);
 		return publicNote(next);
 	}
 
@@ -1363,8 +1415,21 @@ export class SynapseService {
 			result.created.push(title);
 			for (const category of note.categories) categories.add(category);
 		}
-		if (result.created.length || result.updated.length)
+		if (result.created.length || result.updated.length) {
 			await this.afterWrite(space, actor, [...categories]);
+			try {
+				await this.onChange?.({
+					space,
+					actor,
+					at: this.now(),
+					kind: "imported",
+					created: result.created.length,
+					updated: result.updated.length,
+				});
+			} catch {
+				// The notes are imported; whoever listens handles its own trouble.
+			}
+		}
 		if (imported.length) {
 			const lint = linkLinter(
 				(await this.repository.scanNotes(space)).map((note) => note.title),

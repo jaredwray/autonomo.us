@@ -135,6 +135,26 @@ it("adds a webhook for a Claude Code routine, tests, pauses, edits, and deletes 
 		expect(
 			(card().getByRole("checkbox", { name }) as HTMLInputElement).checked,
 		).toBe(true);
+	// The rest of the app is offered too, by area, and starts unchecked.
+	const box = (name: RegExp) =>
+		card().getByRole("checkbox", { name }) as HTMLInputElement;
+	for (const name of [
+		/^Channel access/,
+		/^Shared notes/,
+		/^Agent settings/,
+		/^Web access/,
+	])
+		expect(box(name).checked).toBe(false);
+	fireEvent.click(
+		card().getByRole("button", { name: "Select all This agent events" }),
+	);
+	expect(box(/^Agent settings/).checked).toBe(true);
+	expect(box(/^App sign-ins/).checked).toBe(true);
+	expect(box(/^Channel access/).checked).toBe(false);
+	fireEvent.click(
+		card().getByRole("button", { name: "Clear This agent events" }),
+	);
+	expect(box(/^Agent settings/).checked).toBe(false);
 	fireEvent.click(card().getByRole("button", { name: "Add webhook" }));
 
 	const secret = (

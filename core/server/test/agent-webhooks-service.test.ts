@@ -51,7 +51,7 @@ function setUp(options: {
 				// A revoked agent is not found at all.
 				return status === "revoked"
 					? null
-					: { name: "Scout", workspaceId: WORKSPACE, status };
+					: { name: "Scout", workspaceId: WORKSPACE, status, permissions: [] };
 			},
 		},
 		workspaces: {

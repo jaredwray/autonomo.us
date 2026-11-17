@@ -1,6 +1,6 @@
-import type { RoutingConfig } from "@autonomo.us/common";
+import type { AgentWakeActor, RoutingConfig } from "@autonomo.us/common";
 import type { FastifyInstance } from "fastify";
-import { requestWorkspace } from "../auth/access.js";
+import { requestActor, requestWorkspace } from "../auth/access.js";
 import { MAX_FAILOVER_TIMEOUT_MS } from "../failover.js";
 import type { ProviderSettingsStore } from "../providers/settings.js";
 import type { RoutingSettingsStore } from "../routing/settings.js";
@@ -102,7 +102,12 @@ const schema = {
 /** Registered under `/v1/:workspace`. Targets resolve only within the workspace. */
 export async function routingRoutes(
 	server: FastifyInstance,
-	options: { routing: RoutingSettingsStore; providers: ProviderSettingsStore },
+	options: {
+		routing: RoutingSettingsStore;
+		providers: ProviderSettingsStore;
+		/** Called once routing is saved; the change stands whatever this does. */
+		onChanged?: (workspaceId: string, by: AgentWakeActor) => Promise<unknown>;
+	},
 ) {
 	server.get("/routing", (request, reply) => {
 		reply.header("cache-control", "no-store");
@@ -113,11 +118,15 @@ export async function routingRoutes(
 		{ schema: { body: schema } },
 		async (request) => {
 			const workspace = requestWorkspace(request);
-			return options.routing.update(
+			const updated = await options.routing.update(
 				workspace,
 				request.body,
 				await options.providers.registry(workspace),
 			);
+			await options
+				.onChanged?.(workspace.id, requestActor(request))
+				.catch(() => {});
+			return updated;
 		},
 	);
 }

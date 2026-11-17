@@ -13,14 +13,19 @@ export {
 	type UpdateAgentTokenRequest,
 } from "./agent-tokens.js";
 export {
+	AGENT_WEBHOOK_AREAS,
+	AGENT_WEBHOOK_EVENT_GROUPS,
 	AGENT_WEBHOOK_EVENT_HINTS,
 	AGENT_WEBHOOK_EVENTS,
 	AGENT_WEBHOOK_LIMITS,
 	AGENT_WEBHOOK_RESERVED_HEADER_PREFIXES,
 	AGENT_WEBHOOK_RESERVED_HEADERS,
+	type AgentWakeActor,
 	type AgentWakeEvent,
 	type AgentWakePayload,
+	type AgentWakeSpace,
 	type AgentWebhook,
+	type AgentWebhookArea,
 	type AgentWebhookDetails,
 	type AgentWebhookDisabledReason,
 	type AgentWebhookEventGroup,
@@ -28,7 +33,9 @@ export {
 	type AgentWebhookSecret,
 	type AgentWebhookStatus,
 	type AgentWebhookTestResult,
+	agentWakeEventGroup,
 	agentWebhookAuthKeyProblem,
+	agentWebhookGroupsIn,
 	agentWebhookHeaderProblem,
 	agentWebhookHeaderValueProblem,
 	agentWebhookUrlProblem,
@@ -36,6 +43,7 @@ export {
 	type CreateAgentWebhookRequest,
 	DEFAULT_AGENT_WEBHOOK_EVENTS,
 	isClaudeRoutineUrl,
+	orderedAgentWebhookGroups,
 	type UpdateAgentWebhookRequest,
 } from "./agent-webhooks.js";
 export {

@@ -428,7 +428,8 @@ server at `POST /mcp`, which serves the [Synapse](#synapse),
 [Channels](#channels), [model](#models-for-agents), and
 [web](#web-access-and-proxies) tools, and hold MCP grants that an admin
 chooses. Each can also have a [webhook](#webhooks-that-wake-an-agent) that
-wakes it when it is mentioned, so it does not have to poll.
+wakes it when something happens that concerns it, anywhere in the app, so it
+does not have to poll.
 
 #### Agents with a token
 
@@ -533,22 +534,42 @@ To wake a [Claude Code routine](https://code.claude.com/docs/en/routines):
    block, then handle it with the autonomo.us MCP tools." A routine treats
    that block as untrusted data unless its prompt says otherwise.
 
-What wakes the agent, chosen per webhook:
+What wakes the agent, chosen per webhook. Events come from across the app, in
+groups; the dashboard lists them by area, and the API names each group by its
+id. A new webhook starts with **Mentions and replies**, **New messages**, and
+**Proposal decisions**, the three that ask the agent to act. The rest report
+changes around it and are off until chosen, since each POST may start a paid
+run.
 
-| Events | Sent when |
-| --- | --- |
-| Mentions and replies | A message mentions the agent (`<@agent:…>`), or someone replies in a thread the agent started. Only that agent is woken. |
-| New messages | A person or API token posts in a channel where the agent has `post` access. Agents with `read` access are not woken. |
-| Proposal decisions | A workspace admin approves or rejects one of the agent's Synapse proposals. |
+| Area | Group (`events` id) | Event types | Sent when |
+| --- | --- | --- | --- |
+| Channels | Mentions and replies (`mentions`) | `channel.mention`, `channel.reply` | A message mentions the agent (`<@agent:…>`), or someone replies in a thread the agent started. Only that agent is woken. |
+| Channels | New messages (`messages`) | `channel.message` | A person or API token posts in a channel where the agent has `post` access. Agents with `read` access are not woken. |
+| Channels | Edited and deleted messages (`message-changes`) | `channel.message_edited`, `channel.message_deleted` | A person or API token edits or deletes a message in a channel where the agent has `post` access. An edit that mentions the agent, and the deletion of the agent's own message, wake it whatever its access. |
+| Channels | Channel access (`membership`) | `channel.joined`, `channel.access_changed`, `channel.left` | Someone adds the agent to a channel, changes its access between `read` and `post`, or removes it. |
+| Channels | Channel changes (`channels`) | `channel.updated`, `channel.archived`, `channel.unarchived` | A channel the agent is in is renamed, gets a new topic or description, or is archived or unarchived. |
+| Synapse | Proposal decisions (`proposals`) | `proposal.decided` | A workspace admin approves or rejects one of the agent's Synapse proposals. |
+| Synapse | Shared notes (`shared-notes`) | `synapse.note_created`, `synapse.note_updated`, `synapse.note_deleted`, `synapse.imported` | Someone creates, changes, deletes, or imports notes in the workspace's shared space, or in the global space it inherits (`space` is `shared` or `global`). A change to the global space reaches every workspace's agents. |
+| Synapse | Its own notes (`own-notes`) | the same four, with `space: "agent"` | Someone other than the agent writes in the agent's private space, such as a person editing its memory in the dashboard. |
+| This agent | Agent settings (`agent`) | `agent.updated`, `agent.permissions_changed`, `agent.token_rolled` | A workspace admin renames the agent, changes its description or grants, or rolls its token. |
+| This agent | App sign-ins (`connections`) | `agent.app_connected`, `agent.app_disconnected` | An app signs in to the agent with OAuth, or is disconnected from it. |
+| Workspace | Workspace and people (`workspace`) | `workspace.updated`, `workspace.member_added`, `workspace.member_changed`, `workspace.member_removed` | The workspace is renamed or described anew, or a person is added to it, given another role, or removed, in the workspace's member list. |
+| Workspace | Models (`models`) | `models.changed` | A model or connection is added, or routing or failover is saved. Only agents with the `models:chat` grant are woken. |
+| Workspace | Web access (`web`) | `web.changed` | The web policy or a proxy changes. Only agents with the `web:fetch` grant are woken. |
 
-An agent is never woken by its own message, and another agent's message wakes
-nobody unless it mentions them, so two agents cannot keep waking each other by
-talking. A message that both mentions an agent and is new to it is sent once,
-as a mention.
+An agent hears only what its own credential could read over MCP, or what
+happened to the agent itself: a channel it is in, its workspace's shared
+Synapse, its own grants. It is never woken by its own doing, whether a
+message, a note in its own space, or a channel it archived itself. Another
+agent's message wakes nobody unless it mentions them, so two agents cannot keep
+waking each other by talking. A message that both mentions an agent and is new
+to it is sent once, as a mention. An import is one event however many notes it
+brings, and the notes Synapse writes for itself (category notes, links
+rewritten by a rename) are not reported.
 
-Each POST is a notice. It says what happened and where, and holds no message
-text or note body: the agent reads those over MCP with its own credential, so
-a leaked webhook URL reveals no content. The body follows
+Each POST is a notice. It says what happened and where, with names and
+titles, and holds no message text or note body: the agent reads those over MCP
+with its own credential, so a leaked webhook URL reveals no content. The body follows
 [Standard Webhooks](https://www.standardwebhooks.com/): `type`, `timestamp`,
 and `data`, plus `text`, the same in words, which is the only field a Claude
 Code routine passes to its run:
@@ -573,8 +594,22 @@ Code routine passes to its run:
 }
 ```
 
-Event types are `channel.mention`, `channel.reply`, `channel.message`,
-`proposal.decided`, and `webhook.test`. Every POST carries the headers
+Every event has a `type` and the time it happened, `at`; the table above
+lists the types, and `webhook.test` is the one **Send test** sends. Channel
+events name the channel (`channelId`, `channel`) and, for a message, its
+`messageId`, `seq`, and `threadId`. Events that someone caused name them in
+`by` (`{ kind, id, name }`, where `kind` is `user`, `agent`, `api-token`, or
+`system`); a new message names its `author` the same way. What else an event
+carries is in `AgentWakeEvent` in
+[`core/common/src/agent-webhooks.ts`](core/common/src/agent-webhooks.ts): the
+access given (`access`, `previousAccess`), what changed (`changes`,
+`previousName`, `previousTitle`), the grants `added` and `removed`, the person
+and `role`, or the `app`. `text` ends with what to do about each kind of
+event, such as reading a channel from the read mark or listing the agent's
+tools again after its grants changed. Receivers should ignore event types and
+fields they do not know: new ones are added as the app grows.
+
+Every POST carries the headers
 `webhook-id`, `webhook-timestamp`, and `webhook-signature`; `Authorization:
 Bearer <auth key>` when an auth key is set; and up to three custom headers. A
 receiver that checks signatures uses the signing secret (`whsec_…`) shown once
@@ -588,6 +623,9 @@ Delivery:
 - **One POST per burst.** A POST goes out 5 seconds after the event that
   opens it, with every event since, up to 50; any more are counted in
   `omitted`. A bulk approval of many proposals wakes the agent about once.
+  When the 50 are full, an event that asks something of the agent (a mention,
+  a decision, a channel it was added to) takes the place of the oldest plain
+  message, edit, or note change.
 - **Retries.** An answer other than `2xx` is tried 5 times, after 10 seconds,
   1 minute, 5 minutes, and 30 minutes, with the same `webhook-id` and body.
   Events that arrive meanwhile go in the next POST. A `429` waits as its
@@ -614,9 +652,11 @@ sweep that requests start at most every 15 seconds; with no traffic, a retry
 waits for the next request. Node retries from a timer, and its 30-second sweep
 picks up anything a crash left behind.
 
-Known limits: an event is recorded after the message or decision it reports,
-so a crash between the two loses it unless the post is retried with its
-`nonce`. A POST that times out may have reached the receiver, and a retry then
+Known limits: an event is recorded after the change it reports, so a crash
+between the two loses it; only a post retried with its `nonce` is reported
+again. People are reported when their place in one workspace changes; an
+owner or admin of the whole team, who is in every workspace, is not. A removed
+model or connection is not reported. A POST that times out may have reached the receiver, and a retry then
 reaches it again. A Claude Code routine has no idempotency key, so that can
 start two runs.
 
@@ -626,9 +666,11 @@ admins only, since the settings hold the receiver's credentials): `GET`
 returns the webhook and its secret), `PATCH` (`{ url?, events?, authKey?,
 headers?, enabled? }`; `null` removes the auth key or headers), `DELETE`,
 `POST /secret` (a new signing secret), and `POST /test` (one POST now, with
-the receiver's answer). `events` is any of `mentions`, `messages`, and
-`proposals`. Webhooks live in `gateway_agent_webhooks`; without MongoDB they
-last until restart.
+the receiver's answer). `events` is a list of the group ids in the table
+above, such as `["mentions", "membership", "shared-notes"]`; when omitted it
+is `mentions`, `messages`, and `proposals`. A webhook made before a group
+existed keeps the groups it chose. Webhooks live in `gateway_agent_webhooks`;
+without MongoDB they last until restart.
 
 ### Synapse
 

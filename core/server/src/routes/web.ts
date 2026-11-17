@@ -1,4 +1,5 @@
 import {
+	type AgentWakeActor,
 	type CreateProxyRequest,
 	PROXY_KINDS,
 	type ProxyList,
@@ -9,7 +10,7 @@ import {
 	type WebFetchRequest,
 } from "@autonomo.us/common";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { requestWorkspace } from "../auth/access.js";
+import { requestActor, requestWorkspace } from "../auth/access.js";
 import { mongoErrorDetails } from "../mongo.js";
 import { ServiceError } from "../service-error.js";
 import type { WebCaller, WebService } from "../web/service.js";
@@ -112,7 +113,23 @@ const fetchSchema = {
  */
 export async function webRoutes(
 	server: FastifyInstance,
-	{ store, web }: { store: ProxyStore; web: WebService },
+	{
+		store,
+		web,
+		onChanged,
+	}: {
+		store: ProxyStore;
+		web: WebService;
+		/**
+		 * Called once the policy or a proxy is saved or removed; the change
+		 * stands whatever this does.
+		 */
+		onChanged?: (
+			workspaceId: string,
+			change: "policy" | "proxies",
+			by: AgentWakeActor,
+		) => Promise<unknown>;
+	},
 ) {
 	server.addHook("onRequest", async (_request, reply) => {
 		reply.header("cache-control", "no-store");
@@ -140,6 +157,16 @@ export async function webRoutes(
 		});
 	});
 
+	const changed = async (
+		request: FastifyRequest,
+		change: "policy" | "proxies",
+	) => {
+		await onChanged?.(
+			requestWorkspace(request).id,
+			change,
+			requestActor(request),
+		).catch(() => {});
+	};
 	const caller = (request: FastifyRequest): WebCaller =>
 		request.telemetryCaller ?? {
 			id: "unattributed",
@@ -182,10 +209,14 @@ export async function webRoutes(
 				},
 			},
 		},
-		async (request, reply) =>
-			reply
-				.code(201)
-				.send(await store.create(requestWorkspace(request), request.body)),
+		async (request, reply) => {
+			const created = await store.create(
+				requestWorkspace(request),
+				request.body,
+			);
+			await changed(request, "proxies");
+			return reply.code(201).send(created);
+		},
 	);
 	server.patch<{ Params: { name: string }; Body: UpdateProxyRequest }>(
 		"/proxies/:name",
@@ -199,18 +230,22 @@ export async function webRoutes(
 				},
 			},
 		},
-		(request) =>
-			store.update(
+		async (request) => {
+			const updated = await store.update(
 				requestWorkspace(request),
 				request.params.name,
 				request.body,
-			),
+			);
+			await changed(request, "proxies");
+			return updated;
+		},
 	);
 	server.delete<{ Params: { name: string } }>(
 		"/proxies/:name",
 		{ schema: { params: nameParams } },
 		async (request, reply) => {
 			await store.remove(requestWorkspace(request), request.params.name);
+			await changed(request, "proxies");
 			return reply.code(204).send();
 		},
 	);
@@ -244,7 +279,14 @@ export async function webRoutes(
 	server.put<{ Body: UpdateWebPolicyRequest }>(
 		"/web/policy",
 		{ schema: { body: policySchema } },
-		(request) => store.updatePolicy(requestWorkspace(request), request.body),
+		async (request) => {
+			const policy = await store.updatePolicy(
+				requestWorkspace(request),
+				request.body,
+			);
+			await changed(request, "policy");
+			return policy;
+		},
 	);
 	server.post<{ Body: WebFetchRequest }>(
 		"/web/fetch",

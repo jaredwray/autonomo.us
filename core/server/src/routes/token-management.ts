@@ -1,5 +1,6 @@
 import {
 	API_TOKEN_TTLS,
+	type ApiToken,
 	type CreateApiTokenRequest,
 	type RollApiTokenRequest,
 	type UpdateApiTokenRequest,
@@ -37,6 +38,27 @@ export async function tokenManagementRoutes<Permission extends string>(
 		orgOnly?: boolean;
 		/** Runs after a token is revoked, to end what depended on it. */
 		revoked?(workspace: RequestWorkspace, id: string): Promise<unknown>;
+		/**
+		 * Runs after a token is edited, with what it held before and holds
+		 * now. The edit stands whatever this does.
+		 */
+		updated?(
+			request: FastifyRequest,
+			before: Pick<
+				ApiToken<Permission>,
+				"name" | "description" | "permissions"
+			>,
+			after: ApiToken<Permission>,
+		): Promise<unknown>;
+		/**
+		 * Runs after a token is rolled, with when the token it replaced stops
+		 * working. The roll stands whatever this does.
+		 */
+		rolled?(
+			request: FastifyRequest,
+			id: string,
+			previousValidUntil: string,
+		): Promise<unknown>;
 	},
 ) {
 	const tokenActor = (request: FastifyRequest) => {
@@ -117,15 +139,21 @@ export async function tokenManagementRoutes<Permission extends string>(
 				},
 			},
 		},
-		(request) => {
+		async (request) => {
 			const { actor, name } = tokenActor(request);
-			return options.tokens.update(
+			const before = options.updated
+				? await options.tokens.find(request.params.id)
+				: null;
+			const after = await options.tokens.update(
 				requestWorkspace(request),
 				request.params.id,
 				request.body,
 				actor,
 				name,
 			);
+			if (before)
+				await options.updated?.(request, before, after).catch(() => {});
+			return after;
 		},
 	);
 	server.post<{ Params: { id: string }; Body: RollApiTokenRequest }>(
@@ -148,15 +176,34 @@ export async function tokenManagementRoutes<Permission extends string>(
 				},
 			},
 		},
-		(request) => {
+		async (request) => {
 			const { actor, name } = tokenActor(request);
-			return options.tokens.roll(
+			const before = options.rolled
+				? await options.tokens.find(request.params.id)
+				: null;
+			const started = Date.now();
+			const rolled = await options.tokens.roll(
 				requestWorkspace(request),
 				request.params.id,
 				request.body,
 				actor,
 				name,
 			);
+			if (before) {
+				// The replaced token lasts the overlap asked for, never past its own expiry.
+				const overlap = started + request.body.previousTokenTtlSeconds * 1000;
+				const expiry = before.expiresAt
+					? Date.parse(before.expiresAt)
+					: Number.POSITIVE_INFINITY;
+				await options
+					.rolled?.(
+						request,
+						request.params.id,
+						new Date(Math.min(overlap, expiry)).toISOString(),
+					)
+					.catch(() => {});
+			}
+			return rolled;
 		},
 	);
 	server.delete<{ Params: { id: string } }>(

@@ -63,6 +63,31 @@ export type ChannelDirectory = {
 	people(workspaceId: string): Promise<Array<{ id: string; name: string }>>;
 };
 
+/** What a change to a channel or its agent list did, for whoever listens. */
+export type ChannelChange = {
+	action: ChannelAction["action"];
+	actor: ChannelActor;
+	at: string;
+	/** The channel's revision after the change. */
+	revision: number;
+	/** The name, topic, or description that changed. */
+	fields?: Array<"name" | "topic" | "description">;
+	/** The name before, when the channel was renamed. */
+	previousName?: string;
+	/** The channel was archived or unarchived, alone or with other changes. */
+	lifecycle?: "archived" | "unarchived";
+	/** The agent added, changed, or removed, with its access before and after. */
+	agent?: {
+		id: string;
+		access: ChannelAgentAccess | null;
+		previousAccess: ChannelAgentAccess | null;
+	};
+};
+type ChannelChangeDetails = Pick<
+	ChannelChange,
+	"fields" | "previousName" | "lifecycle" | "agent"
+>;
+
 export type ChannelServiceOptions = {
 	directory: ChannelDirectory;
 	now?: () => number;
@@ -78,6 +103,26 @@ export type ChannelServiceOptions = {
 		/** `replay`: a retried post, settled again; its first settle may have run. */
 		context: { replay: boolean },
 	) => unknown;
+	/**
+	 * Called after a message is edited or deleted, with the message as it now
+	 * is. `seq` is the number of the log entry that records the change. A
+	 * failure here never fails the edit.
+	 */
+	onMessageChange?: (
+		channel: Channel,
+		message: ChannelMessage,
+		change: {
+			kind: "edited" | "deleted";
+			seq: number;
+			at: string;
+			by: ChannelActor;
+		},
+	) => unknown;
+	/**
+	 * Called after a channel or its agent list changes. A failure here never
+	 * fails the change.
+	 */
+	onChange?: (channel: Channel, change: ChannelChange) => unknown;
 };
 
 export type ReadOptions = {
@@ -368,11 +413,14 @@ export class ChannelService {
 		caller: ChannelCaller,
 		reference: string,
 		expectedRevision: number | undefined,
-		change: (channel: StoredChannel) => Promise<{
-			action: ChannelAction["action"];
-			detail: string;
-			note: string;
-		} | null>,
+		change: (channel: StoredChannel) => Promise<
+			| ({
+					action: ChannelAction["action"];
+					detail: string;
+					note: string;
+			  } & ChannelChangeDetails)
+			| null
+		>,
 	): Promise<ChannelDetails> {
 		this.requireManage(caller);
 		for (let attempt = 0; attempt < MAX_CHANGE_TRIES; attempt++) {
@@ -405,6 +453,17 @@ export class ChannelService {
 				);
 			if (result === "ok") {
 				await this.note(channel, caller.actor, applied.note);
+				const { detail: _detail, note: _note, ...details } = applied;
+				try {
+					await this.options.onChange?.(publicChannel(channel), {
+						...details,
+						actor: caller.actor,
+						at: channel.updatedAt,
+						revision: channel.revision,
+					});
+				} catch {
+					// The channel is changed; whoever listens handles its own trouble.
+				}
 				return this.getChannel(workspaceId, caller, channel.id);
 			}
 			// Lost a race with another change. A caller that named a revision
@@ -438,6 +497,8 @@ export class ChannelService {
 			input.revision,
 			async (channel) => {
 				const notes: string[] = [];
+				const fields: NonNullable<ChannelChange["fields"]> = [];
+				let previousName: string | undefined;
 				let lifecycle: "archived" | "unarchived" | undefined;
 				if (input.archived === false && channel.archivedAt) {
 					if (
@@ -452,12 +513,15 @@ export class ChannelService {
 				}
 				if (name !== undefined && name !== channel.name) {
 					notes.push(`renamed the channel from #${channel.name} to #${name}`);
+					fields.push("name");
+					previousName = channel.name;
 					channel.name = name;
 				}
 				if (input.topic !== undefined && input.topic !== channel.topic) {
 					notes.push(
 						input.topic ? `set the topic: ${input.topic}` : "cleared the topic",
 					);
+					fields.push("topic");
 					channel.topic = input.topic;
 				}
 				if (
@@ -465,6 +529,7 @@ export class ChannelService {
 					input.description !== channel.description
 				) {
 					notes.push("changed the description");
+					fields.push("description");
 					channel.description = input.description;
 				}
 				// Checked after unarchiving, before archiving.
@@ -476,14 +541,16 @@ export class ChannelService {
 				if (lifecycle) notes.unshift(`${lifecycle} this channel`);
 				if (!notes.length) return null;
 				const note = notes.join(" and ");
+				const details = { fields, previousName, lifecycle };
 				// A change of archive state alone keeps its own action.
 				return lifecycle && notes.length === 1
 					? {
 							action: lifecycle,
 							detail: `${lifecycle === "archived" ? "Archived" : "Unarchived"} #${channel.name}.`,
 							note,
+							...details,
 						}
-					: { action: "updated", detail: `${note}.`, note };
+					: { action: "updated", detail: `${note}.`, note, ...details };
 			},
 		);
 	}
@@ -532,6 +599,11 @@ export class ChannelService {
 						action: "agent-removed",
 						detail: `Removed ${current.name}.`,
 						note: `removed ${current.name}`,
+						agent: {
+							id: current.agentTokenId,
+							access: null,
+							previousAccess: current.access,
+						},
 					};
 				}
 				if (!option)
@@ -546,6 +618,7 @@ export class ChannelService {
 						action: "agent-changed",
 						detail: `Changed ${option.name} from ${before} to ${access}.`,
 						note: `changed ${option.name}'s access to ${access}`,
+						agent: { id: option.agentTokenId, access, previousAccess: before },
 					};
 				}
 				if (channel.agents.length >= CHANNEL_LIMITS.agentsPerChannel)
@@ -563,6 +636,7 @@ export class ChannelService {
 					action: "agent-added",
 					detail: `Added ${option.name} with ${access} access.`,
 					note: `added ${option.name}`,
+					agent: { id: option.agentTokenId, access, previousAccess: null },
 				};
 			},
 		);
@@ -927,6 +1001,20 @@ export class ChannelService {
 		await this.repository.touchChannel(channel.workspaceId, channel.id, {
 			lastSeq: entry.seq,
 		});
+		try {
+			await this.options.onMessageChange?.(
+				publicChannel(channel),
+				publicMessage(message),
+				{
+					kind: change,
+					seq: entry.seq,
+					at: entry.createdAt,
+					by: caller.actor,
+				},
+			);
+		} catch {
+			// The message is changed; whoever listens handles its own trouble.
+		}
 		return publicMessage(message);
 	}
 

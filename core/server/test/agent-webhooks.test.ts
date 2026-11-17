@@ -675,3 +675,315 @@ describe("delivery", () => {
 		});
 	});
 });
+
+describe("what else in the app wakes an agent", () => {
+	/** The events an agent's receiver got, in order, once nothing is waiting. */
+	const heard = (
+		hooks: ReturnType<typeof receiver>,
+		url = "https://hooks.example.com/scout",
+	) => hooks.for(url).flatMap((wake) => wake.body.data.events);
+
+	it("reports changes to the agent's channels and to the messages in them", async () => {
+		const { agent, addAgent, createChannel, post, ok, hook, hooks, settle } =
+			await start();
+		const scout = await agent("Scout");
+		await hook(scout.id, {
+			url: "https://hooks.example.com/scout",
+			events: ["membership", "channels", "message-changes"],
+		});
+		const channel = await createChannel("qc");
+		await addAgent(channel.id, scout.id, "read");
+		await addAgent(channel.id, scout.id, "post");
+		await ok("PATCH", `/v1/channels/${channel.id}`, {
+			body: { name: "film-qc", topic: "Cuts" },
+		});
+		// A new message is another group's, which this webhook did not choose.
+		const message = await post(channel.id, "The cut at 01:12 is soft.");
+		await ok("PATCH", `/v1/channels/${channel.id}/messages/${message.id}`, {
+			body: { body: `The cut at 01:13 is soft, <@agent:${scout.id}>.` },
+		});
+		await ok(
+			"DELETE",
+			`/v1/channels/${channel.id}/messages/${message.id}`,
+			{},
+			204,
+		);
+		await ok("DELETE", `/v1/channels/${channel.id}/agents/${scout.id}`);
+		await settle();
+
+		const events = heard(hooks);
+		expect(events.map((event) => event.type)).toEqual([
+			"channel.joined",
+			"channel.access_changed",
+			"channel.updated",
+			"channel.message_edited",
+			"channel.message_deleted",
+			"channel.left",
+		]);
+		const by = expect.objectContaining({ kind: "user", name: "Founder" });
+		expect(events).toEqual([
+			expect.objectContaining({ channel: "qc", access: "read", by }),
+			expect.objectContaining({ access: "post", previousAccess: "read" }),
+			expect.objectContaining({
+				channelId: channel.id,
+				channel: "film-qc",
+				changes: ["name", "topic"],
+				previousName: "qc",
+			}),
+			expect.objectContaining({
+				messageId: message.id,
+				seq: message.seq,
+				mentioned: true,
+			}),
+			expect.objectContaining({ messageId: message.id, own: false }),
+			expect.objectContaining({ channel: "film-qc", by }),
+		]);
+		// A notice names places and people, never what a message says.
+		const sent = hooks.received.map((wake) => wake.raw).join("\n");
+		expect(sent).not.toContain("01:13");
+		expect(hooks.received[0].body.text).toContain(
+			"Founder (person) added you to #qc with read access.",
+		);
+	});
+
+	it("tells the agents in an archived channel, and not the agent that archived it", async () => {
+		const { agent, addAgent, createChannel, tool, hook, hooks, settle } =
+			await start();
+		const scout = await agent("Scout");
+		const manager = await agent("Manager", [
+			"mcp:read",
+			"mcp:call",
+			"channels:manage",
+		]);
+		const channel = await createChannel("qc");
+		await addAgent(channel.id, scout.id);
+		await addAgent(channel.id, manager.id);
+		for (const [who, id] of [
+			["scout", scout.id],
+			["manager", manager.id],
+		])
+			await hook(id, {
+				url: `https://hooks.example.com/${who}`,
+				events: ["channels"],
+			});
+		await tool(manager.secret, "channels_update", {
+			channel: channel.id,
+			archived: true,
+		});
+		await settle();
+		expect(heard(hooks)).toEqual([
+			expect.objectContaining({
+				type: "channel.archived",
+				channel: "qc",
+				by: expect.objectContaining({ kind: "agent", id: manager.id }),
+			}),
+		]);
+		expect(heard(hooks, "https://hooks.example.com/manager")).toEqual([]);
+	});
+
+	it("reports notes that change in the shared space and in the agent's own", async () => {
+		const { agent, tool, ok, hook, hooks, settle } = await start();
+		const scout = await agent("Scout");
+		const quill = await agent("Quill");
+		await hook(scout.id, {
+			url: "https://hooks.example.com/scout",
+			events: ["shared-notes", "own-notes"],
+		});
+		await hook(quill.id, {
+			url: "https://hooks.example.com/quill",
+			events: ["own-notes"],
+		});
+		await ok(
+			"POST",
+			"/v1/synapse/spaces/shared/notes",
+			{ body: { title: "Ada Lovelace", body: "Wrote the first program." } },
+			201,
+		);
+		await ok("PATCH", "/v1/synapse/spaces/shared/notes/Ada%20Lovelace", {
+			body: { title: "Ada" },
+		});
+		await ok("POST", "/v1/synapse/spaces/shared/import", {
+			body: {
+				files: [
+					{ path: "Grace.md", content: "One." },
+					{ path: "Linus.md", content: "Two." },
+				],
+			},
+		});
+		// What the agent writes in its own space is no news to it; what a
+		// person writes there is.
+		await tool(scout.secret, "synapse_create", { title: "Scratch" });
+		await ok(
+			"POST",
+			`/v1/synapse/spaces/agent-${scout.id}/notes`,
+			{ body: { title: "From Jared" } },
+			201,
+		);
+		await ok("DELETE", "/v1/synapse/spaces/shared/notes/Ada", {}, 204);
+		await settle();
+
+		const by = expect.objectContaining({ kind: "user", name: "Founder" });
+		expect(heard(hooks)).toEqual([
+			{
+				type: "synapse.note_created",
+				at: expect.any(String),
+				space: "shared",
+				title: "Ada Lovelace",
+				previousTitle: null,
+				by,
+			},
+			expect.objectContaining({
+				type: "synapse.note_updated",
+				title: "Ada",
+				previousTitle: "Ada Lovelace",
+			}),
+			expect.objectContaining({
+				type: "synapse.imported",
+				space: "shared",
+				created: 2,
+				updated: 0,
+			}),
+			expect.objectContaining({
+				type: "synapse.note_created",
+				space: "agent",
+				title: "From Jared",
+			}),
+			expect.objectContaining({ type: "synapse.note_deleted", title: "Ada" }),
+		]);
+		// Another agent's own space is nobody else's business.
+		expect(heard(hooks, "https://hooks.example.com/quill")).toEqual([]);
+		const sent = hooks.received.map((wake) => wake.raw).join("\n");
+		expect(sent).not.toContain("first program");
+	});
+
+	it("tells an agent when its own settings change", async () => {
+		const { agent, ok, hook, hooks, settle } = await start();
+		const scout = await agent("Scout");
+		await hook(scout.id, {
+			url: "https://hooks.example.com/scout",
+			events: ["agent"],
+		});
+		// Saving the same settings again is not a change.
+		await ok("PATCH", `/v1/agent-tokens/${scout.id}`, {
+			body: {
+				name: "Scout",
+				description: "",
+				permissions: ["mcp:read", "mcp:call"],
+			},
+		});
+		await ok("PATCH", `/v1/agent-tokens/${scout.id}`, {
+			body: {
+				name: "Scout 2",
+				description: "",
+				permissions: ["mcp:read", "mcp:call", "web:fetch"],
+			},
+		});
+		await ok("POST", `/v1/agent-tokens/${scout.id}/roll`, {
+			body: { ttlDays: 7, previousTokenTtlSeconds: 3600 },
+		});
+		await settle();
+		const by = expect.objectContaining({ kind: "user", name: "Founder" });
+		expect(heard(hooks)).toEqual([
+			{
+				type: "agent.updated",
+				at: expect.any(String),
+				changes: ["name"],
+				previousName: "Scout",
+				by,
+			},
+			{
+				type: "agent.permissions_changed",
+				at: expect.any(String),
+				added: ["web:fetch"],
+				removed: [],
+				by,
+			},
+			{
+				type: "agent.token_rolled",
+				at: expect.any(String),
+				previousValidUntil: expect.any(String),
+				by,
+			},
+		]);
+		// The delivery names the agent as it is now called.
+		expect(hooks.received[0].body.text).toContain(
+			'Founder (person) renamed you from "Scout".',
+		);
+	});
+
+	it("reports the workspace's name, people, and web access to those it concerns", async () => {
+		const { agent, ok, join, workspaceId, hook, hooks, settle } = await start();
+		const scout = await agent("Scout");
+		const fetcher = await agent("Fetcher", [
+			"mcp:read",
+			"mcp:call",
+			"web:fetch",
+		]);
+		await hook(scout.id, {
+			url: "https://hooks.example.com/scout",
+			events: ["workspace", "web"],
+		});
+		await hook(fetcher.id, {
+			url: "https://hooks.example.com/fetcher",
+			events: ["web"],
+		});
+		const workspace = await ok<{ name: string; description: string }>(
+			"GET",
+			`/v1/workspaces/${workspaceId}`,
+		);
+		await ok("PATCH", `/v1/workspaces/${workspaceId}`, {
+			body: { name: "Studio", description: workspace.description },
+		});
+		const ada = await join("ada@example.com");
+		await ok("PUT", `/v1/members/${ada.user.id}`, { body: { role: "admin" } });
+		await ok("DELETE", `/v1/members/${ada.user.id}`);
+		const policy = await ok<object>("GET", "/v1/web/policy");
+		await ok("PUT", "/v1/web/policy", { body: policy });
+		await settle();
+
+		const events = heard(hooks);
+		expect(events[0]).toMatchObject({
+			type: "workspace.updated",
+			changes: ["name"],
+			name: "Studio",
+			previousName: workspace.name,
+		});
+		// Ada is given the admin role, then loses her place in the workspace.
+		expect(events[1]).toMatchObject({
+			member: { id: ada.user.id, name: "ada" },
+			role: "admin",
+		});
+		expect(events[1].type).toMatch(/^workspace\.member_(added|changed)$/);
+		expect(events.at(-1)).toMatchObject({
+			type: "workspace.member_removed",
+			member: { id: ada.user.id },
+		});
+		// Web access concerns only an agent that holds the Web: Fetch grant.
+		expect(events.map((event) => event.type)).not.toContain("web.changed");
+		expect(heard(hooks, "https://hooks.example.com/fetcher")).toEqual([
+			expect.objectContaining({ type: "web.changed", change: "policy" }),
+		]);
+	});
+
+	it("refuses a group it does not know and lists a webhook's groups in order", async () => {
+		const { agent, hook, refused } = await start();
+		const scout = await agent("Scout");
+		expect(
+			(
+				await refused("POST", `/v1/agents/${scout.id}/webhook`, {
+					body: { url: "https://hooks.example.com/x", events: ["everything"] },
+				})
+			).status,
+		).toBe(400);
+		const created = await hook(scout.id, {
+			url: "https://hooks.example.com/scout",
+			events: ["web", "own-notes", "mentions", "membership"],
+		});
+		expect(created.webhook.events).toEqual([
+			"mentions",
+			"membership",
+			"own-notes",
+			"web",
+		]);
+	});
+});

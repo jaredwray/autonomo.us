@@ -1,16 +1,20 @@
 import {
+	AGENT_WEBHOOK_AREAS,
 	AGENT_WEBHOOK_EVENT_HINTS,
 	AGENT_WEBHOOK_EVENTS,
 	AGENT_WEBHOOK_LIMITS,
 	type AgentWebhook,
+	type AgentWebhookArea,
 	type AgentWebhookEventGroup,
 	type AgentWebhookHeader,
 	type AgentWebhookSecret,
 	type AgentWebhookTestResult,
+	agentWebhookGroupsIn,
 	agentWebhookUrlProblem,
 	CLAUDE_ROUTINE_HEADER,
 	DEFAULT_AGENT_WEBHOOK_EVENTS,
 	isClaudeRoutineUrl,
+	orderedAgentWebhookGroups,
 	type UpdateAgentWebhookRequest,
 } from "@autonomo.us/common";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
@@ -27,7 +31,7 @@ const date = (value: string | null) =>
 	value ? new Date(value).toLocaleString() : "Never";
 const errorText = (cause: unknown, fallback: string) =>
 	cause instanceof Error ? cause.message : fallback;
-const GROUPS = Object.keys(AGENT_WEBHOOK_EVENTS) as AgentWebhookEventGroup[];
+const AREAS = Object.keys(AGENT_WEBHOOK_AREAS) as AgentWebhookArea[];
 
 /** What a delivery failure code means. */
 export function failureText(code: string): string {
@@ -383,29 +387,58 @@ function WebhookForm({
 				</fieldset>
 				<fieldset className="bot-web-choices">
 					<legend>Wakes the agent on</legend>
-					{GROUPS.map((group) => (
-						<label className="bot-web-choice" key={group}>
-							<input
-								type="checkbox"
-								checked={events.includes(group)}
-								onChange={(event) =>
-									setEvents((current) =>
-										event.target.checked
-											? GROUPS.filter(
-													(item) => item === group || current.includes(item),
+					<span className="field-hint">
+						Anything in the app the agent could read for itself can wake it.
+						Choose what is worth a run: each POST may start one.
+					</span>
+					{AREAS.map((area) => {
+						const groups = agentWebhookGroupsIn(area);
+						const all = groups.every((group) => events.includes(group));
+						return (
+							<fieldset className="agent-webhook-area" key={area}>
+								<legend>{AGENT_WEBHOOK_AREAS[area]}</legend>
+								<button
+									className="button agent-webhook-area-toggle"
+									type="button"
+									aria-label={`${all ? "Clear" : "Select all"} ${AGENT_WEBHOOK_AREAS[area]} events`}
+									onClick={() =>
+										setEvents((current) =>
+											orderedAgentWebhookGroups(
+												all
+													? current.filter((item) => !groups.includes(item))
+													: [...current, ...groups],
+											),
+										)
+									}
+								>
+									{all ? "Clear" : "Select all"}
+								</button>
+								{groups.map((group) => (
+									<label className="bot-web-choice" key={group}>
+										<input
+											type="checkbox"
+											checked={events.includes(group)}
+											onChange={(event) =>
+												setEvents((current) =>
+													orderedAgentWebhookGroups(
+														event.target.checked
+															? [...current, group]
+															: current.filter((item) => item !== group),
+													),
 												)
-											: current.filter((item) => item !== group),
-									)
-								}
-							/>
-							<span>
-								{AGENT_WEBHOOK_EVENTS[group]}
-								<span className="field-hint">
-									{AGENT_WEBHOOK_EVENT_HINTS[group]}
-								</span>
-							</span>
-						</label>
-					))}
+											}
+										/>
+										<span>
+											{AGENT_WEBHOOK_EVENTS[group]}
+											<span className="field-hint">
+												{AGENT_WEBHOOK_EVENT_HINTS[group]}
+											</span>
+										</span>
+									</label>
+								))}
+							</fieldset>
+						);
+					})}
 				</fieldset>
 				{error && (
 					<div className="banner-error" role="alert">

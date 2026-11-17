@@ -17,6 +17,7 @@ import {
 	type ChannelMessage,
 	type CreateAgentWebhookRequest,
 	DEFAULT_AGENT_WEBHOOK_EVENTS,
+	orderedAgentWebhookGroups,
 	type SynapseProposal,
 	type UpdateAgentWebhookRequest,
 } from "@autonomo.us/common";
@@ -53,7 +54,19 @@ export type WebhookAgent = {
 	/** Null for an agent from before workspaces: it belongs to the default workspace. */
 	workspaceId: string | null;
 	status: "active" | "expired" | "revoked";
+	/** The agent's grants, which decide what it may hear about. */
+	permissions: readonly string[];
 };
+
+/**
+ * An event for one agent, with the key that recognizes it when the same
+ * thing is reported twice.
+ */
+export type AgentNotice = { event: AgentWakeEvent; key: string };
+/** The event to queue for an agent, or null to leave that agent alone. */
+export type AgentNoticeFor = (
+	agentId: string,
+) => AgentNotice | null | Promise<AgentNotice | null>;
 
 export type AgentWebhooksOptions = {
 	repository: AgentWebhookRepository;
@@ -92,15 +105,15 @@ const SWEEP_BATCH = 50;
 function checkedEvents(
 	events: readonly AgentWebhookEventGroup[] | undefined,
 ): AgentWebhookEventGroup[] {
-	const list = [...new Set(events ?? DEFAULT_AGENT_WEBHOOK_EVENTS)];
+	const list = events ?? DEFAULT_AGENT_WEBHOOK_EVENTS;
 	if (!list.length)
 		throw new AgentWebhookError(
 			"Choose at least one event that wakes the agent.",
 		);
 	for (const event of list)
-		if (!(event in AGENT_WEBHOOK_EVENTS))
+		if (!Object.hasOwn(AGENT_WEBHOOK_EVENTS, event))
 			throw new AgentWebhookError(`${event} is not a webhook event.`);
-	return list;
+	return orderedAgentWebhookGroups(list);
 }
 function checkedUrl(url: string): string {
 	const problem = agentWebhookUrlProblem(url);
@@ -365,7 +378,7 @@ export class AgentWebhooks {
 			else if (
 				message.threadId &&
 				author.kind !== "agent" &&
-				wants(webhook, "channel.reply")
+				wants(webhook, "mentions")
 			) {
 				threadAuthor ??= this.options
 					.threadAuthor(channel.workspaceId, channel.id, message.threadId)
@@ -379,7 +392,12 @@ export class AgentWebhooks {
 			)?.access;
 			if (author.kind !== "agent" && access === "post")
 				types.push("channel.message");
-			const type = types.find((candidate) => wants(webhook, candidate));
+			const type = types.find((candidate) =>
+				wants(
+					webhook,
+					candidate === "channel.message" ? "messages" : "mentions",
+				),
+			);
 			if (!type) continue;
 			await this.enqueue(
 				webhook,
@@ -410,7 +428,7 @@ export class AgentWebhooks {
 		const [webhook] = await this.options.repository.active(workspaceId, [
 			proposal.author.id,
 		]);
-		if (!webhook || !wants(webhook, "proposal.decided")) return;
+		if (!webhook || !wants(webhook, "proposals")) return;
 		await this.enqueue(
 			webhook,
 			{
@@ -423,6 +441,59 @@ export class AgentWebhooks {
 				decidedBy: proposal.decidedBy?.name ?? "A workspace admin",
 			},
 			`proposal:${proposal.id}`,
+		);
+	}
+
+	/**
+	 * Queues an event for each of these agents whose webhook is active and
+	 * chose the event's group. Everything in the app that is not a message or
+	 * a proposal decision reports through here or `broadcast`.
+	 */
+	async notify(
+		workspaceId: string,
+		agentIds: readonly string[],
+		notice: AgentNoticeFor,
+	): Promise<void> {
+		const ids = [...new Set(agentIds)];
+		if (!ids.length) return;
+		await this.queueFor(
+			await this.options.repository.active(workspaceId, ids),
+			notice,
+		);
+	}
+
+	/**
+	 * Queues an event for every agent whose webhook chose `group`: those of
+	 * one workspace, or of every workspace when `workspaceId` is null.
+	 */
+	async broadcast(
+		workspaceId: string | null,
+		group: AgentWebhookEventGroup,
+		notice: AgentNoticeFor,
+	): Promise<void> {
+		await this.queueFor(
+			await this.options.repository.subscribed(workspaceId, group),
+			notice,
+		);
+	}
+
+	/** One agent's trouble never keeps the event from the others. */
+	private async queueFor(
+		webhooks: readonly StoredAgentWebhook[],
+		notice: AgentNoticeFor,
+	): Promise<void> {
+		await Promise.all(
+			webhooks.map(async (webhook) => {
+				try {
+					const made = await notice(webhook.agentId);
+					if (made) await this.enqueue(webhook, made.event, made.key);
+				} catch (error) {
+					this.options.log?.("An agent webhook event could not be queued.", {
+						error,
+						agentId: webhook.agentId,
+					});
+				}
+			}),
 		);
 	}
 

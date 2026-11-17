@@ -10,6 +10,7 @@ import {
 	MemoryAgentWebhookRepository,
 	MongoAgentWebhookRepository,
 } from "./agent-webhooks/repository.js";
+import { AppEvents } from "./agent-webhooks/app-events.js";
 import type { WebhookTiming } from "./agent-webhooks/state.js";
 import { AgentWebhooks } from "./agent-webhooks/webhooks.js";
 import { registerApiAccess, requireRouteScopes } from "./auth/access.js";
@@ -234,6 +235,8 @@ export function createServer(options: CreateServerOptions = {}) {
 		: new MemorySynapseRepository();
 	const synapse = new SynapseService(synapseRepository, {
 		timeZone: config.synapseTimeZone ?? "UTC",
+		// Agents hear of notes that change around them through their webhooks.
+		onChange: (change) => appEvents.onSynapseChanged(change),
 	});
 	// Channels share the control-plane client, so a Worker request that
 	// authenticates and posts stays on one MongoDB connection.
@@ -253,20 +256,22 @@ export function createServer(options: CreateServerOptions = {}) {
 		(options.webTransport === "fetch"
 			? fetchWebhookTransport()
 			: nodeWebhookTransport());
+	const webhookAgents = {
+		find: async (id: string) => {
+			const agent = await agentTokens.find(id);
+			return (
+				agent && {
+					name: agent.name,
+					workspaceId: agent.workspaceId,
+					status: agent.status,
+					permissions: agent.permissions,
+				}
+			);
+		},
+	};
 	const agentWebhooks = new AgentWebhooks({
 		repository: agentWebhookRepository,
-		agents: {
-			find: async (id) => {
-				const agent = await agentTokens.find(id);
-				return (
-					agent && {
-						name: agent.name,
-						workspaceId: agent.workspaceId,
-						status: agent.status,
-					}
-				);
-			},
-		},
+		agents: webhookAgents,
 		workspaces,
 		threadAuthor: async (workspaceId, channelId, messageId) => {
 			const entry = await channelRepository.getEntry(
@@ -290,6 +295,13 @@ export function createServer(options: CreateServerOptions = {}) {
 				: 60_000,
 		log: (message, details) => server.log.error(details, message),
 	});
+	// What else happens in the app that an agent's webhook reports: changes to
+	// channels, Synapse, the agent itself, and its workspace.
+	const appEvents = new AppEvents({
+		webhooks: agentWebhooks,
+		agents: webhookAgents,
+		workspaces,
+	});
 	const channels: ChannelService = new ChannelService(channelRepository, {
 		// A message that mentions one of the gateway's own bots starts its
 		// reply; one meant for an agent elsewhere wakes it through its webhook.
@@ -300,6 +312,9 @@ export function createServer(options: CreateServerOptions = {}) {
 				mcpEvents?.onMessage(channel, message),
 			]);
 		},
+		onMessageChange: (channel, message, change) =>
+			appEvents.onMessageChanged(channel, message, change),
+		onChange: (channel, change) => appEvents.onChannelChanged(channel, change),
 		directory: {
 			// A channel's agents are agent tokens and the bots the gateway runs.
 			agents: async (workspaceId) => {
@@ -343,10 +358,27 @@ export function createServer(options: CreateServerOptions = {}) {
 			const own = agent.workspaceId ?? (await workspaces.defaultWorkspaceId());
 			return own === workspaceId ? agent.permissions : null;
 		},
-		record: async (workspaceId, agentId, action, detail, actorName) => {
+		record: async (workspaceId, agentId, action, detail, actorName, app) => {
 			const workspace = await workspaces.get(workspaceId);
-			if (workspace)
-				await agentTokens.note(workspace, agentId, action, detail, actorName);
+			if (!workspace) return;
+			await agentTokens.note(workspace, agentId, action, detail, actorName);
+			if (app)
+				await appEvents.onAgentApp(
+					workspaceId,
+					agentId,
+					action === "connected"
+						? {
+								kind: "connected",
+								app: app.name,
+								approvedBy: actorName ?? null,
+							}
+						: {
+								kind: "disconnected",
+								app: app.name,
+								reason: app.reason ?? "",
+								by: actorName ?? null,
+							},
+				);
 		},
 	};
 	const oauthRepository = mongo
@@ -517,16 +549,34 @@ export function createServer(options: CreateServerOptions = {}) {
 		},
 	});
 	server.register(teamRoutes, { accounts, workspaces });
-	server.register(workspaceRoutes, { workspaces });
+	server.register(workspaceRoutes, {
+		workspaces,
+		onUpdated: (workspaceId, before, after, by) =>
+			appEvents.onWorkspaceUpdated(workspaceId, before, after, by),
+	});
 	server.register(oauthSignInRoutes, { oauth });
 	server.register(catalogRoutes, { catalog: modelCatalog });
 	// Everything a workspace owns lives under its id. The access hook resolves
 	// and authorizes `:workspace` before any of these handlers run.
 	server.register(
 		async (scoped) => {
-			scoped.register(modelsRoutes, { providers });
-			scoped.register(failoverRoutes, { providers, routing });
-			scoped.register(routingRoutes, { routing, providers });
+			scoped.register(modelsRoutes, {
+				providers,
+				onChanged: (workspaceId, by) =>
+					appEvents.onModelsChanged(workspaceId, "models", by),
+			});
+			scoped.register(failoverRoutes, {
+				providers,
+				routing,
+				onChanged: (workspaceId, by) =>
+					appEvents.onModelsChanged(workspaceId, "failover", by),
+			});
+			scoped.register(routingRoutes, {
+				routing,
+				providers,
+				onChanged: (workspaceId, by) =>
+					appEvents.onModelsChanged(workspaceId, "routing", by),
+			});
 			scoped.register(chatRoutes, {
 				providers,
 				routing,
@@ -541,6 +591,7 @@ export function createServer(options: CreateServerOptions = {}) {
 				tokens: agentTokens,
 				oauth,
 				webhooks: agentWebhooks,
+				events: appEvents,
 			});
 			scoped.register(agentRoutes, { agentTokens, bots, oauth });
 			scoped.register(agentWebhookRoutes, {
@@ -548,7 +599,24 @@ export function createServer(options: CreateServerOptions = {}) {
 				agentTokens,
 				bots,
 			});
-			scoped.register(memberRoutes, { accounts });
+			scoped.register(memberRoutes, {
+				accounts,
+				onChanged: (workspaceId, before, after, by) => {
+					// A person without a name is known by their email, as in channels.
+					const people = (members: typeof before) =>
+						members.map((member) => ({
+							id: member.id,
+							name: member.name || member.email,
+							role: member.role,
+						}));
+					return appEvents.onWorkspaceMembersChanged(
+						workspaceId,
+						people(before),
+						people(after),
+						by,
+					);
+				},
+			});
 			scoped.register(synapseRoutes, {
 				synapse,
 				agentTokens: agentIds,
@@ -558,7 +626,12 @@ export function createServer(options: CreateServerOptions = {}) {
 			});
 			scoped.register(channelRoutes, { channels });
 			scoped.register(botRoutes, { bots, webRequests: botWebRequests });
-			scoped.register(webRoutes, { store: proxies, web });
+			scoped.register(webRoutes, {
+				store: proxies,
+				web,
+				onChanged: (workspaceId, change, by) =>
+					appEvents.onWebChanged(workspaceId, change, by),
+			});
 			scoped.register(overviewRoutes, {
 				accounts,
 				agentTokens,
