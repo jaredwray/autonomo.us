@@ -38,5 +38,5 @@ COPY --from=build /repo/core/ux/dist core/ux/dist
 
 ENV NODE_ENV=production PORT=3000 HOST=0.0.0.0
 USER node
-EXPOSE 3000
+EXPOSE 3000 3001
 CMD ["node", "core/server/dist/start.mjs"]

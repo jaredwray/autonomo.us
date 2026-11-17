@@ -92,7 +92,11 @@ import { type WorkspaceRef, WorkspaceStore } from "./workspaces/store.js";
 const releases = new WeakMap<ReturnType<typeof Fastify>, () => Promise<void>>();
 const backgrounds = new WeakMap<
 	ReturnType<typeof Fastify>,
-	{ settle(): Promise<void>; sweep(): Promise<void>; catchUp(): void }
+	{
+		settle(): Promise<void>;
+		sweep(maxMcpEvents?: number): Promise<void>;
+		catchUp(): void;
+	}
 >();
 const BOT_SWEEP_INTERVAL_MS = 30_000;
 type PersistenceErrorHandler = (
@@ -105,6 +109,8 @@ const initializers = new WeakMap<
 >();
 
 export type CreateServerOptions = {
+	/** Containers use durable platform invocations instead of detached interval sweeps. */
+	backgroundTimers?: boolean;
 	/** Explicit adapters for event integration tests. Production requires durable MongoDB and pinned HTTPS. */
 	mcpEvents?: {
 		repository: EventRepository;
@@ -595,9 +601,6 @@ export function createServer(options: CreateServerOptions = {}) {
 		return initialized;
 	};
 	initializers.set(server, initialize);
-	eventSweepers.set(server, async () => {
-		await mcpEvents?.sweep(1);
-	});
 	if (!options.deferPersistence)
 		server.addHook("onReady", async () => {
 			await initialize();
@@ -632,7 +635,7 @@ export function createServer(options: CreateServerOptions = {}) {
 	// requests: a reply interrupted there is not retried, and webhook retries
 	// wait for the sweep a later request starts (`catchUpBackgroundWork`).
 	let sweeper: ReturnType<typeof setInterval> | undefined;
-	if (!options.deferPersistence)
+	if (!options.deferPersistence && options.backgroundTimers !== false)
 		server.addHook("onReady", async () => {
 			sweeper = setInterval(() => {
 				botRunner.sweep().catch(() => {});
@@ -643,17 +646,17 @@ export function createServer(options: CreateServerOptions = {}) {
 		});
 	backgrounds.set(server, {
 		settle: async () => {
-			await Promise.all([
-				botRunner.idle(),
-				agentWebhooks.idle(),
-				mcpEvents?.idle(),
-			]);
+			// Bot replies can enqueue fresh webhook/MCP work. Wait for producers
+			// first so a completed early consumer snapshot cannot permit sleep.
+			await botRunner.idle();
+			await agentWebhooks.idle();
+			await mcpEvents?.idle();
 		},
-		sweep: async () => {
+		sweep: async (maxMcpEvents = 50) => {
 			await Promise.all([
 				botRunner.sweep(),
 				agentWebhooks.sweep(),
-				mcpEvents?.sweep(),
+				mcpEvents?.sweep(maxMcpEvents),
 			]);
 		},
 		catchUp: () => {
@@ -710,9 +713,10 @@ export function catchUpBackgroundWork(server: ReturnType<typeof Fastify>) {
 /** Starts bot runs and webhook POSTs that nobody is working on, then waits for them. */
 export async function sweepBackgroundWork(
 	server: ReturnType<typeof Fastify>,
+	maxMcpEvents = 50,
 ): Promise<void> {
 	const background = backgrounds.get(server);
-	await background?.sweep();
+	await background?.sweep(maxMcpEvents);
 	await background?.settle();
 }
 
@@ -722,13 +726,4 @@ export async function initializePersistence(
 	onError?: PersistenceErrorHandler,
 ): Promise<boolean> {
 	return (await initializers.get(server)?.(onError)) ?? false;
-}
-
-// The control-port sweep is bounded to one attempt per due subscription.
-const eventSweepers = new WeakMap<
-	ReturnType<typeof Fastify>,
-	() => Promise<void>
->();
-export async function sweepMcpEvents(server: ReturnType<typeof Fastify>) {
-	await eventSweepers.get(server)?.();
 }

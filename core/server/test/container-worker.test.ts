@@ -41,7 +41,14 @@ function fixture() {
 		setInactivityTimeout: vi.fn(async () => {}),
 		getTcpPort: vi.fn((port: number) => (port === 3000 ? app : control)),
 	};
-	const ctx = { container, blockConcurrencyWhile: vi.fn((fn) => fn()) };
+	const ctx = {
+		container,
+		storage: {
+			getAlarm: vi.fn(async () => null),
+			setAlarm: vi.fn(async () => {}),
+		},
+		blockConcurrencyWhile: vi.fn((fn) => fn()),
+	};
 	const instance = new GatewayContainer(ctx as never, bindings as never);
 	return { container, app, control, ctx, instance };
 }
@@ -111,6 +118,38 @@ describe("Container deployment boundary", () => {
 		await worker.scheduled({} as never, env as never);
 		expect(f.container.start).toHaveBeenCalledTimes(2);
 		expect(f.app.fetch).not.toHaveBeenCalled();
+	});
+	it("keeps an alarm invocation pending through a 90-second background run", async () => {
+		vi.useFakeTimers();
+		const f = fixture();
+		let finish!: () => void;
+		f.control.fetch.mockImplementation(async (url: string) => {
+			if (url.endsWith("/sweep"))
+				await new Promise<void>((resolve) => {
+					finish = resolve;
+				});
+			return new Response(null, { status: 204 });
+		});
+		let settled = false;
+		const alarm = f.instance.alarm().then(() => {
+			settled = true;
+		});
+		await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+		await vi.advanceTimersByTimeAsync(90_000);
+		expect(settled).toBe(false);
+		finish();
+		await alarm;
+		expect(settled).toBe(true);
+	});
+	it("arms a drain before forwarding and re-arms after a slow response", async () => {
+		const f = fixture();
+		f.app.fetch.mockImplementation(async () => {
+			expect(f.ctx.storage.setAlarm).toHaveBeenCalledTimes(1);
+			// The first alarm could already have fired while this request was running.
+			return new Response("ok");
+		});
+		await f.instance.fetch(new Request("https://dev.autonomo.us/mcp"));
+		expect(f.ctx.storage.setAlarm).toHaveBeenCalledTimes(2);
 	});
 	it("updates the selected image and changed secrets after DO eviction", async () => {
 		const f = fixture();

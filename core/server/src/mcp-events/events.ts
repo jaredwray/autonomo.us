@@ -491,7 +491,7 @@ export class McpEvents {
 		});
 	}
 	async idle() {
-		await Promise.allSettled([...this.working]);
+		while (this.working.size) await Promise.allSettled([...this.working]);
 	}
 	async close() {
 		this.closing = true;

@@ -71,11 +71,11 @@ export class GatewayContainer extends DurableObject<Env> {
 			});
 		await container.setInactivityTimeout(INACTIVITY_MS);
 		const control = container.getTcpPort(3001);
-		for (let attempt = 0; attempt < 30; attempt++) {
+		for (let attempt = 0; attempt < 12; attempt++) {
 			try {
 				const response = await control.fetch("http://container/ready", {
 					headers: { authorization: `Bearer ${env.CONTAINER_CONTROL_TOKEN}` },
-					signal: AbortSignal.timeout(2000),
+					signal: AbortSignal.timeout(10_000),
 				});
 				await response.body?.cancel();
 				if (response.ok) return;
@@ -86,8 +86,20 @@ export class GatewayContainer extends DurableObject<Env> {
 		}
 		throw new Error("Container readiness timed out");
 	}
+	private async armDrain() {
+		// Arm durably BEFORE forwarding a request that can start detached Node work.
+		const next = Date.now() + 1000;
+		const alarm = await this.ctx.storage.getAlarm();
+		if (alarm === null || alarm > next) await this.ctx.storage.setAlarm(next);
+	}
+	async alarm() {
+		// Alarms can await long bot runs (the fetch waitUntil budget cannot).
+		// A failed alarm retries through the platform; cron is an independent recovery path.
+		await this.sweep();
+	}
 	async fetch(request: Request) {
 		await this.ready();
+		await this.armDrain();
 		const url = new URL(request.url);
 		url.protocol = "http:";
 		url.host = "container";
@@ -102,9 +114,13 @@ export class GatewayContainer extends DurableObject<Env> {
 		])
 			forwarded.headers.delete(name);
 		// Never retry an application request: the first attempt may have committed.
-		return this.container.getTcpPort(3000).fetch(forwarded);
+		const response = await this.container.getTcpPort(3000).fetch(forwarded);
+		// The first alarm may have run during a slow request, before it enqueued work.
+		await this.armDrain();
+		return response;
 	}
 	async sweep() {
+		const deadline = Date.now() + 14 * 60_000;
 		await this.ready();
 		const response = await this.container
 			.getTcpPort(3001)
@@ -113,7 +129,7 @@ export class GatewayContainer extends DurableObject<Env> {
 				headers: {
 					authorization: `Bearer ${this.env.CONTAINER_CONTROL_TOKEN}`,
 				},
-				signal: AbortSignal.timeout(55_000),
+				signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())),
 			});
 		await response.body?.cancel();
 		if (!response.ok) throw new Error("Container retry sweep failed");

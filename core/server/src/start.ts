@@ -6,7 +6,7 @@ import { ModelCatalogService } from "./model-catalog-service.js";
 import {
 	createServer,
 	initializePersistence,
-	sweepMcpEvents,
+	sweepBackgroundWork,
 } from "./server.js";
 
 /**
@@ -38,13 +38,14 @@ const server = createServer({
 	modelCatalog,
 	dashboardDir,
 	assumeHttps: containerMode,
+	backgroundTimers: !containerMode,
 });
 let closing = false;
 const control = containerMode
 	? createContainerControl({
 			token: process.env.CONTAINER_CONTROL_TOKEN ?? "",
 			ready: async () => !closing && (await initializePersistence(server)),
-			sweep: () => sweepMcpEvents(server),
+			sweep: () => sweepBackgroundWork(server, 1),
 		})
 	: undefined;
 for (const signal of ["SIGTERM", "SIGINT"] as const)
@@ -53,8 +54,10 @@ for (const signal of ["SIGTERM", "SIGINT"] as const)
 		closing = true;
 		const deadline = setTimeout(() => process.exit(1), 15_000);
 		deadline.unref();
-		control?.close();
-		void server.close().then(
+		const controlClosed = control
+			? new Promise<void>((resolve) => control.close(() => resolve()))
+			: Promise.resolve();
+		void Promise.all([server.close(), controlClosed]).then(
 			() => process.exit(0),
 			() => process.exit(1),
 		);
