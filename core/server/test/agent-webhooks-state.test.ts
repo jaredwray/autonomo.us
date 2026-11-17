@@ -280,6 +280,17 @@ describe("webhook state", () => {
 		webhook = enqueued(webhook, edited(8), "e3", NOW, timing) ?? webhook;
 		expect(webhook.queue).toHaveLength(3);
 		expect(webhook.omitted).toBe(2);
+		// An edit that mentions the agent asks something: it takes a bulk
+		// event's place, and nothing takes its own.
+		const asks = { ...edited(9), mentioned: true } as AgentWakeEvent;
+		webhook = enqueued(webhook, asks, "e4", NOW, timing) ?? webhook;
+		webhook = enqueued(webhook, edited(10), "e5", NOW, timing) ?? webhook;
+		expect(webhook.queue).toEqual([
+			expect.objectContaining({ type: "synapse.note_created" }),
+			expect.objectContaining({ type: "channel.joined" }),
+			asks,
+		]);
+		expect(webhook.omitted).toBe(4);
 	});
 
 	it("claims under a lease, retries with backoff, and gives up after the last attempt", () => {

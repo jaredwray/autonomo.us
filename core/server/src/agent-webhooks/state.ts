@@ -73,11 +73,12 @@ const isPost = (event: AgentWakeEvent): event is PostEvent =>
 /**
  * Events that come in bulk and say little each: plain messages, edits, and
  * note changes. A full queue drops the oldest of them to keep an event that
- * asks something of the agent.
+ * asks something of the agent. An edit that mentions the agent asks, as a
+ * mention does.
  */
 const isBulk = (event: AgentWakeEvent) =>
 	event.type === "channel.message" ||
-	event.type === "channel.message_edited" ||
+	(event.type === "channel.message_edited" && !event.mentioned) ||
 	event.type === "channel.message_deleted" ||
 	event.type === "synapse.note_created" ||
 	event.type === "synapse.note_updated" ||
