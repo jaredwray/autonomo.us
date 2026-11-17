@@ -104,6 +104,9 @@ jobs:
             -e MONGODB_URI='mongodb://autonomous:autonomous@127.0.0.1:27017/container_smoke?authSource=admin' \
             autonomous-container-ci
           docker exec -i autonomous-container-test node --input-type=module < core/server/scripts/check-container-image.ts
+          # Restart the same one-port image against the same synthetic database.
+          docker restart --timeout 20 autonomous-container-test
+          docker exec -i autonomous-container-test node --input-type=module < core/server/scripts/check-container-image.ts
           docker stop --time 20 autonomous-container-test
           test "$(docker inspect --format '{{.State.ExitCode}}' autonomous-container-test)" = 0
       - name: Remove smoke-test container

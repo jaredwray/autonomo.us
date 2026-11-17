@@ -382,7 +382,7 @@ export class McpEvents {
 	}
 	async sweep(maxPerSubscription = 50) {
 		if (this.closing) return;
-		// Control-port sweeps must drain before close() releases MongoDB too.
+		// Maintenance sweeps must drain before close() releases MongoDB too.
 		const work = this.sweepBatch(maxPerSubscription);
 		this.working.add(work);
 		try {

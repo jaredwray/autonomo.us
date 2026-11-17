@@ -9,8 +9,14 @@ vi.mock("cloudflare:workers", () => ({
 	},
 }));
 
+import Fastify from "fastify";
 import { containerEnvironment } from "../src/container-environment.js";
 import worker, { GatewayContainer } from "../src/container-worker.js";
+import { registerMaintenanceRoutes } from "../src/maintenance-control.js";
+import {
+	MAINTENANCE_PATHS,
+	PUBLIC_INGRESS_HEADER,
+} from "../src/maintenance-protocol.js";
 
 const bindings = {
 	MONGODB_URI: "mongodb://synthetic.invalid/test",
@@ -39,7 +45,15 @@ function fixture() {
 			container.running = false;
 		}),
 		setInactivityTimeout: vi.fn(async () => {}),
-		getTcpPort: vi.fn((port: number) => (port === 3000 ? app : control)),
+		getTcpPort: vi.fn((port: number) => {
+			expect(port).toBe(3000);
+			return {
+				fetch: (input: string | Request, init?: RequestInit) =>
+					typeof input === "string"
+						? control.fetch(input, init)
+						: app.fetch(input),
+			};
+		}),
 	};
 	const ctx = {
 		container,
@@ -108,6 +122,7 @@ describe("Container deployment boundary", () => {
 		expect(sent.headers.get("authorization")).toBe("Bearer synthetic");
 		expect(sent.headers.get("cookie")).toBe("session=synthetic");
 		expect(sent.headers.has("x-forwarded-host")).toBe(false);
+		expect(sent.headers.get(PUBLIC_INGRESS_HEADER)).toBe("1");
 	});
 	it("wakes a stopped container on cron with no incoming user requests", async () => {
 		const f = fixture();
@@ -115,7 +130,7 @@ describe("Container deployment boundary", () => {
 		await worker.scheduled({} as never, env as never);
 		expect(f.container.start).toHaveBeenCalledTimes(1);
 		expect(f.control.fetch).toHaveBeenLastCalledWith(
-			"http://container/sweep",
+			`http://container${MAINTENANCE_PATHS.sweep}`,
 			expect.objectContaining({ method: "POST" }),
 		);
 		f.container.running = false;
@@ -164,12 +179,12 @@ describe("Container deployment boundary", () => {
 		expect(f.ctx.storage.setAlarm).not.toHaveBeenCalled();
 		await f.instance.alarm();
 		expect(f.control.fetch).toHaveBeenLastCalledWith(
-			"http://container/drain",
+			`http://container${MAINTENANCE_PATHS.drain}`,
 			expect.objectContaining({ method: "POST" }),
 		);
 		expect(
 			f.control.fetch.mock.calls.some(
-				([url]) => url === "http://container/sweep",
+				([url]) => url === `http://container${MAINTENANCE_PATHS.sweep}`,
 			),
 		).toBe(false);
 	});
@@ -232,4 +247,61 @@ describe("Container deployment boundary", () => {
 			worker.scheduled({} as never, env as never),
 		).resolves.toBeUndefined();
 	});
+});
+
+it("blocks public normalized/encoded maintenance attempts even with a valid token and spoofed ingress marker", async () => {
+	const server = Fastify();
+	const ready = vi.fn(async () => true);
+	const sweep = vi.fn(async () => {});
+	const drain = vi.fn(async () => {});
+	const maintenance = registerMaintenanceRoutes(server, {
+		token: bindings.CONTAINER_CONTROL_TOKEN,
+		ready,
+		sweep,
+		drain,
+	});
+	const f = fixture();
+	f.app.fetch.mockImplementation(async (request: Request) => {
+		const url = new URL(request.url);
+		const response = await server.inject({
+			method: request.method as "POST",
+			url: url.pathname + url.search,
+			headers: Object.fromEntries(request.headers),
+		});
+		return new Response(response.body || null, { status: response.statusCode });
+	});
+	try {
+		for (const path of [
+			"/_internal/maintenance/sweep",
+			"/%5finternal/maintenance/sweep",
+			"/%255finternal/maintenance/sweep",
+			"/_internal%2fmaintenance%2fsweep",
+			"/v1/../_internal/maintenance/sweep",
+			"/v1/%2e%2e/_internal/maintenance/sweep",
+			"/%5finternal//maintenance/sweep",
+			"/_internal/maintenance/sweep?x=1",
+			"/_INTERNAL/maintenance/sweep",
+			"/v1/%252e%252e/%255finternal/maintenance/sweep",
+			"/%5finternal\\maintenance\\sweep",
+		]) {
+			const response = await f.instance.fetch(
+				new Request(`https://dev.autonomo.us${path}`, {
+					method: "POST",
+					headers: {
+						authorization: `Bearer ${bindings.CONTAINER_CONTROL_TOKEN}`,
+						[PUBLIC_INGRESS_HEADER]: "0",
+					},
+				}),
+			);
+			expect(response.status).toBe(404);
+		}
+		expect(ready).not.toHaveBeenCalled();
+		expect(sweep).not.toHaveBeenCalled();
+		expect(drain).not.toHaveBeenCalled();
+		for (const [request] of f.app.fetch.mock.calls)
+			expect((request as Request).headers.get(PUBLIC_INGRESS_HEADER)).toBe("1");
+	} finally {
+		await maintenance.close();
+		await server.close();
+	}
 });
