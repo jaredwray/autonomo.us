@@ -561,7 +561,9 @@ happened to the agent itself: a channel it is in, its workspace's shared
 Synapse, its own grants. The groups added to the first three (changes to
 channels, notes, models, and web access) therefore reach only
 an agent that holds both `mcp:read` and `mcp:call`, whatever its webhook
-chose; **Agent settings** and **App sign-ins** are about the agent and reach
+chose. The grants are checked when the event happens and again when its POST
+is made up, so grants taken away in between take the waiting events with
+them; **Agent settings** and **App sign-ins** are about the agent and reach
 it with any grants, and mentions, new messages, and proposal decisions are
 sent as they always were. It is never woken by its own doing, whether a
 message, a note in its own space, or a channel it archived itself. Another

@@ -60,6 +60,35 @@ export function wants(
 	);
 }
 
+/** What an agent needs to read anything over MCP: to list tools, and to call one. */
+const MCP_GRANTS = ["mcp:read", "mcp:call"] as const;
+/**
+ * The grants an agent must hold to be sent a group's events, so that a
+ * webhook never tells it more than its own credential could read. The three
+ * groups that came first, and what happens to the agent itself, need none.
+ */
+const GROUP_GRANTS: Partial<Record<AgentWebhookEventGroup, readonly string[]>> =
+	{
+		"message-changes": MCP_GRANTS,
+		membership: MCP_GRANTS,
+		channels: MCP_GRANTS,
+		"shared-notes": MCP_GRANTS,
+		"own-notes": MCP_GRANTS,
+		models: [...MCP_GRANTS, "models:chat"],
+		web: [...MCP_GRANTS, "web:fetch"],
+	};
+
+/** Whether an agent holding `permissions` may be sent this event. */
+export function mayHear(
+	event: AgentWakeEvent,
+	permissions: readonly string[],
+): boolean {
+	const group = agentWakeEventGroup(event);
+	return (group ? (GROUP_GRANTS[group] ?? []) : []).every((grant) =>
+		permissions.includes(grant),
+	);
+}
+
 /** A newly posted message, which a retried post can report twice. */
 type PostEvent = Extract<
 	AgentWakeEvent,
@@ -195,7 +224,8 @@ export type Claim = {
  * Takes the due POST under a lease: the delivery waiting for a retry, or a
  * new one made of the queued events. Null when nothing is due or someone
  * else holds the lease. `dueAt` moves to the end of the lease, so a sender
- * that crashes leaves the delivery for the sweep.
+ * that crashes leaves the delivery for the sweep. A new delivery leaves out
+ * the queued events the agent's grants no longer let it hear.
  */
 export function claimed(
 	webhook: StoredAgentWebhook,
@@ -204,6 +234,8 @@ export function claimed(
 	timing: WebhookTiming,
 	/** Recorded on a new delivery; its retries keep it. */
 	agentName?: string,
+	/** The agent's grants now; without them every queued event is sent. */
+	permissions?: readonly string[],
 ): Claim | null {
 	const at = iso(now);
 	if (webhook.status !== "active" || !webhook.dueAt || webhook.dueAt > at)
@@ -227,12 +259,19 @@ export function claimed(
 	if (current.status !== "active") return { webhook: current, delivery: null };
 	let delivery = current.delivery;
 	if (!delivery) {
-		if (!current.queue.length)
-			return { webhook: { ...current, dueAt: null }, delivery: null };
+		// Grants taken away since an event was queued take the event with them.
+		const events = permissions
+			? current.queue.filter((event) => mayHear(event, permissions))
+			: current.queue;
+		if (!events.length)
+			return {
+				webhook: { ...current, queue: [], omitted: 0, dueAt: null },
+				delivery: null,
+			};
 		delivery = {
 			id: `msg_${randomUUID().replaceAll("-", "")}`,
 			createdAt: at,
-			events: current.queue,
+			events,
 			omitted: current.omitted,
 			...(agentName === undefined ? {} : { agentName }),
 			attempts: 0,

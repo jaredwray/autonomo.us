@@ -17,6 +17,7 @@ import {
 	claimed,
 	enqueued,
 	finished,
+	mayHear,
 	publicWebhook,
 	switched,
 	type WebhookTiming,
@@ -291,6 +292,64 @@ describe("webhook state", () => {
 			asks,
 		]);
 		expect(webhook.omitted).toBe(4);
+	});
+
+	it("makes up a POST from the events the agent's grants still let it hear", () => {
+		const by = { kind: "user", id: "u1", name: "Jared" } as const;
+		const at = iso(NOW);
+		const web: AgentWakeEvent = {
+			type: "web.changed",
+			at,
+			change: "policy",
+			by,
+		};
+		const joined: AgentWakeEvent = {
+			type: "channel.joined",
+			at,
+			channelId: "c1",
+			channel: "general",
+			access: "post",
+			by,
+		};
+		const renamed: AgentWakeEvent = {
+			type: "agent.updated",
+			at,
+			changes: ["name"],
+			previousName: "Scout",
+			by,
+		};
+		const mcp = ["mcp:read", "mcp:call"];
+		// The first three groups and the agent's own events need no grant.
+		for (const event of [message(1), message(2, "channel.mention"), renamed])
+			expect(mayHear(event, [])).toBe(true);
+		expect(mayHear(joined, ["mcp:read"])).toBe(false);
+		expect(mayHear(joined, mcp)).toBe(true);
+		expect(mayHear(web, mcp)).toBe(false);
+		expect(mayHear(web, [...mcp, "web:fetch"])).toBe(true);
+
+		let webhook = stored({
+			events: ["messages", "membership", "web", "agent"],
+		});
+		for (const [key, event] of Object.entries({ web, joined, renamed }))
+			webhook = enqueued(webhook, event, key, NOW, timing) ?? webhook;
+		const due = NOW + 5_000;
+		// With its grants, everything goes; with the web grant gone, the rest.
+		expect(
+			claimed(webhook, "l1", due, timing, "Scout", [...mcp, "web:fetch"])
+				?.delivery?.events,
+		).toEqual([web, joined, renamed]);
+		const narrowed = claimed(webhook, "l1", due, timing, "Scout", mcp);
+		expect(narrowed?.delivery?.events).toEqual([joined, renamed]);
+		expect(narrowed?.webhook.queue).toEqual([]);
+		// With nothing left to say, nothing is sent and nothing waits.
+		const only = enqueued(stored({ events: ["web"] }), web, "w", NOW, timing);
+		if (!only) throw new Error("not enqueued");
+		expect(claimed(only, "l1", due, timing, "Scout", mcp)).toMatchObject({
+			delivery: null,
+			webhook: { queue: [], dueAt: null },
+		});
+		// A caller that does not know the grants sends what is queued.
+		expect(claimed(only, "l1", due, timing)?.delivery?.events).toEqual([web]);
 	});
 
 	it("claims under a lease, retries with backoff, and gives up after the last attempt", () => {

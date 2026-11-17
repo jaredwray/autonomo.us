@@ -9,6 +9,7 @@ import type {
 } from "@autonomo.us/common";
 import type { ChannelChange } from "../channels/channels.js";
 import type { SynapseChange } from "../synapse/synapse.js";
+import { mayHear } from "./state.js";
 import type {
 	AgentNoticeFor,
 	AgentWebhooks,
@@ -35,8 +36,6 @@ type Draft = Timeless<AgentWakeEvent>;
 
 /** The default workspace's shared space; another's is `shared-<workspace id>`. */
 const SHARED = "shared";
-/** The grants an agent needs to read anything over MCP: list tools, and call one. */
-const MCP_GRANTS = ["mcp:read", "mcp:call"];
 const sameActor = (
 	actor: { kind: string; id: string },
 	agentId: string,
@@ -68,18 +67,17 @@ export class AppEvents {
 		};
 	}
 	/**
-	 * `notice`, for the agents that can read what it reports: those holding
-	 * the MCP grants and any `permission` the resource needs besides. An
-	 * agent that cannot is not told, whatever its webhook chose.
+	 * `notice`, for the agents whose grants let them hear the event it makes
+	 * (`mayHear`). An agent that could not read what happened is not told,
+	 * whatever its webhook chose.
 	 */
-	private readers(notice: AgentNoticeFor, permission?: string): AgentNoticeFor {
+	private readers(notice: AgentNoticeFor): AgentNoticeFor {
 		return async (agentId) => {
+			const made = await notice(agentId);
+			if (!made) return null;
 			const grants =
 				(await this.options.agents.find(agentId))?.permissions ?? [];
-			return MCP_GRANTS.every((grant) => grants.includes(grant)) &&
-				(permission === undefined || grants.includes(permission))
-				? notice(agentId)
-				: null;
+			return mayHear(made.event, grants) ? made : null;
 		};
 	}
 	private async quietly(work: () => Promise<void>): Promise<void> {
@@ -375,20 +373,21 @@ export class AppEvents {
 
 	// The workspace.
 
-	/** Tells every agent of the workspace that chose `group`, once each. */
+	/**
+	 * Tells every agent of the workspace that chose `group`, once each. Only
+	 * agents that hold the grant to use what changed are told (`mayHear`).
+	 */
 	private toWorkspace(
 		workspaceId: string,
 		group: "models" | "web",
 		event: Draft,
-		/** Only agents that hold this grant too can use what changed. */
-		permission?: string,
 	): Promise<void> {
 		const at = this.at();
 		return this.quietly(() =>
 			this.options.webhooks.broadcast(
 				workspaceId,
 				group,
-				this.readers(() => this.once(event, at), permission),
+				this.readers(() => this.once(event, at)),
 			),
 		);
 	}
@@ -399,12 +398,11 @@ export class AppEvents {
 		change: "models" | "routing" | "failover",
 		by: AgentWakeActor,
 	): Promise<void> {
-		return this.toWorkspace(
-			workspaceId,
-			"models",
-			{ type: "models.changed", change, by },
-			"models:chat",
-		);
+		return this.toWorkspace(workspaceId, "models", {
+			type: "models.changed",
+			change,
+			by,
+		});
 	}
 
 	/** The workspace's web policy or proxies changed. */
@@ -413,11 +411,10 @@ export class AppEvents {
 		change: "policy" | "proxies",
 		by: AgentWakeActor,
 	): Promise<void> {
-		return this.toWorkspace(
-			workspaceId,
-			"web",
-			{ type: "web.changed", change, by },
-			"web:fetch",
-		);
+		return this.toWorkspace(workspaceId, "web", {
+			type: "web.changed",
+			change,
+			by,
+		});
 	}
 }

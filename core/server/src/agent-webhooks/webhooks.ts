@@ -574,6 +574,7 @@ export class AgentWebhooks {
 					this.now(),
 					this.timing,
 					agent?.name,
+					agent?.permissions,
 				);
 				claim.delivery = taken?.delivery ?? null;
 				return taken?.webhook ?? null;

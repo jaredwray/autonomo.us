@@ -48,7 +48,7 @@ function setUp() {
 			},
 			{ pinsAddress: false as const },
 		),
-		timing: { gapMs: 5 },
+		timing: { gapMs: 25 },
 		timeoutMs: 200,
 	});
 	closers.push(() => webhooks.close());
@@ -92,7 +92,12 @@ function setUp() {
 	};
 	const types = async (agentId: string) =>
 		(await heard(agentId)).map((event) => event.type);
-	return { events, agent, heard, types, webhooks, repository };
+	/** Changes an agent's grants, as an admin's edit does. */
+	const grant = (agentId: string, permissions: string[]) => {
+		const current = agents.get(agentId);
+		if (current) agents.set(agentId, { ...current, permissions });
+	};
+	return { events, agent, heard, types, grant, webhooks, repository };
 }
 
 function channel(
@@ -537,6 +542,42 @@ describe("agent, models, and web events", () => {
 		);
 		expect(await types(blind)).toEqual(["agent.permissions_changed"]);
 		expect(await types(partial)).toEqual([]);
+	});
+
+	it("leaves out what was queued when the agent's grants are taken away before it is sent", async () => {
+		const { events, agent, heard, grant } = setUp();
+		const scout = await agent(["channels", "web", "agent"], {
+			permissions: ["mcp:read", "mcp:call", "web:fetch"],
+		});
+		await events.onChannelChanged(channel([[scout, "post"]]), {
+			action: "archived",
+			actor: jared,
+			at: AT,
+			revision: 5,
+			lifecycle: "archived",
+		});
+		await events.onWebChanged(WORKSPACE, "policy", by);
+		// Both wait for the POST; meanwhile an admin takes the grants away.
+		const before = {
+			name: "Scout",
+			description: "",
+			permissions: ["mcp:read", "mcp:call", "web:fetch"],
+		};
+		grant(scout, []);
+		await events.onAgentUpdated(
+			WORKSPACE,
+			scout,
+			before,
+			{ ...before, permissions: [] },
+			by,
+		);
+		// Only what happened to the agent itself is still its to hear.
+		expect(await heard(scout)).toEqual([
+			expect.objectContaining({
+				type: "agent.permissions_changed",
+				removed: ["mcp:read", "mcp:call", "web:fetch"],
+			}),
+		]);
 	});
 
 	it("never fails the change it reports", async () => {
