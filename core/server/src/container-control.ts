@@ -6,11 +6,13 @@ export function createContainerControl(options: {
 	token: string;
 	ready(): Promise<boolean>;
 	sweep(): Promise<void>;
+	drain(): Promise<void>;
 }) {
 	if (options.token.length < 32)
 		throw new Error("Missing container control token");
 	const expected = Buffer.from(`Bearer ${options.token}`);
 	let sweeping: Promise<void> | undefined;
+	let draining: Promise<void> | undefined;
 	let checking: Promise<boolean> | undefined;
 	let readyUntil = 0;
 	const ready = () => {
@@ -48,6 +50,13 @@ export function createContainerControl(options: {
 					sweeping = undefined;
 				});
 				await sweeping;
+				response.writeHead(204).end();
+			} else if (request.method === "POST" && request.url === "/drain") {
+				// No initialization or repository scans for request-triggered drains.
+				draining ??= options.drain().finally(() => {
+					draining = undefined;
+				});
+				await draining;
 				response.writeHead(204).end();
 			} else response.writeHead(404).end();
 		} catch {

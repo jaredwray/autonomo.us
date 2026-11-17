@@ -6,6 +6,7 @@ import { ModelCatalogService } from "./model-catalog-service.js";
 import {
 	createServer,
 	initializePersistence,
+	settleBackgroundWork,
 	sweepBackgroundWork,
 } from "./server.js";
 
@@ -46,6 +47,7 @@ const control = containerMode
 			token: process.env.CONTAINER_CONTROL_TOKEN ?? "",
 			ready: async () => !closing && (await initializePersistence(server)),
 			sweep: () => sweepBackgroundWork(server, 1),
+			drain: () => settleBackgroundWork(server),
 		})
 	: undefined;
 for (const signal of ["SIGTERM", "SIGINT"] as const)

@@ -95,11 +95,25 @@ export class GatewayContainer extends DurableObject<Env> {
 	async alarm() {
 		// Alarms can await long bot runs (the fetch waitUntil budget cannot).
 		// A failed alarm retries through the platform; cron is an independent recovery path.
-		await this.sweep();
+		// Request alarms only drain work already started; never scan durable queues.
+		// A stopped/crashed instance is recovered by the independent cron invocation.
+		if (!this.container.running) return;
+		const response = await this.container
+			.getTcpPort(3001)
+			.fetch("http://container/drain", {
+				method: "POST",
+				headers: {
+					authorization: `Bearer ${this.env.CONTAINER_CONTROL_TOKEN}`,
+				},
+				signal: AbortSignal.timeout(14 * 60_000),
+			});
+		await response.body?.cancel();
+		if (!response.ok) throw new Error("Container background drain failed");
 	}
 	async fetch(request: Request) {
 		await this.ready();
-		await this.armDrain();
+		const canStartWork = !["GET", "HEAD", "OPTIONS"].includes(request.method);
+		if (canStartWork) await this.armDrain();
 		const url = new URL(request.url);
 		url.protocol = "http:";
 		url.host = "container";
@@ -116,7 +130,14 @@ export class GatewayContainer extends DurableObject<Env> {
 		// Never retry an application request: the first attempt may have committed.
 		const response = await this.container.getTcpPort(3000).fetch(forwarded);
 		// The first alarm may have run during a slow request, before it enqueued work.
-		await this.armDrain();
+		// Preserve a committed response if this best-effort re-arm fails. Cron recovers.
+		if (canStartWork) {
+			try {
+				await this.armDrain();
+			} catch {
+				console.error("gateway.container_alarm_rearm_failed");
+			}
+		}
 		return response;
 	}
 	async sweep() {

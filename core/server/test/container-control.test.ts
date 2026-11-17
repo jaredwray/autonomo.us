@@ -24,8 +24,14 @@ it("protects readiness and sweeps and coalesces concurrent ticks without exposin
 			}),
 	);
 	const ready = vi.fn(async () => true);
+	const drain = vi.fn(async () => {});
 	const token = "synthetic-control-".repeat(4);
-	const server = createContainerControl({ token, ready, sweep });
+	const server = createContainerControl({
+		token,
+		ready,
+		sweep,
+		drain,
+	});
 	servers.push(server);
 	server.listen(0, "127.0.0.1");
 	await once(server, "listening");
@@ -35,6 +41,12 @@ it("protects readiness and sweeps and coalesces concurrent ticks without exposin
 	expect((await fetch(`${base}/sweep`, { method: "POST" })).status).toBe(404);
 	expect(sweep).not.toHaveBeenCalled();
 	const headers = { authorization: `Bearer ${token}` };
+	expect(
+		(await fetch(`${base}/drain`, { method: "POST", headers })).status,
+	).toBe(204);
+	expect(drain).toHaveBeenCalledTimes(1);
+	expect(ready).not.toHaveBeenCalled();
+	expect(sweep).not.toHaveBeenCalled();
 	expect((await fetch(`${base}/ready`, { headers })).status).toBe(204);
 	const a = fetch(`${base}/sweep`, { method: "POST", headers });
 	const b = fetch(`${base}/sweep`, { method: "POST", headers });
@@ -68,6 +80,7 @@ it("retains successful slow initialization across an aborted readiness probe", a
 		token,
 		ready,
 		sweep: async () => {},
+		drain: async () => {},
 	});
 	servers.push(server);
 	server.listen(0, "127.0.0.1");

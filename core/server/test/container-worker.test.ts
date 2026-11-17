@@ -98,7 +98,11 @@ describe("Container deployment boundary", () => {
 				env: expect.objectContaining({ CONTAINER_MODE: "true" }),
 			}),
 		);
-		const sent = f.app.fetch.mock.calls[0][0] as unknown as Request;
+		const sent = f.app.fetch.mock.calls
+			.map(([request]) => request as unknown as Request)
+			.find((request) => request.method === "POST");
+		expect(sent).toBeDefined();
+		if (!sent) throw new Error("Missing forwarded POST");
 		expect(sent.url).toBe("http://container/oauth/token?x=1");
 		expect(await sent.text()).toBe("exact=bytes");
 		expect(sent.headers.get("authorization")).toBe("Bearer synthetic");
@@ -122,9 +126,10 @@ describe("Container deployment boundary", () => {
 	it("keeps an alarm invocation pending through a 90-second background run", async () => {
 		vi.useFakeTimers();
 		const f = fixture();
+		f.container.running = true;
 		let finish!: () => void;
 		f.control.fetch.mockImplementation(async (url: string) => {
-			if (url.endsWith("/sweep"))
+			if (url.endsWith("/drain"))
 				await new Promise<void>((resolve) => {
 					finish = resolve;
 				});
@@ -148,8 +153,41 @@ describe("Container deployment boundary", () => {
 			// The first alarm could already have fired while this request was running.
 			return new Response("ok");
 		});
-		await f.instance.fetch(new Request("https://dev.autonomo.us/mcp"));
+		await f.instance.fetch(
+			new Request("https://dev.autonomo.us/mcp", { method: "POST" }),
+		);
 		expect(f.ctx.storage.setAlarm).toHaveBeenCalledTimes(2);
+	});
+	it("does not arm background work from public health requests or scan queues in request alarms", async () => {
+		const f = fixture();
+		await f.instance.fetch(new Request("https://dev.autonomo.us/healthz"));
+		expect(f.ctx.storage.setAlarm).not.toHaveBeenCalled();
+		await f.instance.alarm();
+		expect(f.control.fetch).toHaveBeenLastCalledWith(
+			"http://container/drain",
+			expect.objectContaining({ method: "POST" }),
+		);
+		expect(
+			f.control.fetch.mock.calls.some(
+				([url]) => url === "http://container/sweep",
+			),
+		).toBe(false);
+	});
+	it("preserves an already committed response when the post-response alarm write fails", async () => {
+		const f = fixture();
+		f.ctx.storage.setAlarm
+			.mockResolvedValueOnce(undefined)
+			.mockRejectedValueOnce(new Error("synthetic storage failure"));
+		f.app.fetch.mockResolvedValue(new Response("committed", { status: 201 }));
+		const response = await f.instance.fetch(
+			new Request("https://dev.autonomo.us/v1/messages", {
+				method: "POST",
+				body: "synthetic",
+			}),
+		);
+		expect(response.status).toBe(201);
+		expect(await response.text()).toBe("committed");
+		expect(f.app.fetch).toHaveBeenCalledTimes(1);
 	});
 	it("updates the selected image and changed secrets after DO eviction", async () => {
 		const f = fixture();
