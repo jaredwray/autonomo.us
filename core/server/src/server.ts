@@ -1,6 +1,7 @@
 import cors from "@fastify/cors";
 import Fastify from "fastify";
 import packageJson from "../package.json" with { type: "json" };
+import { AppEvents } from "./agent-webhooks/app-events.js";
 import {
 	fetchWebhookTransport,
 	nodeWebhookTransport,
@@ -10,7 +11,6 @@ import {
 	MemoryAgentWebhookRepository,
 	MongoAgentWebhookRepository,
 } from "./agent-webhooks/repository.js";
-import { AppEvents } from "./agent-webhooks/app-events.js";
 import type { WebhookTiming } from "./agent-webhooks/state.js";
 import { AgentWebhooks } from "./agent-webhooks/webhooks.js";
 import { registerApiAccess, requireRouteScopes } from "./auth/access.js";
