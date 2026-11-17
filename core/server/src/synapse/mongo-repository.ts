@@ -1,6 +1,7 @@
 import type { SynapseProposal, SynapseSpaceId } from "@autonomo.us/common";
 import { type Document, MongoClient } from "mongodb";
 import { mongoOperationDeadlines, requestMongoClient } from "../mongo.js";
+import { mongoFailureDetails, type SynapseDiagnostic } from "./diagnostics.js";
 import { SynapseError, synapseUnavailable } from "./errors.js";
 import type {
 	FindOptions,
@@ -98,7 +99,10 @@ function sortSpec(sort: FindOptions["sort"]): Document {
 export class MongoSynapseRepository implements SynapseRepository {
 	readonly persistence = "mongodb" as const;
 	private client?: MongoClient;
-	constructor(private readonly mongodbUrl: string) {}
+	constructor(
+		private readonly mongodbUrl: string,
+		private readonly diagnostic?: (details: SynapseDiagnostic) => void,
+	) {}
 
 	private database() {
 		const create = () =>
@@ -126,26 +130,35 @@ export class MongoSynapseRepository implements SynapseRepository {
 		);
 	}
 	private async createIndexes() {
-		const notes = this.notes();
-		await notes.createIndexes([
-			{ key: { space: 1, titleKey: 1 }, unique: true, name: "space_title" },
-			{ key: { space: 1, linkKeys: 1 }, name: "space_links" },
-			{ key: { space: 1, categoryKeys: 1 }, name: "space_categories" },
-			{ key: { space: 1, tagKeys: 1 }, name: "space_tags" },
-			{ key: { space: 1, updatedAt: -1 }, name: "space_updated" },
-		]);
-		await this.proposals().createIndexes([
-			{
-				key: { "author.id": 1, status: 1, createdAt: -1 },
-				name: "author_status",
-			},
-			// Each workspace lists the proposals for its own shared space.
-			{ key: { space: 1, status: 1, createdAt: -1 }, name: "space_status" },
-			{ key: { space: 1, decidedAt: -1 }, name: "space_decided" },
-		]);
+		await this.diagnose("initialize", "connect", () =>
+			this.database().command({ ping: 1 }),
+		);
+		await this.diagnose("initialize", "indexes.notes", () =>
+			this.notes().createIndexes([
+				{ key: { space: 1, titleKey: 1 }, unique: true, name: "space_title" },
+				{ key: { space: 1, linkKeys: 1 }, name: "space_links" },
+				{ key: { space: 1, categoryKeys: 1 }, name: "space_categories" },
+				{ key: { space: 1, tagKeys: 1 }, name: "space_tags" },
+				{ key: { space: 1, updatedAt: -1 }, name: "space_updated" },
+			]),
+		);
+		await this.diagnose("initialize", "indexes.proposals", () =>
+			this.proposals().createIndexes([
+				{
+					key: { "author.id": 1, status: 1, createdAt: -1 },
+					name: "author_status",
+				},
+				// Each workspace lists the proposals for its own shared space.
+				{ key: { space: 1, status: 1, createdAt: -1 }, name: "space_status" },
+				{ key: { space: 1, decidedAt: -1 }, name: "space_decided" },
+			]),
+		);
 	}
 	/** Runs `operation` once the indexes exist; driver failures become 503s. */
-	private async storage<T>(operation: () => Promise<T>): Promise<T> {
+	private async storage<T>(
+		name: keyof SynapseRepository | "check",
+		operation: () => Promise<T>,
+	): Promise<T> {
 		try {
 			let ready = indexed.get(this.mongodbUrl);
 			if (!ready) {
@@ -154,21 +167,81 @@ export class MongoSynapseRepository implements SynapseRepository {
 				ready.catch(() => indexed.delete(this.mongodbUrl));
 			}
 			await ready;
-			return await operation();
+			return await this.diagnose(name, "operation", operation);
 		} catch (error) {
 			if (error instanceof SynapseError) throw error;
 			throw synapseUnavailable(error);
 		}
 	}
 
+	private async diagnose<T>(
+		operation: string,
+		stage: SynapseDiagnostic["stage"],
+		action: () => Promise<T>,
+	): Promise<T> {
+		const started = performance.now();
+		try {
+			const result = await action();
+			if (stage === "connect" || stage.startsWith("indexes."))
+				this.emit({
+					event: "synapse.storage_ready",
+					operation,
+					stage,
+					durationMs: Math.round(performance.now() - started),
+				});
+			return result;
+		} catch (error) {
+			if (error instanceof SynapseError) throw error;
+			this.emit({
+				event: "synapse.storage_failed",
+				operation,
+				stage,
+				durationMs: Math.round(performance.now() - started),
+				...mongoFailureDetails(error),
+			});
+			throw synapseUnavailable(error);
+		}
+	}
+	private emit(details: SynapseDiagnostic) {
+		// Logging must never turn a committed write into an application failure.
+		try {
+			this.diagnostic?.(details);
+		} catch {
+			/* Diagnostic sinks are best effort. */
+		}
+	}
+	/** Exercise initialization and bounded reads on all three collections, without note contents. */
+	async check(): Promise<void> {
+		await this.storage("check", async () => {
+			// Settle every read before a Worker releases its request-scoped clients.
+			const checks = [
+				["read.notes", () => this.notes()],
+				["read.spaces", () => this.spaces()],
+				["read.proposals", () => this.proposals()],
+			] as const;
+			const results = await Promise.allSettled(
+				checks.map(([stage, collection]) =>
+					this.diagnose("check", stage, () =>
+						collection().findOne(
+							{},
+							{ projection: { _id: 1 }, maxTimeMS: 3000 },
+						),
+					),
+				),
+			);
+			const failed = results.find((result) => result.status === "rejected");
+			if (failed?.status === "rejected") throw failed.reason;
+		});
+	}
+
 	async getNote(space: SynapseSpaceId, titleKey: string) {
-		const found = await this.storage(() =>
+		const found = await this.storage("getNote", () =>
 			this.notes().findOne({ space, titleKey }),
 		);
 		return found ? toNote(found) : null;
 	}
 	async findNotes(filter: NoteFilter, options: FindOptions) {
-		const found = await this.storage(() =>
+		const found = await this.storage("findNotes", () =>
 			this.notes()
 				.find(noteQuery(filter))
 				.sort(sortSpec(options.sort))
@@ -179,10 +252,12 @@ export class MongoSynapseRepository implements SynapseRepository {
 		return found.map(toNote);
 	}
 	async countNotes(filter: NoteFilter) {
-		return this.storage(() => this.notes().countDocuments(noteQuery(filter)));
+		return this.storage("countNotes", () =>
+			this.notes().countDocuments(noteQuery(filter)),
+		);
 	}
 	async scanNotes(space: SynapseSpaceId) {
-		const found = await this.storage(() =>
+		const found = await this.storage("scanNotes", () =>
 			this.notes().find({ space }, { projection: INDEX_PROJECTION }).toArray(),
 		);
 		return found.map((document) => toNote(document) as NoteIndexEntry);
@@ -195,7 +270,7 @@ export class MongoSynapseRepository implements SynapseRepository {
 	) {
 		const dateKey = date.toLowerCase();
 		const prefix = new RegExp(`^${escapeRegex(dateKey)}`);
-		const found = await this.storage(() =>
+		const found = await this.storage("findDailyNotes", () =>
 			this.notes()
 				.find({
 					space,
@@ -218,7 +293,7 @@ export class MongoSynapseRepository implements SynapseRepository {
 		return found.map(toNote);
 	}
 	async insertNote(note: StoredNote) {
-		return this.storage(async () => {
+		return this.storage("insertNote", async () => {
 			try {
 				await this.notes().insertOne(toDocument(note));
 				return true;
@@ -229,7 +304,7 @@ export class MongoSynapseRepository implements SynapseRepository {
 		});
 	}
 	async replaceNote(note: StoredNote, expectedRevision: number) {
-		return this.storage(async () => {
+		return this.storage("replaceNote", async () => {
 			try {
 				const result = await this.notes().replaceOne(
 					{ _id: note.id, revision: expectedRevision },
@@ -244,7 +319,7 @@ export class MongoSynapseRepository implements SynapseRepository {
 		});
 	}
 	async deleteNote(id: string, expectedRevision?: number) {
-		const result = await this.storage(() =>
+		const result = await this.storage("deleteNote", () =>
 			this.notes().deleteOne({
 				_id: id,
 				...(expectedRevision === undefined
@@ -255,7 +330,7 @@ export class MongoSynapseRepository implements SynapseRepository {
 		return result.deletedCount > 0;
 	}
 	async spaceStats() {
-		const groups = await this.storage(() =>
+		const groups = await this.storage("spaceStats", () =>
 			this.notes()
 				.aggregate<{
 					_id: SynapseSpaceId;
@@ -279,7 +354,9 @@ export class MongoSynapseRepository implements SynapseRepository {
 		);
 	}
 	async listSpaceRecords() {
-		const found = await this.storage(() => this.spaces().find().toArray());
+		const found = await this.storage("listSpaceRecords", () =>
+			this.spaces().find().toArray(),
+		);
 		return found.map(
 			({ _id, ...rest }): SpaceRecord => ({
 				id: _id as SynapseSpaceId,
@@ -293,7 +370,7 @@ export class MongoSynapseRepository implements SynapseRepository {
 		name: string | undefined,
 		fallbackName: string,
 	) {
-		await this.storage(() =>
+		await this.storage("upsertSpaceRecord", () =>
 			this.spaces().updateOne(
 				{ _id: id },
 				{
@@ -308,10 +385,12 @@ export class MongoSynapseRepository implements SynapseRepository {
 		);
 	}
 	async insertProposal(proposal: SynapseProposal) {
-		await this.storage(() => this.proposals().insertOne(toDocument(proposal)));
+		await this.storage("insertProposal", () =>
+			this.proposals().insertOne(toDocument(proposal)),
+		);
 	}
 	async getProposal(id: string) {
-		const found = await this.storage(() =>
+		const found = await this.storage("getProposal", () =>
 			this.proposals().findOne({ _id: id }),
 		);
 		return found ? proposalOf(found) : null;
@@ -326,7 +405,7 @@ export class MongoSynapseRepository implements SynapseRepository {
 		};
 	}
 	async listProposals(filter: ProposalFilter) {
-		const found = await this.storage(() =>
+		const found = await this.storage("listProposals", () =>
 			this.proposals()
 				.find(this.proposalQuery(filter))
 				.sort({ createdAt: -1, _id: -1 })
@@ -335,7 +414,7 @@ export class MongoSynapseRepository implements SynapseRepository {
 		return found.map(proposalOf);
 	}
 	async recentDecisions(space: SynapseSpaceId, limit: number) {
-		const found = await this.storage(() =>
+		const found = await this.storage("recentDecisions", () =>
 			this.proposals()
 				.find({ space, status: { $in: ["approved", "rejected"] } })
 				.sort({ decidedAt: -1, _id: -1 })
@@ -345,12 +424,12 @@ export class MongoSynapseRepository implements SynapseRepository {
 		return found.map(proposalOf);
 	}
 	async countProposals(filter: ProposalFilter) {
-		return this.storage(() =>
+		return this.storage("countProposals", () =>
 			this.proposals().countDocuments(this.proposalQuery(filter)),
 		);
 	}
 	async claimProposal(id: string, claim: ProposalClaim, now: string) {
-		const result = await this.storage(() =>
+		const result = await this.storage("claimProposal", () =>
 			this.proposals().updateOne(
 				{ _id: id, status: "pending", ...unclaimed(now) },
 				{ $set: { claim } },
@@ -363,7 +442,7 @@ export class MongoSynapseRepository implements SynapseRepository {
 		decision: ProposalDecision,
 		guard: { now: string; claimId?: string },
 	) {
-		const result = await this.storage(() =>
+		const result = await this.storage("decideProposal", () =>
 			this.proposals().updateOne(
 				{
 					_id: id,
@@ -378,7 +457,7 @@ export class MongoSynapseRepository implements SynapseRepository {
 		return result.matchedCount > 0;
 	}
 	async releaseProposalClaim(id: string, claimId: string) {
-		const result = await this.storage(() =>
+		const result = await this.storage("releaseProposalClaim", () =>
 			this.proposals().updateOne(
 				{ _id: id, "claim.id": claimId },
 				{ $unset: { claim: "" } },

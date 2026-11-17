@@ -11,6 +11,7 @@ for (let attempt = 0; attempt < 12; attempt++) {
 		if (!response.ok) throw new Error(`HTTP ${response.status}`);
 		const health = (await response.json()) as {
 			status?: string;
+			synapse?: { configured?: boolean; ready?: boolean };
 			mongodb?: {
 				configured?: boolean;
 				connected?: boolean;
@@ -28,7 +29,13 @@ for (let attempt = 0; attempt < 12; attempt++) {
 			throw new Error(
 				"MongoDB configuration did not initialize; check Worker logs and database write permissions",
 			);
-		console.log("API health and MongoDB initialization verified.");
+		if (!health.synapse?.configured || !health.synapse.ready)
+			throw new Error(
+				"Synapse storage check failed; inspect container synapse.storage_failed logs for stage and error codes",
+			);
+		console.log(
+			"API health, MongoDB initialization and Synapse storage verified.",
+		);
 		process.exit(0);
 	} catch (error) {
 		failure = error instanceof Error ? error.message : "Health check failed";

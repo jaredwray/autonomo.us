@@ -76,6 +76,7 @@ await Promise.all(
 const health = await (await fetch("http://127.0.0.1:3000/healthz")).json();
 assert.equal(health.mongodb.initialized, true);
 assert.equal(health.mongodb.connected, true);
+assert.deepEqual(health.synapse, { configured: true, ready: true });
 const oauth = await (
 	await fetch("http://127.0.0.1:3000/.well-known/oauth-authorization-server")
 ).json();
@@ -91,5 +92,5 @@ assert.equal(
 	401,
 );
 console.log(
-	"Built image: single listener, Mongo readiness, protected/parallel maintenance, OAuth HTTPS origin and MCP auth verified.",
+	"Built image: single listener, Mongo and Synapse readiness, protected/parallel maintenance, OAuth HTTPS origin and MCP auth verified.",
 );
