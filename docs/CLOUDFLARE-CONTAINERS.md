@@ -37,7 +37,10 @@ This revision drops Node 22/24 support. Only Node `>=26.13.1 <27` is supported,
 including published packages and build tools; pnpm enforces the engine range.
 The image pins the official Node 26.13.1 Alpine digest. Test, browser, release,
 model-update and deploy workflows read `.nvmrc`. Corepack 0.36.0 is installed
-explicitly because Node 26 no longer bundles it; pnpm remains pinned in
+explicitly because Node 26 no longer bundles it. Docker uses a SHA-256-verified
+Corepack artifact in a shared base stage, without npm or lifecycle scripts; CI
+and development setup retain Socket Firewall/Safe Chain. A current BuildKit
+with `ADD --checksum` support is required. pnpm remains pinned in
 `package.json` and the dependency lockfile is unchanged.
 
 Before merging, an administrator must replace required branch checks `test (22)`

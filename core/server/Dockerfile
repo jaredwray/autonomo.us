@@ -2,9 +2,17 @@
 #   docker build -f core/server/Dockerfile .
 # One image runs the whole product: the Node process serves the API and the
 # dashboard build (core/ux/dist).
-FROM node:26.13.1-alpine@sha256:6bd9ab43c0ec0190ca7b2d193906cb8b7edf6e7f4afa43ddeccd6452710bffb5 AS build
-# Corepack is no longer bundled with Node 26.
-RUN npm install --global corepack@0.36.0 && corepack enable
+FROM node:26.13.1-alpine@sha256:6bd9ab43c0ec0190ca7b2d193906cb8b7edf6e7f4afa43ddeccd6452710bffb5 AS base
+# Node 26 no longer bundles Corepack. Verify the exact artifact before extraction
+# or execution; no npm install or lifecycle scripts run in this bootstrap.
+ADD --checksum=sha256:9128cfe26aee0c99f4fc68c15c6b8b12309a68be0de2c012cdfea2a463cb722f https://registry.npmjs.org/corepack/-/corepack-0.36.0.tgz /tmp/corepack.tgz
+RUN mkdir -p /usr/local/lib/node_modules/corepack \
+	&& tar -xzf /tmp/corepack.tgz -C /usr/local/lib/node_modules/corepack --strip-components=1 \
+	&& rm /tmp/corepack.tgz \
+	&& ln -s /usr/local/lib/node_modules/corepack/dist/corepack.js /usr/local/bin/corepack \
+	&& corepack enable
+
+FROM base AS build
 WORKDIR /repo
 
 # Manifests first so dependency installation caches across source changes.
@@ -23,9 +31,7 @@ RUN pnpm --filter @autonomo.us/common build \
 	&& pnpm --filter @autonomo.us/ux build
 
 # Runtime: production dependencies only, plus the built output.
-FROM node:26.13.1-alpine@sha256:6bd9ab43c0ec0190ca7b2d193906cb8b7edf6e7f4afa43ddeccd6452710bffb5
-# Corepack is no longer bundled with Node 26.
-RUN npm install --global corepack@0.36.0 && corepack enable
+FROM base
 WORKDIR /repo
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
 COPY core/server/package.json core/server/
