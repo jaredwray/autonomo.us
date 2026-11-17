@@ -16,6 +16,28 @@ AI platform for gateway, agents, and management.
 - **@autonomo.us/common** — Shared types and utilities
 - **@autonomo.us/logo** — Animated AUTONOMOUS aurora logo (framework-agnostic SVG)
 
+## Runtime support — breaking change
+
+Only the current Node.js LTS major is supported: **Node 26**, starting at
+**26.13.1**. Node 22/24 and non-LTS majors are no longer supported by this
+revision. All workspace/published packages declare `>=26.13.1 <27`; pnpm
+installs fail on unsupported hosts. CI, release/deployment tooling and the
+container image use the version pinned in `.nvmrc` (the image also pins its digest).
+Future LTS transitions require an explicit reviewed update, not a floating `lts` tag.
+
+Existing host installations must upgrade Node before installing this revision,
+then reinstall dependencies and rebuild native modules/output. Rebuild Docker
+and development containers; an existing running image does not update itself.
+Keep MongoDB volumes, database names and runtime secrets unchanged: this runtime
+upgrade does not require a data migration. Retain the previous application/image
+for rollback; do not run this new revision on Node 22/24.
+
+Node 26 no longer bundles Corepack. Install the pinned Corepack 0.36.0 through
+your approved package-install protection, then run `corepack enable` to use the
+repository's pinned pnpm. Codespaces/Cloud Agents use the Safe Chain bootstrap;
+CI installs Corepack through Socket Firewall. Host setup with nvm starts with
+`nvm install && nvm use` in this directory. See [deployment migration and rollback](docs/CLOUDFLARE-CONTAINERS.md).
+
 ## Getting Started
 
 Run the whole platform with docker compose — one server container (API gateway
@@ -1148,94 +1170,9 @@ exceed 100,000 time/model/caller/operation groups also fall back with this notic
 
 ## Deployment
 
-Merges to `main` deploy the development environment to one Cloudflare Worker,
-`autonomous-server-development`, which serves the dashboard and the API at
-<https://dev.autonomo.us>. The
-[deploy-development](.github/workflows/deploy-development.yml) workflow runs
-`pnpm deploy:development`, which builds `@autonomo.us/ux` and uploads its
-`dist` directory as the Worker's static assets together with the API code
-(`assets` in `core/server/wrangler.jsonc`). The `autonomo.us` zone must already
-be on the Cloudflare account. Compose and the Worker now have the same shape:
-one origin, one deployable.
+The development configuration serves static dashboard assets at the edge and forwards API routes to a full Node gateway in Cloudflare Containers at <https://dev.autonomo.us>. OAuth, MCP, API paths and the existing MongoDB remain unchanged. A Cron Trigger wakes the container every minute for durable MCP delivery retries, independently of user traffic.
 
-| Path | Served by |
-| --- | --- |
-| `/v1/*`, `/mcp`, `/oauth/*`, `/.well-known/*`, `/health`, `/healthz` | The API (Fastify) inside the Worker (`run_worker_first`). |
-| Everything else | The dashboard build. Unknown paths get `index.html` for client-side routes. These requests never invoke the Worker. |
-
-The dashboard calls the API on its own origin, so the build needs no
-`VITE_API_URL`. API clients use `https://dev.autonomo.us/v1/...`.
-
-Cutting over from the retired Workers (`autonomous-ux-development` and
-`autonomous-api-development`) is a one-time step. Secrets belong to a Worker,
-so set them on the new name **before** merging the change that first deploys
-it; Wrangler creates the Worker as a placeholder when it does not exist yet.
-Never deploy a new Worker to a public hostname without them: with no
-`SETUP_TOKEN`, first-run setup is open to whoever reaches `POST /v1/setup`
-first, and with no `MONGODB_URI` that owner lives in memory until the next
-deploy.
-
-1. Before merging, create the new Worker with its secrets:
-
-   ```bash
-   pnpm exec wrangler secret put MONGODB_URI -c core/server/wrangler.jsonc
-   pnpm exec wrangler secret put SETUP_TOKEN -c core/server/wrangler.jsonc
-   ```
-
-2. Merge. The deploy attaches `dev.autonomo.us` to the new Worker (Wrangler
-   moves a custom domain from the Worker that held it) and the workflow's
-   health check verifies `/healthz` and MongoDB. The retired Workers keep
-   running throughout, so a failed deploy leaves `dev-api.autonomo.us`
-   serving the previous release.
-
-3. Only after that check passes, delete the retired Workers so
-   `dev-api.autonomo.us` stops serving the old code:
-
-   ```bash
-   pnpm exec wrangler delete --name autonomous-ux-development
-   pnpm exec wrangler delete --name autonomous-api-development
-   ```
-
-Provision a MongoDB server or managed cluster outside this workflow and store
-its connection string as the `MONGODB_URI` Worker secret, as above. The
-deployment check fails until it is set.
-
-With a fresh database, set `SETUP_TOKEN` so only you can create the owner
-account, then open <https://dev.autonomo.us> and enter it. Setup state lives in
-MongoDB, and a token that completed setup grants nothing afterwards, so it can
-stay set. To recover a gateway whose owners are all locked out, give the secret
-a new value (for example `openssl rand -hex 32`); saving it deploys the Worker,
-and the dashboard opens on setup until that token is used.
-
-Include the application database name in the connection string. The MongoDB
-user needs read/write access to that database, and the cluster must accept
-connections from the Worker. A GitHub or local environment secret alone does
-not configure this Worker binding. On the first request, the API creates the
-database's `gateway_routing` collection and its default configuration.
-
-The deployment workflow runs `pnpm check:deployment` after uploading. It fails
-unless `/healthz` responds successfully and MongoDB is configured, connected,
-and initialized. For an initial deployment, set the Worker secret and rerun
-the workflow. Database write failures remain visible even when a ping succeeds.
-
-Worker logs are enabled in `core/server/wrangler.jsonc`. View them in Cloudflare's
-Worker observability page or with:
-
-```bash
-pnpm exec wrangler tail -c core/server/wrangler.jsonc
-```
-
-`gateway.request` records method, path, status, and duration. Persistence emits
-`gateway.persistence_ready`, `gateway.mongodb_unconfigured`, or
-`gateway.persistence_failed` with a store name and diagnostic error type/code.
-Logs omit request bodies, authorization headers, connection strings, and driver
-messages. For example, MongoDB code 13 indicates insufficient permissions and
-code 18 indicates authentication failure.
-
-| Secret | Required | Purpose |
-| --- | --- | --- |
-| `CLOUDFLARE_API_TOKEN` | yes | Token scoped to the account and the `autonomo.us` zone. Permissions: Account → Workers Scripts → Edit, Zone → Workers Routes → Edit, Zone → DNS → Edit. |
-| `CLOUDFLARE_ACCOUNT_ID` | yes | Account that owns the `autonomo.us` zone. |
+Deployment is **manual** through `deploy-development`; merging does not deploy. Read [Cloudflare Containers deployment, migration and rollback](docs/CLOUDFLARE-CONTAINERS.md) before provisioning secrets or deploying. The retained `wrangler.legacy.jsonc` runs the previous Worker implementation, which intentionally does not advertise MCP Events.
 
 ## Testing
 
@@ -1250,7 +1187,7 @@ pnpm test
 pnpm test:worker
 ```
 
-`test:worker` starts the production entry in the actual Workers runtime and
+`test:worker` starts the retained legacy entry in the actual Workers runtime and
 requires MongoDB. It checks cold startup, both health endpoints, schema
 validation, logging, automatic configuration creation, concurrent requests,
 database writes, and failure recovery. It uses temporary databases and removes

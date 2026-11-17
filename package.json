@@ -1,6 +1,7 @@
 {
 	"name": "autonomo.us",
 	"version": "0.0.0",
+	"engines": { "node": ">=26.13.1 <27" },
 	"private": true,
 	"license": "MIT",
 	"author": "Jared Wray",

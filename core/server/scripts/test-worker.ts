@@ -11,14 +11,13 @@ import { fileURLToPath } from "node:url";
 import { MongoClient } from "mongodb";
 import { startOpenAIStub } from "../test/openai-stub.js";
 
-// Run the production entry in workerd. Node tests and Wrangler dry-runs do not
+// Run the retained legacy entry in workerd. Node tests and Wrangler dry-runs do not
 // enforce Workers' restrictions on code generation or request-owned sockets.
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 const config = JSON.parse(
-	(await readFile(join(root, "core/server/wrangler.jsonc"), "utf8")).replace(
-		/^\s*\/\/.*$/gm,
-		"",
-	),
+	(
+		await readFile(join(root, "core/server/wrangler.legacy.jsonc"), "utf8")
+	).replace(/^\s*\/\/.*$/gm, ""),
 );
 
 /**

@@ -12,17 +12,9 @@ permissions:
 
 jobs:
   test:
-    # Named by Node major only, so required status checks ("test (22)",
-    # "test (24)") keep matching when an exact version below is bumped.
-    name: test (${{ matrix.node }})
+    # Branch protection must require test (26), replacing test (22)/(24).
+    name: test (26)
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - node: 22
-            node-version: '22.23.5'
-          - node: 24
-            node-version: '24'
     services:
       mongo:
         image: mongo:8
@@ -52,14 +44,24 @@ jobs:
       - name: Use Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: ${{ matrix.node-version }}
+          node-version-file: .nvmrc
+          package-manager-cache: false
+      - name: Install Corepack (not bundled with Node 26)
+        # zizmor: ignore[adhoc-packages] pinned package-manager bootstrap through Socket Firewall
+        run: sfw npm install --global corepack@0.36.0
       - run: corepack enable
       - run: sfw pnpm install --frozen-lockfile
       - run: pnpm lint
       - run: pnpm build
-      - name: Check development Worker config
+      - name: Typecheck the native Container API
+        run: |
+          pnpm exec wrangler types "$RUNNER_TEMP/container-runtime.d.ts" -c core/server/wrangler.jsonc
+          pnpm exec tsc --ignoreConfig --noEmit --strict --skipLibCheck --target esnext --module esnext --moduleResolution bundler core/server/src/container-worker.ts "$RUNNER_TEMP/container-runtime.d.ts"
+      - name: Validate Container configuration and edge bundle
         # The dashboard assets come from core/ux/dist, built by pnpm build above.
         run: pnpm exec wrangler deploy -c core/server/wrangler.jsonc --dry-run --outdir "$RUNNER_TEMP/server"
+      - name: Check retained Worker rollback config
+        run: pnpm exec wrangler deploy -c core/server/wrangler.legacy.jsonc --dry-run --outdir "$RUNNER_TEMP/legacy"
       # Suites that need MongoDB default to the service above. Leaving
       # MONGODB_URI unset keeps createServer() in-memory for the other tests.
       - run: pnpm test:ci
@@ -68,6 +70,20 @@ jobs:
 
   docker:
     runs-on: ubuntu-latest
+    services:
+      mongo:
+        image: mongo:8
+        env:
+          MONGO_INITDB_ROOT_USERNAME: autonomous
+          MONGO_INITDB_ROOT_PASSWORD: autonomous
+          GLIBC_TUNABLES: glibc.pthread.rseq=1
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet -u autonomous -p autonomous --eval 'db.adminCommand({ping:1}).ok'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -78,7 +94,21 @@ jobs:
         with:
           mode: firewall-free
           firewall-version: "1.15.0"
-      - run: docker compose build server
+      - run: docker build --tag autonomous-container-ci -f core/server/Dockerfile .
+      - name: Exercise the built Node image with synthetic data
+        run: |
+          docker run -d --network host --name autonomous-container-test \
+            -e CONTAINER_MODE=true \
+            -e PUBLIC_URL=https://gateway.example.invalid \
+            -e CONTAINER_CONTROL_TOKEN=synthetic-ci-only-control-token-0000000000 \
+            -e MONGODB_URI='mongodb://autonomous:autonomous@127.0.0.1:27017/container_smoke?authSource=admin' \
+            autonomous-container-ci
+          docker exec -i autonomous-container-test node --input-type=module < core/server/scripts/check-container-image.ts
+          docker stop --time 20 autonomous-container-test
+          test "$(docker inspect --format '{{.State.ExitCode}}' autonomous-container-test)" = 0
+      - name: Remove smoke-test container
+        if: always()
+        run: docker rm -f autonomous-container-test || true
 
   dropdown-browser:
     runs-on: ubuntu-latest
@@ -93,7 +123,10 @@ jobs:
           firewall-version: "1.15.0"
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
-          node-version: '24'
+          node-version-file: .nvmrc
+      - name: Install Corepack (not bundled with Node 26)
+        # zizmor: ignore[adhoc-packages] pinned package-manager bootstrap through Socket Firewall
+        run: sfw npm install --global corepack@0.36.0
       - run: corepack enable
       - run: sfw pnpm install --frozen-lockfile
       - run: pnpm --filter @autonomo.us/common build

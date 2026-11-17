@@ -1,25 +1,10 @@
 name: deploy-development
 
-# Publishes the development environment to one Cloudflare Worker on main.
-#   autonomous-server-development → https://dev.autonomo.us (dashboard and API)
-# The dashboard build is uploaded as the Worker's static assets; /v1, /health
-# and /healthz run the API.
-#
-# Repository secrets:
-#   CLOUDFLARE_API_TOKEN  — required. Account → Workers Scripts → Edit,
-#                           Zone → Workers Routes → Edit, Zone → DNS → Edit.
-#                           Scope the token to the account that owns autonomo.us
-#                           and to that zone.
-#   CLOUDFLARE_ACCOUNT_ID — required. The same account.
-#
-# Provision a MongoDB server and set its URL on the API worker:
-#   pnpm exec wrangler secret put MONGODB_URI -c core/server/wrangler.jsonc
-# The API creates its configuration database on its first request. The health
-# check fails until the secret is set and configuration initialization succeeds.
+# Operator-triggered migration. Do not deploy this topology merely by merging.
+# Requires Workers Paid, Containers write, registry write, Workers Scripts Edit,
+# and the existing domain/DNS permissions. See docs/CLOUDFLARE-CONTAINERS.md.
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
 
 permissions:
   contents: read
@@ -53,6 +38,9 @@ jobs:
         with:
           node-version-file: .nvmrc
           package-manager-cache: false
+      - name: Install Corepack (not bundled with Node 26)
+        # zizmor: ignore[adhoc-packages] pinned package-manager bootstrap through Socket Firewall
+        run: sfw npm install --global corepack@0.36.0
       - name: Enable Corepack
         run: corepack enable
       - name: Prepare pnpm
@@ -68,7 +56,7 @@ jobs:
             echo "Set CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID before deploying."
             exit 1
           fi
-      - name: Build the dashboard and deploy the development Worker
+      - name: Build dashboard, container image and development edge Worker
         run: pnpm deploy:development
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

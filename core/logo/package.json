@@ -1,6 +1,7 @@
 {
 	"name": "@autonomo.us/logo",
 	"version": "0.0.0",
+	"engines": { "node": ">=26.13.1 <27" },
 	"description": "Animated AUTONOMOUS aurora logo — a dependency-free, framework-agnostic SVG logo library",
 	"license": "MIT",
 	"author": "Jared Wray",

@@ -378,17 +378,28 @@ export class McpEvents {
 	}
 	catchUp() {
 		if (this.closing || this.working.size) return;
-		const work = this.sweep()
-			.catch(() => {})
-			.finally(() => this.working.delete(work));
-		this.working.add(work);
+		void this.sweep().catch(() => {});
 	}
-	async sweep() {
+	async sweep(maxPerSubscription = 50) {
 		if (this.closing) return;
+		// Control-port sweeps must drain before close() releases MongoDB too.
+		const work = this.sweepBatch(maxPerSubscription);
+		this.working.add(work);
+		try {
+			await work;
+		} finally {
+			this.working.delete(work);
+		}
+	}
+	private async sweepBatch(maxPerSubscription: number) {
 		const due = await this.options.repository.due(this.now());
 		await Promise.all(
 			due.map(async (row) => {
-				for (let count = 0; count < 50 && !this.closing; count++) {
+				for (
+					let count = 0;
+					count < maxPerSubscription && !this.closing;
+					count++
+				) {
 					await this.deliver(row.id);
 					const current = await this.options.repository.get(row.id);
 					if (
@@ -480,7 +491,7 @@ export class McpEvents {
 		});
 	}
 	async idle() {
-		await Promise.all([...this.working]);
+		while (this.working.size) await Promise.allSettled([...this.working]);
 	}
 	async close() {
 		this.closing = true;

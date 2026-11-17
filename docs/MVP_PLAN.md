@@ -1013,7 +1013,7 @@ Each implementation PR is reviewed against every item. A PR is approved only whe
 10. Tests run against real services (Postgres, ClickHouse, MinIO, real-protocol HTTP servers, the real MCP SDK); no module mocks, no fetch mocks, no fake timers around service calls.
 11. Suites that need a service probe it and skip loudly when absent; CI provides the service so nothing skips in CI.
 12. New behavior has tests for the failure path (service down, timeout, denial, bad signature), not only the happy path.
-13. `pnpm lint`, `pnpm build`, and `pnpm test` pass on Node 22 and 24; coverage for new modules is not below the package's current level.
+13. `pnpm lint`, `pnpm build`, and `pnpm test` pass on the supported Node 26 LTS runtime; coverage for new modules is not below the package's current level.
 
 **Operability**
 
