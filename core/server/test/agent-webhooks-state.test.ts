@@ -17,6 +17,7 @@ import {
 	claimed,
 	enqueued,
 	finished,
+	mayHear,
 	publicWebhook,
 	switched,
 	type WebhookTiming,
@@ -185,6 +186,170 @@ describe("webhook state", () => {
 		]);
 		expect(webhook.omitted).toBe(2);
 		expect(publicWebhook(webhook).pendingEvents).toBe(5);
+	});
+
+	it("queues only the events of the groups a webhook chose", () => {
+		const note: AgentWakeEvent = {
+			type: "synapse.note_updated",
+			at: iso(NOW),
+			space: "shared",
+			title: "Ada Lovelace",
+			previousTitle: null,
+			by: { kind: "user", id: "u1", name: "Jared" },
+		};
+		const own: AgentWakeEvent = { ...note, space: "agent" };
+		// A webhook from before these groups existed hears none of them.
+		expect(enqueued(stored(), note, "n1", NOW, timing)).toBeNull();
+		const chosen = stored({ events: ["shared-notes"] });
+		expect(enqueued(chosen, note, "n1", NOW, timing)?.queue).toEqual([note]);
+		// The same event in the agent's own space is another group's.
+		expect(enqueued(chosen, own, "n2", NOW, timing)).toBeNull();
+		expect(enqueued(chosen, message(1), "k1", NOW, timing)).toBeNull();
+		expect(
+			enqueued(
+				chosen,
+				{ type: "webhook.test", at: iso(NOW), requestedBy: "Jared" },
+				"t1",
+				NOW,
+				timing,
+			),
+		).toBeNull();
+		expect(
+			publicWebhook(stored({ events: ["web", "proposals", "mentions"] }))
+				.events,
+		).toEqual(["mentions", "proposals", "web"]);
+	});
+
+	it("drops a bulk event, not one that asks something, when the queue is full", () => {
+		const by = { kind: "user", id: "u1", name: "Jared" } as const;
+		const edited = (seq: number): AgentWakeEvent => ({
+			type: "channel.message_edited",
+			at: iso(NOW),
+			channelId: "c1",
+			channel: "general",
+			messageId: `m${seq}`,
+			seq,
+			threadId: null,
+			by,
+			mentioned: false,
+		});
+		let webhook = stored({
+			events: ["message-changes", "membership", "shared-notes"],
+		});
+		// Two edits of one message are two events: only posts repeat by number.
+		for (const key of ["e1", "e2"])
+			webhook = enqueued(webhook, edited(7), key, NOW, timing) ?? webhook;
+		webhook =
+			enqueued(
+				webhook,
+				{
+					type: "synapse.note_created",
+					at: iso(NOW),
+					space: "shared",
+					title: "Ada",
+					previousTitle: null,
+					by,
+				},
+				"n1",
+				NOW,
+				timing,
+			) ?? webhook;
+		expect(webhook.queue).toHaveLength(3);
+		expect(webhook.channelSeqs).toEqual({});
+		webhook =
+			enqueued(
+				webhook,
+				{
+					type: "channel.joined",
+					at: iso(NOW),
+					channelId: "c2",
+					channel: "film-qc",
+					access: "post",
+					by,
+				},
+				"j1",
+				NOW,
+				timing,
+			) ?? webhook;
+		expect(webhook.queue.map((event) => event.type)).toEqual([
+			"channel.message_edited",
+			"synapse.note_created",
+			"channel.joined",
+		]);
+		expect(webhook.omitted).toBe(1);
+		// Another bulk event finds no room and is only counted.
+		webhook = enqueued(webhook, edited(8), "e3", NOW, timing) ?? webhook;
+		expect(webhook.queue).toHaveLength(3);
+		expect(webhook.omitted).toBe(2);
+		// An edit that mentions the agent asks something: it takes a bulk
+		// event's place, and nothing takes its own.
+		const asks = { ...edited(9), mentioned: true } as AgentWakeEvent;
+		webhook = enqueued(webhook, asks, "e4", NOW, timing) ?? webhook;
+		webhook = enqueued(webhook, edited(10), "e5", NOW, timing) ?? webhook;
+		expect(webhook.queue).toEqual([
+			expect.objectContaining({ type: "synapse.note_created" }),
+			expect.objectContaining({ type: "channel.joined" }),
+			asks,
+		]);
+		expect(webhook.omitted).toBe(4);
+	});
+
+	it("makes up a POST from the events the agent's grants still let it hear", () => {
+		const by = { kind: "user", id: "u1", name: "Jared" } as const;
+		const at = iso(NOW);
+		const web: AgentWakeEvent = {
+			type: "web.changed",
+			at,
+			change: "policy",
+			by,
+		};
+		const joined: AgentWakeEvent = {
+			type: "channel.joined",
+			at,
+			channelId: "c1",
+			channel: "general",
+			access: "post",
+			by,
+		};
+		const renamed: AgentWakeEvent = {
+			type: "agent.updated",
+			at,
+			changes: ["name"],
+			previousName: "Scout",
+			by,
+		};
+		const mcp = ["mcp:read", "mcp:call"];
+		// The first three groups and the agent's own events need no grant.
+		for (const event of [message(1), message(2, "channel.mention"), renamed])
+			expect(mayHear(event, [])).toBe(true);
+		expect(mayHear(joined, ["mcp:read"])).toBe(false);
+		expect(mayHear(joined, mcp)).toBe(true);
+		expect(mayHear(web, mcp)).toBe(false);
+		expect(mayHear(web, [...mcp, "web:fetch"])).toBe(true);
+
+		let webhook = stored({
+			events: ["messages", "membership", "web", "agent"],
+		});
+		for (const [key, event] of Object.entries({ web, joined, renamed }))
+			webhook = enqueued(webhook, event, key, NOW, timing) ?? webhook;
+		const due = NOW + 5_000;
+		// With its grants, everything goes; with the web grant gone, the rest.
+		expect(
+			claimed(webhook, "l1", due, timing, "Scout", [...mcp, "web:fetch"])
+				?.delivery?.events,
+		).toEqual([web, joined, renamed]);
+		const narrowed = claimed(webhook, "l1", due, timing, "Scout", mcp);
+		expect(narrowed?.delivery?.events).toEqual([joined, renamed]);
+		expect(narrowed?.webhook.queue).toEqual([]);
+		// With nothing left to say, nothing is sent and nothing waits.
+		const only = enqueued(stored({ events: ["web"] }), web, "w", NOW, timing);
+		if (!only) throw new Error("not enqueued");
+		expect(claimed(only, "l1", due, timing, "Scout", mcp)).toMatchObject({
+			delivery: null,
+			webhook: { queue: [], dueAt: null },
+		});
+		// A caller that does not know the grants sends what is queued.
+		expect(claimed(only, "l1", due, timing)?.delivery?.events).toEqual([web]);
 	});
 
 	it("claims under a lease, retries with backoff, and gives up after the last attempt", () => {
@@ -483,12 +648,118 @@ describe("webhook delivery", () => {
 				"- Ada (person) mentioned you in #general, message 41.",
 				'- Jared rejected your proposal to update "Ada Lovelace" in the shared Synapse.',
 				"- 2 new messages in #general (messages 42–43) from CI and Ada.",
-				"- 2 more updates did not fit here; your channels and proposals show them.",
+				"- 2 more updates did not fit here; your channels, proposals, and Synapse show them.",
 				"",
 				"Read each channel above with channels_read: it starts at your read mark, so it shows everything you have not handled. Mark what you handled with channels_mark_read.",
 				"Call synapse_proposals to see each decision and its reason, and follow up on rejected ones.",
 			].join("\n"),
 		);
+	});
+
+	it("words every kind of event, and says once what to do about each kind", () => {
+		const by = { kind: "user", id: "u1", name: "Jared" } as const;
+		const at = iso(NOW);
+		const place = { at, channelId: "c1", channel: "film-qc", by };
+		const about = { ...place, messageId: "m7", seq: 7, threadId: null };
+		const events: AgentWakeEvent[] = [
+			{ ...about, type: "channel.message_edited", mentioned: true },
+			{ ...about, type: "channel.message_deleted", own: true },
+			{ ...place, type: "channel.joined", access: "post" },
+			{
+				...place,
+				type: "channel.access_changed",
+				access: "read",
+				previousAccess: "post",
+			},
+			{ ...place, type: "channel.left" },
+			{
+				...place,
+				type: "channel.updated",
+				changes: ["name", "topic"],
+				previousName: "qc",
+			},
+			{ ...place, type: "channel.archived" },
+			{
+				type: "synapse.note_updated",
+				at,
+				space: "shared",
+				title: "Ada Lovelace",
+				previousTitle: "Ada",
+				by,
+			},
+			{
+				type: "synapse.note_deleted",
+				at,
+				space: "agent",
+				title: "Scratch",
+				previousTitle: null,
+				by,
+			},
+			{
+				type: "synapse.imported",
+				at,
+				space: "global",
+				created: 12,
+				updated: 3,
+				by: { kind: "api-token", id: "t1", name: "CI" },
+			},
+			{
+				type: "agent.updated",
+				at,
+				changes: ["name", "description"],
+				previousName: "Scout\n1",
+				by,
+			},
+			{
+				type: "agent.permissions_changed",
+				at,
+				added: ["models:chat"],
+				removed: ["web:fetch"],
+				by,
+			},
+			{
+				type: "agent.token_rolled",
+				at,
+				previousValidUntil: "2026-11-16T10:00:00.000Z",
+				by,
+			},
+			{ type: "agent.app_connected", at, app: "Claude", approvedBy: "Jared" },
+			{
+				type: "agent.app_disconnected",
+				at,
+				app: "Cursor",
+				reason: "The app signed out.",
+				by: null,
+			},
+			{ type: "models.changed", at, change: "routing", by },
+			{ type: "web.changed", at, change: "policy", by },
+		];
+		expect(wakeText("Scout", events, 0).split("\n")).toEqual([
+			"autonomo.us woke Scout with 17 updates:",
+			"- Jared (person) edited message 7 in #film-qc, which mentions you.",
+			"- Jared (person) deleted message 7 in #film-qc, which you wrote.",
+			"- Jared (person) added you to #film-qc with post access.",
+			"- Jared (person) changed your access to #film-qc from post to read.",
+			"- Jared (person) removed you from #film-qc.",
+			"- Jared (person) updated #film-qc: renamed it from #qc, changed its topic.",
+			"- Jared (person) archived #film-qc.",
+			'- Jared (person) renamed "Ada" to "Ada Lovelace" in the shared Synapse.',
+			'- Jared (person) deleted "Scratch" in your own Synapse space.',
+			"- CI (token) imported notes into the global Synapse: 12 created, 3 changed.",
+			'- Jared (person) renamed you from "Scout 1" and changed your description.',
+			"- Jared (person) changed your grants: added models:chat; removed web:fetch.",
+			"- Jared (person) rolled your agent token. The token it replaced works until 2026-11-16T10:00:00.000Z.",
+			"- The app Claude signed in to you, approved by Jared.",
+			"- The app Cursor was disconnected from you. The app signed out.",
+			"- Jared (person) changed the workspace's models: its routing.",
+			"- Jared (person) changed the workspace's web access: its policy.",
+			"",
+			"Read each channel above with channels_read: it starts at your read mark, so it shows everything you have not handled. Mark what you handled with channels_mark_read.",
+			"Call channels_list to see the channels you are in now and what is unread in each.",
+			'Read a note above with synapse_read (space "shared" for the shared and global Synapse) before relying on what you remember of it.',
+			"Your grants decide which tools you have: list your tools again before you rely on one.",
+			"Call models_list to see the models you can use now.",
+		]);
 	});
 });
 

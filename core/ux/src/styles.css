@@ -1428,6 +1428,9 @@ a.button { text-decoration: none; }
 .bot-web-choice { display: flex; align-items: flex-start; gap: 8px; margin: 6px 0; font-size: 13px; }
 .bot-web-choice input { margin-top: 3px; }
 .bot-web-choice .field-hint { display: block; margin-top: 2px; }
+.agent-webhook-area { position: relative; margin: 14px 0 0; padding: 0; border: 0; min-width: 0; }
+.bot-web-choices .agent-webhook-area legend { margin-bottom: 2px; padding: 0; color: var(--text-secondary); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+.agent-webhook-area-toggle { position: absolute; top: -24px; right: 0; padding: 2px 8px; font-size: 12px; }
 .bot-web-add { display: flex; gap: 8px; margin: 8px 0 4px; }
 .bot-web-add input { flex: 1; min-width: 0; }
 .bot-web-problem { color: var(--status-critical); }

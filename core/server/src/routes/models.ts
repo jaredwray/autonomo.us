@@ -1,6 +1,10 @@
-import { type AddModelRequest, PROVIDER_NAMES } from "@autonomo.us/common";
+import {
+	type AddModelRequest,
+	type AgentWakeActor,
+	PROVIDER_NAMES,
+} from "@autonomo.us/common";
 import type { FastifyInstance } from "fastify";
-import { requestWorkspace } from "../auth/access.js";
+import { requestActor, requestWorkspace } from "../auth/access.js";
 import type { ModelCatalogService } from "../model-catalog-service.js";
 import {
 	ProviderSettingsError,
@@ -20,7 +24,11 @@ export async function catalogRoutes(
 	server.get("/v1/models/catalog", async () => options.catalog.getCatalog());
 }
 
-export type ModelsRouteOptions = { providers: ProviderSettingsStore };
+export type ModelsRouteOptions = {
+	providers: ProviderSettingsStore;
+	/** Called once a model or connection is added; the change stands whatever this does. */
+	onChanged?: (workspaceId: string, by: AgentWakeActor) => Promise<unknown>;
+};
 
 /** Registered under `/v1/:workspace`. */
 export async function modelsRoutes(
@@ -80,10 +88,12 @@ export async function modelsRoutes(
 		async (request, reply) => {
 			reply.header("cache-control", "no-store");
 			try {
-				return await options.providers.add(
-					requestWorkspace(request),
-					request.body,
-				);
+				const workspace = requestWorkspace(request);
+				const added = await options.providers.add(workspace, request.body);
+				await options
+					.onChanged?.(workspace.id, requestActor(request))
+					.catch(() => {});
+				return added;
 			} catch (error) {
 				if (error instanceof ProviderSettingsError)
 					return reply

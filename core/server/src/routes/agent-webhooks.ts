@@ -22,6 +22,7 @@ const params = {
 	required: ["agent"],
 	properties: { agent: { type: "string", format: "uuid" } },
 };
+/** The groups of events a webhook can choose, from the shared catalog. */
 const events = {
 	type: "array",
 	minItems: 1,

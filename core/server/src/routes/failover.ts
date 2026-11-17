@@ -1,6 +1,6 @@
-import type { FailoverPolicy } from "@autonomo.us/common";
+import type { AgentWakeActor, FailoverPolicy } from "@autonomo.us/common";
 import type { FastifyInstance } from "fastify";
-import { requestWorkspace } from "../auth/access.js";
+import { requestActor, requestWorkspace } from "../auth/access.js";
 import { MAX_FAILOVER_TIMEOUT_MS } from "../failover.js";
 import type { ProviderSettingsStore } from "../providers/settings.js";
 import type { RoutingSettingsStore } from "../routing/settings.js";
@@ -8,6 +8,8 @@ import type { RoutingSettingsStore } from "../routing/settings.js";
 export type FailoverRouteOptions = {
 	providers: ProviderSettingsStore;
 	routing: RoutingSettingsStore;
+	/** Called once failover is saved; the change stands whatever this does. */
+	onChanged?: (workspaceId: string, by: AgentWakeActor) => Promise<unknown>;
 };
 
 const failoverBodySchema = {
@@ -60,7 +62,11 @@ export async function failoverRoutes(
 					},
 				});
 			}
-			return options.routing.updateFailover(workspace, patch);
+			const updated = await options.routing.updateFailover(workspace, patch);
+			await options
+				.onChanged?.(workspace.id, requestActor(request))
+				.catch(() => {});
+			return updated;
 		},
 	);
 }

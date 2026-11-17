@@ -7,6 +7,7 @@ import {
 	MAX_GRAPH_NODES,
 	MAX_PENDING_PROPOSALS,
 	PROPOSAL_CLAIM_MS,
+	type SynapseChange,
 	SynapseService,
 	sharedSpaceId,
 } from "../src/synapse/synapse.js";
@@ -1883,5 +1884,119 @@ describe("import link diagnostics", () => {
 		expect(result.created).toEqual(["Index"]);
 		expect(result.warnings).toHaveLength(100);
 		expect(result.warningsTruncated).toBe(true);
+	});
+});
+
+describe("change reports", () => {
+	/** A Synapse that records what it tells whoever listens. */
+	function reporting() {
+		const changes: SynapseChange[] = [];
+		const service = new SynapseService(new MemorySynapseRepository(), {
+			timeZone: "UTC",
+			now: () => Date.parse("2026-11-08T22:30:00Z"),
+			onChange: (change) => {
+				changes.push(change);
+			},
+		});
+		const kinds = () =>
+			changes.map((change) =>
+				change.kind === "imported"
+					? `imported ${change.created}+${change.updated}`
+					: `${change.kind} ${change.note.title}`,
+			);
+		return { service, changes, kinds };
+	}
+
+	it("reports each note written or deleted once, with who did it", async () => {
+		const { service, changes, kinds } = reporting();
+		await service.createNote(
+			"shared",
+			{ title: "Ada", template: "People", body: "See [[Charles]]." },
+			user,
+		);
+		await service.createNote("shared", { title: "Charles" }, user);
+		// A rename reports the renamed note, not the notes whose links follow it.
+		await service.updateNote("shared", "Charles", { title: "Babbage" }, user);
+		await service.updateNote("shared", "Ada", { body: "Later." }, agent);
+		// An append creates the note when it is missing, then changes it.
+		await service.appendNote("shared", "Log", { text: "one" }, user);
+		await service.appendNote("shared", "Log", { text: "two" }, user);
+		await service.log(agentSpace, "Did a thing.", agent);
+		await service.log(agentSpace, "And another.", agent);
+		await service.deleteNote("shared", "Log", user);
+		expect(kinds()).toEqual([
+			// The People category note Synapse makes for itself is not reported.
+			"created Ada",
+			"created Charles",
+			"updated Babbage",
+			"updated Ada",
+			"created Log",
+			"updated Log",
+			"created 2026-11-08",
+			"updated 2026-11-08",
+			"deleted Log",
+		]);
+		expect(changes[2]).toMatchObject({
+			space: "shared",
+			actor: user,
+			at: "2026-11-08T22:30:00.000Z",
+			previousTitle: "Charles",
+			note: { revision: 2 },
+		});
+		expect(changes[3]).toMatchObject({ actor: agent, previousTitle: null });
+		expect(changes[6]).toMatchObject({ space: agentSpace, actor: agent });
+	});
+
+	it("reports an import once, and an approved proposal as the change it makes", async () => {
+		const { service, kinds } = reporting();
+		await service.importSpace(
+			"shared",
+			{
+				files: [
+					{ path: "Ada.md", content: "One." },
+					{ path: "Grace.md", content: "Two." },
+					{ path: "notes.txt", content: "Not a note." },
+				],
+			},
+			user,
+		);
+		await service.importSpace(
+			"shared",
+			{ files: [{ path: "Ada.md", content: "One, again." }] },
+			user,
+		);
+		await service.importSpace(
+			"shared",
+			{ files: [{ path: "Ada.md", content: "Changed." }], overwrite: true },
+			user,
+		);
+		const proposal = await service.propose(agent, {
+			action: "create",
+			title: "Linus",
+			body: "Three.",
+			reason: "Missing.",
+		});
+		await service.decideProposal(proposal.id, { decision: "approve" }, user);
+		// Nothing imported, nothing reported.
+		expect(kinds()).toEqual(["imported 2+0", "imported 0+1", "created Linus"]);
+	});
+
+	it("keeps a write when whoever listens fails", async () => {
+		const service = new SynapseService(new MemorySynapseRepository(), {
+			timeZone: "UTC",
+			onChange: () => {
+				throw new Error("nobody home");
+			},
+		});
+		await service.createNote("shared", { title: "Ada" }, user);
+		await service.importSpace(
+			"shared",
+			{ files: [{ path: "Grace.md", content: "Two." }] },
+			user,
+		);
+		await service.deleteNote("shared", "Ada", user);
+		expect(
+			(await service.query("shared", {})).notes.map((n) => n.title),
+		).toEqual(["Grace"]);
 	});
 });

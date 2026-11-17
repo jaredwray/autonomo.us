@@ -9,31 +9,205 @@
  * a notice. It says what happened and where, and holds no message text or
  * note body: the agent reads those over MCP with its own credential.
  */
-import type { ChannelActor } from "./channels.js";
-import type { SynapseProposalAction } from "./synapse.js";
+import type { ChannelActor, ChannelAgentAccess } from "./channels.js";
+import type { SynapseActor, SynapseProposalAction } from "./synapse.js";
 
-/** What wakes an agent, as the dashboard names it. */
-export const AGENT_WEBHOOK_EVENTS = {
-	mentions: "Mentions and replies",
-	messages: "New messages",
-	proposals: "Proposal decisions",
+/** Where in the app an event comes from, as the dashboard heads each list. */
+export const AGENT_WEBHOOK_AREAS = {
+	channels: "Channels",
+	synapse: "Synapse",
+	agent: "This agent",
+	workspace: "Workspace",
 } as const;
-export type AgentWebhookEventGroup = keyof typeof AGENT_WEBHOOK_EVENTS;
-/** What each group sends, in a sentence. */
-export const AGENT_WEBHOOK_EVENT_HINTS: Record<AgentWebhookEventGroup, string> =
+export type AgentWebhookArea = keyof typeof AGENT_WEBHOOK_AREAS;
+
+/**
+ * Everything that can wake an agent, across the app, in the order the
+ * dashboard lists it. A webhook chooses groups; `types` are the events each
+ * group sends. An agent only hears what its own credential could read over
+ * MCP, or what happened to the agent itself.
+ */
+export const AGENT_WEBHOOK_EVENT_GROUPS = {
+	mentions: {
+		area: "channels",
+		label: "Mentions and replies",
+		hint: "A message that mentions the agent, or a reply in a thread the agent started. Wakes only this agent.",
+		types: ["channel.mention", "channel.reply"],
+	},
+	messages: {
+		area: "channels",
+		label: "New messages",
+		hint: "A person or API token posts in a channel where the agent can post. An agent with read access is not woken, and other agents' posts wake nobody unless they mention someone.",
+		types: ["channel.message"],
+	},
+	"message-changes": {
+		area: "channels",
+		label: "Edited and deleted messages",
+		hint: "A person or API token edits or deletes a message in a channel where the agent can post. An edit that mentions the agent, and the deletion of the agent's own message, wake it whatever its access.",
+		types: ["channel.message_edited", "channel.message_deleted"],
+	},
+	membership: {
+		area: "channels",
+		label: "Channel access",
+		hint: "Someone adds the agent to a channel, changes its access between read and post, or removes it.",
+		types: ["channel.joined", "channel.access_changed", "channel.left"],
+	},
+	channels: {
+		area: "channels",
+		label: "Channel changes",
+		hint: "A channel the agent is in is renamed, gets a new topic or description, or is archived or unarchived.",
+		types: ["channel.updated", "channel.archived", "channel.unarchived"],
+	},
+	proposals: {
+		area: "synapse",
+		label: "Proposal decisions",
+		hint: "A workspace admin approves or rejects one of the agent's Synapse proposals.",
+		types: ["proposal.decided"],
+	},
+	"shared-notes": {
+		area: "synapse",
+		label: "Shared notes",
+		hint: "Someone creates, changes, deletes, or imports notes in the workspace's shared Synapse, or in the global Synapse it inherits.",
+		types: [
+			"synapse.note_created",
+			"synapse.note_updated",
+			"synapse.note_deleted",
+			"synapse.imported",
+		],
+	},
+	"own-notes": {
+		area: "synapse",
+		label: "Its own notes",
+		hint: "Someone other than the agent creates, changes, deletes, or imports notes in the agent's private Synapse space.",
+		types: [
+			"synapse.note_created",
+			"synapse.note_updated",
+			"synapse.note_deleted",
+			"synapse.imported",
+		],
+	},
+	agent: {
+		area: "agent",
+		label: "Agent settings",
+		hint: "A workspace admin renames the agent, changes its description or grants, or rolls its token.",
+		types: ["agent.updated", "agent.permissions_changed", "agent.token_rolled"],
+	},
+	connections: {
+		area: "agent",
+		label: "App sign-ins",
+		hint: "An app signs in to the agent with OAuth, or is disconnected from it.",
+		types: ["agent.app_connected", "agent.app_disconnected"],
+	},
+	models: {
+		area: "workspace",
+		label: "Models",
+		hint: "The workspace's models, routing, or failover change. Only an agent with the Models: Chat grant is woken.",
+		types: ["models.changed"],
+	},
+	web: {
+		area: "workspace",
+		label: "Web access",
+		hint: "The workspace's web policy or proxies change. Only an agent with the Web: Fetch grant is woken.",
+		types: ["web.changed"],
+	},
+} as const satisfies Record<
+	string,
 	{
-		mentions:
-			"A message that mentions the agent, or a reply in a thread the agent started. Wakes only this agent.",
-		messages:
-			"A person or API token posts in a channel where the agent can post. An agent with read access is not woken, and other agents' posts wake nobody unless they mention someone.",
-		proposals:
-			"A workspace admin approves or rejects one of the agent's Synapse proposals.",
-	};
+		area: AgentWebhookArea;
+		label: string;
+		hint: string;
+		types: readonly AgentWakeEvent["type"][];
+	}
+>;
+export type AgentWebhookEventGroup = keyof typeof AGENT_WEBHOOK_EVENT_GROUPS;
+
+const groupTexts = (field: "label" | "hint") =>
+	Object.fromEntries(
+		Object.entries(AGENT_WEBHOOK_EVENT_GROUPS).map(([id, group]) => [
+			id,
+			group[field],
+		]),
+	) as Record<AgentWebhookEventGroup, string>;
+/** What wakes an agent, as the dashboard names it. */
+export const AGENT_WEBHOOK_EVENTS = groupTexts("label");
+/** What each group sends, in a sentence. */
+export const AGENT_WEBHOOK_EVENT_HINTS = groupTexts("hint");
+/**
+ * The groups a new webhook starts with: what asks the agent to act. The rest
+ * report changes around it, and are chosen per webhook.
+ */
 export const DEFAULT_AGENT_WEBHOOK_EVENTS: readonly AgentWebhookEventGroup[] = [
 	"mentions",
 	"messages",
 	"proposals",
 ];
+
+/** The groups of one area, in the dashboard's order. */
+export function agentWebhookGroupsIn(
+	area: AgentWebhookArea,
+): AgentWebhookEventGroup[] {
+	return (
+		Object.keys(AGENT_WEBHOOK_EVENT_GROUPS) as AgentWebhookEventGroup[]
+	).filter((group) => AGENT_WEBHOOK_EVENT_GROUPS[group].area === area);
+}
+
+/** `groups` without repeats, in the dashboard's order. */
+export function orderedAgentWebhookGroups(
+	groups: Iterable<AgentWebhookEventGroup>,
+): AgentWebhookEventGroup[] {
+	const chosen = new Set(groups);
+	return (
+		Object.keys(AGENT_WEBHOOK_EVENT_GROUPS) as AgentWebhookEventGroup[]
+	).filter((group) => chosen.has(group));
+}
+
+/**
+ * The group a webhook must have chosen to be sent this event, or null for an
+ * event no group sends (a test). A Synapse event belongs to the group of the
+ * space it happened in.
+ */
+export function agentWakeEventGroup(
+	event: AgentWakeEvent,
+): AgentWebhookEventGroup | null {
+	switch (event.type) {
+		case "channel.mention":
+		case "channel.reply":
+			return "mentions";
+		case "channel.message":
+			return "messages";
+		case "channel.message_edited":
+		case "channel.message_deleted":
+			return "message-changes";
+		case "channel.joined":
+		case "channel.access_changed":
+		case "channel.left":
+			return "membership";
+		case "channel.updated":
+		case "channel.archived":
+		case "channel.unarchived":
+			return "channels";
+		case "proposal.decided":
+			return "proposals";
+		case "synapse.note_created":
+		case "synapse.note_updated":
+		case "synapse.note_deleted":
+		case "synapse.imported":
+			return event.space === "agent" ? "own-notes" : "shared-notes";
+		case "agent.updated":
+		case "agent.permissions_changed":
+		case "agent.token_rolled":
+			return "agent";
+		case "agent.app_connected":
+		case "agent.app_disconnected":
+			return "connections";
+		case "models.changed":
+			return "models";
+		case "web.changed":
+			return "web";
+		default:
+			return null;
+	}
+}
 
 export const AGENT_WEBHOOK_LIMITS = {
 	urlLength: 2000,
@@ -286,25 +460,76 @@ export type AgentWebhookTestResult = {
 	durationMs: number;
 };
 
+/** Who did something. `system`: the gateway itself. */
+export type AgentWakeActor = SynapseActor;
+
+/** The channel an event happened in, by id and by its name at the time. */
+type InChannel = { at: string; channelId: string; channel: string };
+/** The message an event is about: `seq` is its number in the channel. */
+type AboutMessage = InChannel & {
+	messageId: string;
+	seq: number;
+	/** The thread's first message, for a reply in a thread. */
+	threadId: string | null;
+};
+/**
+ * Where a note lives, as the agent names it over MCP: `shared` is its
+ * workspace's team canon, `global` the canon every workspace inherits, and
+ * `agent` the agent's own private space.
+ */
+export type AgentWakeSpace = "shared" | "global" | "agent";
+
 /** One thing that happened, as a POST lists it. */
 export type AgentWakeEvent =
-	| {
+	| (AboutMessage & {
 			/**
 			 * `channel.mention`: the message mentions the agent.
 			 * `channel.reply`: a reply in a thread the agent started.
 			 * `channel.message`: a new message in a channel the agent can post in.
 			 */
 			type: "channel.mention" | "channel.reply" | "channel.message";
-			at: string;
-			channelId: string;
-			/** The channel's name when the message was posted. */
-			channel: string;
-			messageId: string;
-			seq: number;
-			/** The thread's first message, for a reply in a thread. */
-			threadId: string | null;
 			author: ChannelActor;
-	  }
+	  })
+	| (AboutMessage & {
+			type: "channel.message_edited";
+			by: ChannelActor;
+			/** The message mentions the agent as it now reads. */
+			mentioned: boolean;
+	  })
+	| (AboutMessage & {
+			type: "channel.message_deleted";
+			by: ChannelActor;
+			/** The agent wrote the message. */
+			own: boolean;
+	  })
+	| (InChannel & {
+			/** The agent was added to the channel. */
+			type: "channel.joined";
+			access: ChannelAgentAccess;
+			by: ChannelActor;
+	  })
+	| (InChannel & {
+			type: "channel.access_changed";
+			access: ChannelAgentAccess;
+			previousAccess: ChannelAgentAccess;
+			by: ChannelActor;
+	  })
+	| (InChannel & {
+			/** The agent was removed from the channel. */
+			type: "channel.left";
+			by: ChannelActor;
+	  })
+	| (InChannel & {
+			type: "channel.updated";
+			changes: Array<"name" | "topic" | "description">;
+			/** The name before, when it was renamed. */
+			previousName: string | null;
+			by: ChannelActor;
+	  })
+	| (InChannel & {
+			type: "channel.archived" | "channel.unarchived";
+			by: ChannelActor;
+	  })
 	| {
 			type: "proposal.decided";
 			at: string;
@@ -313,6 +538,78 @@ export type AgentWakeEvent =
 			title: string;
 			status: "approved" | "rejected";
 			decidedBy: string;
+	  }
+	| {
+			type:
+				| "synapse.note_created"
+				| "synapse.note_updated"
+				| "synapse.note_deleted";
+			at: string;
+			space: AgentWakeSpace;
+			title: string;
+			/** The title before, when the note was renamed. */
+			previousTitle: string | null;
+			by: AgentWakeActor;
+	  }
+	| {
+			/** Many notes at once, reported as one event. */
+			type: "synapse.imported";
+			at: string;
+			space: AgentWakeSpace;
+			created: number;
+			updated: number;
+			by: AgentWakeActor;
+	  }
+	| {
+			type: "agent.updated";
+			at: string;
+			changes: Array<"name" | "description">;
+			/** The name before, when the agent was renamed. */
+			previousName: string | null;
+			by: AgentWakeActor;
+	  }
+	| {
+			type: "agent.permissions_changed";
+			at: string;
+			/** Grant ids, such as `models:chat`. */
+			added: string[];
+			removed: string[];
+			by: AgentWakeActor;
+	  }
+	| {
+			type: "agent.token_rolled";
+			at: string;
+			/** When the token it replaced stops working. */
+			previousValidUntil: string;
+			by: AgentWakeActor;
+	  }
+	| {
+			type: "agent.app_connected";
+			at: string;
+			/** The app's name, which the app chose itself. */
+			app: string;
+			approvedBy: string | null;
+	  }
+	| {
+			type: "agent.app_disconnected";
+			at: string;
+			app: string;
+			reason: string;
+			/** Who disconnected it; null when the app or the gateway did. */
+			by: string | null;
+	  }
+	| {
+			type: "models.changed";
+			at: string;
+			/** `models`: a model or connection. `routing` and `failover`: those settings. */
+			change: "models" | "routing" | "failover";
+			by: AgentWakeActor;
+	  }
+	| {
+			type: "web.changed";
+			at: string;
+			change: "policy" | "proxies";
+			by: AgentWakeActor;
 	  }
 	| {
 			/** A workspace admin sent a test from the dashboard. */

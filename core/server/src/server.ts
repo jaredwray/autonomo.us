@@ -1,6 +1,7 @@
 import cors from "@fastify/cors";
 import Fastify from "fastify";
 import packageJson from "../package.json" with { type: "json" };
+import { AppEvents } from "./agent-webhooks/app-events.js";
 import {
 	fetchWebhookTransport,
 	nodeWebhookTransport,
@@ -247,6 +248,8 @@ export function createServer(options: CreateServerOptions = {}) {
 		: new MemorySynapseRepository();
 	const synapse = new SynapseService(synapseRepository, {
 		timeZone: config.synapseTimeZone ?? "UTC",
+		// Agents hear of notes that change around them through their webhooks.
+		onChange: (change) => appEvents.onSynapseChanged(change),
 	});
 	// Channels share the control-plane client, so a Worker request that
 	// authenticates and posts stays on one MongoDB connection.
@@ -266,20 +269,22 @@ export function createServer(options: CreateServerOptions = {}) {
 		(options.webTransport === "fetch"
 			? fetchWebhookTransport()
 			: nodeWebhookTransport());
+	const webhookAgents = {
+		find: async (id: string) => {
+			const agent = await agentTokens.find(id);
+			return (
+				agent && {
+					name: agent.name,
+					workspaceId: agent.workspaceId,
+					status: agent.status,
+					permissions: agent.permissions,
+				}
+			);
+		},
+	};
 	const agentWebhooks = new AgentWebhooks({
 		repository: agentWebhookRepository,
-		agents: {
-			find: async (id) => {
-				const agent = await agentTokens.find(id);
-				return (
-					agent && {
-						name: agent.name,
-						workspaceId: agent.workspaceId,
-						status: agent.status,
-					}
-				);
-			},
-		},
+		agents: webhookAgents,
 		workspaces,
 		threadAuthor: async (workspaceId, channelId, messageId) => {
 			const entry = await channelRepository.getEntry(
@@ -303,6 +308,13 @@ export function createServer(options: CreateServerOptions = {}) {
 				: 60_000,
 		log: (message, details) => server.log.error(details, message),
 	});
+	// What else happens in the app that an agent's webhook reports: changes to
+	// channels, Synapse, the agent itself, and its workspace.
+	const appEvents = new AppEvents({
+		webhooks: agentWebhooks,
+		agents: webhookAgents,
+		workspaces,
+	});
 	const channels: ChannelService = new ChannelService(channelRepository, {
 		// A message that mentions one of the gateway's own bots starts its
 		// reply; one meant for an agent elsewhere wakes it through its webhook.
@@ -313,6 +325,9 @@ export function createServer(options: CreateServerOptions = {}) {
 				mcpEvents?.onMessage(channel, message),
 			]);
 		},
+		onMessageChange: (channel, message, change) =>
+			appEvents.onMessageChanged(channel, message, change),
+		onChange: (channel, change) => appEvents.onChannelChanged(channel, change),
 		directory: {
 			// A channel's agents are agent tokens and the bots the gateway runs.
 			agents: async (workspaceId) => {
@@ -356,10 +371,27 @@ export function createServer(options: CreateServerOptions = {}) {
 			const own = agent.workspaceId ?? (await workspaces.defaultWorkspaceId());
 			return own === workspaceId ? agent.permissions : null;
 		},
-		record: async (workspaceId, agentId, action, detail, actorName) => {
+		record: async (workspaceId, agentId, action, detail, actorName, app) => {
 			const workspace = await workspaces.get(workspaceId);
-			if (workspace)
-				await agentTokens.note(workspace, agentId, action, detail, actorName);
+			if (!workspace) return;
+			await agentTokens.note(workspace, agentId, action, detail, actorName);
+			if (app)
+				await appEvents.onAgentApp(
+					workspaceId,
+					agentId,
+					action === "connected"
+						? {
+								kind: "connected",
+								app: app.name,
+								approvedBy: actorName ?? null,
+							}
+						: {
+								kind: "disconnected",
+								app: app.name,
+								reason: app.reason ?? "",
+								by: actorName ?? null,
+							},
+				);
 		},
 	};
 	const oauthRepository = mongo
@@ -538,9 +570,23 @@ export function createServer(options: CreateServerOptions = {}) {
 	// and authorizes `:workspace` before any of these handlers run.
 	server.register(
 		async (scoped) => {
-			scoped.register(modelsRoutes, { providers });
-			scoped.register(failoverRoutes, { providers, routing });
-			scoped.register(routingRoutes, { routing, providers });
+			scoped.register(modelsRoutes, {
+				providers,
+				onChanged: (workspaceId, by) =>
+					appEvents.onModelsChanged(workspaceId, "models", by),
+			});
+			scoped.register(failoverRoutes, {
+				providers,
+				routing,
+				onChanged: (workspaceId, by) =>
+					appEvents.onModelsChanged(workspaceId, "failover", by),
+			});
+			scoped.register(routingRoutes, {
+				routing,
+				providers,
+				onChanged: (workspaceId, change, by) =>
+					appEvents.onModelsChanged(workspaceId, change, by),
+			});
 			scoped.register(chatRoutes, {
 				providers,
 				routing,
@@ -555,6 +601,7 @@ export function createServer(options: CreateServerOptions = {}) {
 				tokens: agentTokens,
 				oauth,
 				webhooks: agentWebhooks,
+				events: appEvents,
 			});
 			scoped.register(agentRoutes, { agentTokens, bots, oauth });
 			scoped.register(agentWebhookRoutes, {
@@ -572,7 +619,12 @@ export function createServer(options: CreateServerOptions = {}) {
 			});
 			scoped.register(channelRoutes, { channels });
 			scoped.register(botRoutes, { bots, webRequests: botWebRequests });
-			scoped.register(webRoutes, { store: proxies, web });
+			scoped.register(webRoutes, {
+				store: proxies,
+				web,
+				onChanged: (workspaceId, change, by) =>
+					appEvents.onWebChanged(workspaceId, change, by),
+			});
 			scoped.register(overviewRoutes, {
 				accounts,
 				agentTokens,

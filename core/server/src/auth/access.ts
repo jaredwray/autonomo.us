@@ -1,4 +1,5 @@
 import {
+	type AgentWakeActor,
 	API_TOKEN_PERMISSIONS,
 	type ApiTokenPermission,
 	type TeamMember,
@@ -315,6 +316,20 @@ export function signedInMember(request: FastifyRequest): TeamMember {
 	if (request.auth?.kind !== "user")
 		throw new AccountError("Sign in as a team member for this action.", 403);
 	return request.auth.member;
+}
+
+/** Who made this request, as an event names them: a person or an API token. */
+export function requestActor(request: FastifyRequest): AgentWakeActor {
+	const auth = request.auth;
+	if (auth?.kind === "user")
+		return {
+			kind: "user",
+			id: auth.member.id,
+			name: auth.member.name || auth.member.email,
+		};
+	if (auth?.kind === "api-token")
+		return { kind: "api-token", id: auth.token.id, name: auth.token.name };
+	return { kind: "system", id: "gateway", name: "The gateway" };
 }
 
 /** The workspace the access hook resolved for this request. */

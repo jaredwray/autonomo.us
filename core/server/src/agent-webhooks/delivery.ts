@@ -2,6 +2,7 @@ import { createHmac, randomBytes } from "node:crypto";
 import { request as httpsRequest } from "node:https";
 import type { LookupFunction } from "node:net";
 import {
+	type AgentWakeActor,
 	type AgentWakeEvent,
 	type AgentWakePayload,
 	type AgentWebhookHeader,
@@ -43,7 +44,15 @@ function line(value: string, max = 80): string {
 	const flat = value.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+/gu, " ").trim();
 	return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
 }
-const KIND = { user: "person", agent: "agent", "api-token": "token" };
+const KIND = {
+	user: "person",
+	agent: "agent",
+	"api-token": "token",
+	system: "gateway",
+};
+/** Who did something: a name and what kind of actor it is. */
+const who = (actor: AgentWakeActor) =>
+	`${line(actor.name)} (${KIND[actor.kind]})`;
 const range = (seqs: number[]) => {
 	const low = Math.min(...seqs);
 	const high = Math.max(...seqs);
@@ -53,6 +62,38 @@ const names = (list: string[]) =>
 	list.length <= 2
 		? list.join(" and ")
 		: `${list.slice(0, 2).join(", ")}, and ${list.length - 2} more`;
+const count = (n: number, one: string, many = `${one}s`) =>
+	`${n} ${n === 1 ? one : many}`;
+const SPACE = {
+	shared: "the shared Synapse",
+	global: "the global Synapse",
+	agent: "your own Synapse space",
+};
+const NOTE_VERB = {
+	"synapse.note_created": "created",
+	"synapse.note_updated": "changed",
+	"synapse.note_deleted": "deleted",
+};
+const MODELS_CHANGE = {
+	models: "its models or connections",
+	routing: "its routing",
+	failover: "its failover",
+};
+
+/** What to do about the events of one kind, said once below the list. */
+const NEXT = {
+	channels:
+		"Read each channel above with channels_read: it starts at your read mark, so it shows everything you have not handled. Mark what you handled with channels_mark_read.",
+	membership:
+		"Call channels_list to see the channels you are in now and what is unread in each.",
+	proposals:
+		"Call synapse_proposals to see each decision and its reason, and follow up on rejected ones.",
+	notes:
+		'Read a note above with synapse_read (space "shared" for the shared and global Synapse) before relying on what you remember of it.',
+	agent:
+		"Your grants decide which tools you have: list your tools again before you rely on one.",
+	models: "Call models_list to see the models you can use now.",
+} as const;
 
 /**
  * The payload's `text`: what happened and what to do next, in words. A
@@ -69,24 +110,23 @@ export function wakeText(
 		string,
 		{ channel: string; seqs: number[]; authors: string[] }
 	>();
-	let channels = false;
-	let proposals = false;
+	const next = new Set<keyof typeof NEXT>();
 	for (const event of events) {
 		switch (event.type) {
 			case "channel.mention":
-				channels = true;
+				next.add("channels");
 				lines.push(
-					`- ${line(event.author.name)} (${KIND[event.author.kind]}) mentioned you in #${event.channel}, message ${event.seq}${event.threadId ? " in a thread" : ""}.`,
+					`- ${who(event.author)} mentioned you in #${event.channel}, message ${event.seq}${event.threadId ? " in a thread" : ""}.`,
 				);
 				break;
 			case "channel.reply":
-				channels = true;
+				next.add("channels");
 				lines.push(
-					`- ${line(event.author.name)} (${KIND[event.author.kind]}) replied in a thread you started in #${event.channel}, message ${event.seq}.`,
+					`- ${who(event.author)} replied in a thread you started in #${event.channel}, message ${event.seq}.`,
 				);
 				break;
 			case "channel.message": {
-				channels = true;
+				next.add("channels");
 				const group = messages.get(event.channelId) ?? {
 					channel: event.channel,
 					seqs: [],
@@ -98,10 +138,122 @@ export function wakeText(
 				messages.set(event.channelId, group);
 				break;
 			}
+			case "channel.message_edited":
+				next.add("channels");
+				lines.push(
+					`- ${who(event.by)} edited message ${event.seq} in #${event.channel}${event.mentioned ? ", which mentions you" : ""}.`,
+				);
+				break;
+			case "channel.message_deleted":
+				next.add("channels");
+				lines.push(
+					`- ${who(event.by)} deleted message ${event.seq} in #${event.channel}${event.own ? ", which you wrote" : ""}.`,
+				);
+				break;
+			case "channel.joined":
+				next.add("membership");
+				lines.push(
+					`- ${who(event.by)} added you to #${event.channel} with ${event.access} access.`,
+				);
+				break;
+			case "channel.access_changed":
+				next.add("membership");
+				lines.push(
+					`- ${who(event.by)} changed your access to #${event.channel} from ${event.previousAccess} to ${event.access}.`,
+				);
+				break;
+			case "channel.left":
+				next.add("membership");
+				lines.push(`- ${who(event.by)} removed you from #${event.channel}.`);
+				break;
+			case "channel.updated": {
+				const changes = event.changes.map((change) =>
+					change === "name" && event.previousName
+						? `renamed it from #${event.previousName}`
+						: `changed its ${change}`,
+				);
+				lines.push(
+					`- ${who(event.by)} updated #${event.channel}: ${changes.join(", ")}.`,
+				);
+				break;
+			}
+			case "channel.archived":
+			case "channel.unarchived":
+				next.add("membership");
+				lines.push(
+					`- ${who(event.by)} ${event.type === "channel.archived" ? "archived" : "unarchived"} #${event.channel}.`,
+				);
+				break;
 			case "proposal.decided":
-				proposals = true;
+				next.add("proposals");
 				lines.push(
 					`- ${line(event.decidedBy)} ${event.status} your proposal to ${event.action} "${line(event.title)}" in the shared Synapse.`,
+				);
+				break;
+			case "synapse.note_created":
+			case "synapse.note_updated":
+			case "synapse.note_deleted":
+				if (event.type !== "synapse.note_deleted") next.add("notes");
+				lines.push(
+					event.previousTitle
+						? `- ${who(event.by)} renamed "${line(event.previousTitle)}" to "${line(event.title)}" in ${SPACE[event.space]}.`
+						: `- ${who(event.by)} ${NOTE_VERB[event.type]} "${line(event.title)}" in ${SPACE[event.space]}.`,
+				);
+				break;
+			case "synapse.imported":
+				next.add("notes");
+				lines.push(
+					`- ${who(event.by)} imported notes into ${SPACE[event.space]}: ${event.created} created, ${event.updated} changed.`,
+				);
+				break;
+			case "agent.updated": {
+				const did = [
+					event.previousName &&
+						`renamed you from "${line(event.previousName)}"`,
+					event.changes.includes("description") && "changed your description",
+				].filter(Boolean);
+				lines.push(
+					`- ${who(event.by)} ${did.join(" and ") || "changed your settings"}.`,
+				);
+				break;
+			}
+			case "agent.permissions_changed": {
+				next.add("agent");
+				const parts = [
+					event.added.length &&
+						`added ${event.added.map((id) => line(id)).join(", ")}`,
+					event.removed.length &&
+						`removed ${event.removed.map((id) => line(id)).join(", ")}`,
+				].filter(Boolean);
+				lines.push(
+					`- ${who(event.by)} changed your grants: ${parts.join("; ")}.`,
+				);
+				break;
+			}
+			case "agent.token_rolled":
+				lines.push(
+					`- ${who(event.by)} rolled your agent token. The token it replaced works until ${event.previousValidUntil}.`,
+				);
+				break;
+			case "agent.app_connected":
+				lines.push(
+					`- The app ${line(event.app)} signed in to you${event.approvedBy ? `, approved by ${line(event.approvedBy)}` : ""}.`,
+				);
+				break;
+			case "agent.app_disconnected":
+				lines.push(
+					`- The app ${line(event.app)} was disconnected from you${event.by ? ` by ${line(event.by)}` : ""}. ${line(event.reason, 200)}`,
+				);
+				break;
+			case "models.changed":
+				next.add("models");
+				lines.push(
+					`- ${who(event.by)} changed the workspace's models: ${MODELS_CHANGE[event.change]}.`,
+				);
+				break;
+			case "web.changed":
+				lines.push(
+					`- ${who(event.by)} changed the workspace's web access: its ${event.change}.`,
 				);
 				break;
 			case "webhook.test":
@@ -113,26 +265,21 @@ export function wakeText(
 	}
 	for (const group of messages.values())
 		lines.push(
-			`- ${group.seqs.length === 1 ? "1 new message" : `${group.seqs.length} new messages`} in #${group.channel} (${range(group.seqs)}) from ${names(group.authors)}.`,
+			`- ${count(group.seqs.length, "new message")} in #${group.channel} (${range(group.seqs)}) from ${names(group.authors)}.`,
 		);
 	if (omitted)
 		lines.push(
-			`- ${omitted} more ${omitted === 1 ? "update" : "updates"} did not fit here; your channels and proposals show them.`,
+			`- ${omitted} more ${omitted === 1 ? "update" : "updates"} did not fit here; your channels, proposals, and Synapse show them.`,
 		);
 	const total = events.length + omitted;
-	const next: string[] = [];
-	if (channels)
-		next.push(
-			"Read each channel above with channels_read: it starts at your read mark, so it shows everything you have not handled. Mark what you handled with channels_mark_read.",
-		);
-	if (proposals)
-		next.push(
-			"Call synapse_proposals to see each decision and its reason, and follow up on rejected ones.",
-		);
+	// In the order of `NEXT`, whatever order the events came in.
+	const advice = (Object.keys(NEXT) as Array<keyof typeof NEXT>)
+		.filter((key) => next.has(key))
+		.map((key) => NEXT[key]);
 	return [
-		`autonomo.us woke ${line(agentName)} with ${total === 1 ? "1 update" : `${total} updates`}:`,
+		`autonomo.us woke ${line(agentName)} with ${count(total, "update")}:`,
 		...lines,
-		...(next.length ? ["", ...next] : []),
+		...(advice.length ? ["", ...advice] : []),
 	].join("\n");
 }
 

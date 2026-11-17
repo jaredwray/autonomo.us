@@ -162,4 +162,34 @@ describe.each(contracts)("%s agent webhook repository", (_name, make) => {
 		expect(await repository.due(T1, 1)).toHaveLength(1);
 		await repository.close();
 	});
+
+	it("finds the active webhooks that chose a group, in one workspace or all", async () => {
+		const repository = make();
+		const workspace = randomUUID();
+		const notes = webhook(workspace, { events: ["mentions", "shared-notes"] });
+		const paused = webhook(workspace, {
+			events: ["shared-notes"],
+			status: "paused",
+		});
+		const other = webhook(workspace, { events: ["mentions"] });
+		const elsewhere = webhook(randomUUID(), { events: ["shared-notes"] });
+		for (const item of [notes, paused, other, elsewhere])
+			await repository.insert(item);
+
+		expect(
+			(await repository.subscribed(workspace, "shared-notes")).map(
+				(item) => item.agentId,
+			),
+		).toEqual([notes.agentId]);
+		// Every workspace's, for what all of them inherit.
+		const everywhere = (await repository.subscribed(null, "shared-notes")).map(
+			(item) => item.agentId,
+		);
+		expect(everywhere).toContain(notes.agentId);
+		expect(everywhere).toContain(elsewhere.agentId);
+		expect(everywhere).not.toContain(paused.agentId);
+		expect(everywhere).not.toContain(other.agentId);
+		expect(await repository.subscribed(workspace, "models")).toEqual([]);
+		await repository.close();
+	});
 });

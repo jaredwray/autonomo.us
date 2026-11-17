@@ -37,13 +37,17 @@ export type OAuthAgents = {
 	 * is no such agent or it is revoked.
 	 */
 	permissions(workspaceId: string, agentId: string): Promise<string[] | null>;
-	/** Writes a sign-in or sign-out into the agent's history. */
+	/**
+	 * Writes a sign-in or sign-out into the agent's history. `app` names the
+	 * app, and says why it was disconnected, for whoever else is told.
+	 */
 	record(
 		workspaceId: string,
 		agentId: string,
 		action: "connected" | "disconnected",
 		detail: string,
 		actorName?: string,
+		app?: { name: string; reason?: string },
 	): Promise<void>;
 };
 
@@ -515,6 +519,7 @@ export class OAuthService {
 			"connected",
 			`${grant.clientName} signed in at ${redirectHost(grant.redirectUri)}.`,
 			grant.approvedBy,
+			{ name: grant.clientName },
 		);
 		return response;
 	}
@@ -583,6 +588,7 @@ export class OAuthService {
 				"disconnected",
 				`${grant.clientName} disconnected. ${reason}`,
 				actor,
+				{ name: grant.clientName, reason },
 			)
 			.catch(() => {});
 	}

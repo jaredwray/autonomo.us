@@ -93,6 +93,14 @@ export interface AgentWebhookRepository {
 		workspaceId: string,
 		agentIds: readonly string[],
 	): Promise<StoredAgentWebhook[]>;
+	/**
+	 * The active webhooks that chose `group`: those of one workspace, or of
+	 * every workspace when `workspaceId` is null.
+	 */
+	subscribed(
+		workspaceId: string | null,
+		group: AgentWebhookEventGroup,
+	): Promise<StoredAgentWebhook[]>;
 	/** Active webhooks whose next POST was due by `now`. */
 	due(now: string, limit: number): Promise<StoredAgentWebhook[]>;
 	close(): Promise<void>;
@@ -164,6 +172,16 @@ export class MemoryAgentWebhookRepository implements AgentWebhookRepository {
 			.filter(
 				(webhook): webhook is StoredAgentWebhook =>
 					webhook?.workspaceId === workspaceId && webhook.status === "active",
+			)
+			.map((webhook) => structuredClone(webhook));
+	}
+	async subscribed(workspaceId: string | null, group: AgentWebhookEventGroup) {
+		return [...this.webhooks.values()]
+			.filter(
+				(webhook) =>
+					webhook.status === "active" &&
+					webhook.events.includes(group) &&
+					(workspaceId === null || webhook.workspaceId === workspaceId),
 			)
 			.map((webhook) => structuredClone(webhook));
 	}
@@ -275,6 +293,21 @@ export class MongoAgentWebhookRepository implements AgentWebhookRepository {
 					_id: { $in: [...agentIds] },
 					workspaceId: { $eq: workspaceId },
 					status: "active",
+				})
+				.toArray(),
+		);
+		return found.map(toWebhook);
+	}
+	async subscribed(workspaceId: string | null, group: AgentWebhookEventGroup) {
+		const found = await this.storage(() =>
+			this.webhooks()
+				.find({
+					status: "active",
+					// Matches a webhook whose `events` list holds the group.
+					events: { $eq: group },
+					...(workspaceId === null
+						? {}
+						: { workspaceId: { $eq: workspaceId } }),
 				})
 				.toArray(),
 		);

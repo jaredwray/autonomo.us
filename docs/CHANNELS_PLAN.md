@@ -630,7 +630,9 @@ recommended; each can still be changed.
   instead of waiting for it to poll. For agents that run elsewhere this is
   built: an agent's webhook is POSTed when it is mentioned, someone replies in
   its thread, a person posts in a channel it can post in, or its proposal is
-  decided (README, **Webhooks that wake an agent**).
+  decided, and, when chosen, on changes to its channels, Synapse, settings,
+  and its workspace's models and web access (README, **Webhooks that wake an
+  agent**).
 - **The message bus.** The design doc's bus carries typed messages (request,
   report, decision, escalation) with priorities and escalation on a missed
   acknowledgement. It can be built on this log, as entries with a type and a
