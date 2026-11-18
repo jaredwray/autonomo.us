@@ -67,6 +67,12 @@ const unclaimed = (now: string): Document => ({
 });
 
 const DUPLICATE_KEY = 11000;
+/**
+ * A filter value compared as a value. `$eq` never reads its operand as query
+ * operators, so a value that somehow arrived as an object matches nothing
+ * instead of changing what the query means.
+ */
+const is = <T>(value: T) => ({ $eq: value });
 /** Indexes are created once per process for each database. */
 const indexed = new Map<string, Promise<void>>();
 
@@ -539,7 +545,7 @@ export class MongoSynapseRepository implements SynapseRepository {
 					? note.noteId
 					: (
 							await this.revisions().findOne(
-								{ space, titleKey: note.titleKey },
+								{ space: is(space), titleKey: is(note.titleKey) },
 								{
 									sort: { at: -1, revision: -1, _id: -1 },
 									projection: { noteId: 1 },
@@ -548,7 +554,7 @@ export class MongoSynapseRepository implements SynapseRepository {
 						)?.noteId;
 			if (noteId === undefined) return [];
 			return this.revisions()
-				.find({ space, noteId })
+				.find({ space: is(space), noteId: is(noteId) })
 				.sort({ at: -1, revision: -1, _id: -1 })
 				.limit(limit)
 				.toArray();
@@ -559,7 +565,10 @@ export class MongoSynapseRepository implements SynapseRepository {
 	}
 	async getRevision(noteId: string, revision: number) {
 		const found = await this.storage("getRevision", () =>
-			this.revisions().findOne({ noteId, revision }),
+			this.revisions().findOne({
+				noteId: is(noteId),
+				revision: is(Number(revision)),
+			}),
 		);
 		if (!found) return null;
 		const { _id, ...rest } = found;
@@ -567,13 +576,16 @@ export class MongoSynapseRepository implements SynapseRepository {
 	}
 	async pruneRevisions(noteId: string, revision: number) {
 		await this.storage("pruneRevisions", () =>
-			this.revisions().deleteMany({ noteId, revision: { $lte: revision } }),
+			this.revisions().deleteMany({
+				noteId: is(noteId),
+				revision: { $lte: Number(revision) },
+			}),
 		);
 	}
 	async revisionsSince(space: SynapseSpaceId, since: string, limit: number) {
 		const found = await this.storage("revisionsSince", () =>
 			this.revisions()
-				.find({ space, at: { $gt: since } })
+				.find({ space: is(space), at: { $gt: String(since) } })
 				.sort({ at: -1, revision: -1, _id: -1 })
 				.limit(limit)
 				.toArray(),
@@ -584,7 +596,7 @@ export class MongoSynapseRepository implements SynapseRepository {
 	}
 	async getMaintenance(space: SynapseSpaceId) {
 		const found = await this.storage("getMaintenance", () =>
-			this.maintenance().findOne({ _id: space }),
+			this.maintenance().findOne({ _id: is(space) }),
 		);
 		return found ? maintenanceOf(found) : null;
 	}
@@ -612,16 +624,19 @@ export class MongoSynapseRepository implements SynapseRepository {
 				// collides with it and the claim fails.
 				const result = await this.maintenance().updateOne(
 					{
-						_id: space,
+						_id: is(space),
 						$and: [
 							{
 								$or: [
 									{ lease: { $exists: false } },
-									{ "lease.until": { $lte: now } },
+									{ "lease.until": { $lte: String(now) } },
 								],
 							},
 							{
-								$or: [{ lastRunAt: null }, { lastRunAt: { $lt: dueBefore } }],
+								$or: [
+									{ lastRunAt: null },
+									{ lastRunAt: { $lt: String(dueBefore) } },
+								],
 							},
 						],
 					},
@@ -646,7 +661,7 @@ export class MongoSynapseRepository implements SynapseRepository {
 	) {
 		const result = await this.storage("finishMaintenance", () =>
 			this.maintenance().updateOne(
-				{ _id: space, "lease.id": leaseId },
+				{ _id: is(space), "lease.id": is(leaseId) },
 				{ $set: { batch, lastRunAt: at }, $unset: { lease: "" } },
 			),
 		);
@@ -655,7 +670,7 @@ export class MongoSynapseRepository implements SynapseRepository {
 	async releaseMaintenance(space: SynapseSpaceId, leaseId: string) {
 		await this.storage("releaseMaintenance", () =>
 			this.maintenance().updateOne(
-				{ _id: space, "lease.id": leaseId },
+				{ _id: is(space), "lease.id": is(leaseId) },
 				{ $unset: { lease: "" } },
 			),
 		);
@@ -669,9 +684,9 @@ export class MongoSynapseRepository implements SynapseRepository {
 		const result = await this.storage("reviewMaintenance", () =>
 			this.maintenance().updateOne(
 				{
-					_id: space,
-					"batch.id": batch.id,
-					"batch.revision": expectedRevision,
+					_id: is(space),
+					"batch.id": is(batch.id),
+					"batch.revision": is(Number(expectedRevision)),
 				},
 				{
 					$set: { batch },
