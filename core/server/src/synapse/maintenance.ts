@@ -855,26 +855,61 @@ export class SynapseMaintenance {
 		actor: SynapseActor,
 	) {
 		const { repository } = this.synapse;
-		const [taken, into] = await Promise.all([
-			this.synapse.findNote(space, alias),
-			repository.getNote(space, titleKey(intoTitle)),
-		]);
-		const names = (note: StoredNote) =>
-			propertyTargets(note.properties.aliases).some(
-				(item) => titleKey(item) === titleKey(alias),
+		const names = (item: string) => titleKey(item) === titleKey(alias);
+		/** The note that goes by the alias, or why the links stay as they are. */
+		const check = async () => {
+			const [taken, into] = await Promise.all([
+				this.synapse.findNote(space, alias),
+				repository.getNote(space, titleKey(intoTitle)),
+			]);
+			if (taken)
+				throw new SynapseError(
+					`"${taken.title}" is a note now, so links to it are left as they are.`,
+					409,
+				);
+			if (!into || !propertyTargets(into.properties.aliases).some(names))
+				throw new SynapseError(
+					`"${intoTitle}" no longer goes by "${alias}", so links to "${alias}" are left as they are.`,
+					409,
+				);
+			return into;
+		};
+		const into = await check();
+		// An alias written as a link (`[[Old name]]`) would be rewritten with
+		// the rest and leave the note listing its own title, no longer going
+		// by the alias. It is written plainly first, so the note goes by the
+		// alias for as long as links are being moved.
+		const listed = into.properties.aliases;
+		const aliases =
+			typeof listed === "string"
+				? [listed]
+				: Array.isArray(listed)
+					? listed
+					: [];
+		const plain = aliases.map((item) =>
+			propertyTargets(item).some(names) ? alias : item,
+		);
+		if (plain.some((item, index) => item !== aliases[index]))
+			await this.synapse.updateNote(
+				space,
+				into.title,
+				{ properties: { aliases: plain }, revision: into.revision },
+				actor,
 			);
-		if (taken)
-			throw new SynapseError(
-				`"${taken.title}" is a note now, so links to it are left as they are.`,
-				409,
-			);
-		if (!into || !names(into))
-			throw new SynapseError(
-				`"${intoTitle}" no longer goes by "${alias}", so links to "${alias}" are left as they are.`,
-				409,
-			);
-		await this.synapse.relink(space, alias, into.title, actor);
-		await this.keepAlias(space, into.title, alias, actor);
+		// Moving links is one write per note, and the review may be minutes
+		// old by the last of them, so each write asks again whether the
+		// alias is still a name without a note.
+		let refused: unknown;
+		await this.synapse.relink(space, alias, into.title, actor, () =>
+			check().then(
+				() => true,
+				(error) => {
+					refused = error;
+					return false;
+				},
+			),
+		);
+		if (refused) throw refused;
 	}
 
 	/**

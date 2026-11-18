@@ -1170,9 +1170,10 @@ export class SynapseService {
 		revision: number,
 		actor: SynapseActor,
 		/**
-		 * The note's revision as the caller last saw it. A note that has moved
-		 * on since is a conflict, so a restore never replaces an edit its
-		 * caller has not seen. Without it, the restore goes over whatever is there.
+		 * The note's revision as the caller last saw it, 0 for a note that was
+		 * gone. A note that has moved on since, or exists now, is a conflict,
+		 * so a restore never replaces an edit its caller has not seen. Without
+		 * it, the restore goes over whatever is there.
 		 */
 		expectedRevision?: number,
 	): Promise<SynapseNote> {
@@ -1180,10 +1181,11 @@ export class SynapseService {
 		const current = await this.repository.getNote(space, titleKey(title));
 		if (
 			expectedRevision !== undefined &&
-			current?.revision !== expectedRevision
+			(current?.revision ?? 0) !== expectedRevision
 		)
 			throw changed();
 		if (!current) {
+			// A note created from here on has the title, and creating refuses it.
 			// An inherited note is not this space's to restore.
 			const shown = await this.readNote(space, titleKey(title));
 			if (shown) throw inherited(shown.title);
@@ -1339,8 +1341,15 @@ export class SynapseService {
 	}
 
 	/** Points every [[from]] link in a space at `to`, as a rename does. */
-	relink(space: SynapseSpaceId, from: string, to: string, actor: SynapseActor) {
-		return this.rewriteLinksTo(space, from, to, actor);
+	relink(
+		space: SynapseSpaceId,
+		from: string,
+		to: string,
+		actor: SynapseActor,
+		/** Asked before each note is rewritten; false stops there. */
+		proceed?: () => Promise<boolean>,
+	) {
+		return this.rewriteLinksTo(space, from, to, actor, proceed);
 	}
 
 	/** Rewrites [[Old]] links note by note; not a transaction (docs/SYNAPSE.md §3). */
@@ -1912,6 +1921,14 @@ export class SynapseService {
 		request: CreateSynapseProposalRequest,
 		/** The shared space of the author's workspace. */
 		space: SynapseSpaceId = SYNAPSE_SHARED_SPACE,
+		/**
+		 * The revision of the note the request was built from, null for no
+		 * note. A proposal whose body was computed from a note records that
+		 * note's revision as its base only if the note is still there: built
+		 * from one revision and based on a later one, its approval would
+		 * replace an edit its author never read.
+		 */
+		builtFrom?: number | null,
 	): Promise<SynapseProposal> {
 		if (!PROPOSAL_ACTIONS.includes(request.action))
 			throw new SynapseError(
@@ -1930,6 +1947,8 @@ export class SynapseService {
 		// Proposals change the workspace's own notes. Creating a note with an
 		// inherited title overrides the global note; the others need its own note.
 		const existing = await this.repository.getNote(space, titleKey(title));
+		if (builtFrom !== undefined && (existing?.revision ?? null) !== builtFrom)
+			throw changed();
 		if (!existing && request.action !== "create") {
 			const global = await this.readNote(space, titleKey(title));
 			if (global) throw inherited(global.title);

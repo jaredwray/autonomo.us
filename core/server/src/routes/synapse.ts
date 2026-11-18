@@ -511,28 +511,14 @@ export async function synapseRoutes(
 				},
 			},
 		},
-		async (request) => {
-			const { expected } = request.query;
-			if (expected === 0) {
-				// The caller saw no note: one that exists now is the conflict.
-				const exists = await synapse.repository.getNote(
-					request.params.space,
-					request.params.title.toLowerCase(),
-				);
-				if (exists)
-					throw new SynapseError(
-						"This note changed during your request. Reload it and try again.",
-						409,
-					);
-			}
-			return synapse.restoreRevision(
+		async (request) =>
+			synapse.restoreRevision(
 				request.params.space,
 				request.params.title,
 				request.params.revision,
 				actorOf(request),
-				expected ? expected : undefined,
-			);
-		},
+				request.query.expected,
+			),
 	);
 	server.post<{ Params: NoteParams; Body: CiteSynapseEvidenceRequest }>(
 		"/synapse/spaces/:space/notes/:title/evidence",

@@ -48,6 +48,8 @@ export const MAX_CAPTURE_ENTITIES = 50;
 export const MAX_CAPTURE_UPDATES = 20;
 const SOURCES_KEY = "sources";
 const TITLE_ATTEMPTS = 20;
+/** Times a proposed line is built again from a note that changed under it. */
+const LINE_ATTEMPTS = 3;
 const WRITE_ATTEMPTS = 3;
 const DERIVED_TITLE_LENGTH = 120;
 
@@ -605,6 +607,36 @@ export class SynapseCapture {
 				? null
 				: { body: appendSectionLine(current.body, MENTIONS_HEADING, line) };
 		try {
+			return await this.line(
+				space,
+				source,
+				entry,
+				withLine,
+				actor,
+				scope,
+				update,
+			);
+		} catch (error) {
+			if (!(error instanceof SynapseError)) throw error;
+			// One note that cannot take its line does not undo the capture.
+			return update("prepared", { detail: error.message });
+		}
+	}
+
+	/** Writes a note's line, or proposes it where the capturer may only propose. */
+	private async line(
+		space: SynapseSpaceId,
+		source: StoredNote,
+		entry: NoteIndexEntry,
+		withLine: (current: StoredNote) => { body: string } | null,
+		actor: SynapseActor,
+		scope: CaptureScope,
+		update: (
+			state: SynapseCaptureUpdate["state"],
+			extra?: Partial<SynapseCaptureUpdate>,
+		) => SynapseCaptureUpdate,
+	): Promise<SynapseCaptureUpdate> {
+		for (let attempt = 0; ; attempt++) {
 			const note = await this.synapse.repository.getNote(
 				entry.space,
 				entry.titleKey,
@@ -651,9 +683,12 @@ export class SynapseCapture {
 						actor,
 						"Withdrawn: the source or the note has changed since. A newer proposal replaces this one.",
 					);
-			const proposal =
-				waiting ??
-				(await this.synapse.propose(
+			if (waiting) return update("proposed", { proposalId: waiting.id });
+			try {
+				// Filed only against the revision this body was built from: the
+				// whole body is proposed, so one built from an older revision
+				// would, once approved, undo whatever was written since.
+				const proposal = await this.synapse.propose(
 					actor,
 					{
 						action: "update",
@@ -662,12 +697,14 @@ export class SynapseCapture {
 						reason,
 					},
 					scope.propose,
-				));
-			return update("proposed", { proposalId: proposal.id });
-		} catch (error) {
-			if (!(error instanceof SynapseError)) throw error;
-			// One note that cannot take its line does not undo the capture.
-			return update("prepared", { detail: error.message });
+					note.revision,
+				);
+				return update("proposed", { proposalId: proposal.id });
+			} catch (error) {
+				const moved = error instanceof SynapseError && error.statusCode === 409;
+				// The note moved on meanwhile: the line is built again from it.
+				if (!moved || attempt + 1 === LINE_ATTEMPTS) throw error;
+			}
 		}
 	}
 }

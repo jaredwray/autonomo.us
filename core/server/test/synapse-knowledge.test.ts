@@ -2460,7 +2460,7 @@ describe("third review", () => {
 		// The alias written as a link is still an alias, not the note's own title.
 		expect(
 			(await synapse.getNote("shared", "Pricing page")).properties.aliases,
-		).toEqual(["Price list", "Pricing pages"]);
+		).toEqual(["Pricing pages", "Price list"]);
 		// Dismissing one alias's finding does not hide another's.
 		await synapse.createNote(
 			"shared",
@@ -2620,5 +2620,192 @@ describe("third review", () => {
 		expect(
 			carriesOutsideMaterial("synapse_proposals", proposals("Met on Tuesday.")),
 		).toBe(false);
+	});
+});
+
+/** A repository in which something else can write between two of a caller's steps. */
+class RacingRepository extends MemorySynapseRepository {
+	/** Each runs once, just before the call it is named for. */
+	race: {
+		insertNote?: () => Promise<unknown>;
+		listProposals?: () => Promise<unknown>;
+	} = {};
+	/** Runs after each note is replaced. */
+	replaced?: (title: string) => Promise<unknown>;
+	private async once(step: keyof RacingRepository["race"]) {
+		const run = this.race[step];
+		this.race[step] = undefined;
+		await run?.();
+	}
+	override async insertNote(
+		...args: Parameters<MemorySynapseRepository["insertNote"]>
+	) {
+		await this.once("insertNote");
+		return super.insertNote(...args);
+	}
+	override async listProposals(
+		...args: Parameters<MemorySynapseRepository["listProposals"]>
+	) {
+		await this.once("listProposals");
+		return super.listProposals(...args);
+	}
+	override async replaceNote(
+		...args: Parameters<MemorySynapseRepository["replaceNote"]>
+	) {
+		const done = await super.replaceNote(...args);
+		if (done) await this.replaced?.(args[0].title);
+		return done;
+	}
+}
+
+function racing() {
+	let now = Date.parse("2026-11-18T10:00:00Z");
+	const repository = new RacingRepository();
+	const synapse = new SynapseService(repository, {
+		timeZone: "UTC",
+		now: () => now,
+	});
+	return {
+		...synapseFeatures(synapse),
+		repository,
+		tick() {
+			now += 1000;
+		},
+	};
+}
+
+describe("fourth review", () => {
+	it("files a proposed line only against the revision it was built from", async () => {
+		const { synapse, capture, repository } = racing();
+		await synapse.createNote(
+			"shared",
+			{ title: "Acme", body: "A customer." },
+			user,
+		);
+		// The note is edited after the capture read it and before it proposes.
+		repository.race.listProposals = () =>
+			synapse.updateNote(
+				"shared",
+				"Acme",
+				{ body: "A customer since 2024." },
+				user,
+			);
+		const result = await capture.capture(
+			own,
+			captureInput({
+				title: "Acme terms",
+				text: "Acme pays net 30.",
+				apply: true,
+			}),
+			agent,
+			{ read: ["shared"], propose: "shared" },
+		);
+		expect(result.updates[0]).toMatchObject({
+			title: "Acme",
+			state: "proposed",
+		});
+		const [line] = (
+			await synapse.listProposals({ authorId: agent.id, status: "pending" })
+		).filter((item) => item.action === "update");
+		// Built again from the edited note, so approving it keeps the edit.
+		expect(line.baseRevision).toBe(2);
+		expect(line.body).toContain("A customer since 2024.");
+		await synapse.decideProposal(line.id, { decision: "approve" }, user);
+		const acme = await synapse.getNote("shared", "Acme");
+		expect(acme.body).toContain("A customer since 2024.");
+		expect(acme.body).toContain("## Mentions");
+
+		// Stated directly: a body built from revision 1 is not filed against 3.
+		const stale = {
+			action: "update" as const,
+			title: "Acme",
+			body: "Built from an old copy.",
+			reason: "A test.",
+		};
+		await expect(
+			synapse.propose(agent, stale, "shared", 1),
+		).rejects.toMatchObject({ statusCode: 409 });
+		await expect(
+			synapse.propose(agent, stale, "shared", null),
+		).rejects.toMatchObject({ statusCode: 409 });
+		expect(
+			await synapse.propose(agent, stale, "shared", acme.revision),
+		).toMatchObject({ baseRevision: acme.revision });
+	});
+
+	it("restores a deleted note only while it is still gone", async () => {
+		const { synapse, repository } = racing();
+		await synapse.createNote("shared", { title: "Plan", body: "one" }, user);
+		await synapse.deleteNote("shared", "Plan", user);
+		// Someone creates the note again after the history page was opened.
+		await synapse.createNote("shared", { title: "Plan", body: "new" }, agent);
+		await expect(
+			synapse.restoreRevision("shared", "Plan", 1, user, 0),
+		).rejects.toMatchObject({ statusCode: 409 });
+		expect((await synapse.getNote("shared", "Plan")).body).toBe("new");
+
+		// The same, when the note appears while the restore is under way.
+		await synapse.createNote("shared", { title: "Brief", body: "one" }, user);
+		await synapse.deleteNote("shared", "Brief", user);
+		repository.race.insertNote = () =>
+			synapse.createNote("shared", { title: "Brief", body: "new" }, agent);
+		await expect(
+			synapse.restoreRevision("shared", "Brief", 1, user, 0),
+		).rejects.toMatchObject({ statusCode: 409 });
+		expect((await synapse.getNote("shared", "Brief")).body).toBe("new");
+
+		// Still gone: the state comes back as a new note.
+		await synapse.createNote("shared", { title: "Memo", body: "one" }, user);
+		await synapse.deleteNote("shared", "Memo", user);
+		expect(
+			await synapse.restoreRevision("shared", "Memo", 1, user, 0),
+		).toMatchObject({ body: "one", revision: 1 });
+	});
+
+	it("stops moving links to an alias once a note takes the alias", async () => {
+		const { synapse, maintenance, repository, tick } = racing();
+		await synapse.createNote(
+			"shared",
+			{ title: "Pricing page", properties: { aliases: ["Price list"] } },
+			user,
+		);
+		for (const title of ["First", "Second"]) {
+			tick();
+			await synapse.createNote(
+				"shared",
+				{ title, body: "See the [[Price list]]." },
+				user,
+			);
+		}
+		const batch = await maintenance.run("shared");
+		const [finding] = batch?.findings ?? [];
+		expect(finding.fix).toEqual({
+			action: "relink",
+			from: "Price list",
+			into: "Pricing page",
+		});
+		// A note is created under the alias after the first link has moved.
+		repository.replaced = async (title) => {
+			if (title !== "First") return;
+			repository.replaced = undefined;
+			await synapse.createNote("shared", { title: "Price list" }, agent);
+		};
+		const decided = await maintenance.decide(
+			"shared",
+			{ ids: [finding.id], decision: "apply" },
+			user,
+		);
+		expect(decided.findings[0]).toMatchObject({
+			state: "open",
+			detail:
+				'"Price list" is a note now, so links to it are left as they are.',
+		});
+		expect((await synapse.getNote("shared", "First")).body).toBe(
+			"See the [[Pricing page]].",
+		);
+		// This link now names a note, and is left pointing at it.
+		expect((await synapse.getNote("shared", "Second")).body).toBe(
+			"See the [[Price list]].",
+		);
 	});
 });
