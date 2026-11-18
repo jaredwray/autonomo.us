@@ -1,11 +1,22 @@
 import {
 	type AppendSynapseNoteRequest,
+	type CiteSynapseEvidenceRequest,
+	type CreateSynapseCommitmentRequest,
 	type CreateSynapseNoteRequest,
+	type DecideSynapseFindingsRequest,
 	type DecideSynapseProposalRequest,
+	type SaveSynapseAnswerRequest,
+	type SetSynapseDecisionStatusRequest,
+	SYNAPSE_COMMITMENT_STATUSES,
+	SYNAPSE_DECISION_STATUSES,
 	SYNAPSE_GLOBAL_SPACE,
 	SYNAPSE_SHARED_SPACE,
 	SYNAPSE_SPACE_ID_PATTERN,
 	type SynapseActor,
+	type SynapseCaptureRequest,
+	type SynapseCommitmentEvent,
+	type SynapseCommitmentStatus,
+	type SynapseContextRequest,
 	type SynapseImportRequest,
 	type SynapseNoteSort,
 	type SynapseProposal,
@@ -17,8 +28,22 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { requestWorkspace, signedInMember } from "../auth/access.js";
 import type { AgentTokenStore } from "../auth/agent-tokens.js";
 import { mongoErrorDetails } from "../mongo.js";
-import { SynapseError } from "../synapse/errors.js";
 import {
+	captureInput,
+	captureNeedsFetch,
+	MAX_CAPTURE_LENGTH,
+} from "../synapse/capture.js";
+import { MAX_TASK_LENGTH } from "../synapse/context.js";
+import { SynapseError } from "../synapse/errors.js";
+import { type SynapseFeatures, synapseFeatures } from "../synapse/features.js";
+import { MAX_FINDINGS } from "../synapse/maintenance.js";
+import {
+	MAX_ANSWER_EVIDENCE,
+	MAX_PASSAGES,
+	MAX_QUESTION_LENGTH,
+} from "../synapse/retrieval.js";
+import {
+	agentSpaceId,
 	MAX_QUERY_LIMIT,
 	MAX_REASON_LENGTH,
 	type SynapseService,
@@ -27,6 +52,10 @@ import {
 import { zipStore } from "../synapse/zip.js";
 
 const IMPORT_BODY_LIMIT = 5 * 1024 * 1024;
+/** A capture's text in JSON, with room for escapes. */
+const CAPTURE_BODY_LIMIT = 2 * 1024 * 1024;
+/** How long a capture may wait for the page it names. */
+const CAPTURE_FETCH_MS = 60_000;
 const IMPORT_MAX_FILES = 500;
 const string = { type: "string" };
 const space = { type: "string", pattern: SYNAPSE_SPACE_ID_PATTERN };
@@ -49,6 +78,17 @@ const dateParams = {
 		date: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" },
 	},
 };
+const revisionParams = {
+	type: "object",
+	required: ["space", "title", "revision"],
+	properties: {
+		space,
+		title: titleParam,
+		revision: { type: "integer", minimum: 1 },
+	},
+};
+const date = { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" };
+const commitmentStatus = { enum: [...SYNAPSE_COMMITMENT_STATUSES] };
 const idParams = {
 	type: "object",
 	required: ["id"],
@@ -97,10 +137,29 @@ export async function synapseRoutes(
 	server: FastifyInstance,
 	{
 		synapse,
+		features,
+		fetchPage,
 		agentTokens,
 		onProposalDecided,
 	}: {
 		synapse: SynapseService;
+		/** What is built on the notes. Made for `synapse` when omitted. */
+		features?: SynapseFeatures;
+		/**
+		 * Reads the page a capture names. Without it, and for anyone but a
+		 * workspace admin, a capture needs the page's text.
+		 */
+		fetchPage?: (
+			request: FastifyRequest,
+			url: string,
+			deadline: number,
+		) => Promise<{
+			ok: boolean;
+			url: string;
+			finalUrl: string;
+			content: string;
+			reason?: string;
+		}>;
 		/** Who has an agent space here: agent tokens and the gateway's bots. */
 		agentTokens: Pick<AgentTokenStore, "ids">;
 		/**
@@ -113,6 +172,13 @@ export async function synapseRoutes(
 		) => Promise<unknown>;
 	},
 ) {
+	const { capture, retriever, commitments, briefing, maintenance } =
+		features ?? synapseFeatures(synapse);
+	/** A person, for what only a person may do: approve, review, restore. */
+	const person = (request: FastifyRequest): SynapseActor => {
+		const member = signedInMember(request);
+		return { kind: "user", id: member.id, name: member.name || member.email };
+	};
 	server.addHook("onRequest", async (request, reply) => {
 		reply.header("cache-control", "no-store");
 		// Decide access to the space before reading a body (an import is up to
@@ -403,6 +469,351 @@ export async function synapseRoutes(
 		},
 		(request) =>
 			synapse.importSpace(request.params.space, request.body, actorOf(request)),
+	);
+	server.get<{ Params: NoteParams }>(
+		"/synapse/spaces/:space/notes/:title/history",
+		{ schema: { params: noteParams } },
+		(request) => synapse.history(request.params.space, request.params.title),
+	);
+	server.get<{ Params: NoteParams & { revision: number } }>(
+		"/synapse/spaces/:space/notes/:title/history/:revision",
+		{ schema: { params: revisionParams } },
+		(request) =>
+			synapse.revision(
+				request.params.space,
+				request.params.title,
+				request.params.revision,
+			),
+	);
+	server.post<{ Params: NoteParams & { revision: number } }>(
+		"/synapse/spaces/:space/notes/:title/history/:revision/restore",
+		{ schema: { params: revisionParams } },
+		(request) =>
+			synapse.restoreRevision(
+				request.params.space,
+				request.params.title,
+				request.params.revision,
+				actorOf(request),
+			),
+	);
+	server.post<{ Params: NoteParams; Body: CiteSynapseEvidenceRequest }>(
+		"/synapse/spaces/:space/notes/:title/evidence",
+		{
+			schema: {
+				params: noteParams,
+				body: body({ source: titleParam, passage: string }, [
+					"source",
+					"passage",
+				]),
+			},
+		},
+		(request) =>
+			synapse.cite(
+				request.params.space,
+				request.params.title,
+				request.body,
+				actorOf(request),
+			),
+	);
+	server.post<{ Params: NoteParams; Body: SetSynapseDecisionStatusRequest }>(
+		"/synapse/spaces/:space/notes/:title/status",
+		{
+			schema: {
+				params: noteParams,
+				body: body(
+					{
+						status: { enum: [...SYNAPSE_DECISION_STATUSES] },
+						supersededBy: titleParam,
+						reason: { ...string, maxLength: MAX_REASON_LENGTH },
+					},
+					["status"],
+				),
+			},
+		},
+		(request) =>
+			synapse.setDecisionStatus(
+				request.params.space,
+				request.params.title,
+				request.body,
+				actorOf(request),
+			),
+	);
+	// Approving an answer makes it knowledge: that takes a person.
+	server.post<{ Params: NoteParams }>(
+		"/synapse/spaces/:space/notes/:title/approve",
+		{ schema: { params: noteParams } },
+		(request) =>
+			retriever.approveAnswer(
+				request.params.space,
+				request.params.title,
+				person(request),
+			),
+	);
+	server.post<{ Params: SpaceParams; Body: SynapseCaptureRequest }>(
+		"/synapse/spaces/:space/capture",
+		{
+			bodyLimit: CAPTURE_BODY_LIMIT,
+			schema: {
+				params: spaceParams,
+				body: body({
+					url: { ...string, maxLength: 2000 },
+					text: { ...string, maxLength: MAX_CAPTURE_LENGTH },
+					document: body(
+						{
+							name: { ...string, minLength: 1, maxLength: 200 },
+							content: { ...string, maxLength: MAX_CAPTURE_LENGTH },
+						},
+						["name", "content"],
+					),
+					title: string,
+					apply: { type: "boolean" },
+				}),
+			},
+		},
+		async (request) => {
+			let fetched: { content: string; url: string } | undefined;
+			if (captureNeedsFetch(request.body)) {
+				// Check the address before anything is fetched for it.
+				captureInput({ ...request.body, text: "" });
+				// A fetch can spend the workspace's proxy budget, as POST /web/fetch does.
+				const workspace = requestWorkspace(request);
+				if (
+					!fetchPage ||
+					request.auth?.kind !== "user" ||
+					workspace.role !== "admin"
+				)
+					throw new SynapseError(
+						fetchPage
+							? "Only a workspace admin can capture a page by its address alone. Send the page's text along with the url."
+							: "Web access is turned off on this gateway. Send the page's text along with the url.",
+						fetchPage ? 403 : 400,
+					);
+				const page = await fetchPage(
+					request,
+					request.body.url as string,
+					Date.now() + CAPTURE_FETCH_MS,
+				);
+				if (!page.ok)
+					throw new SynapseError(
+						`Could not fetch ${page.url}. ${page.reason ?? ""}`.trim(),
+						502,
+					);
+				fetched = { content: page.content, url: page.finalUrl };
+			}
+			return capture.capture(
+				request.params.space,
+				captureInput(request.body, fetched),
+				actorOf(request),
+			);
+		},
+	);
+	server.get<{
+		Params: SpaceParams;
+		Querystring: { question: string; limit?: number };
+	}>(
+		"/synapse/spaces/:space/retrieve",
+		{
+			schema: {
+				params: spaceParams,
+				querystring: {
+					type: "object",
+					required: ["question"],
+					properties: {
+						question: { ...string, maxLength: MAX_QUESTION_LENGTH },
+						limit: { type: "integer", minimum: 1, maximum: MAX_PASSAGES },
+					},
+				},
+			},
+		},
+		(request) => retriever.retrieve([request.params.space], request.query),
+	);
+	server.post<{ Params: SpaceParams; Body: SaveSynapseAnswerRequest }>(
+		"/synapse/spaces/:space/answers",
+		{
+			schema: {
+				params: spaceParams,
+				body: body(
+					{
+						question: { ...string, maxLength: MAX_QUESTION_LENGTH },
+						answer: string,
+						evidence: {
+							type: "array",
+							maxItems: MAX_ANSWER_EVIDENCE,
+							items: body({ source: titleParam, passage: string }, [
+								"source",
+								"passage",
+							]),
+						},
+						title: string,
+					},
+					["question", "answer", "evidence"],
+				),
+			},
+		},
+		async (request, reply) =>
+			reply
+				.code(201)
+				.send(
+					await retriever.saveAnswer(
+						request.params.space,
+						request.body,
+						actorOf(request),
+					),
+				),
+	);
+	server.get<{
+		Params: SpaceParams;
+		Querystring: {
+			status?: SynapseCommitmentStatus;
+			owner?: string;
+			project?: string;
+			overdue?: boolean;
+		};
+	}>(
+		"/synapse/spaces/:space/commitments",
+		{
+			schema: {
+				params: spaceParams,
+				querystring: {
+					type: "object",
+					properties: {
+						status: commitmentStatus,
+						owner: titleParam,
+						project: titleParam,
+						overdue: { type: "boolean" },
+					},
+				},
+			},
+		},
+		async (request) => ({
+			commitments: await commitments.list(request.params.space, request.query),
+		}),
+	);
+	server.post<{ Params: SpaceParams; Body: CreateSynapseCommitmentRequest }>(
+		"/synapse/spaces/:space/commitments",
+		{
+			schema: {
+				params: spaceParams,
+				body: body(
+					{
+						title: string,
+						// A name or a list of names; the service checks which.
+						owner: {},
+						due: date,
+						project: {},
+						evidence: { ...string, maxLength: 500 },
+						body: string,
+					},
+					["title", "owner", "evidence"],
+				),
+			},
+		},
+		async (request, reply) =>
+			reply
+				.code(201)
+				.send(
+					await commitments.create(
+						request.params.space,
+						request.body,
+						actorOf(request),
+					),
+				),
+	);
+	server.post<{ Params: NoteParams; Body: SynapseCommitmentEvent }>(
+		"/synapse/spaces/:space/commitments/:title/events",
+		{
+			schema: {
+				params: noteParams,
+				body: body(
+					{
+						kind: {
+							enum: [
+								"message",
+								"meeting",
+								"transcript",
+								"confirmation",
+								"calendar",
+							],
+						},
+						status: commitmentStatus,
+						due: date,
+						evidence: { ...string, maxLength: 500 },
+						text: { ...string, maxLength: 1000 },
+					},
+					["kind"],
+				),
+			},
+		},
+		(request) =>
+			commitments.record(
+				request.params.space,
+				request.params.title,
+				request.body,
+				actorOf(request),
+			),
+	);
+	// A briefing for an agent that does not speak MCP: the workspace's canon,
+	// and one of its agents' own space when the request names it.
+	server.post<{ Body: SynapseContextRequest & { agent?: string } }>(
+		"/synapse/context",
+		{
+			schema: {
+				body: body({
+					task: { ...string, maxLength: MAX_TASK_LENGTH },
+					project: titleParam,
+					agent: { ...string, pattern: "^[A-Za-z0-9_-]{1,64}$" },
+				}),
+			},
+		},
+		async (request) => {
+			const workspace = requestWorkspace(request);
+			const { agent, ...brief } = request.body ?? {};
+			if (agent !== undefined && !(await agentTokens.ids(workspace)).has(agent))
+				throw new SynapseError("No such agent in this workspace.", 404);
+			return briefing.brief(
+				{
+					shared: sharedSpaceId(workspace),
+					...(agent === undefined ? {} : { own: agentSpaceId(agent) }),
+				},
+				brief,
+			);
+		},
+	);
+	server.get<{ Params: SpaceParams }>(
+		"/synapse/spaces/:space/maintenance",
+		{ schema: { params: spaceParams } },
+		(request) => maintenance.view(request.params.space),
+	);
+	server.post<{ Params: SpaceParams }>(
+		"/synapse/spaces/:space/maintenance/run",
+		{ schema: { params: spaceParams } },
+		async (request) => ({
+			batch: await maintenance.run(request.params.space, true),
+		}),
+	);
+	// A review applies fixes that merge and delete notes: that takes a person.
+	server.post<{ Params: SpaceParams; Body: DecideSynapseFindingsRequest }>(
+		"/synapse/spaces/:space/maintenance/decide",
+		{
+			schema: {
+				params: spaceParams,
+				body: body(
+					{
+						ids: {
+							type: "array",
+							minItems: 1,
+							maxItems: MAX_FINDINGS,
+							items: { ...string, maxLength: 64 },
+						},
+						decision: { enum: ["apply", "dismiss"] },
+						revision: { type: "integer", minimum: 1 },
+					},
+					["ids", "decision"],
+				),
+			},
+		},
+		(request) =>
+			maintenance.decide(request.params.space, request.body, person(request)),
 	);
 	server.get<{ Querystring: { status?: SynapseProposalStatus } }>(
 		"/synapse/proposals",

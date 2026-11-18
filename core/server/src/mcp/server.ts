@@ -36,8 +36,11 @@ export type JsonSchema = {
 	additionalProperties: false;
 };
 export type PropertySchema = {
-	type: "string" | "integer" | "number" | "object" | "boolean";
+	type: "string" | "integer" | "number" | "object" | "boolean" | "array";
 	description: string;
+	/** array: what each item is. Items are checked by the tool, not here. */
+	items?: { type: "object" | "string" };
+	maxItems?: number;
 	enum?: readonly string[];
 	minimum?: number;
 	maximum?: number;
@@ -76,6 +79,11 @@ export type McpCallContext = {
 	proxyRequestsPerDay?: number;
 	/** A bot's web scope: a reason to refuse a host, or null. */
 	allowHost?: (host: string) => string | null;
+	/**
+	 * A web page has entered this reply. A tool that both reads the web and
+	 * writes must then do no more than keep what it read.
+	 */
+	untrusted?: boolean;
 };
 /** The agent a request authenticated as, in its workspace. */
 export type McpAgent = {
@@ -85,7 +93,10 @@ export type McpAgent = {
 	token: Pick<
 		AuthenticatedToken<AgentTokenPermission>,
 		"id" | "name" | "permissions"
-	>;
+	> & {
+		/** What the agent is for, as its record says. */
+		description?: string;
+	};
 	actor: { kind: "agent"; id: string; name: string };
 	workspace: Workspace;
 };
@@ -151,6 +162,22 @@ export function argumentProblem(
 				return `${key} must be at most ${rule.maximum}`;
 		} else if (rule.type === "boolean") {
 			if (typeof value !== "boolean") return `${key} must be true or false`;
+		} else if (rule.type === "array") {
+			if (!Array.isArray(value)) return `${key} must be a list`;
+			if (rule.maxItems !== undefined && value.length > rule.maxItems)
+				return `${key} holds at most ${rule.maxItems} items`;
+			const item = rule.items?.type;
+			if (
+				item &&
+				value.some((entry) =>
+					item === "string"
+						? typeof entry !== "string"
+						: entry === null ||
+							typeof entry !== "object" ||
+							Array.isArray(entry),
+				)
+			)
+				return `${key} must be a list of ${item}s`;
 		} else if (
 			value === null ||
 			typeof value !== "object" ||

@@ -332,6 +332,17 @@ describe("MCP endpoint", () => {
 			"synapse_templates",
 			"synapse_propose",
 			"synapse_proposals",
+			"synapse_context",
+			"synapse_capture",
+			"synapse_cite",
+			"synapse_decision_status",
+			"synapse_history",
+			"synapse_ask",
+			"synapse_save_answer",
+			"synapse_commit",
+			"synapse_commitments",
+			"synapse_commitment_update",
+			"synapse_digest",
 		]);
 		for (const tool of tools) {
 			expect(tool.description.length).toBeGreaterThan(20);

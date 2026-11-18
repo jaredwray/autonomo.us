@@ -1,5 +1,6 @@
 import type { SynapseActor } from "@autonomo.us/common";
-import { describe, expect, it } from "vitest";
+import { MongoClient } from "mongodb";
+import { afterAll, describe, expect, it } from "vitest";
 import { captureInput, titleFrom } from "../src/synapse/capture.js";
 import { statedStatus } from "../src/synapse/commitments.js";
 import {
@@ -12,6 +13,7 @@ import {
 import { synapseFeatures } from "../src/synapse/features.js";
 import { nameKey } from "../src/synapse/maintenance.js";
 import { MemorySynapseRepository } from "../src/synapse/memory-repository.js";
+import { MongoSynapseRepository } from "../src/synapse/mongo-repository.js";
 import { passagesOf } from "../src/synapse/retrieval.js";
 import {
 	MAX_BODY_LENGTH,
@@ -19,6 +21,7 @@ import {
 	SynapseService,
 } from "../src/synapse/synapse.js";
 import { findMentions, root, stem } from "../src/synapse/text.js";
+import { mongoAvailable, uniqueMongoUrl } from "./mongo-env.js";
 
 const user: SynapseActor = { kind: "user", id: "u1", name: "Founder" };
 const agent: SynapseActor = { kind: "agent", id: "tok-1", name: "Scout" };
@@ -1652,4 +1655,144 @@ describe("maintenance", () => {
 			(await repository.getMaintenance("shared"))?.batch?.digest.since,
 		).not.toBeNull();
 	});
+});
+
+const available = await mongoAvailable();
+const mongoUrl = uniqueMongoUrl("know");
+afterAll(async () => {
+	if (!available) return;
+	const client = new MongoClient(mongoUrl, { serverSelectionTimeoutMS: 1500 });
+	await client.db().dropDatabase();
+	await client.close();
+});
+
+describe.skipIf(!available)("on MongoDB", () => {
+	it("captures, retrieves, keeps history, and maintains a space", async () => {
+		let now = Date.parse("2026-11-18T10:00:00Z");
+		const repository = new MongoSynapseRepository(mongoUrl);
+		const synapse = new SynapseService(repository, {
+			timeZone: "UTC",
+			now: () => now,
+		});
+		const { capture, retriever, commitments, briefing, maintenance } =
+			synapseFeatures(synapse);
+		try {
+			await synapse.createNote(
+				"shared",
+				{
+					title: "Ada Lovelace",
+					template: "People",
+					properties: { aliases: ["Countess of Lovelace"] },
+				},
+				user,
+			);
+			await synapse.createNote(
+				"shared",
+				{ title: "Ada Lovelaces", body: "A second note for her." },
+				user,
+			);
+			const url = "https://example.com/engine";
+			const first = await capture.capture(
+				"shared",
+				captureInput({
+					url,
+					text: "# Engine notes\nThe Countess of Lovelace wrote the program.",
+				}),
+				user,
+			);
+			expect(first.source.status).toBe("created");
+			expect(first.entities.map((item) => item.title)).toEqual([
+				"Ada Lovelace",
+			]);
+			expect(
+				(
+					await capture.capture(
+						"shared",
+						captureInput({
+							url,
+							text: "# Engine notes\nThe Countess of Lovelace wrote the program.\n",
+						}),
+						user,
+					)
+				).source.status,
+			).toBe("unchanged");
+			now += 1000;
+			const changed = await capture.capture(
+				"shared",
+				captureInput({
+					url,
+					text: "# Engine notes\nShe wrote two programs.",
+					apply: true,
+				}),
+				user,
+			);
+			expect(changed.source).toMatchObject({ status: "updated", revision: 2 });
+			expect(
+				(await synapse.history("shared", "Engine notes")).revisions.map(
+					(item) => item.revision,
+				),
+			).toEqual([2, 1]);
+			expect(
+				(await synapse.revision("shared", "Engine notes", 1)).body,
+			).toContain("Countess");
+
+			const found = await retriever.retrieve(["shared"], {
+				question: "who wrote programs?",
+			});
+			expect(found.passages[0]).toMatchObject({ title: "Engine notes" });
+			expect(found.missing).toEqual([]);
+			await commitments.create(
+				"shared",
+				{
+					title: "Publish the notes",
+					owner: "Ada Lovelace",
+					due: "2026-11-01",
+					evidence: "Engine notes",
+				},
+				user,
+			);
+			const brief = await briefing.brief({ shared: "shared" });
+			expect(brief.commitments.map((item) => item.title)).toEqual([
+				"Publish the notes",
+			]);
+
+			const batch = await maintenance.run("shared");
+			const duplicate = batch?.findings.find(
+				(item) => item.kind === "duplicate",
+			);
+			expect(duplicate?.fix).toEqual({
+				action: "merge",
+				from: "Ada Lovelaces",
+				into: "Ada Lovelace",
+			});
+			expect(batch?.findings.map((item) => item.kind)).toContain("stale");
+			expect(await maintenance.run("shared")).toBeNull();
+			now += 1000;
+			const reviewed = await maintenance.decide(
+				"shared",
+				{ ids: [duplicate?.id as string], decision: "apply", revision: 1 },
+				user,
+			);
+			expect(reviewed.revision).toBe(2);
+			await expect(
+				maintenance.decide(
+					"shared",
+					{ ids: [duplicate?.id as string], decision: "dismiss", revision: 1 },
+					user,
+				),
+			).rejects.toMatchObject({ statusCode: 409 });
+			expect((await synapse.history("shared", "Ada Lovelaces")).exists).toBe(
+				false,
+			);
+			now += 1000;
+			const next = await maintenance.run("shared", true);
+			expect(next?.digest.changed).toEqual([
+				"1 note changed: [[Ada Lovelace]].",
+				"1 note deleted: [[Ada Lovelaces]].",
+				"1 maintenance fix applied.",
+			]);
+		} finally {
+			await repository.close();
+		}
+	}, 20_000);
 });

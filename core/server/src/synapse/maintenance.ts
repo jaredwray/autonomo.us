@@ -221,9 +221,12 @@ export class SynapseMaintenance {
 			return null;
 		}
 		try {
+			// The run counts from when it started reading: a note written while
+			// it reads is "changed since" for the run after it.
+			const startedAt = this.at();
 			const previous = await repository.getMaintenance(space);
-			const batch = await this.inspect(space, previous);
-			await repository.finishMaintenance(space, lease.id, batch, this.at());
+			const batch = await this.inspect(space, previous, startedAt);
+			await repository.finishMaintenance(space, lease.id, batch, startedAt);
 			return publicBatch(batch);
 		} catch (error) {
 			await repository.releaseMaintenance(space, lease.id).catch(() => {});
@@ -268,6 +271,7 @@ export class SynapseMaintenance {
 	private async inspect(
 		space: SynapseSpaceId,
 		previous: MaintenanceRecord | null,
+		startedAt: string,
 	): Promise<SynapseMaintenanceBatch> {
 		const notes = await this.read(space);
 		const found: SynapseFinding[] = [];
@@ -392,7 +396,7 @@ export class SynapseMaintenance {
 		return {
 			id: randomUUID(),
 			space,
-			createdAt: this.at(),
+			createdAt: startedAt,
 			revision: 1,
 			findings,
 			digest: await this.digest(space, previous, findings, notes.length),

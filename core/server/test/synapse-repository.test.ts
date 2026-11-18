@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type {
 	SynapseActor,
+	SynapseMaintenanceBatch,
 	SynapseProposal,
 	SynapseSpaceId,
 } from "@autonomo.us/common";
@@ -8,9 +9,11 @@ import { MongoClient } from "mongodb";
 import { afterAll, describe, expect, it } from "vitest";
 import { MemorySynapseRepository } from "../src/synapse/memory-repository.js";
 import { MongoSynapseRepository } from "../src/synapse/mongo-repository.js";
-import type {
-	StoredNote,
-	SynapseRepository,
+import {
+	revisionId,
+	type StoredNote,
+	type StoredRevision,
+	type SynapseRepository,
 } from "../src/synapse/repository.js";
 import { mongoAvailable, uniqueMongoUrl } from "./mongo-env.js";
 
@@ -585,6 +588,307 @@ function contract(name: string, open: () => SynapseRepository) {
 				await repo.close();
 			}
 		});
+
+		it("matches any of several terms and returns alias keys with the index", async () => {
+			const repo = open();
+			try {
+				const space: SynapseSpaceId = `shared-${randomUUID()}`;
+				await repo.insertNote(
+					note(space, "Ada", {
+						searchText: "ada\nwrites programs",
+						aliasKeys: ["countess of lovelace"],
+					}),
+				);
+				await repo.insertNote(
+					note(space, "Bob", { searchText: "bob\nprices things (a+b)" }),
+				);
+				await repo.insertNote(note(space, "Cy", { searchText: "cy\nidle" }));
+				const sort = { by: "titleKey" as const, direction: "asc" as const };
+				const titles = async (anyTerms: string[], terms?: string[]) =>
+					(
+						await repo.findNotes(
+							{ space, anyTerms, ...(terms ? { terms } : {}) },
+							{ sort, limit: 10 },
+						)
+					).map((item) => item.title);
+				expect(await titles(["program", "pric"])).toEqual(["Ada", "Bob"]);
+				// Terms are text, not patterns.
+				expect(await titles(["(a+b)", "zzz"])).toEqual(["Bob"]);
+				expect(await titles(["zzz"])).toEqual([]);
+				expect(await titles([])).toEqual(["Ada", "Bob", "Cy"]);
+				expect(await titles(["program", "pric"], ["bob"])).toEqual(["Bob"]);
+				expect(
+					await repo.countNotes({ space, anyTerms: ["idle", "ada"] }),
+				).toBe(2);
+				const index = await repo.scanNotes(space);
+				expect(index.find((entry) => entry.title === "Ada")?.aliasKeys).toEqual(
+					["countess of lovelace"],
+				);
+				expect(
+					index.find((entry) => entry.title === "Bob")?.aliasKeys ?? [],
+				).toEqual([]);
+			} finally {
+				await repo.close();
+			}
+		});
+
+		it("keeps a note's past states by id and by the titles it had", async () => {
+			const repo = open();
+			try {
+				const space: SynapseSpaceId = `shared-${randomUUID()}`;
+				const other: SynapseSpaceId = `shared-${randomUUID()}`;
+				const noteId = randomUUID();
+				const state = (
+					revision: number,
+					title: string,
+					extra: Partial<StoredRevision> = {},
+				): StoredRevision => ({
+					id: revisionId(extra.noteId ?? noteId, revision),
+					noteId,
+					space,
+					title,
+					titleKey: title.toLowerCase(),
+					revision,
+					change: revision === 1 ? "created" : "updated",
+					at: `2026-11-08T10:00:0${revision}.000Z`,
+					by: actor,
+					properties: { n: revision },
+					body: `body ${revision}`,
+					...extra,
+				});
+				await repo.insertRevision(state(1, "Draft"));
+				await repo.insertRevision(state(2, "Draft"));
+				await repo.insertRevision(state(3, "Final"));
+				// The same state again changes nothing.
+				await repo.insertRevision(state(2, "Draft", { body: "rewritten" }));
+				const later = randomUUID();
+				await repo.insertRevision(
+					state(1, "Draft", {
+						noteId: later,
+						at: "2026-11-09T00:00:00.000Z",
+						body: "a later note with an old title",
+					}),
+				);
+				await repo.insertRevision(
+					state(1, "Draft", { noteId: randomUUID(), space: other }),
+				);
+				const revisions = async (
+					by: { noteId: string } | { titleKey: string },
+					limit = 10,
+				) =>
+					(await repo.listRevisions(space, by, limit)).map((item) => [
+						item.revision,
+						item.title,
+						item.body,
+					]);
+				expect(await revisions({ noteId })).toEqual([
+					[3, "Final", "body 3"],
+					[2, "Draft", "body 2"],
+					[1, "Draft", "body 1"],
+				]);
+				expect(await revisions({ noteId }, 2)).toHaveLength(2);
+				// A title leads to the note that had it last.
+				expect(await revisions({ titleKey: "final" })).toHaveLength(3);
+				expect(await revisions({ titleKey: "draft" })).toEqual([
+					[1, "Draft", "a later note with an old title"],
+				]);
+				expect(await revisions({ titleKey: "nothing" })).toEqual([]);
+				expect(await revisions({ noteId: randomUUID() })).toEqual([]);
+				expect(await repo.getRevision(noteId, 2)).toMatchObject({
+					id: revisionId(noteId, 2),
+					space,
+					change: "updated",
+					by: actor,
+					properties: { n: 2 },
+					body: "body 2",
+				});
+				expect(await repo.getRevision(noteId, 9)).toBeNull();
+				expect(
+					(
+						await repo.revisionsSince(space, "2026-11-08T10:00:02.000Z", 10)
+					).map((item) => [item.noteId === noteId, item.revision]),
+				).toEqual([
+					[false, 1],
+					[true, 3],
+				]);
+				expect(
+					await repo.revisionsSince(space, "2026-11-08T10:00:00.000Z", 1),
+				).toHaveLength(1);
+				await repo.pruneRevisions(noteId, 2);
+				expect(await revisions({ noteId })).toEqual([[3, "Final", "body 3"]]);
+				expect(await revisions({ titleKey: "draft" })).toHaveLength(1);
+			} finally {
+				await repo.close();
+			}
+		});
+
+		it("leases a space's maintenance run and keeps its batch and dismissals", async () => {
+			const repo = open();
+			try {
+				const space: SynapseSpaceId = `shared-${randomUUID()}`;
+				const batch = (id: string, revision = 1): SynapseMaintenanceBatch => ({
+					id,
+					space,
+					createdAt: "2026-11-08T10:00:00.000Z",
+					revision,
+					findings: [
+						{
+							id: "f1",
+							kind: "duplicate",
+							titles: ["A", "B"],
+							summary: "Same.",
+							fix: { action: "merge", from: "B", into: "A" },
+							state: "open",
+						},
+					],
+					digest: { since: null, changed: ["x"], needsYou: ["y"] },
+				});
+				const at = (minute: number) =>
+					`2026-11-08T10:${String(minute).padStart(2, "0")}:00.000Z`;
+				expect(await repo.getMaintenance(space)).toBeNull();
+				// The first claim creates the record; a second waits for the lease.
+				expect(
+					await repo.claimMaintenance(
+						space,
+						{ id: "l1", until: at(5) },
+						at(0),
+						at(0),
+					),
+				).toBe(true);
+				expect(
+					await repo.claimMaintenance(
+						space,
+						{ id: "l2", until: at(6) },
+						at(1),
+						"9999",
+					),
+				).toBe(false);
+				expect(await repo.getMaintenance(space)).toEqual({
+					space,
+					lastRunAt: null,
+					batch: null,
+					dismissed: [],
+				});
+				expect(
+					await repo.finishMaintenance(space, "l2", batch("b0"), at(2)),
+				).toBe(false);
+				// An expired lease is taken over; the lost one cannot finish.
+				expect(
+					await repo.claimMaintenance(
+						space,
+						{ id: "l3", until: at(20) },
+						at(6),
+						"9999",
+					),
+				).toBe(true);
+				expect(
+					await repo.finishMaintenance(space, "l1", batch("b0"), at(7)),
+				).toBe(false);
+				expect(
+					await repo.finishMaintenance(space, "l3", batch("b1"), at(8)),
+				).toBe(true);
+				expect(await repo.getMaintenance(space)).toEqual({
+					space,
+					lastRunAt: at(8),
+					batch: batch("b1"),
+					dismissed: [],
+				});
+				expect(
+					(await repo.listMaintenanceRuns()).find((run) => run.space === space),
+				).toEqual({ space, lastRunAt: at(8) });
+				// Not due until its last run is older than `dueBefore`.
+				expect(
+					await repo.claimMaintenance(
+						space,
+						{ id: "l4", until: at(30) },
+						at(9),
+						at(8),
+					),
+				).toBe(false);
+				expect(
+					await repo.claimMaintenance(
+						space,
+						{ id: "l4", until: at(30) },
+						at(9),
+						at(9),
+					),
+				).toBe(true);
+				// A failed run hands the space back at once.
+				await repo.releaseMaintenance(space, "other");
+				expect(
+					await repo.claimMaintenance(
+						space,
+						{ id: "l5", until: at(31) },
+						at(10),
+						"9999",
+					),
+				).toBe(false);
+				await repo.releaseMaintenance(space, "l4");
+				expect(
+					await repo.claimMaintenance(
+						space,
+						{ id: "l5", until: at(31) },
+						at(10),
+						"9999",
+					),
+				).toBe(true);
+				await repo.releaseMaintenance(space, "l5");
+
+				// A review replaces the batch only at the revision it read.
+				const reviewed = { ...batch("b1", 2) };
+				reviewed.findings[0].state = "dismissed";
+				expect(await repo.reviewMaintenance(space, reviewed, 3, ["f1"])).toBe(
+					false,
+				);
+				expect(
+					await repo.reviewMaintenance(space, { ...reviewed, id: "b9" }, 1, [
+						"f1",
+					]),
+				).toBe(false);
+				expect(await repo.reviewMaintenance(space, reviewed, 1, ["f1"])).toBe(
+					true,
+				);
+				expect(await repo.reviewMaintenance(space, reviewed, 1, ["f1"])).toBe(
+					false,
+				);
+				expect(
+					await repo.reviewMaintenance(space, { ...reviewed, revision: 3 }, 2, [
+						"f1",
+						"f2",
+					]),
+				).toBe(true);
+				const record = await repo.getMaintenance(space);
+				expect(record?.batch?.revision).toBe(3);
+				expect(record?.batch?.findings[0].state).toBe("dismissed");
+				expect(record?.dismissed.sort()).toEqual(["f1", "f2"]);
+				// The next run keeps what was dismissed.
+				expect(
+					await repo.claimMaintenance(
+						space,
+						{ id: "l6", until: at(40) },
+						at(11),
+						"9999",
+					),
+				).toBe(true);
+				expect(
+					await repo.finishMaintenance(space, "l6", batch("b2"), at(12)),
+				).toBe(true);
+				expect((await repo.getMaintenance(space))?.dismissed.sort()).toEqual([
+					"f1",
+					"f2",
+				]);
+				expect(
+					await repo.reviewMaintenance(
+						`shared-${randomUUID()}`,
+						batch("b2"),
+						1,
+						[],
+					),
+				).toBe(false);
+			} finally {
+				await repo.close();
+			}
+		});
 	});
 }
 
@@ -607,6 +911,11 @@ describe.skipIf(!available)("mongodb", () => {
 			expect(
 				indexes.find((index) => index.name === "space_title")?.unique,
 			).toBe(true);
+			expect(
+				(await cleanup.db().collection("synapse_revisions").indexes())
+					.map((index) => index.name)
+					.sort(),
+			).toEqual(["_id_", "note_revision", "space_at", "space_title_at"]);
 		} finally {
 			await repo.close();
 		}
