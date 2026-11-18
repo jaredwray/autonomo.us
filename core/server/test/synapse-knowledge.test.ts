@@ -2291,18 +2291,61 @@ describe("second review", () => {
 		tick();
 		const second = await page("Acme pays net 60.");
 		expect(second.source).toMatchObject({ status: "updated", revision: 2 });
-		const creates = (
-			await synapse.listProposals({ authorId: agent.id })
-		).filter((item) => item.action === "create");
-		// The earlier proposal holds the earlier text; it is not passed off as this one.
-		expect(creates.map((item) => item.body).sort()).toEqual([
-			"Acme pays net 30.",
-			"Acme pays net 60.",
-		]);
-		expect(second.source.proposalId).not.toBe(first.source.proposalId);
+		const all = await synapse.listProposals({ authorId: agent.id });
+		// The earlier proposals are taken back by the agent itself, so a
+		// reviewer cannot approve the old text under a line that cites the new.
 		expect(
-			creates.find((item) => item.id === second.source.proposalId)?.body,
-		).toBe("Acme pays net 60.");
+			all
+				.map((item) => [item.action, item.status, item.decidedBy?.name ?? null])
+				.sort(),
+		).toEqual([
+			["create", "pending", null],
+			["create", "rejected", "Scout"],
+			["update", "pending", null],
+			["update", "rejected", "Scout"],
+		]);
+		const pending = all.filter((item) => item.status === "pending");
+		expect(pending.find((item) => item.action === "create")).toMatchObject({
+			id: second.source.proposalId,
+			body: "Acme pays net 60.",
+		});
+		expect(pending.find((item) => item.action === "update")?.body).toContain(
+			"(r2, ",
+		);
+		expect(
+			all.find((item) => item.status === "rejected")?.decisionReason,
+		).toMatch(/^Withdrawn: the source was captured again/);
+		expect(second.source.proposalId).not.toBe(first.source.proposalId);
+		// Only its own, and only while pending.
+		expect(await synapse.withdrawProposal(pending[0].id, user, "no")).toBe(
+			false,
+		);
+		expect(
+			await synapse.withdrawProposal(
+				first.source.proposalId as string,
+				agent,
+				"x",
+			),
+		).toBe(false);
+	});
+
+	it("restores only over the revision its caller saw, when told which", async () => {
+		const { synapse } = start();
+		await synapse.createNote("shared", { title: "Plan", body: "one" }, user);
+		await synapse.updateNote("shared", "Plan", { body: "two" }, user);
+		// Someone edits after the history was opened at revision 2.
+		await synapse.updateNote("shared", "Plan", { body: "three" }, agent);
+		await expect(
+			synapse.restoreRevision("shared", "Plan", 1, user, 2),
+		).rejects.toMatchObject({ statusCode: 409 });
+		expect((await synapse.getNote("shared", "Plan")).body).toBe("three");
+		expect(
+			await synapse.restoreRevision("shared", "Plan", 1, user, 3),
+		).toMatchObject({ body: "one", revision: 4 });
+		await synapse.deleteNote("shared", "Plan", user);
+		await expect(
+			synapse.restoreRevision("shared", "Plan", 1, user, 4),
+		).rejects.toMatchObject({ statusCode: 409 });
 	});
 
 	it("offers to point links at a note when they name one of its aliases", async () => {

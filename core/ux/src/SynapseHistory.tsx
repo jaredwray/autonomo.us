@@ -89,7 +89,14 @@ export function SynapseHistory({
 		setBusy(true);
 		setError("");
 		try {
-			const note = await restoreSynapseRevision(space, title, shown.revision);
+			// Only over the note as this page shows it: an edit made since is
+			// a conflict to look at, not something to replace unseen.
+			const note = await restoreSynapseRevision(
+				space,
+				title,
+				shown.revision,
+				current,
+			);
 			setNotice(
 				`Restored revision ${shown.revision}. It is now revision ${note.revision}.`,
 			);
@@ -97,6 +104,9 @@ export function SynapseHistory({
 			await onRestored();
 		} catch (cause) {
 			setError(failureMessage(cause, "Could not restore the revision."));
+			// The note moved on: show what it says now, with its history.
+			if ((cause as { status?: number }).status === 409)
+				await onRestored().catch(() => {});
 		} finally {
 			setBusy(false);
 		}

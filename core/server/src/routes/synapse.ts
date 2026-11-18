@@ -494,16 +494,45 @@ export async function synapseRoutes(
 				request.params.revision,
 			),
 	);
-	server.post<{ Params: NoteParams & { revision: number } }>(
+	// `?expected=` restores only over that revision of the note (0: a note
+	// that is gone), so a restore chosen from a stale page is a 409.
+	server.post<{
+		Params: NoteParams & { revision: number };
+		Querystring: { expected?: number };
+	}>(
 		"/synapse/spaces/:space/notes/:title/history/:revision/restore",
-		{ schema: { params: revisionParams } },
-		(request) =>
-			synapse.restoreRevision(
+		{
+			schema: {
+				params: revisionParams,
+				querystring: {
+					type: "object",
+					additionalProperties: false,
+					properties: { expected: { type: "integer", minimum: 0 } },
+				},
+			},
+		},
+		async (request) => {
+			const { expected } = request.query;
+			if (expected === 0) {
+				// The caller saw no note: one that exists now is the conflict.
+				const exists = await synapse.repository.getNote(
+					request.params.space,
+					request.params.title.toLowerCase(),
+				);
+				if (exists)
+					throw new SynapseError(
+						"This note changed during your request. Reload it and try again.",
+						409,
+					);
+			}
+			return synapse.restoreRevision(
 				request.params.space,
 				request.params.title,
 				request.params.revision,
 				actorOf(request),
-			),
+				expected ? expected : undefined,
+			);
+		},
 	);
 	server.post<{ Params: NoteParams; Body: CiteSynapseEvidenceRequest }>(
 		"/synapse/spaces/:space/notes/:title/evidence",

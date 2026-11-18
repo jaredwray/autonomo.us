@@ -90,11 +90,33 @@ describe("Synapse knowledge over REST", () => {
 				})
 			).status,
 		).toBe(403);
+		// A restore chosen from a stale page is a conflict, not an overwrite.
+		for (const expected of [1, 0])
+			expect(
+				(
+					await refused(
+						"POST",
+						`${note("Pricing")}/history/1/restore?expected=${expected}`,
+					)
+				).status,
+			).toBe(409);
 		const restored = await ok<SynapseNote>(
 			"POST",
-			`${note("Pricing")}/history/1/restore`,
+			`${note("Pricing")}/history/1/restore?expected=2`,
 		);
 		expect(restored).toMatchObject({ body: "Seats.", revision: 3 });
+		await ok("DELETE", note("Pricing"), {}, 204);
+		// Gone, as the caller expects: the last state comes back as a new note.
+		expect(
+			(await refused("POST", `${note("Pricing")}/history/3/restore?expected=3`))
+				.status,
+		).toBe(409);
+		expect(
+			await ok<SynapseNote>(
+				"POST",
+				`${note("Pricing")}/history/3/restore?expected=0`,
+			),
+		).toMatchObject({ body: "Seats.", revision: 1 });
 		await ok("DELETE", note("Pricing"), {}, 204);
 		const gone = await ok<SynapseHistory>("GET", `${note("Pricing")}/history`);
 		expect(gone.exists).toBe(false);

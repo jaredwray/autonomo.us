@@ -862,6 +862,31 @@ it("lists a note's history, shows a past revision's source, and restores it", as
 	expect(screen.queryByRole("region", { name: "History" })).toBeNull();
 });
 
+it("refuses to restore over an edit made after the history was opened", async () => {
+	const running = await start("#/synapse/shared/Plan", async (seeded) => {
+		await createNote(seeded, "shared", { title: "Plan", body: "First." });
+		await editNote(seeded, "Plan", { body: "Second." });
+	});
+	const note = within(await region("Note"));
+	await note.findByText("Second.");
+	fireEvent.click(note.getByRole("button", { name: "History" }));
+	const history = within(await region("History"));
+	fireEvent.click(
+		await history.findByRole("button", { name: "View revision 1" }),
+	);
+	const first = within(await region(/^Revision 1: created by Founder/));
+	// Someone else edits before Restore is pressed.
+	await editNote(running, "Plan", { body: "Third, by someone else." });
+	fireEvent.click(first.getByRole("button", { name: "Restore this revision" }));
+	await history.findByText(/This note changed during your request/);
+	// Their edit stands, and the page shows it.
+	await note.findByText("Third, by someone else.");
+	expect((await readNote(running, "Plan")).json().note).toMatchObject({
+		body: "Third, by someone else.",
+		revision: 3,
+	});
+});
+
 it("shows a deleted note's history where the note was, and restores it", async () => {
 	await start("#/synapse/shared/Gone", async (seeded) => {
 		await createNote(seeded, "shared", {

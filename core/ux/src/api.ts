@@ -796,10 +796,13 @@ export function restoreSynapseRevision(
 	space: string,
 	title: string,
 	revision: number,
+	/** The note's revision as the page shows it (0: no note). A note that moved on is a 409. */
+	expected: number,
 ): Promise<SynapseNote> {
-	return apiRequest(`${notePath(space, title)}/history/${revision}/restore`, {
-		method: "POST",
-	});
+	return apiRequest(
+		`${notePath(space, title)}/history/${revision}/restore?expected=${expected}`,
+		{ method: "POST" },
+	);
 }
 /** Adds a line to the note's Evidence section; the passage must be in the source. */
 export function citeSynapseEvidence(

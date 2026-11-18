@@ -1169,9 +1169,20 @@ export class SynapseService {
 		title: string,
 		revision: number,
 		actor: SynapseActor,
+		/**
+		 * The note's revision as the caller last saw it. A note that has moved
+		 * on since is a conflict, so a restore never replaces an edit its
+		 * caller has not seen. Without it, the restore goes over whatever is there.
+		 */
+		expectedRevision?: number,
 	): Promise<SynapseNote> {
 		const past = await this.revision(space, title, revision);
 		const current = await this.repository.getNote(space, titleKey(title));
+		if (
+			expectedRevision !== undefined &&
+			current?.revision !== expectedRevision
+		)
+			throw changed();
 		if (!current) {
 			// An inherited note is not this space's to restore.
 			const shown = await this.readNote(space, titleKey(title));
@@ -1185,8 +1196,43 @@ export class SynapseService {
 		return this.updateNote(
 			space,
 			current.title,
-			{ body: past.body, properties: past.properties, replaceProperties: true },
+			{
+				body: past.body,
+				properties: past.properties,
+				replaceProperties: true,
+				// Against the note as read here, whatever the caller expected.
+				revision: current.revision,
+			},
 			actor,
+		);
+	}
+
+	/**
+	 * Takes back a pending proposal of the author's own, as one that a newer
+	 * proposal replaces. It is recorded as rejected by its author with the
+	 * reason, and nothing is logged to the author's daily note.
+	 */
+	async withdrawProposal(
+		id: string,
+		author: SynapseActor,
+		reason: string,
+	): Promise<boolean> {
+		const proposal = await this.repository.getProposal(id);
+		if (
+			!proposal ||
+			proposal.status !== "pending" ||
+			proposal.author.id !== author.id
+		)
+			return false;
+		return this.repository.decideProposal(
+			id,
+			{
+				status: "rejected",
+				decidedAt: this.now(),
+				decidedBy: author,
+				decisionReason: assertReason(reason, "Withdrawing a proposal"),
+			},
+			{ now: this.now() },
 		);
 	}
 

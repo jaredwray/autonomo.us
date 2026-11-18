@@ -412,19 +412,27 @@ export class SynapseCapture {
 			// A note with this title there already answers the link, or is in its way.
 			if (await this.synapse.repository.getNote(shared, source.titleKey))
 				return undefined;
-			const pending = (
+			const mine = (
 				await this.synapse.listProposals({
 					authorId: actor.id,
 					status: "pending",
 				})
-			).find(
+			).filter(
 				(proposal) =>
 					proposal.action === "create" &&
-					titleKey(proposal.title) === source.titleKey &&
-					// One filed for an earlier version does not hold what the
-					// lines proposed now quote. A reviewer approves this one.
-					proposal.body === source.body,
+					titleKey(proposal.title) === source.titleKey,
 			);
+			const pending = mine.find((proposal) => proposal.body === source.body);
+			// One filed for an earlier version does not hold what the lines
+			// proposed now quote. It is taken back, so a reviewer cannot
+			// approve the old text under lines that cite the new one.
+			for (const stale of mine)
+				if (stale !== pending)
+					await this.synapse.withdrawProposal(
+						stale.id,
+						actor,
+						"Withdrawn: the source was captured again and has changed. A newer proposal replaces this one.",
+					);
 			if (pending) return pending.id;
 			return (
 				await this.synapse.propose(
@@ -616,17 +624,27 @@ export class SynapseCapture {
 							: "It is in a space this capture cannot change.",
 				});
 			// The same line proposed before and not yet decided is not filed again.
-			const waiting = (
+			const reason = `The source [[${source.title}]] mentions this note.`;
+			const lines = (
 				await this.synapse.listProposals({
 					authorId: actor.id,
 					status: "pending",
 				})
-			).find(
+			).filter(
 				(pending) =>
 					pending.action === "update" &&
 					titleKey(pending.title) === note.titleKey &&
-					pending.body === change.body,
+					pending.reason === reason,
 			);
+			const waiting = lines.find((pending) => pending.body === change.body);
+			// A line proposed for an earlier version of the source is taken back.
+			for (const stale of lines)
+				if (stale !== waiting)
+					await this.synapse.withdrawProposal(
+						stale.id,
+						actor,
+						"Withdrawn: the source was captured again and has changed. A newer proposal replaces this one.",
+					);
 			const proposal =
 				waiting ??
 				(await this.synapse.propose(
@@ -635,7 +653,7 @@ export class SynapseCapture {
 						action: "update",
 						title: note.title,
 						body: change.body,
-						reason: `The source [[${source.title}]] mentions this note.`,
+						reason,
 					},
 					scope.propose,
 				));
