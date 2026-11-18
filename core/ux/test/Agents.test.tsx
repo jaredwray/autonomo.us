@@ -1034,6 +1034,10 @@ it("starts an OAuth agent from its address alone, opens it once a sign-in makes 
 	expect(start.getAllByRole("listitem")[2].textContent).toBe(
 		"Approve it as a new agent: give it a name and choose its permissions.",
 	);
+	// The last step is the line that has the agent brief itself from Synapse.
+	expect(start.getAllByRole("listitem")[3].textContent).toMatch(
+		/Before you start a task, call synapse_context with the task in a sentence\./,
+	);
 	const writeText = vi.fn(async () => {});
 	vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
 	fireEvent.click(start.getByRole("button", { name: "Copy address" }));

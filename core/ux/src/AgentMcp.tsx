@@ -441,6 +441,15 @@ function ConnectSteps({ agent }: { agent?: string }) {
 					"Approve it as a new agent: give it a name and choose its permissions."
 				)}
 			</li>
+			<li>
+				Add this to the app's own instructions for the agent, so it starts each
+				task briefed from Synapse:{" "}
+				<q>
+					Before you start a task, call synapse_context with the task in a
+					sentence. Keep to the standing rules and the decisions in force it
+					returns, and mind the commitments it lists.
+				</q>
+			</li>
 		</ol>
 	);
 }
