@@ -145,6 +145,101 @@ export type SynapseNoteView = {
 	categoryMembers: SynapseNoteSummary[];
 	/** The note as an Obsidian file: YAML frontmatter plus body. */
 	markdown: string;
+	/** Whether the note is still current: a decision's status, a draft, the last review. */
+	standing: SynapseStanding;
+	/** Where the note's claims come from: the lines of its `## Evidence` section. */
+	evidence: SynapseEvidence[];
+};
+
+/** A decision's status. Written in the `status` property as `[[Active]]`, `[[Disputed]]`, or `[[Superseded]]`. */
+export const SYNAPSE_DECISION_STATUSES = [
+	"active",
+	"disputed",
+	"superseded",
+] as const;
+export type SynapseDecisionStatus = (typeof SYNAPSE_DECISION_STATUSES)[number];
+
+/** "Is it still current?" for one note, read from its properties. */
+export type SynapseStanding = {
+	/** From the `status` property; null when the note carries none of the three. */
+	status: SynapseDecisionStatus | null;
+	/** Titles in `superseded_by`: what replaced this note. */
+	supersededBy: string[];
+	/** Titles in `supersedes`: what this note replaced. */
+	supersedes: string[];
+	/** The `reviewed` property, else `date`: when someone last confirmed it (YYYY-MM-DD). */
+	reviewed: string | null;
+	/** `status` says `[[Draft]]`: saved, not yet approved knowledge. */
+	draft: boolean;
+	/** False once the note is superseded. */
+	current: boolean;
+};
+
+/**
+ * One line of a note's `## Evidence` section:
+ * `- [[Source]] (r3, 2026-11-18): "the passage"`. The source is a note, so the
+ * line is also a link and shows among the source's backlinks.
+ */
+export type SynapseEvidence = {
+	/** The source note's title as written. */
+	source: string;
+	/** The source's revision when it was cited, when the line records one. */
+	revision: number | null;
+	/** When it was cited (YYYY-MM-DD), when the line records it. */
+	date: string | null;
+	/** The quoted passage; empty when the line only links the source. */
+	passage: string;
+	/**
+	 * `verified`: the passage is in the source as it stands. `changed`: the
+	 * source no longer contains it (its history may). `missing`: no note with
+	 * that title. `unquoted`: the line quotes nothing to check.
+	 */
+	state: "verified" | "changed" | "missing" | "unquoted";
+};
+
+export type CiteSynapseEvidenceRequest = {
+	/** Title of the source note, in the same space. */
+	source: string;
+	/** Words copied from the source. They must appear in it. */
+	passage: string;
+};
+
+export type SetSynapseDecisionStatusRequest = {
+	status: SynapseDecisionStatus;
+	/** superseded: the decision that replaces this one. */
+	supersededBy?: string;
+	/** Why; written into the decision's `## Status` log. */
+	reason?: string;
+};
+
+export type SynapseRevisionChange = "created" | "updated" | "deleted";
+
+/** One past state of a note, without its contents. */
+export type SynapseRevisionSummary = {
+	revision: number;
+	/** The note's title at that revision. */
+	title: string;
+	change: SynapseRevisionChange;
+	at: string;
+	by: SynapseActor;
+	/** Characters in the body. */
+	size: number;
+};
+
+/** One past state of a note in full. A `deleted` revision holds what was deleted. */
+export type SynapseRevision = SynapseRevisionSummary & {
+	properties: SynapseProperties;
+	body: string;
+	/** That state as an Obsidian file. */
+	markdown: string;
+};
+
+export type SynapseHistory = {
+	title: string;
+	/** False when the note has been deleted: its history remains. */
+	exists: boolean;
+	/** Newest first, up to the 200 latest. */
+	revisions: SynapseRevisionSummary[];
 };
 
 export type SynapseNoteSort = "updated" | "created" | "title" | "relevance";
@@ -347,3 +442,289 @@ export type DecideSynapseProposalRequest = {
 };
 
 export type SynapseProposalList = { proposals: SynapseProposal[] };
+
+/** What `synapse_capture` and "Save to Synapse" take: one of a URL, text, or a document. */
+export type SynapseCaptureRequest = {
+	/** The page's address. Fetched when no `text` comes with it; otherwise recorded as where the text came from. */
+	url?: string;
+	/** Text to keep as it is. */
+	text?: string;
+	/** A document's name and its text. */
+	document?: { name: string; content: string };
+	/** Title for the source note. Defaults to the document's name, the page's heading, or its address. */
+	title?: string;
+	/** Also make the prepared updates: append to the capturer's own notes, and propose appends to shared ones. */
+	apply?: boolean;
+};
+
+/** An existing note the captured text mentions by title or alias. */
+export type SynapseCaptureEntity = {
+	title: string;
+	space: SynapseSpaceId;
+	categories: string[];
+	/** Times the text names it. */
+	mentions: number;
+	/** The text around the first mention. */
+	passage: string;
+};
+
+/** A line prepared for a note the capture mentions, and what became of it. */
+export type SynapseCaptureUpdate = {
+	title: string;
+	space: SynapseSpaceId;
+	/** The Markdown to append: a dated line that links the source and quotes the mention. */
+	text: string;
+	/**
+	 * `prepared`: ready, not written. `applied`: appended. `proposed`: filed
+	 * as a proposal for the shared space. `skipped`: not needed or not possible,
+	 * with `detail` saying why.
+	 */
+	state: "prepared" | "applied" | "proposed" | "skipped";
+	detail?: string;
+	proposalId?: string;
+};
+
+export type SynapseCaptureResult = {
+	source: {
+		title: string;
+		space: SynapseSpaceId;
+		revision: number;
+		/** `unchanged`: this exact content was captured before, and nothing was written. */
+		status: "created" | "updated" | "unchanged";
+		url: string | null;
+		/** SHA-256 of the content with line endings and trailing space normalized. */
+		hash: string;
+		/** The content was longer than a note holds and was cut. */
+		truncated: boolean;
+		/** When it was first captured (YYYY-MM-DD). */
+		captured: string | null;
+		/** `updated`: how the content differs from the version before. */
+		diff?: { added: number; removed: number; sample: string[] };
+	};
+	entities: SynapseCaptureEntity[];
+	updates: SynapseCaptureUpdate[];
+	/** What changed, in a sentence or two. */
+	summary: string;
+};
+
+export type SynapseRetrieveRequest = {
+	question: string;
+	/** Passages to return. Default 8, maximum 30. */
+	limit?: number;
+};
+
+/**
+ * How far a passage can be trusted. `approved`: team canon (shared or
+ * global). `unreviewed`: an agent's own note, which nobody reviewed. `draft`:
+ * saved with `[[Draft]]` status. `disputed` and `superseded`: a decision's
+ * status says so.
+ */
+export type SynapsePassageStanding =
+	| "approved"
+	| "unreviewed"
+	| "draft"
+	| "disputed"
+	| "superseded";
+
+/** A cited piece of a note that answers part of a question. */
+export type SynapsePassage = {
+	title: string;
+	space: SynapseSpaceId;
+	/** The heading the passage sits under, when it has one. */
+	heading: string | null;
+	text: string;
+	/** Higher is better; comparable only within one retrieval. */
+	score: number;
+	/** The question's words this passage matched, as asked. */
+	matched: string[];
+	/** `text`: its words match. `link`: a matching note links to or from it. */
+	via: "text" | "link";
+	/** `link`: the matching note it was reached from. */
+	from?: string;
+	categories: string[];
+	/** The note's own date: `date`, `published`, `start`, or `created`, else the day it last changed. */
+	date: string | null;
+	/** Dates the passage itself mentions (YYYY-MM-DD). */
+	dates: string[];
+	standing: SynapsePassageStanding;
+	revision: number;
+	updatedAt: string;
+};
+
+export type SynapseRetrieval = {
+	question: string;
+	passages: SynapsePassage[];
+	/** The question's words that matched nothing: what Synapse does not know. */
+	missing: string[];
+	/** Links in the matching notes that have no note yet: knowledge someone meant to write. */
+	unresolved: string[];
+	/** Notes considered. */
+	searched: number;
+};
+
+export type SaveSynapseAnswerRequest = {
+	question: string;
+	answer: string;
+	/** What the answer rests on: source notes, each with the words it relies on. */
+	evidence: CiteSynapseEvidenceRequest[];
+	/** Defaults to the question. */
+	title?: string;
+};
+
+export const SYNAPSE_COMMITMENT_STATUSES = [
+	"open",
+	"blocked",
+	"done",
+	"cancelled",
+] as const;
+export type SynapseCommitmentStatus =
+	(typeof SYNAPSE_COMMITMENT_STATUSES)[number];
+
+/** An obligation someone took on: a note in the Commitments category, read as a record. */
+export type SynapseCommitment = {
+	title: string;
+	space: SynapseSpaceId;
+	/** Who owes it: link targets of the `owner` property. */
+	owner: string[];
+	/** YYYY-MM-DD, or null when no date was promised. */
+	due: string | null;
+	status: SynapseCommitmentStatus;
+	project: string[];
+	/** The messages and notes it rests on: note titles, and message references such as `channel:<id>#<seq>`. */
+	evidence: string[];
+	/** Open or blocked, and past its due date. */
+	overdue: boolean;
+	updatedAt: string;
+	revision: number;
+};
+export type SynapseCommitmentList = { commitments: SynapseCommitment[] };
+
+export type CreateSynapseCommitmentRequest = {
+	/** What is owed, as a short statement. */
+	title: string;
+	owner: string | string[];
+	due?: string;
+	project?: string | string[];
+	/** The message or note where it was promised: a note title, a `[[link]]`, or a message reference. */
+	evidence: string;
+	body?: string;
+};
+
+/**
+ * Something that happened to a commitment. `message`, `meeting`, and
+ * `transcript` cite where it was said; `confirmation` is a person saying so.
+ * `calendar` is scheduling context: it may move the due date, never the status.
+ */
+export type SynapseCommitmentEvent = {
+	kind: "message" | "meeting" | "transcript" | "confirmation" | "calendar";
+	/** New status. Needs `evidence` unless `kind` is `confirmation`; refused for `calendar`. */
+	status?: SynapseCommitmentStatus;
+	/** New due date (YYYY-MM-DD). */
+	due?: string;
+	/** A note title, a `[[link]]`, or a message reference. */
+	evidence?: string;
+	/** What happened, in a sentence. */
+	text?: string;
+};
+
+export type SynapseContextRequest = {
+	/** What the agent is about to do, in its own words. */
+	task?: string;
+	/** A project note's title, when the task belongs to one. */
+	project?: string;
+};
+
+/** One line of a briefing: a note and the part of it that matters. */
+export type SynapseContextItem = {
+	title: string;
+	space: SynapseSpaceId;
+	text: string;
+	date: string | null;
+	/** Decisions: `disputed` marks one that is not settled. */
+	status?: SynapseDecisionStatus;
+};
+
+/** A compact briefing for a task; see docs/SYNAPSE.md §14. */
+export type SynapseContext = {
+	generatedAt: string;
+	task: string | null;
+	/** What the agent is for: its description and its `Remit` note. */
+	remit: string | null;
+	/** Standing rules that apply to this agent. */
+	rules: SynapseContextItem[];
+	/** Goals of the projects the task concerns. */
+	goals: SynapseContextItem[];
+	/** Decisions in force. Superseded ones are left out. */
+	decisions: SynapseContextItem[];
+	/** Passages that bear on the task. */
+	evidence: SynapsePassage[];
+	/** Open questions. */
+	questions: SynapseContextItem[];
+	/** Overdue and blocked commitments, and the agent's own open ones. */
+	commitments: SynapseCommitment[];
+	/** The briefing as Markdown, cut to fit a prompt. */
+	text: string;
+	truncated: boolean;
+};
+
+export type SynapseFindingKind =
+	| "duplicate"
+	| "conflict"
+	| "stale"
+	| "unsupported";
+
+/** What applying a finding does. A finding without one needs a person to edit the notes. */
+export type SynapseFix =
+	/** Appends `from` to `into`, points links at `into`, and deletes `from`. */
+	| { action: "merge"; from: string; into: string }
+	/** Records that the decision was reviewed today and still stands. */
+	| { action: "confirm"; title: string }
+	/** Marks the decision superseded by `by`. */
+	| { action: "supersede"; title: string; by: string };
+
+export type SynapseFinding = {
+	id: string;
+	kind: SynapseFindingKind;
+	/** The notes it is about. */
+	titles: string[];
+	summary: string;
+	fix: SynapseFix | null;
+	state: "open" | "applied" | "dismissed";
+	/** Why applying it failed, when it did. */
+	detail?: string;
+	decidedAt?: string;
+	decidedBy?: SynapseActor;
+};
+
+/** "What changed / what needs you" since the last maintenance run. */
+export type SynapseDigest = {
+	/** When the run before this one finished, or null for the first. */
+	since: string | null;
+	changed: string[];
+	needsYou: string[];
+};
+
+/** One maintenance run's findings for a space, reviewed as a batch. */
+export type SynapseMaintenanceBatch = {
+	id: string;
+	space: SynapseSpaceId;
+	createdAt: string;
+	/** Increments with every decision, so two reviewers do not overwrite each other. */
+	revision: number;
+	findings: SynapseFinding[];
+	digest: SynapseDigest;
+};
+
+export type SynapseMaintenanceView = {
+	/** The latest run, or null before the first. */
+	batch: SynapseMaintenanceBatch | null;
+	/** Hours between automatic runs. */
+	intervalHours: number;
+};
+
+export type DecideSynapseFindingsRequest = {
+	ids: string[];
+	decision: "apply" | "dismiss";
+	/** The batch revision the reviewer saw. */
+	revision?: number;
+};

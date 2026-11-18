@@ -80,7 +80,7 @@ describe("time", () => {
 });
 
 describe("templates and categories", () => {
-	it("ships 13 templates with plural names, descriptions, and {{date}} filling", async () => {
+	it("ships 18 templates with plural names, descriptions, and {{date}} filling", async () => {
 		const { service } = synapse();
 		const templates = service.templates();
 		expect(templates.map((item) => item.name)).toEqual([
@@ -96,6 +96,11 @@ describe("templates and categories", () => {
 			"Products",
 			"Places",
 			"Journal",
+			"Sources",
+			"Rules",
+			"Questions",
+			"Answers",
+			"Commitments",
 			"Daily",
 		]);
 		for (const template of BUILTIN_TEMPLATES) {
@@ -862,7 +867,7 @@ describe("export and import", () => {
 			]),
 		);
 		expect(paths.filter((path) => path.startsWith("Templates/"))).toHaveLength(
-			13,
+			18,
 		);
 		expect(exported.files.find((f) => f.path === "Loose.md")?.content).toBe(
 			"No properties",

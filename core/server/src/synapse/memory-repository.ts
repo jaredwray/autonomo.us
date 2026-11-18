@@ -1,7 +1,13 @@
-import type { SynapseProposal, SynapseSpaceId } from "@autonomo.us/common";
+import type {
+	SynapseMaintenanceBatch,
+	SynapseProposal,
+	SynapseSpaceId,
+} from "@autonomo.us/common";
 import type {
 	FindOptions,
 	InstantRange,
+	MaintenanceLease,
+	MaintenanceRecord,
 	NoteFilter,
 	NoteIndexEntry,
 	ProposalClaim,
@@ -10,6 +16,7 @@ import type {
 	SpaceRecord,
 	SpaceStats,
 	StoredNote,
+	StoredRevision,
 	SynapseRepository,
 } from "./repository.js";
 import { DAILY_DATE_PROPERTIES } from "./repository.js";
@@ -45,6 +52,11 @@ function matches(note: StoredNote, filter: NoteFilter): boolean {
 	)
 		return false;
 	if (filter.terms?.some((term) => !note.searchText.includes(term)))
+		return false;
+	if (
+		filter.anyTerms?.length &&
+		!filter.anyTerms.some((term) => note.searchText.includes(term))
+	)
 		return false;
 	if (
 		filter.where?.some(
@@ -96,6 +108,7 @@ export function indexEntry(note: StoredNote): NoteIndexEntry {
 		categoryKeys: note.categoryKeys,
 		tags: note.tags,
 		tagKeys: note.tagKeys,
+		...(note.aliasKeys ? { aliasKeys: note.aliasKeys } : {}),
 		createdAt: note.createdAt,
 		updatedAt: note.updatedAt,
 		revision: note.revision,
@@ -110,6 +123,11 @@ export class MemorySynapseRepository implements SynapseRepository {
 	private readonly proposals = new Map<string, SynapseProposal>();
 	/** Kept apart from proposals so claims never reach callers. */
 	private readonly claims = new Map<string, ProposalClaim>();
+	private readonly revisions = new Map<string, StoredRevision>();
+	private readonly maintenance = new Map<
+		string,
+		MaintenanceRecord & { lease?: MaintenanceLease }
+	>();
 
 	private select(filter: NoteFilter) {
 		return [...this.notes.values()].filter((note) => matches(note, filter));
@@ -294,6 +312,127 @@ export class MemorySynapseRepository implements SynapseRepository {
 	async releaseProposalClaim(id: string, claimId: string) {
 		if (this.claims.get(id)?.id !== claimId) return false;
 		return this.claims.delete(id);
+	}
+	async insertRevision(revision: StoredRevision) {
+		if (!this.revisions.has(revision.id))
+			this.revisions.set(revision.id, structuredClone(revision));
+	}
+	private newestFirst(revisions: StoredRevision[], limit: number) {
+		return revisions
+			.sort(
+				(a, b) =>
+					b.at.localeCompare(a.at) ||
+					b.revision - a.revision ||
+					b.id.localeCompare(a.id),
+			)
+			.slice(0, limit)
+			.map((revision) => structuredClone(revision));
+	}
+	async listRevisions(
+		space: SynapseSpaceId,
+		note: { noteId: string } | { titleKey: string },
+		limit: number,
+	) {
+		const all = [...this.revisions.values()].filter(
+			(revision) => revision.space === space,
+		);
+		// A title may have named several notes over time: the latest one's history.
+		const noteId =
+			"noteId" in note
+				? note.noteId
+				: this.newestFirst(
+						all.filter((revision) => revision.titleKey === note.titleKey),
+						1,
+					)[0]?.noteId;
+		return this.newestFirst(
+			all.filter((revision) => revision.noteId === noteId),
+			limit,
+		);
+	}
+	async getRevision(noteId: string, revision: number) {
+		const found = this.revisions.get(`${noteId}:${revision}`);
+		return found ? structuredClone(found) : null;
+	}
+	async pruneRevisions(noteId: string, revision: number) {
+		for (const [id, stored] of this.revisions)
+			if (stored.noteId === noteId && stored.revision <= revision)
+				this.revisions.delete(id);
+	}
+	async revisionsSince(space: SynapseSpaceId, since: string, limit: number) {
+		return this.newestFirst(
+			[...this.revisions.values()].filter(
+				(revision) => revision.space === space && revision.at > since,
+			),
+			limit,
+		);
+	}
+	private record({
+		lease: _lease,
+		...record
+	}: MaintenanceRecord & { lease?: MaintenanceLease }): MaintenanceRecord {
+		return structuredClone(record);
+	}
+	async getMaintenance(space: SynapseSpaceId) {
+		const record = this.maintenance.get(space);
+		return record ? this.record(record) : null;
+	}
+	async listMaintenanceRuns() {
+		return [...this.maintenance.values()].map(({ space, lastRunAt }) => ({
+			space,
+			lastRunAt,
+		}));
+	}
+	async claimMaintenance(
+		space: SynapseSpaceId,
+		lease: MaintenanceLease,
+		now: string,
+		dueBefore: string,
+	) {
+		const record = this.maintenance.get(space);
+		if (record?.lease && record.lease.until > now) return false;
+		if (record?.lastRunAt && record.lastRunAt >= dueBefore) return false;
+		this.maintenance.set(space, {
+			...(record ?? { space, lastRunAt: null, batch: null, dismissed: [] }),
+			lease: { ...lease },
+		});
+		return true;
+	}
+	async finishMaintenance(
+		space: SynapseSpaceId,
+		leaseId: string,
+		batch: SynapseMaintenanceBatch,
+		at: string,
+	) {
+		const record = this.maintenance.get(space);
+		if (record?.lease?.id !== leaseId) return false;
+		this.maintenance.set(space, {
+			space,
+			lastRunAt: at,
+			batch: structuredClone(batch),
+			dismissed: record.dismissed,
+		});
+		return true;
+	}
+	async releaseMaintenance(space: SynapseSpaceId, leaseId: string) {
+		const record = this.maintenance.get(space);
+		if (record?.lease?.id === leaseId) delete record.lease;
+	}
+	async reviewMaintenance(
+		space: SynapseSpaceId,
+		batch: SynapseMaintenanceBatch,
+		expectedRevision: number,
+		dismissed: string[],
+	) {
+		const record = this.maintenance.get(space);
+		if (
+			!record?.batch ||
+			record.batch.id !== batch.id ||
+			record.batch.revision !== expectedRevision
+		)
+			return false;
+		record.batch = structuredClone(batch);
+		record.dismissed = [...new Set([...record.dismissed, ...dismissed])];
+		return true;
 	}
 	async close() {}
 }

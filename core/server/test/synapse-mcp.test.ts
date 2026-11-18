@@ -445,7 +445,7 @@ describe("MCP endpoint", () => {
 		const templates = await callTool(alice.secret, "synapse_templates");
 		expect(
 			(templates.structuredContent as { templates: unknown[] }).templates,
-		).toHaveLength(13);
+		).toHaveLength(18);
 		expect(JSON.parse(templates.content[0].text)).toEqual(
 			templates.structuredContent,
 		);

@@ -1,7 +1,11 @@
 import type {
+	SynapseActor,
+	SynapseMaintenanceBatch,
 	SynapseNote,
+	SynapseProperties,
 	SynapseProposal,
 	SynapseProposalStatus,
+	SynapseRevisionChange,
 	SynapseSpaceId,
 } from "@autonomo.us/common";
 
@@ -15,6 +19,11 @@ export type StoredNote = SynapseNote & {
 	searchText: string;
 	/** One entry per scalar property value or list item, normalized for `where`. */
 	propertyKeys: PropertyIndexEntry[];
+	/**
+	 * Lowercased values of the `aliases` property: other names the note goes
+	 * by. Absent on notes written before aliases were indexed.
+	 */
+	aliasKeys?: string[];
 };
 
 export type PropertyIndexEntry = { k: string; v: string };
@@ -32,6 +41,7 @@ export type NoteIndexEntry = Pick<
 	| "categoryKeys"
 	| "tags"
 	| "tagKeys"
+	| "aliasKeys"
 	| "createdAt"
 	| "updatedAt"
 	| "revision"
@@ -53,6 +63,8 @@ export type NoteFilter = {
 	tagPrefix?: string;
 	/** Lowercased terms that must all appear in `searchText`. */
 	terms?: string[];
+	/** Lowercased terms of which at least one appears in `searchText`. */
+	anyTerms?: string[];
 	where?: PropertyIndexEntry[];
 };
 
@@ -92,6 +104,38 @@ export type ProposalDecision = Required<
 	Pick<SynapseProposal, "status" | "decidedAt" | "decidedBy">
 > &
 	Pick<SynapseProposal, "decisionReason">;
+
+/** A past state of a note. A `deleted` revision holds what was deleted. */
+export type StoredRevision = {
+	/** `<note id>:<revision>`, so recording the same state twice is one record. */
+	id: string;
+	noteId: string;
+	space: SynapseSpaceId;
+	title: string;
+	titleKey: string;
+	revision: number;
+	change: SynapseRevisionChange;
+	at: string;
+	by: SynapseActor;
+	properties: SynapseProperties;
+	body: string;
+};
+
+export const revisionId = (noteId: string, revision: number) =>
+	`${noteId}:${revision}`;
+
+/** A time-limited hold on a space's maintenance run. */
+export type MaintenanceLease = { id: string; until: string };
+
+/** A space's maintenance: its latest batch and what reviewers dismissed for good. */
+export type MaintenanceRecord = {
+	space: SynapseSpaceId;
+	/** When the last run finished, or null before the first. */
+	lastRunAt: string | null;
+	batch: SynapseMaintenanceBatch | null;
+	/** Keys of findings a reviewer dismissed; later runs leave them out. */
+	dismissed: string[];
+};
 
 /**
  * Storage for notes, space records, and proposals. The memory and MongoDB
@@ -157,6 +201,57 @@ export interface SynapseRepository {
 	): Promise<boolean>;
 	/** Drops a claim whose approval failed, so the proposal can be decided at once. */
 	releaseProposalClaim(id: string, claimId: string): Promise<boolean>;
+	/** Records a past state once: a second record with the same id changes nothing. */
+	insertRevision(revision: StoredRevision): Promise<void>;
+	/** A note's states by its id, or by a title it had in the space, newest first. */
+	listRevisions(
+		space: SynapseSpaceId,
+		note: { noteId: string } | { titleKey: string },
+		limit: number,
+	): Promise<StoredRevision[]>;
+	getRevision(noteId: string, revision: number): Promise<StoredRevision | null>;
+	/** Deletes a note's states at or below `revision`. */
+	pruneRevisions(noteId: string, revision: number): Promise<void>;
+	/** States recorded in a space after `since`, newest first. */
+	revisionsSince(
+		space: SynapseSpaceId,
+		since: string,
+		limit: number,
+	): Promise<StoredRevision[]>;
+	getMaintenance(space: SynapseSpaceId): Promise<MaintenanceRecord | null>;
+	/** Every space's last run, for deciding which are due. */
+	listMaintenanceRuns(): Promise<
+		Array<Pick<MaintenanceRecord, "space" | "lastRunAt">>
+	>;
+	/**
+	 * Takes a space's maintenance run. Fails while another unexpired lease
+	 * holds it, or when its last run finished at or after `dueBefore`.
+	 */
+	claimMaintenance(
+		space: SynapseSpaceId,
+		lease: MaintenanceLease,
+		now: string,
+		dueBefore: string,
+	): Promise<boolean>;
+	/** Records a finished run and drops its lease; false when the lease was lost. */
+	finishMaintenance(
+		space: SynapseSpaceId,
+		leaseId: string,
+		batch: SynapseMaintenanceBatch,
+		at: string,
+	): Promise<boolean>;
+	/** Drops the lease of a run that failed, so the next sweep retries it. */
+	releaseMaintenance(space: SynapseSpaceId, leaseId: string): Promise<void>;
+	/**
+	 * Replaces the batch after a review, only while it is still at
+	 * `expectedRevision`, and adds `dismissed` to the dismissed keys.
+	 */
+	reviewMaintenance(
+		space: SynapseSpaceId,
+		batch: SynapseMaintenanceBatch,
+		expectedRevision: number,
+		dismissed: string[],
+	): Promise<boolean>;
 	close(): Promise<void>;
 }
 

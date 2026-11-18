@@ -47,6 +47,7 @@ export type SynapseDiagnostic = {
 		| "connect"
 		| "indexes.notes"
 		| "indexes.proposals"
+		| "indexes.revisions"
 		| "read.notes"
 		| "read.spaces"
 		| "read.proposals"
