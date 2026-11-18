@@ -41,8 +41,12 @@ const LIMITS = {
 	questions: 6,
 	commitments: 8,
 };
-/** Sources and clippings hold other people's words: a briefing cites notes about them, not them. */
-const OUTSIDE_MATERIAL = new Set(["sources", "clippings"]);
+/**
+ * Categories a briefing does not quote as evidence. Sources and clippings
+ * hold other people's words: a briefing cites notes about them, not them.
+ * Commitments have a section of their own, and their bodies are activity logs.
+ */
+const NOT_EVIDENCE = new Set(["sources", "clippings", COMMITMENTS_KEY]);
 /**
  * Sections that quote sources. What a source said does not belong in a
  * briefing either, wherever it was copied to.
@@ -229,28 +233,6 @@ export class SynapseBriefing {
 			.sort(byUrgency)
 			.slice(0, LIMITS.commitments);
 
-		let evidence: SynapsePassage[] = [];
-		if (task && terms.length)
-			evidence = (
-				await this.retriever
-					.retrieve(
-						this.spaces(scope),
-						{ question: task, limit: LIMITS.evidence * 3 },
-						shown,
-					)
-					// A briefing without passages is still a briefing.
-					.catch(() => ({ passages: [] as SynapsePassage[] }))
-			).passages
-				.filter(
-					(passage) =>
-						passage.standing !== "superseded" &&
-						!QUOTING_SECTIONS.includes(passage.heading ?? "") &&
-						!passage.categories.some((category) =>
-							OUTSIDE_MATERIAL.has(titleKey(category)),
-						),
-				)
-				.slice(0, LIMITS.evidence);
-
 		const remit =
 			[scope.remit?.trim(), remitNote ? ownWords(remitNote.body) : ""]
 				.filter(Boolean)
@@ -268,7 +250,7 @@ export class SynapseBriefing {
 				),
 			);
 		});
-		const context: Omit<SynapseContext, "text" | "truncated"> = {
+		const listed: Omit<SynapseContext, "text" | "truncated" | "evidence"> = {
 			generatedAt: new Date(this.synapse.nowMs()).toISOString(),
 			task,
 			remit,
@@ -285,7 +267,6 @@ export class SynapseBriefing {
 			decisions: pick(decisions.filter(current), LIMITS.decisions).map((note) =>
 				this.item(note),
 			),
-			evidence,
 			questions: pick(
 				questions.filter((note) => {
 					const status = propertyTargets(note.properties.status).map(titleKey);
@@ -295,6 +276,36 @@ export class SynapseBriefing {
 			).map((note) => this.item(note)),
 			commitments: owed,
 		};
+		const named = new Set(
+			[listed.rules, listed.goals, listed.decisions, listed.questions]
+				.flat()
+				.map((item) => titleKey(item.title)),
+		);
+		let evidence: SynapsePassage[] = [];
+		if (task && terms.length)
+			evidence = (
+				await this.retriever
+					.retrieve(
+						this.spaces(scope),
+						{ question: task, limit: LIMITS.evidence * 3 },
+						shown,
+					)
+					// A briefing without passages is still a briefing.
+					.catch(() => ({ passages: [] as SynapsePassage[] }))
+			).passages
+				.filter(
+					(passage) =>
+						passage.standing !== "superseded" &&
+						// A note the briefing already lists says its piece there.
+						!named.has(titleKey(passage.title)) &&
+						!QUOTING_SECTIONS.includes(passage.heading ?? "") &&
+						!passage.categories.some((category) =>
+							NOT_EVIDENCE.has(titleKey(category)),
+						),
+				)
+				.slice(0, LIMITS.evidence);
+
+		const context = { ...listed, evidence };
 		return { ...context, ...render(context) };
 	}
 }

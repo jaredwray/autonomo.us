@@ -312,7 +312,7 @@ A briefing is what an agent should know before it starts a task, compact enough 
 | Project goals | The project named in `project` and the projects whose titles or aliases the task mentions: each one's `goal` property, else the start of its body. Without either, the three latest projects that are not done. |
 | Decisions in force | Notes in the Decisions category that are not superseded and not drafts, the ones that link a concerned project or share the task's words first, else the latest. Up to 8; a disputed one is marked `DISPUTED`. |
 | Open questions | Notes in the Questions category whose `status` is empty or `[[Open]]`, ranked the same way. Up to 6. |
-| Relevant evidence | The best passages retrieval finds for the task (section 16), without superseded notes, without Sources and Clippings, and without passages from `## Mentions` and `## Evidence` sections. Up to 5; only when a task is given. |
+| Relevant evidence | The best passages retrieval finds for the task (section 16), without superseded notes, without Sources, Clippings, and Commitments, without passages from `## Mentions` and `## Evidence` sections, and without notes the briefing already lists above. Up to 5; only when a task is given. |
 
 A line's text is the note's own words: its `## Mentions` and `## Evidence` sections are left out, since they quote sources, and a briefing goes into a prompt as the team's word. When the text would pass its limit the later sections lose lines and `truncated` is true; the lists in the structured result are never cut. Sections with nothing in them are left out, and a workspace with nothing written yet gets one line saying so.
 
