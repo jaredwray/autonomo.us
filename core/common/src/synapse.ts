@@ -688,7 +688,9 @@ export type SynapseFix =
 	/** Records that the decision was reviewed today and still stands. */
 	| { action: "confirm"; title: string }
 	/** Marks the decision superseded by `by`. */
-	| { action: "supersede"; title: string; by: string };
+	| { action: "supersede"; title: string; by: string }
+	/** Points links to `from`, a title with no note, at `into`, which lists it as an alias. */
+	| { action: "relink"; from: string; into: string };
 
 export type SynapseFinding = {
 	id: string;

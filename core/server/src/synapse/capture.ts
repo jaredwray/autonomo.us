@@ -420,7 +420,10 @@ export class SynapseCapture {
 			).find(
 				(proposal) =>
 					proposal.action === "create" &&
-					titleKey(proposal.title) === source.titleKey,
+					titleKey(proposal.title) === source.titleKey &&
+					// One filed for an earlier version does not hold what the
+					// lines proposed now quote. A reviewer approves this one.
+					proposal.body === source.body,
 			);
 			if (pending) return pending.id;
 			return (
@@ -612,16 +615,30 @@ export class SynapseCapture {
 							? "It is inherited from the global Synapse, which this capture cannot change."
 							: "It is in a space this capture cannot change.",
 				});
-			const proposal = await this.synapse.propose(
-				actor,
-				{
-					action: "update",
-					title: note.title,
-					body: change.body,
-					reason: `The source [[${source.title}]] mentions this note.`,
-				},
-				scope.propose,
+			// The same line proposed before and not yet decided is not filed again.
+			const waiting = (
+				await this.synapse.listProposals({
+					authorId: actor.id,
+					status: "pending",
+				})
+			).find(
+				(pending) =>
+					pending.action === "update" &&
+					titleKey(pending.title) === note.titleKey &&
+					pending.body === change.body,
 			);
+			const proposal =
+				waiting ??
+				(await this.synapse.propose(
+					actor,
+					{
+						action: "update",
+						title: note.title,
+						body: change.body,
+						reason: `The source [[${source.title}]] mentions this note.`,
+					},
+					scope.propose,
+				));
 			return update("proposed", { proposalId: proposal.id });
 		} catch (error) {
 			if (!(error instanceof SynapseError)) throw error;

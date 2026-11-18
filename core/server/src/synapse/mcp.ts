@@ -6,14 +6,11 @@ import type {
 	SynapseCommitmentEvent,
 	SynapseCommitmentStatus,
 	SynapseContext,
-	SynapseDaily,
 	SynapseDecisionStatus,
-	SynapseNoteList,
 	SynapseNoteView,
 	SynapseProperties,
 	SynapseProposalStatus,
 	SynapseRetrieval,
-	SynapseRevision,
 	SynapseSpaceId,
 } from "@autonomo.us/common";
 import {
@@ -643,45 +640,50 @@ export function retrievalText(result: SynapseRetrieval): string {
 /**
  * Whether a tool's result holds outside material: a note in Sources or
  * Clippings, or what another note quotes from one in its Evidence or
- * Mentions section. Search and daily results are summaries, whose snippets
- * leave those sections out, so only a captured note itself counts there.
+ * Mentions section. It looks at what the result holds, not at which tool
+ * returned it, so a tool added later is covered: a note, a note's view, a
+ * past state, a day's note, a proposal's proposed body, a passage marked
+ * `source`. Summaries carry no body and their snippets leave the quoting
+ * sections out, so there only a captured note itself counts.
  */
-export function carriesOutsideMaterial(name: string, result: unknown): boolean {
+export function carriesOutsideMaterial(
+	_name: string,
+	result: unknown,
+): boolean {
+	if (result === null || typeof result !== "object") return false;
 	const quotes = (body: string) =>
-		QUOTING_SECTIONS.some((heading) => sectionLines(body, heading).length > 0);
-	switch (name) {
-		case "synapse_read": {
-			const { note } = result as SynapseNoteView;
-			return isOutside(note.categories) || quotes(note.body);
-		}
-		case "synapse_ask":
-			return (result as SynapseRetrieval).passages.some(
-				(item) => item.standing === "source",
-			);
-		case "synapse_search":
-			return (result as SynapseNoteList).notes.some((item) =>
-				isOutside(item.categories),
-			);
-		case "synapse_daily": {
-			const daily = result as SynapseDaily;
-			return (
-				daily.entries.some((item) => isOutside(item.categories)) ||
-				(daily.note !== null &&
-					(isOutside(daily.note.categories) || quotes(daily.note.body)))
-			);
-		}
-		case "synapse_history": {
-			// One past state in full; a list of revisions holds no content.
-			const past = result as Partial<SynapseRevision>;
-			return (
-				typeof past.body === "string" &&
-				(isOutside(extractCategories(past.properties ?? {})) ||
-					quotes(past.body))
-			);
-		}
-		default:
-			return false;
-	}
+		QUOTING_SECTIONS.some((title) =>
+			sectionLines(body, title).some((line) => line.trim() !== ""),
+		);
+	type Held = {
+		body?: unknown;
+		categories?: unknown;
+		properties?: unknown;
+		standing?: unknown;
+	};
+	/** A note, a past state, a proposal, a summary, or a passage. */
+	const outside = (item: unknown): boolean => {
+		if (item === null || typeof item !== "object") return false;
+		const held = item as Held;
+		if (held.standing === "source") return true;
+		const categories = Array.isArray(held.categories)
+			? (held.categories as string[])
+			: held.properties !== null && typeof held.properties === "object"
+				? extractCategories(held.properties as SynapseProperties)
+				: [];
+		return (
+			isOutside(categories) ||
+			(typeof held.body === "string" && quotes(held.body))
+		);
+	};
+	const holder = result as Record<string, unknown>;
+	return (
+		outside(result) ||
+		outside(holder.note) ||
+		["notes", "entries", "passages", "proposals"].some(
+			(key) => Array.isArray(holder[key]) && holder[key].some(outside),
+		)
+	);
 }
 
 /** Shapes checked by the service's validateProperties, not here. */

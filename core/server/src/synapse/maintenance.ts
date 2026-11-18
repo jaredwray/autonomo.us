@@ -315,6 +315,21 @@ export class SynapseMaintenance {
 
 		this.duplicates(notes, add);
 
+		// Links to a title that has no note, but that a note lists as an
+		// alias: what a merge leaves when it is cut short before its links.
+		const linked = new Set(notes.flatMap((note) => note.linkKeys));
+		for (const note of notes)
+			for (const alias of propertyTargets(note.properties.aliases)) {
+				const key = titleKey(alias);
+				if (!linked.has(key) || byKey.has(key)) continue;
+				add(
+					"duplicate",
+					[note],
+					`Notes link to [[${alias}]], which has no note and is another name for [[${note.title}]].`,
+					{ action: "relink", from: alias, into: note.title },
+				);
+			}
+
 		// Decisions whose statuses contradict each other, or that nobody settled.
 		const decisions = notes.filter((note) => is(note, "decisions"));
 		const topics = new Map<string, Light[]>();
@@ -465,6 +480,13 @@ export class SynapseMaintenance {
 					`email\n${text(note.properties.email)}`,
 					note,
 					"the same email address",
+				);
+			// The same content captured twice at the same moment (section 14).
+			if (note.categoryKeys.includes("sources") && text(note.properties.hash))
+				join(
+					`hash\n${text(note.properties.hash)}`,
+					note,
+					"the same captured content",
 				);
 			if (text(note.properties.url))
 				join(
@@ -797,6 +819,10 @@ export class SynapseMaintenance {
 			);
 			return;
 		}
+		if (fix.action === "relink") {
+			await this.synapse.relink(space, fix.from, fix.into, actor);
+			return;
+		}
 		await this.merge(space, fix.from, fix.into, actor);
 	}
 
@@ -853,51 +879,67 @@ export class SynapseMaintenance {
 				);
 			return { body, properties };
 		};
-		// Checked before anything is deleted.
-		merged(into);
-		// The source goes first, and only at the revision read here: what is
-		// folded in is then exactly what was deleted, and an edit made to it
-		// meanwhile stops the merge instead of being lost. From here its
-		// content lives in this call and in its history.
-		await this.synapse.deleteNote(space, from.title, actor, from.revision);
-		try {
-			let target = into;
-			for (let attempt = 0; ; attempt++) {
-				try {
-					await this.synapse.updateNote(
-						space,
-						target.title,
-						{
-							...merged(target),
-							replaceProperties: true,
-							revision: target.revision,
-						},
-						actor,
-					);
-					break;
-				} catch (error) {
-					const current = await repository.getNote(space, into.titleKey);
-					if (
-						!(error instanceof SynapseError && error.statusCode === 409) ||
-						attempt + 1 >= MERGE_ATTEMPTS ||
-						!current
-					)
-						throw error;
-					// Someone edited the kept note: fold into what it says now.
-					target = current;
-				}
-			}
-		} catch (error) {
-			// The kept note could not take it: put the source back as it was.
-			await this.synapse
-				.createNote(
+		// The kept note takes the content first, so nothing exists only in
+		// this call. Someone editing the kept note meanwhile is folded into.
+		let target = into;
+		/** The kept note as this merge wrote it. */
+		let written: { title: string; revision: number } | null = null;
+		for (let attempt = 0; written === null; attempt++) {
+			try {
+				written = await this.synapse.updateNote(
 					space,
-					{ title: from.title, body: from.body, properties: from.properties },
+					target.title,
+					{
+						...merged(target),
+						replaceProperties: true,
+						revision: target.revision,
+					},
+					actor,
+				);
+			} catch (error) {
+				const current = await repository.getNote(space, into.titleKey);
+				if (
+					!(error instanceof SynapseError && error.statusCode === 409) ||
+					attempt + 1 >= MERGE_ATTEMPTS ||
+					!current
+				)
+					throw error;
+				target = current;
+			}
+		}
+		// The other note goes only at the revision that was folded in: an
+		// edit made to it meanwhile stops the merge instead of being lost.
+		try {
+			await this.synapse.deleteNote(space, from.title, actor, from.revision);
+		} catch (error) {
+			if (!(error instanceof SynapseError)) throw error;
+			// Both notes stay. The kept one gives back what it took, unless it
+			// has been edited since, which only a person can untangle.
+			const restored = await this.synapse
+				.updateNote(
+					space,
+					written.title,
+					{
+						body: target.body,
+						properties: target.properties,
+						replaceProperties: true,
+						revision: written.revision,
+					},
 					actor,
 				)
-				.catch(() => {});
-			throw error;
+				.then(
+					() => true,
+					() => false,
+				);
+			throw new SynapseError(
+				restored
+					? `"${from.title}" changed while it was being merged, so nothing was merged. Apply the finding again to merge what it says now.`
+					: `"${from.title}" changed while it was being merged, and "${into.title}" was edited too, so it still holds the "Merged from ${from.title}" section. Remove that section, then apply the finding again.`,
+				409,
+			);
 		}
+		// Last, the links. If this is cut short, the links to the deleted title
+		// are found by the next run, which offers to point them at the kept note.
 		await this.synapse.relink(space, from.title, into.title, actor);
 	}
 }

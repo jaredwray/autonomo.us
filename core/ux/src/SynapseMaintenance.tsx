@@ -43,6 +43,8 @@ function fixText(finding: SynapseFinding): string {
 	if (!fix) return "Needs an edit by hand: there is no automatic fix.";
 	if (fix.action === "merge")
 		return `Applying merges “${fix.from}” into “${fix.into}” and deletes “${fix.from}”. Its history keeps what it held.`;
+	if (fix.action === "relink")
+		return `Applying points links to “${fix.from}” at “${fix.into}”.`;
 	if (fix.action === "confirm")
 		return `Applying confirms “${fix.title}” is still current, reviewed today.`;
 	return `Applying marks “${fix.title}” superseded by “${fix.by}”.`;

@@ -7,6 +7,7 @@ import type {
 	SynapseStanding,
 } from "@autonomo.us/common";
 import { DATE_PATTERN, linkTarget } from "./markdown.js";
+import { heading } from "./text.js";
 
 /** Where a note keeps the sources of its claims. */
 export const EVIDENCE_HEADING = "Evidence";
@@ -49,19 +50,18 @@ function outsideCode(lines: string[]): boolean[] {
 	return outside;
 }
 
-const escapeRegex = (text: string) =>
-	text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
 /** The lines of a `## <heading>` section and where it sits, or null without one. */
-function section(lines: string[], heading: string) {
+function section(lines: string[], title: string) {
 	const outside = outsideCode(lines);
-	const title = new RegExp(`^## ${escapeRegex(heading)}\\s*$`);
-	const start = lines.findIndex(
-		(item, index) => outside[index] && title.test(item),
+	const headings = lines.map((item, index) =>
+		outside[index] ? heading(item) : null,
+	);
+	const start = headings.findIndex(
+		(found) => found?.level === 2 && found.text === title,
 	);
 	if (start === -1) return null;
-	const next = lines.findIndex(
-		(item, index) => index > start && outside[index] && /^#{1,2}\s/.test(item),
+	const next = headings.findIndex(
+		(found, index) => index > start && found !== null && found.level <= 2,
 	);
 	return { start, next, outside };
 }

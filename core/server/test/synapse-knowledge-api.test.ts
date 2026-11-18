@@ -544,7 +544,9 @@ describe("Synapse knowledge over MCP", () => {
 					"GET",
 					"/v1/synapse/proposals?status=pending",
 				)
-			).proposals.map((item) => [item.action, item.title]),
+			).proposals
+				.map((item) => [item.action, item.title])
+				.sort(),
 		).toEqual([
 			["create", "Call notes"],
 			["update", "Ada Lovelace"],

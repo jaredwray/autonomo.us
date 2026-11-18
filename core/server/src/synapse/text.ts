@@ -89,15 +89,30 @@ export function root(word: string): string {
  * over the whole line, so a line of any length and content costs its length.
  */
 export function headingText(line: string, maxLevel = 6): string | null {
+	const found = heading(line);
+	return found && found.level <= maxLevel ? found.text : null;
+}
+
+/**
+ * An ATX heading line as its level and text, or null. Up to three leading
+ * spaces and a closing run of #s are part of the syntax, not of the text,
+ * so `  ## Evidence ##` is the level-2 heading "Evidence". Everything that
+ * asks whether a line starts a section asks here, so they cannot disagree.
+ */
+export function heading(line: string): { level: number; text: string } | null {
 	const open = /^ {0,3}(#{1,6})(?:[ \t]|$)/.exec(line);
-	if (!open || open[1].length > maxLevel) return null;
+	if (!open) return null;
+	const level = open[1].length;
 	const text = line.slice(open[0].length).trim();
 	// A closing run of #s counts only after a space, or as the whole heading.
 	let end = text.length;
 	while (end > 0 && text[end - 1] === "#") end--;
-	if (end === text.length) return text;
-	if (end === 0) return "";
-	return /[ \t]/.test(text[end - 1]) ? text.slice(0, end).trimEnd() : text;
+	if (end === text.length) return { level, text };
+	if (end === 0) return { level, text: "" };
+	return {
+		level,
+		text: /[ \t]/.test(text[end - 1]) ? text.slice(0, end).trimEnd() : text,
+	};
 }
 
 /** A note that text may mention, by its title or one of its aliases. */

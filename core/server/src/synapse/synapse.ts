@@ -1044,23 +1044,37 @@ export class SynapseService {
 		// one reactivated, or superseded now by another.
 		for (const former of propertyTargets(note.properties.superseded_by)) {
 			if (by && titleKey(former) === by.titleKey) continue;
-			const replacer = await this.repository.getNote(space, titleKey(former));
-			if (!replacer) continue;
-			const supersedes = propertyTargets(replacer.properties.supersedes);
-			const remaining = supersedes.filter(
-				(item) => titleKey(item) !== note.titleKey,
-			);
-			if (remaining.length !== supersedes.length)
-				await this.updateNote(
+			// The status is saved. The other decision may be changing too, so
+			// this is tried against a fresh copy each time; if it still cannot
+			// be written, the status stands and maintenance reports the pair.
+			for (let attempt = 0; attempt < WRITE_ATTEMPTS; attempt++) {
+				const replacer = await this.repository.getNote(space, titleKey(former));
+				if (!replacer) break;
+				const supersedes = propertyTargets(replacer.properties.supersedes);
+				const remaining = supersedes.filter(
+					(item) => titleKey(item) !== note.titleKey,
+				);
+				if (remaining.length === supersedes.length) break;
+				const written = await this.updateNote(
 					space,
 					replacer.title,
 					{
 						properties: {
 							supersedes: remaining.map((item) => `[[${item}]]`),
 						},
+						revision: replacer.revision,
 					},
 					actor,
+				).then(
+					() => true,
+					(error) => {
+						if (error instanceof SynapseError && error.statusCode === 409)
+							return false;
+						throw error;
+					},
 				);
+				if (written) break;
+			}
 		}
 		// The replacing decision says what it replaced, when it is this space's own.
 		if (by && by.space === space) {
