@@ -67,7 +67,7 @@ const dateOf = (note: StoredNote) =>
  * A compact briefing for a task: the rules that apply, what the agent is
  * for, the goals of the projects involved, decisions in force, passages
  * that bear on the task, open questions, and commitments that are late or
- * stuck. See docs/SYNAPSE.md §14.
+ * stuck. See docs/SYNAPSE.md §15.
  */
 export class SynapseBriefing {
 	constructor(

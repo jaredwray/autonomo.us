@@ -644,7 +644,7 @@ export type SynapseContextItem = {
 	status?: SynapseDecisionStatus;
 };
 
-/** A compact briefing for a task; see docs/SYNAPSE.md §14. */
+/** A compact briefing for a task; see docs/SYNAPSE.md §15. */
 export type SynapseContext = {
 	generatedAt: string;
 	task: string | null;

@@ -155,7 +155,7 @@ type Scored = {
 /**
  * Finds the passages that bear on a question and saves the answers built
  * from them. Matching is by word stems and aliases, ranked like BM25, and
- * widened through the notes' links; see docs/SYNAPSE.md §15.
+ * widened through the notes' links; see docs/SYNAPSE.md §16.
  */
 export class SynapseRetriever {
 	constructor(private readonly synapse: SynapseService) {}

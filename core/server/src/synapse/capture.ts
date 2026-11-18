@@ -209,7 +209,7 @@ const isConflict = (error: unknown) =>
 /**
  * "Save to Synapse": keeps a page, some text, or a document as a source note,
  * finds the existing notes it mentions, and prepares a line for each. See
- * docs/SYNAPSE.md §13.
+ * docs/SYNAPSE.md §14.
  */
 export class SynapseCapture {
 	constructor(private readonly synapse: SynapseService) {}

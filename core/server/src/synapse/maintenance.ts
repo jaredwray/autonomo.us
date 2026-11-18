@@ -113,7 +113,7 @@ const named = (titles: string[]) =>
  * and unsupported claims as one batch a person reviews, with a digest of
  * what changed and what needs them. Runs are durable: each holds a lease in
  * storage, so one process runs a space at a time and a crashed run is
- * retried by the next sweep. See docs/SYNAPSE.md §17.
+ * retried by the next sweep. See docs/SYNAPSE.md §18.
  */
 export class SynapseMaintenance {
 	private readonly intervalMs: number;

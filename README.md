@@ -332,7 +332,7 @@ through environment variables:
 - `GET /v1/:workspace/telemetry/analytics?from=<ISO timestamp>&to=<ISO timestamp>` — date-filtered model, connection, caller, and time-series analytics, plus a `web` section for web fetches. Optional `model`, `provider` (connection ID), and `caller` filters apply to the model report; only `caller` applies to `web`. Ranges are start-inclusive, end-exclusive, and limited to 90 days. Requires `telemetry:read` when API authentication is enabled.
 - `GET /v1/:workspace/overview?from=<ISO timestamp>&to=<ISO timestamp>` — the dashboard's home page in one request; see [Dashboard](#dashboard). Signed-in team members only.
 
-- `/v1/:workspace/synapse/...` — Synapse's notes, spaces, export/import, and proposals; see [Synapse](#synapse).
+- `/v1/:workspace/synapse/...` — Synapse's notes, spaces, export/import, proposals, history, capture, retrieval, commitments, briefings, and maintenance; see [Synapse](#synapse).
 - `/v1/:workspace/channels/...` — channels, their messages, agents, and read marks; see [Channels](#channels).
 - `/v1/:workspace/bots/...` — agents the gateway runs and their runs; see [Agents with instructions](#agents-with-instructions).
 - `/v1/:workspace/proxies/...` and `/v1/:workspace/web/...` — web proxies, the web policy, and fetching a page; see [Web access and proxies](#web-access-and-proxies).
@@ -374,7 +374,7 @@ within that workspace:
 | Routing | None, Read, Edit | Read inspects routing and failover. Edit also saves those settings. |
 | Inference | None, Run | Run sends chat and decisions requests, including Auto, pools, and failover. |
 | Telemetry | None, Read | Read views usage and events. |
-| Synapse | None, Read, Edit | Read lists spaces, templates, notes, categories, unresolved links, the link graph, daily views, and proposals. Edit also creates, changes, appends to, deletes, imports, and exports notes. Neither decides proposals or changes the global space. |
+| Synapse | None, Read, Edit | Read lists spaces, templates, notes, categories, unresolved links, the link graph, daily views, and proposals, reads a note's history, retrieves passages, lists commitments and a space's maintenance batch, and asks for a briefing. Edit also creates, changes, appends to, deletes, imports, and exports notes, captures sources, cites evidence, marks decisions, saves answers, records commitments, and runs maintenance. Neither decides proposals, approves answers, reviews a maintenance batch, or changes the global space. |
 | Channels | None, Read, Post | Read lists channels and reads messages. Post also posts, edits and deletes the token's own messages. Neither creates or changes a channel or its agents. |
 | Proxies | None, Read, Edit | Read lists proxies, their usage, and the web policy. Edit also adds proxies, changes their keys, saves the policy, and runs a proxy's billable test. Keys are never returned. |
 | Web | None, Fetch | Fetch reads a page with `POST /v1/<workspace>/web/fetch`, through the workspace's proxies when needed, within its limits. |
@@ -715,7 +715,10 @@ before you write, one note per thing, link first mentions, dates as
 `YYYY-MM-DD`, log what you did); the tools are `synapse_search`, `synapse_read`,
 `synapse_create`, `synapse_update`, `synapse_append`, `synapse_delete`, `synapse_log`,
 `synapse_daily`, `synapse_unresolved`, `synapse_templates`, `synapse_propose`, and
-`synapse_proposals`:
+`synapse_proposals`, plus the knowledge tools described below: `synapse_context`,
+`synapse_capture`, `synapse_cite`, `synapse_decision_status`, `synapse_history`,
+`synapse_ask`, `synapse_save_answer`, `synapse_commit`, `synapse_commitments`,
+`synapse_commitment_update`, and `synapse_digest`:
 
 ```bash
 curl -X POST http://localhost:3000/mcp \
@@ -745,9 +748,83 @@ or a `.zip` with `?format=zip`) and `POST /spaces/:space/import` (up to 500 file
 admins only). Titles are URL-encoded; errors use `{ error: { message } }`.
 
 With `MONGODB_URI`, notes live in `synapse_notes`, space records in
-`synapse_spaces`, and proposals in `synapse_proposals`; without it Synapse lasts
-until restart. `SYNAPSE_TIME_ZONE` sets the time zone for `{{date}}`, daily
-notes, and the log.
+`synapse_spaces`, proposals in `synapse_proposals`, past states of notes in
+`synapse_revisions`, and maintenance records in `synapse_maintenance`; without
+it Synapse lasts until restart. `SYNAPSE_TIME_ZONE` sets the time zone for
+`{{date}}`, daily notes, and the log.
+
+#### Knowledge an agent can work from
+
+Six things sit on top of the notes. Each is described in full in
+[docs/SYNAPSE.md](docs/SYNAPSE.md), sections 13 to 18, and all of it stays
+plain notes that export to Obsidian.
+
+- **Save to Synapse.** `synapse_capture` (and **Save to Synapse** in the
+  dashboard) keeps a web page, some text, or a document as a note in the
+  Sources category, exactly as it was found. It names the existing notes the
+  source mentions, by title or alias, and prepares a dated, quoted line for
+  each; `apply` writes those lines to the capturer's own notes and files
+  proposals for shared ones. The same content twice saves nothing, and a page
+  that changed becomes a new revision with a count of the lines that differ.
+  A capture by address alone is fetched like `web_fetch`: an agent needs the
+  `web:fetch` grant, and over REST only a workspace admin may.
+- **Automatic project context.** `synapse_context` returns a briefing of at
+  most 6,000 characters for a task: the standing rules that apply to the
+  agent, its remit, the goals of the projects involved, decisions in force,
+  passages that bear on the task, open questions, and commitments that are
+  overdue or blocked. A bot the gateway runs loads it when its reply starts,
+  if it uses tools. Any other agent calls the tool, or asks over REST:
+
+  ```bash
+  curl -X POST http://localhost:3000/v1/<workspace id>/synapse/context \
+    -H "authorization: Bearer <API token with Synapse: Read>" \
+    -H "content-type: application/json" \
+    -d '{"task":"Compare tax engines for the billing rewrite","agent":"<agent id>"}'
+  ```
+
+  Put the result's `text` at the top of the agent's prompt. For an MCP agent,
+  add this line to its own instructions, since not every client shows the
+  server's: "Before you start a task, call synapse_context with the task in a
+  sentence, and keep to the rules and decisions it returns."
+- **Evidence, history, and superseded decisions.** Every change to a note is
+  kept (the 200 latest states of each note, including what a deleted note
+  held) and any state can be restored. A note cites its sources in an
+  `## Evidence` section, one line per quoted passage with the source's
+  revision and the date; the gateway checks the quote when it is written and
+  again whenever the note is read, so a note shows when its source has moved
+  on. Decisions are marked active, disputed, or superseded, with the decision
+  that replaced them; superseded ones drop out of briefings.
+- **Background maintenance.** A job reads each space about once a day and
+  reports possible duplicates, decisions whose statuses contradict each
+  other, decisions nobody has reviewed for 180 days, overdue commitments, and
+  claims that cite nothing or quote a source that changed. The findings come
+  as one batch with a "what changed / what needs you" digest; a person
+  applies the fixes it offers (merge two notes, confirm a decision, mark one
+  superseded) or dismisses them for good. A run holds a lease in storage, so
+  replicas run a space once and a crashed run is retried.
+- **Evidence-backed answers.** `synapse_ask` returns cited passages rather
+  than notes. It matches forms of a word and a note's aliases, follows the
+  best notes' links, and labels every passage `approved`, `unreviewed`,
+  `draft`, `disputed`, or `superseded` with its dates. It also names the
+  words nothing matched. An answer is saved with the passages it rests on,
+  and stays a draft until a person approves it. Matching is by words, not
+  meaning: there are no embeddings yet, so "fee" does not find "price".
+- **Commitments.** A commitment has an owner, a due date, a status, a
+  project, and the message or meeting note where it was promised. A person's
+  channel message that links one and states a status beside the link
+  (`[[Ship the pricing page]] is done`) updates it, with that message as the
+  evidence. A status change needs a note, a transcript, a message, or a
+  person's confirmation; a calendar entry may only move the due date.
+
+The REST routes for these, under `/v1/<workspace id>/synapse`:
+`GET .../notes/:title/history`, `GET .../history/:revision`, and
+`POST .../history/:revision/restore`; `POST .../notes/:title/evidence`,
+`.../status`, and `.../approve` (people only); `POST /spaces/:space/capture`;
+`GET /spaces/:space/retrieve?question=` and `POST /spaces/:space/answers`;
+`GET|POST /spaces/:space/commitments` and
+`POST .../commitments/:title/events`; `POST /context`; and
+`GET /spaces/:space/maintenance`, `POST .../maintenance/run`, and
+`POST .../maintenance/decide` (people only).
 
 ### Channels
 
@@ -831,14 +908,19 @@ and posts the reply as the bot. Nothing has to run outside the gateway.
 - **Tools.** With tools on, a reply may search and write the bot's own
   Synapse space, read the workspace's shared space, propose changes to it, and
   read the bot's other channels, in at most 8 model calls. It never gets a
-  tool that posts elsewhere or manages channels.
+  tool that posts elsewhere or manages channels. Its reply also starts with a
+  [briefing from Synapse](#knowledge-an-agent-can-work-from) on the message
+  that asked: the rules, decisions, and commitments that apply.
 - **Web access.** A separate switch gives a reply `web_fetch`, so the bot can
   read a page someone links. Its proxied requests count against its own
   **Proxied requests a day** limit (default 20) and the workspace's monthly
   proxy budget. On the Worker a proxy is tried only with at least 20 seconds
   of the reply left. Once a reply has read a page, it can no longer use its
   Synapse or channel tools, so a page cannot steer the bot into reading or
-  changing the workspace's notes and channels.
+  changing the workspace's notes and channels. A bot with both switches on
+  can still keep a page: `synapse_capture` with the page's address fetches and
+  saves it in one step, inside the same scope and limits, and counts as
+  reading the web.
 - **Web scope.** Each bot with web access has a scope. **Any page** allows
   whatever the workspace's rules allow. **Only links people post** (the
   default) allows sites people linked in the messages the reply sees, plus

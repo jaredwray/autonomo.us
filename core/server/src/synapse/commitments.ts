@@ -161,7 +161,7 @@ export const messageReference = (message: { channelId: string; seq: number }) =>
  * Commitments: obligations kept as notes in the Commitments category, each
  * with an owner, a due date, a status, a project, and the message or meeting
  * note it rests on. What happens to one is appended to its `## Activity`
- * section. See docs/SYNAPSE.md §16.
+ * section. See docs/SYNAPSE.md §17.
  */
 export class SynapseCommitments {
 	constructor(private readonly synapse: SynapseService) {}
