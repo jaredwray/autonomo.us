@@ -53,7 +53,7 @@ export const MCP_INSTRUCTIONS = [
 	"Start every task with synapse_context: it returns the standing rules that apply to you, your remit, the goals of the projects involved, decisions in force, evidence that bears on the task, open questions, and commitments that are late or blocked.",
 	"Keep outside material with synapse_capture (a url, text, or a document): it saves the source as it was found, tells you which existing notes it mentions, and prepares their updates. Capturing the same thing twice saves nothing new, and a page that changed becomes a new revision.",
 	"Say where a claim comes from with synapse_cite, which quotes a source note in the claim's Evidence section. Decisions are active, disputed, or superseded (synapse_decision_status); a superseded decision no longer applies. synapse_history shows what a note said before.",
-	"Answer questions from memory with synapse_ask: it returns cited passages with their dates and standing (approved, unreviewed, draft, disputed, superseded) and names what Synapse does not know. Keep a useful answer with synapse_save_answer; it stays a draft until a person approves it.",
+	"Answer questions from memory with synapse_ask: it returns cited passages with their dates and standing (approved, unreviewed, draft, disputed, superseded, or source for captured material) and names what Synapse does not know. Keep a useful answer with synapse_save_answer; it stays a draft until a person approves it.",
 	"Record a promise with synapse_commit (an owner, a due date, and the message or note where it was made) and what happens to it with synapse_commitment_update. A status change needs the note, transcript, or message where it was said; a calendar entry only moves the due date.",
 ].join("\n");
 

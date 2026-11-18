@@ -805,7 +805,8 @@ plain notes that export to Obsidian.
 - **Evidence-backed answers.** `synapse_ask` returns cited passages rather
   than notes. It matches forms of a word and a note's aliases, follows the
   best notes' links, and labels every passage `approved`, `unreviewed`,
-  `draft`, `disputed`, or `superseded` with its dates. It also names the
+  `draft`, `disputed`, `superseded`, or `source` (captured material) with
+  its dates. It also names the
   words nothing matched. An answer is saved with the passages it rests on,
   and stays a draft until a person approves it. Matching is by words, not
   meaning: there are no embeddings yet, so "fee" does not find "price".

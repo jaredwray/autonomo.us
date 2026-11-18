@@ -517,14 +517,16 @@ export type SynapseRetrieveRequest = {
  * How far a passage can be trusted. `approved`: team canon (shared or
  * global). `unreviewed`: an agent's own note, which nobody reviewed. `draft`:
  * saved with `[[Draft]]` status. `disputed` and `superseded`: a decision's
- * status says so.
+ * status says so. `source`: captured or clipped material, kept as it was
+ * found, which is somebody else's words wherever it is stored.
  */
 export type SynapsePassageStanding =
 	| "approved"
 	| "unreviewed"
 	| "draft"
 	| "disputed"
-	| "superseded";
+	| "superseded"
+	| "source";
 
 /** A cited piece of a note that answers part of a question. */
 export type SynapsePassage = {

@@ -609,7 +609,7 @@ describe("Synapse knowledge over MCP", () => {
 		});
 		expect(asked.data.passages[0]).toMatchObject({
 			title: "Call notes",
-			standing: "unreviewed",
+			standing: "source",
 		});
 		expect(asked.text).toMatch(/^1\. \[\[Call notes\]\] \(agent-/);
 		expect(asked.text).toMatch(/outside material/);

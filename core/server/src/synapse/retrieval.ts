@@ -127,8 +127,11 @@ const datesIn = (text: string) => [
 
 /** How far a note can be trusted, from its status and the space it lives in. */
 export function passageStanding(
-	note: Pick<StoredNote, "space" | "properties">,
+	note: Pick<StoredNote, "space" | "properties" | "categoryKeys">,
 ): SynapsePassageStanding {
+	// Keeping a page in the team's canon does not make what it says the team's.
+	if (note.categoryKeys.some((key) => key === "sources" || key === "clippings"))
+		return "source";
 	const standing = standingOf(note.properties);
 	if (standing.status === "superseded") return "superseded";
 	if (standing.status === "disputed") return "disputed";
@@ -140,6 +143,7 @@ export function passageStanding(
 const STANDING_WEIGHT: Record<SynapsePassageStanding, number> = {
 	approved: 1,
 	unreviewed: 1,
+	source: 1,
 	disputed: 0.8,
 	draft: 0.6,
 	superseded: 0.3,

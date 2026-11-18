@@ -783,7 +783,8 @@ describe("retrieval", () => {
 	}
 
 	it("matches word forms, ranks by standing, follows links, and says what is missing", async () => {
-		const { retriever } = await seeded();
+		const context = await seeded();
+		const { retriever } = context;
 		const found = await retriever.retrieve([own, "shared"], {
 			question: "How is pricing decided for enterprise?",
 		});
@@ -801,6 +802,18 @@ describe("retrieval", () => {
 		expect(rows).toContainEqual(["Pricing FAQ", "text", "draft"]);
 		expect(rows).toContainEqual(["Seat pricing", "text", "superseded"]);
 		expect(rows).toContainEqual(["Billing rewrite", "link", "approved"]);
+		// A page kept in the canon is still somebody else's words.
+		const { capture } = context;
+		await capture.capture(
+			"shared",
+			captureInput({ text: "Vendor pricing\nTheir pricing is per seat." }),
+			user,
+		);
+		expect(
+			(
+				await retriever.retrieve(["shared"], { question: "vendor pricing" })
+			).passages.find((item) => item.title === "Vendor pricing")?.standing,
+		).toBe("source");
 		const [best] = found.passages;
 		expect(best).toMatchObject({
 			space: "shared",
