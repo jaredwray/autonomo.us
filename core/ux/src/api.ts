@@ -31,17 +31,20 @@ import type {
 	ChannelList,
 	ChannelMembers,
 	ChannelMessage,
+	CiteSynapseEvidenceRequest,
 	CreateAgentTokenRequest,
 	CreateAgentWebhookRequest,
 	CreateApiTokenRequest,
 	CreateBotRequest,
 	CreateChannelRequest,
 	CreateProxyRequest,
+	CreateSynapseCommitmentRequest,
 	CreateSynapseNoteRequest,
 	CreateTeamInviteRequest,
 	CreateWorkspaceRequest,
 	CurrentSession,
 	DecideBotWebRequest,
+	DecideSynapseFindingsRequest,
 	DecideSynapseProposalRequest,
 	FailoverPolicy,
 	GatewayResponse,
@@ -57,14 +60,26 @@ import type {
 	RollApiTokenRequest,
 	RoutingConfig,
 	RoutingSettings,
+	SaveSynapseAnswerRequest,
+	SetSynapseDecisionStatusRequest,
 	SetupCheck,
 	SetupRequest,
+	SynapseCaptureRequest,
+	SynapseCaptureResult,
 	SynapseCategory,
+	SynapseCommitment,
+	SynapseCommitmentEvent,
+	SynapseCommitmentList,
+	SynapseCommitmentStatus,
 	SynapseDaily,
+	SynapseEvidence,
 	SynapseExport,
 	SynapseGraph,
+	SynapseHistory,
 	SynapseImportRequest,
 	SynapseImportResult,
+	SynapseMaintenanceBatch,
+	SynapseMaintenanceView,
 	SynapseNote,
 	SynapseNoteList,
 	SynapseNoteView,
@@ -72,6 +87,9 @@ import type {
 	SynapseProposalList,
 	SynapseProposalStatus,
 	SynapseQuery,
+	SynapseRetrieval,
+	SynapseRetrieveRequest,
+	SynapseRevision,
 	SynapseSpaceList,
 	SynapseTemplate,
 	SynapseUnresolvedLink,
@@ -755,6 +773,144 @@ export function importSynapseNotes(
 	input: SynapseImportRequest,
 ): Promise<SynapseImportResult> {
 	return apiRequest(`${spacePath(space)}/import`, {
+		method: "POST",
+		body: input,
+	});
+}
+/** A note's past revisions, newest first. A deleted note keeps its history. */
+export function fetchSynapseHistory(
+	space: string,
+	title: string,
+): Promise<SynapseHistory> {
+	return apiRequest(`${notePath(space, title)}/history`);
+}
+export function fetchSynapseRevision(
+	space: string,
+	title: string,
+	revision: number,
+): Promise<SynapseRevision> {
+	return apiRequest(`${notePath(space, title)}/history/${revision}`);
+}
+/** Writes a past revision back as the newest one. */
+export function restoreSynapseRevision(
+	space: string,
+	title: string,
+	revision: number,
+): Promise<SynapseNote> {
+	return apiRequest(`${notePath(space, title)}/history/${revision}/restore`, {
+		method: "POST",
+	});
+}
+/** Adds a line to the note's Evidence section; the passage must be in the source. */
+export function citeSynapseEvidence(
+	space: string,
+	title: string,
+	input: CiteSynapseEvidenceRequest,
+): Promise<{ note: SynapseNote; evidence: SynapseEvidence }> {
+	return apiRequest(`${notePath(space, title)}/evidence`, {
+		method: "POST",
+		body: input,
+	});
+}
+export function setSynapseDecisionStatus(
+	space: string,
+	title: string,
+	input: SetSynapseDecisionStatusRequest,
+): Promise<SynapseNote> {
+	return apiRequest(`${notePath(space, title)}/status`, {
+		method: "POST",
+		body: input,
+	});
+}
+/** Makes a draft answer approved knowledge. Only a signed-in person may. */
+export function approveSynapseAnswer(
+	space: string,
+	title: string,
+): Promise<SynapseNote> {
+	return apiRequest(`${notePath(space, title)}/approve`, { method: "POST" });
+}
+/** "Save to Synapse": keeps a page, text, or a document as a source note. */
+export function captureToSynapse(
+	space: string,
+	input: SynapseCaptureRequest,
+): Promise<SynapseCaptureResult> {
+	return apiRequest(`${spacePath(space)}/capture`, {
+		method: "POST",
+		body: input,
+	});
+}
+export function retrieveSynapse(
+	space: string,
+	{ question, limit }: SynapseRetrieveRequest,
+): Promise<SynapseRetrieval> {
+	const params = new URLSearchParams({ question });
+	if (limit !== undefined) params.set("limit", String(limit));
+	return apiRequest(`${spacePath(space)}/retrieve?${params}`);
+}
+/** Saves an answer as a draft note that cites its evidence. */
+export function saveSynapseAnswer(
+	space: string,
+	input: SaveSynapseAnswerRequest,
+): Promise<SynapseNote> {
+	return apiRequest(`${spacePath(space)}/answers`, {
+		method: "POST",
+		body: input,
+	});
+}
+export function fetchSynapseCommitments(
+	space: string,
+	filter: {
+		status?: SynapseCommitmentStatus;
+		owner?: string;
+		project?: string;
+		overdue?: boolean;
+	} = {},
+): Promise<SynapseCommitmentList> {
+	const params = new URLSearchParams();
+	for (const [key, value] of Object.entries(filter))
+		if (value !== undefined && value !== "") params.set(key, String(value));
+	const search = params.toString();
+	return apiRequest(
+		`${spacePath(space)}/commitments${search ? `?${search}` : ""}`,
+	);
+}
+export function createSynapseCommitment(
+	space: string,
+	input: CreateSynapseCommitmentRequest,
+): Promise<SynapseCommitment> {
+	return apiRequest(`${spacePath(space)}/commitments`, {
+		method: "POST",
+		body: input,
+	});
+}
+/** Records what happened to a commitment: a new status, a new due date. */
+export function recordSynapseCommitmentEvent(
+	space: string,
+	title: string,
+	event: SynapseCommitmentEvent,
+): Promise<SynapseCommitment> {
+	return apiRequest(
+		`${spacePath(space)}/commitments/${encodeURIComponent(title)}/events`,
+		{ method: "POST", body: event },
+	);
+}
+export function fetchSynapseMaintenance(
+	space: string,
+): Promise<SynapseMaintenanceView> {
+	return apiRequest(`${spacePath(space)}/maintenance`);
+}
+/** Runs maintenance now; answers 409 while another run holds the space. */
+export function runSynapseMaintenance(
+	space: string,
+): Promise<{ batch: SynapseMaintenanceBatch | null }> {
+	return apiRequest(`${spacePath(space)}/maintenance/run`, { method: "POST" });
+}
+/** Applies or dismisses findings; a stale `revision` answers 409. */
+export function decideSynapseFindings(
+	space: string,
+	input: DecideSynapseFindingsRequest,
+): Promise<SynapseMaintenanceBatch> {
+	return apiRequest(`${spacePath(space)}/maintenance/decide`, {
 		method: "POST",
 		body: input,
 	});

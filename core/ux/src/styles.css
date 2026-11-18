@@ -1178,6 +1178,93 @@ a.button { text-decoration: none; }
 	.synapse-diff, .synapse-import-pickers { grid-template-columns: 1fr; }
 	.synapse-properties th { width: 110px; }
 }
+/* Synapse tools (Save to Synapse, Ask, Commitments, Maintenance) and a note's standing, evidence, and history */
+.synapse-tool > .synapse-space-field { max-width: 420px; margin-bottom: 20px; }
+.synapse-tool > div > .section-heading { gap: 24px; margin-bottom: 20px; }
+.synapse-tool > div > .section-heading .page-description { margin: 0; max-width: 680px; }
+.synapse-tool .card-note { margin: 0 0 12px; color: var(--text-secondary); font-size: 12px; }
+.synapse-tool .card h2 { margin-bottom: 6px; font-size: 16px; }
+.synapse-tool .card h3, .synapse-evidence h3, .synapse-history h3 { margin: 16px 0 8px; font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: .05em; }
+.synapse-tool .token-form .form-field, .synapse-tool .synapse-inline-form .form-field, .synapse-standing .form-field, .synapse-evidence .form-field { margin: 12px 0; }
+.synapse-tool textarea, .synapse-standing textarea, .synapse-evidence textarea { width: 100%; padding: 10px 12px; border: 1px solid var(--hairline); border-radius: 6px; background: var(--page); color: var(--text-primary); font: inherit; font-weight: 400; resize: vertical; }
+.synapse-tool textarea:focus-visible, .synapse-standing textarea:focus-visible, .synapse-evidence textarea:focus-visible { outline: 2px solid var(--series-1); outline-offset: 3px; }
+.synapse-tool input[type="file"] { padding: 8px; font-size: 12px; }
+.synapse-tool .form-actions { margin-top: 16px; }
+.synapse-tool .banner-error, .synapse-tool .banner-warning, .synapse-tool .success-notice { margin: 0 0 16px; }
+.synapse-tool .card .banner-error { margin: 12px 0 0; }
+.synapse-text-button { padding: 0; border: 0; background: transparent; color: var(--series-1); font: inherit; text-decoration: underline; cursor: pointer; }
+.synapse-capture-apply { margin: 8px 0 4px; font-size: 13px; }
+.synapse-result-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin: 0; font-size: 13px; overflow-wrap: anywhere; }
+.synapse-result-meta { margin: 0; color: var(--text-secondary); font-size: 12px; }
+.synapse-result-list, .synapse-passage-list, .synapse-finding-list, .synapse-check-list { list-style: none; margin: 0; padding: 0; }
+.synapse-result-list > li, .synapse-passage-list > li, .synapse-finding-list > li { padding: 12px 0; border-top: 1px solid var(--hairline); }
+.synapse-result-list blockquote, .synapse-passage-list blockquote { margin: 8px 0 0; padding: 4px 12px; border-left: 3px solid var(--hairline); color: var(--text-secondary); font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.synapse-passage-list .synapse-result-meta { margin-top: 6px; }
+.synapse-capture-diff, .synapse-capture-line, .synapse-revision-source { margin: 8px 0 0; padding: 10px 12px; border: 1px solid var(--hairline); border-radius: 8px; background: var(--page); color: var(--text-primary); font-size: 12px; white-space: pre-wrap; overflow: auto; overflow-wrap: anywhere; }
+.synapse-revision-source { max-height: 420px; }
+.synapse-revision-source:focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; }
+.synapse-chip:is(.synapse-state-verified, .synapse-state-applied, .synapse-state-approved, .synapse-state-active, .synapse-state-done, .synapse-state-created) { background: var(--surface-1); color: var(--success-text); border-color: color-mix(in srgb, var(--status-good) 35%, var(--hairline)); }
+.synapse-chip:is(.synapse-state-changed, .synapse-state-unquoted, .synapse-state-disputed, .synapse-state-blocked, .synapse-state-draft, .synapse-state-unreviewed, .synapse-state-updated, .synapse-state-prepared, .synapse-state-proposed) { background: var(--surface-1); color: var(--status-warning); border-color: color-mix(in srgb, var(--status-warning) 40%, var(--hairline)); }
+.synapse-chip:is(.synapse-state-missing, .synapse-overdue) { background: var(--surface-1); color: var(--status-critical); border-color: color-mix(in srgb, var(--status-critical) 35%, var(--hairline)); }
+.synapse-ask-form { display: flex; align-items: end; gap: 12px; }
+.synapse-ask-form .form-field { flex: 1; margin: 12px 0 0 !important; }
+.synapse-passage-heading { color: var(--text-secondary); }
+.synapse-ask-gap { margin: 12px 0 0; color: var(--text-secondary); font-size: 13px; overflow-wrap: anywhere; }
+.synapse-ask-gap strong { color: var(--text-primary); }
+.synapse-answer-evidence { margin: 12px 0; }
+.synapse-answer-evidence .field-hint { display: block; margin-top: 8px; }
+.synapse-check-list li { padding: 4px 0; }
+.synapse-check-list .token-permission-choice, .synapse-status-choices .token-permission-choice { align-items: flex-start; }
+.synapse-check-list input, .synapse-status-choices input { flex: none; margin-top: 2px; }
+.synapse-check-list span { min-width: 0; overflow-wrap: anywhere; }
+.synapse-table { width: 100%; border-collapse: collapse; text-align: left; font-size: 12px; }
+.synapse-table thead th { padding: 10px 8px; border-bottom: 1px solid var(--hairline); color: var(--text-muted); font-size: 11px; font-weight: 500; white-space: nowrap; }
+.synapse-table tbody th, .synapse-table tbody td { padding: 12px 8px; border-top: 1px solid var(--hairline); color: var(--text-secondary); font-weight: 400; vertical-align: top; overflow-wrap: anywhere; }
+.synapse-table tbody th { color: var(--text-primary); font-size: 13px; font-weight: 550; }
+.synapse-commitment-table { min-width: 640px; }
+.synapse-commitment-filter { min-width: 180px; }
+.synapse-commitment-editor > td { border-top: 0 !important; padding-top: 0 !important; }
+/* The update form sits in a table row, and stays in view when a narrow screen scrolls the table sideways. */
+.synapse-commitments .table-scroll { container-type: inline-size; }
+.synapse-commitment-update { position: sticky; left: 8px; width: calc(100cqw - 16px); max-width: 100%; min-width: 0; margin: 0; }
+.synapse-commitments .card > .section-heading { flex-wrap: wrap; }
+.synapse-commitment-update legend { padding: 0 6px; color: var(--text-primary); font-size: 12px; font-weight: 600; }
+.synapse-commitment-due { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin-top: 12px; }
+.synapse-commitment-due .form-field { max-width: 220px; margin: 0 !important; }
+.synapse-digest { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 24px; }
+.synapse-digest ul { margin: 0; padding-left: 18px; color: var(--text-secondary); font-size: 13px; }
+.synapse-digest li { padding: 2px 0; overflow-wrap: anywhere; }
+.synapse-finding-bar .button { margin-left: 0; }
+.synapse-finding-bar .synapse-bulk-count { margin-right: auto; }
+.synapse-finding { display: flex; align-items: flex-start; gap: 10px; }
+.synapse-finding > div { min-width: 0; }
+.synapse-finding p { margin: 0 0 4px; }
+.synapse-finding-summary { color: var(--text-primary); font-size: 13px; overflow-wrap: anywhere; }
+.synapse-finding-detail { padding-left: 10px; border-left: 3px solid var(--status-critical); color: var(--text-secondary); font-size: 12px; }
+.synapse-standing { margin: 4px 0 16px; }
+.synapse-standing-line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; color: var(--text-secondary); font-size: 13px; }
+.synapse-standing .card-note { margin: 8px 0 0; }
+.synapse-standing .banner-error { margin: 12px 0 0; }
+.synapse-status-choices { display: grid; gap: 8px; margin: 0 0 12px; }
+.synapse-evidence { margin-top: 28px; padding-top: 18px; border-top: 1px solid var(--hairline); }
+.synapse-evidence .section-heading { align-items: center; margin-bottom: 4px; }
+.synapse-evidence h3 { margin: 0; }
+.synapse-evidence .card-note { margin: 8px 0 0; }
+.synapse-history { margin: 0 0 20px; padding: 16px; border: 1px solid var(--hairline); border-radius: 8px; }
+.synapse-history h3 { margin: 0 0 8px; }
+.synapse-history .banner-error, .synapse-history .success-notice { margin: 0 0 12px; }
+.synapse-revision { margin-top: 16px; }
+.synapse-revision .section-heading { align-items: center; flex-wrap: wrap; margin-bottom: 6px; }
+.synapse-revision h4 { margin: 0; font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.synapse-revision .card-note { margin: 0; }
+@media (max-width: 900px) {
+	/* Six tabs do not fit a phone: they scroll sideways instead of widening the page. */
+	.synapse-view .page-tabs { overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; }
+	.synapse-view .page-tabs button { flex: none; margin-bottom: 0; white-space: nowrap; outline-offset: -2px; }
+	.synapse-digest { grid-template-columns: 1fr; }
+	.synapse-ask-form { flex-direction: column; align-items: stretch; }
+	.synapse-tool > div > .section-heading { flex-wrap: wrap; }
+}
 /* Channels */
 .nav-item { position: relative; }
 .nav-attention { margin-left: auto; min-width: 20px; padding: 1px 6px; border-radius: 999px; background: var(--status-critical); color: #fff; font-size: 11px; font-weight: 650; line-height: 18px; text-align: center; }
