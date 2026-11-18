@@ -500,6 +500,12 @@ export type SynapseCaptureResult = {
 		captured: string | null;
 		/** `updated`: how the content differs from the version before. */
 		diff?: { added: number; removed: number; sample: string[] };
+		/**
+		 * An agent's capture whose updates were proposed for the shared space:
+		 * the proposal that adds the source there too, so the lines that cite
+		 * it lead somewhere once they are approved.
+		 */
+		proposalId?: string;
 	};
 	entities: SynapseCaptureEntity[];
 	updates: SynapseCaptureUpdate[];

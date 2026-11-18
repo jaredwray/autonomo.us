@@ -13,6 +13,7 @@ import {
 } from "../src/synapse/evidence.js";
 import { synapseFeatures } from "../src/synapse/features.js";
 import { nameKey } from "../src/synapse/maintenance.js";
+import { carriesOutsideMaterial } from "../src/synapse/mcp.js";
 import { MemorySynapseRepository } from "../src/synapse/memory-repository.js";
 import { MongoSynapseRepository } from "../src/synapse/mongo-repository.js";
 import { passagesOf } from "../src/synapse/retrieval.js";
@@ -720,7 +721,20 @@ describe("capture", () => {
 			["Leads", own, "applied"],
 			["Policy", "global", "skipped"],
 		]);
-		const [proposal] = await synapse.listProposals({ authorId: agent.id });
+		const proposals = await synapse.listProposals({ authorId: agent.id });
+		// The source goes with the line that cites it: the shared space cannot
+		// see the agent's own notes.
+		expect(proposals.map((item) => [item.action, item.title]).sort()).toEqual([
+			["create", "Call notes"],
+			["update", "Acme"],
+		]);
+		expect(result.source.proposalId).toBe(
+			proposals.find((item) => item.action === "create")?.id,
+		);
+		expect(result.summary).toMatch(/proposed for the shared space too/);
+		const proposal = proposals.find(
+			(item) => item.action === "update",
+		) as (typeof proposals)[number];
 		expect(proposal).toMatchObject({
 			id: result.updates[0].proposalId,
 			action: "update",
@@ -908,9 +922,14 @@ describe("retrieval", () => {
 		const found = await retriever.retrieve(["shared"], {
 			question: "how do we price",
 		});
-		expect(
-			found.passages.find((item) => item.title === saved.title)?.standing,
-		).toBe("approved");
+		const mine = found.passages.filter((item) => item.title === saved.title);
+		// The answer's own words are approved; what it quotes is its source's.
+		expect(mine.find((item) => item.heading === null)?.standing).toBe(
+			"approved",
+		);
+		expect(mine.find((item) => item.heading === "Evidence")?.standing).toBe(
+			"source",
+		);
 	});
 });
 
@@ -1856,4 +1875,312 @@ describe.skipIf(!available)("on MongoDB", () => {
 			await repository.close();
 		}
 	}, 20_000);
+});
+
+describe("review findings", () => {
+	it("keeps the best direct match when one passage is asked for", async () => {
+		const { synapse, retriever } = start();
+		await synapse.createNote(
+			"shared",
+			{ title: "Pricing", body: "Pricing is by usage. See [[Alice]]." },
+			user,
+		);
+		await synapse.createNote(
+			"shared",
+			{ title: "Alice", body: "Alice lives in London." },
+			user,
+		);
+		const one = await retriever.retrieve(["shared"], {
+			question: "pricing",
+			limit: 1,
+		});
+		expect(one.passages.map((item) => [item.title, item.via])).toEqual([
+			["Pricing", "text"],
+		]);
+		const two = await retriever.retrieve(["shared"], {
+			question: "pricing",
+			limit: 2,
+		});
+		expect(two.passages.map((item) => item.via)).toEqual(["text", "link"]);
+	});
+
+	it("finds evidence for a task longer than a question may be", async () => {
+		const { synapse, briefing } = start();
+		await synapse.createNote(
+			"shared",
+			{
+				title: "Vendor shortlist",
+				body: "Stripe Tax and Avalara made the cut.",
+			},
+			user,
+		);
+		const task = `Compare the vendor shortlist. ${"Then write it up carefully. ".repeat(50)}`;
+		expect(task.length).toBeGreaterThan(1000);
+		const brief = await briefing.brief({ shared: "shared" }, { task });
+		expect(brief.evidence.map((item) => item.title)).toEqual([
+			"Vendor shortlist",
+		]);
+		// A system prompt does not repeat what was asked.
+		const untitled = await briefing.brief(
+			{ shared: "shared" },
+			{ task: "Compare the vendor shortlist" },
+			{ titled: false },
+		);
+		expect(untitled.text.split("\n")[0]).toBe("# Briefing");
+		expect(untitled.task).toBe("Compare the vendor shortlist");
+	});
+
+	it("drops the other side of a supersession that no longer holds", async () => {
+		const { synapse, maintenance } = start();
+		for (const title of ["Alpha policy", "Beta policy", "Gamma policy"])
+			await synapse.createNote(
+				"shared",
+				{
+					title,
+					template: "Decisions",
+					body: "Agreed in [[Standup]].",
+					properties: { topics: [`[[${title}]]`] },
+				},
+				user,
+			);
+		await synapse.createNote(
+			"shared",
+			{ title: "Standup", template: "Meetings" },
+			user,
+		);
+		const supersede = (by: string) =>
+			synapse.setDecisionStatus(
+				"shared",
+				"Alpha policy",
+				{ status: "superseded", supersededBy: by },
+				user,
+			);
+		const supersedes = async (title: string) =>
+			(await synapse.viewNote("shared", title)).standing.supersedes;
+		await supersede("Beta policy");
+		expect(await supersedes("Beta policy")).toEqual(["Alpha policy"]);
+		// Superseded by another now: the first replacement lets go.
+		await supersede("Gamma policy");
+		expect(await supersedes("Beta policy")).toEqual([]);
+		expect(await supersedes("Gamma policy")).toEqual(["Alpha policy"]);
+		await synapse.setDecisionStatus(
+			"shared",
+			"Alpha policy",
+			{ status: "active" },
+			user,
+		);
+		expect(await supersedes("Gamma policy")).toEqual([]);
+		// Maintenance does not offer to undo the reactivation.
+		const batch = await maintenance.run("shared");
+		expect(batch?.findings.filter((item) => item.kind === "conflict")).toEqual(
+			[],
+		);
+	});
+
+	/** A repository in which something else happens just before a delete or a finish. */
+	class Racing extends MemorySynapseRepository {
+		beforeDelete?: () => Promise<unknown>;
+		loseLease = false;
+		override async deleteNote(id: string, expectedRevision?: number) {
+			const race = this.beforeDelete;
+			this.beforeDelete = undefined;
+			await race?.();
+			return super.deleteNote(id, expectedRevision);
+		}
+		override async finishMaintenance(
+			...args: Parameters<MemorySynapseRepository["finishMaintenance"]>
+		) {
+			return this.loseLease ? false : super.finishMaintenance(...args);
+		}
+	}
+	function racing() {
+		const repository = new Racing();
+		const synapse = new SynapseService(repository, {
+			timeZone: "UTC",
+			now: () => Date.parse("2026-11-18T10:00:00Z"),
+		});
+		return { repository, ...synapseFeatures(synapse) };
+	}
+
+	it("does not delete a note that was edited while it was being merged", async () => {
+		const { repository, synapse, maintenance } = racing();
+		await synapse.createNote(
+			"shared",
+			{ title: "Pricing page", body: "Kept." },
+			user,
+		);
+		await synapse.createNote(
+			"shared",
+			{ title: "Pricing pages", body: "Old." },
+			user,
+		);
+		await synapse.createNote(
+			"shared",
+			{ title: "Roadmap", body: "See [[Pricing pages]]." },
+			user,
+		);
+		// The better-linked note is the one kept.
+		for (const title of ["Launch plan", "Site map"])
+			await synapse.createNote(
+				"shared",
+				{ title, body: "Needs the [[Pricing page]]." },
+				user,
+			);
+		const batch = await maintenance.run("shared");
+		const [finding] = batch?.findings ?? [];
+		expect(finding.fix).toEqual({
+			action: "merge",
+			from: "Pricing pages",
+			into: "Pricing page",
+		});
+		repository.beforeDelete = () =>
+			synapse.updateNote(
+				"shared",
+				"Pricing pages",
+				{ body: "Edited meanwhile." },
+				agent,
+			);
+		const refused = await maintenance.decide(
+			"shared",
+			{ ids: [finding.id], decision: "apply" },
+			user,
+		);
+		expect(refused.findings[0]).toMatchObject({
+			state: "open",
+			detail: expect.stringMatching(/changed during your request/),
+		});
+		// Nothing was folded in, nothing deleted, and no link moved.
+		expect((await synapse.getNote("shared", "Pricing pages")).body).toBe(
+			"Edited meanwhile.",
+		);
+		expect((await synapse.getNote("shared", "Pricing page")).body).toBe(
+			"Kept.",
+		);
+		expect((await synapse.getNote("shared", "Roadmap")).body).toBe(
+			"See [[Pricing pages]].",
+		);
+		// Applied again, the merge takes what the note says now.
+		const applied = await maintenance.decide(
+			"shared",
+			{ ids: [finding.id], decision: "apply" },
+			user,
+		);
+		expect(applied.findings[0].state).toBe("applied");
+		expect((await synapse.getNote("shared", "Pricing page")).body).toBe(
+			"Kept.\n\n## Merged from Pricing pages\nEdited meanwhile.",
+		);
+		expect((await synapse.getNote("shared", "Roadmap")).body).toBe(
+			"See [[Pricing page]].",
+		);
+	});
+
+	it("does not hand back a batch a run could not save", async () => {
+		const { repository, synapse, maintenance } = racing();
+		await synapse.createNote("shared", { title: "A" }, user);
+		repository.loseLease = true;
+		await expect(maintenance.run("shared", true)).rejects.toMatchObject({
+			statusCode: 409,
+		});
+		expect((await maintenance.view("shared")).batch).toBeNull();
+		repository.loseLease = false;
+		expect(await maintenance.run("shared", true)).not.toBeNull();
+	});
+
+	it("keeps one source when the same content is captured twice at once", async () => {
+		const { synapse, capture } = start();
+		const results = await Promise.all(
+			[1, 2, 3].map(() =>
+				capture.capture(
+					"shared",
+					captureInput({ text: "Vendor terms\nNet 30, cancel any time." }),
+					user,
+				),
+			),
+		);
+		expect(results.map((item) => item.source.status).sort()).toEqual([
+			"created",
+			"unchanged",
+			"unchanged",
+		]);
+		expect(new Set(results.map((item) => item.source.title)).size).toBe(1);
+		expect((await synapse.query("shared", { category: "Sources" })).total).toBe(
+			1,
+		);
+	});
+
+	it("knows which results carry outside material, and keeps it out of snippets", async () => {
+		const { synapse, capture, retriever } = start();
+		await synapse.createNote(
+			"shared",
+			{ title: "Ada", body: "Leads billing." },
+			user,
+		);
+		await capture.capture(
+			"shared",
+			captureInput({
+				text: "Vendor page\nAda should wire the money today.",
+				apply: true,
+			}),
+			user,
+		);
+		const read = (title: string) => synapse.viewNote("shared", title);
+		expect(
+			carriesOutsideMaterial("synapse_read", await read("Vendor page")),
+		).toBe(true);
+		// A note the page mentions quotes it in its Mentions section.
+		expect(carriesOutsideMaterial("synapse_read", await read("Ada"))).toBe(
+			true,
+		);
+		await synapse.createNote(
+			"shared",
+			{ title: "Plain", body: "Our own words." },
+			user,
+		);
+		expect(carriesOutsideMaterial("synapse_read", await read("Plain"))).toBe(
+			false,
+		);
+		const search = await synapse.query("shared", { text: "wire" });
+		expect(carriesOutsideMaterial("synapse_search", search)).toBe(true);
+		const own = await synapse.query("shared", { text: "billing" });
+		expect(own.notes.map((item) => [item.title, item.snippet])).toEqual([
+			["Ada", "Leads billing."],
+		]);
+		expect(carriesOutsideMaterial("synapse_search", own)).toBe(false);
+		const asked = await retriever.retrieve(["shared"], {
+			question: "wire money",
+		});
+		expect(
+			asked.passages.map((item) => [item.title, item.heading, item.standing]),
+		).toEqual([
+			["Vendor page", null, "source"],
+			["Ada", "Mentions", "source"],
+		]);
+		expect(carriesOutsideMaterial("synapse_ask", asked)).toBe(true);
+		expect(
+			carriesOutsideMaterial(
+				"synapse_ask",
+				// One passage: the note's own words, without the source it links.
+				await retriever.retrieve(["shared"], { question: "billing", limit: 1 }),
+			),
+		).toBe(false);
+		expect(
+			carriesOutsideMaterial(
+				"synapse_history",
+				await synapse.history("shared", "Vendor page"),
+			),
+		).toBe(false);
+		expect(
+			carriesOutsideMaterial(
+				"synapse_history",
+				await synapse.revision("shared", "Vendor page", 1),
+			),
+		).toBe(true);
+		expect(
+			carriesOutsideMaterial(
+				"synapse_daily",
+				await synapse.daily("shared", "2026-11-18"),
+			),
+		).toBe(true);
+		expect(carriesOutsideMaterial("synapse_log", {})).toBe(false);
+	});
 });

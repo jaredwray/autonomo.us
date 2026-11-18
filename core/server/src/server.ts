@@ -549,6 +549,9 @@ export function createServer(options: CreateServerOptions = {}) {
 					agentName: bot.name,
 				},
 				{ task: task.slice(0, MAX_TASK_LENGTH) },
+				// The message is in the conversation already; a system prompt
+				// does not repeat what someone in a channel wrote.
+				{ titled: false },
 			);
 			const holds =
 				brief.remit ||
@@ -700,6 +703,10 @@ export function createServer(options: CreateServerOptions = {}) {
 						}
 					: {}),
 				agentTokens: agentIds,
+				agentName: async (workspace, id) =>
+					(await bots.bots(workspace.id)).find((bot) => bot.id === id)?.name ??
+					(await agentTokens.find(id))?.name ??
+					null,
 				// The proposing agent hears the decision through its webhook.
 				onProposalDecided: (workspaceId, proposal) =>
 					agentWebhooks.onProposalDecided(workspaceId, proposal),

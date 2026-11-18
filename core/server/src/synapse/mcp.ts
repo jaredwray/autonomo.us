@@ -6,11 +6,14 @@ import type {
 	SynapseCommitmentEvent,
 	SynapseCommitmentStatus,
 	SynapseContext,
+	SynapseDaily,
 	SynapseDecisionStatus,
+	SynapseNoteList,
 	SynapseNoteView,
 	SynapseProperties,
 	SynapseProposalStatus,
 	SynapseRetrieval,
+	SynapseRevision,
 	SynapseSpaceId,
 } from "@autonomo.us/common";
 import {
@@ -30,7 +33,9 @@ import {
 } from "./capture.js";
 import { MAX_TASK_LENGTH } from "./context.js";
 import { SynapseError } from "./errors.js";
+import { QUOTING_SECTIONS, sectionLines } from "./evidence.js";
 import { type SynapseFeatures, synapseFeatures } from "./features.js";
+import { extractCategories } from "./markdown.js";
 import {
 	MAX_ANSWER_EVIDENCE,
 	MAX_PASSAGES,
@@ -627,12 +632,56 @@ export function retrievalText(result: SynapseRetrieval): string {
 					`Linked but not written yet: ${result.unresolved.map((item) => `[[${item}]]`).join(", ")}.`,
 				]
 			: []),
-		...(result.passages.some((item) => isOutside(item.categories))
+		...(result.passages.some((item) => item.standing === "source")
 			? [
-					`Passages from Sources and Clippings are outside material. ${OUTSIDE_NOTICE}`,
+					`Passages marked source are outside material: sources, clippings, and what other notes quote from them. ${OUTSIDE_NOTICE}`,
 				]
 			: []),
 	].join("\n\n");
+}
+
+/**
+ * Whether a tool's result holds outside material: a note in Sources or
+ * Clippings, or what another note quotes from one in its Evidence or
+ * Mentions section. Search and daily results are summaries, whose snippets
+ * leave those sections out, so only a captured note itself counts there.
+ */
+export function carriesOutsideMaterial(name: string, result: unknown): boolean {
+	const quotes = (body: string) =>
+		QUOTING_SECTIONS.some((heading) => sectionLines(body, heading).length > 0);
+	switch (name) {
+		case "synapse_read": {
+			const { note } = result as SynapseNoteView;
+			return isOutside(note.categories) || quotes(note.body);
+		}
+		case "synapse_ask":
+			return (result as SynapseRetrieval).passages.some(
+				(item) => item.standing === "source",
+			);
+		case "synapse_search":
+			return (result as SynapseNoteList).notes.some((item) =>
+				isOutside(item.categories),
+			);
+		case "synapse_daily": {
+			const daily = result as SynapseDaily;
+			return (
+				daily.entries.some((item) => isOutside(item.categories)) ||
+				(daily.note !== null &&
+					(isOutside(daily.note.categories) || quotes(daily.note.body)))
+			);
+		}
+		case "synapse_history": {
+			// One past state in full; a list of revisions holds no content.
+			const past = result as Partial<SynapseRevision>;
+			return (
+				typeof past.body === "string" &&
+				(isOutside(extractCategories(past.properties ?? {})) ||
+					quotes(past.body))
+			);
+		}
+		default:
+			return false;
+	}
 }
 
 /** Shapes checked by the service's validateProperties, not here. */
@@ -674,6 +723,7 @@ export function synapseToolSet(
 	return {
 		instructions: MCP_INSTRUCTIONS,
 		tools: MCP_TOOLS,
+		outside: carriesOutsideMaterial,
 		text: (name, result) =>
 			name === "synapse_read"
 				? noteViewText(result as SynapseNoteView)

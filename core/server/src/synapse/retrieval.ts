@@ -15,6 +15,7 @@ import {
 	EVIDENCE_HEADING,
 	evidenceLine,
 	evidenceState,
+	QUOTING_SECTIONS,
 	standingOf,
 } from "./evidence.js";
 import {
@@ -218,7 +219,12 @@ export class SynapseRetriever {
 		// Follow the best notes' links: the project a matching decision is
 		// about answers part of the question without sharing its words.
 		const linked = await this.linked(spaces, direct, notes);
-		const room = Math.min(linked.passages.length, Math.ceil(limit / 4));
+		// Linked passages take up to a quarter of the answer, and never all of it.
+		const room = Math.min(
+			linked.passages.length,
+			Math.ceil(limit / 4),
+			limit - 1,
+		);
 		const kept = [
 			...direct.slice(0, limit - room).map((item) => this.passage(item, terms)),
 			...linked.passages.slice(0, room),
@@ -348,7 +354,10 @@ export class SynapseRetriever {
 			categories: note.categories,
 			date: own ?? localDate(Date.parse(note.updatedAt), this.synapse.timeZone),
 			dates: datesIn(piece.text),
-			standing: passageStanding(note),
+			// What a note quotes from a source is the source's words, not the note's.
+			standing: QUOTING_SECTIONS.includes(piece.heading ?? "")
+				? "source"
+				: passageStanding(note),
 			revision: note.revision,
 			updatedAt: note.updatedAt,
 		};

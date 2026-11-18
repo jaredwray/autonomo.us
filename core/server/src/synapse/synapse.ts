@@ -49,7 +49,9 @@ import {
 	evidenceState,
 	parseEvidence,
 	propertyTargets,
+	QUOTING_SECTIONS,
 	standingOf,
+	withoutSections,
 } from "./evidence.js";
 import {
 	assertTitle,
@@ -283,7 +285,8 @@ function summary(note: StoredNote, terms: string[] = []): SynapseNoteSummary {
 		createdAt: note.createdAt,
 		updatedAt: note.updatedAt,
 		revision: note.revision,
-		snippet: snippet(note.body, terms),
+		// A snippet shows the note's own words, not what it quotes from sources.
+		snippet: snippet(withoutSections(note.body, QUOTING_SECTIONS), terms),
 	};
 }
 
@@ -1037,6 +1040,28 @@ export class SynapseService {
 			},
 			actor,
 		);
+		// A decision that no longer replaces this one stops saying it does:
+		// one reactivated, or superseded now by another.
+		for (const former of propertyTargets(note.properties.superseded_by)) {
+			if (by && titleKey(former) === by.titleKey) continue;
+			const replacer = await this.repository.getNote(space, titleKey(former));
+			if (!replacer) continue;
+			const supersedes = propertyTargets(replacer.properties.supersedes);
+			const remaining = supersedes.filter(
+				(item) => titleKey(item) !== note.titleKey,
+			);
+			if (remaining.length !== supersedes.length)
+				await this.updateNote(
+					space,
+					replacer.title,
+					{
+						properties: {
+							supersedes: remaining.map((item) => `[[${item}]]`),
+						},
+					},
+					actor,
+				);
+		}
 		// The replacing decision says what it replaced, when it is this space's own.
 		if (by && by.space === space) {
 			const supersedes = propertyTargets(by.properties.supersedes);

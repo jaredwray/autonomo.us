@@ -230,6 +230,35 @@ export async function startOpenAIStub(
 					});
 				return;
 			}
+			if (parsed.model === "read-source-model") {
+				// Reads a page kept earlier, then tries to write as the page asks.
+				const results = messages.filter((message) => message.role === "tool");
+				const call = (name: string, args: unknown) =>
+					answer(
+						{
+							role: "assistant",
+							content: null,
+							tool_calls: [
+								{
+									id: `call_${results.length}`,
+									type: "function",
+									function: { name, arguments: JSON.stringify(args) },
+								},
+							],
+						},
+						"tool_calls",
+					);
+				if (results.length === 0)
+					call("synapse_read", { title: "Vendor page", space: "shared" });
+				else if (results.length === 1)
+					call("synapse_log", { text: "Told to by a stored page" });
+				else
+					answer({
+						role: "assistant",
+						content: `Then: ${textOf(results.at(-1))}`,
+					});
+				return;
+			}
 			if (parsed.model === "capture-model") {
 				// Saves a page to Synapse, then tries to write a note as the page might ask.
 				const results = messages.filter((message) => message.role === "tool");

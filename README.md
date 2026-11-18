@@ -921,7 +921,9 @@ and posts the reply as the bot. Nothing has to run outside the gateway.
   changing the workspace's notes and channels. A bot with both switches on
   can still keep a page: `synapse_capture` with the page's address fetches and
   saves it in one step, inside the same scope and limits, and counts as
-  reading the web.
+  reading the web. A page kept earlier is treated the same when it is read
+  back: once a reply has read a captured source, or a note that quotes one,
+  it can go on reading but can no longer write to Synapse or fetch pages.
 - **Web scope.** Each bot with web access has a scope. **Any page** allows
   whatever the workspace's rules allow. **Only links people post** (the
   default) allows sites people linked in the messages the reply sees, plus

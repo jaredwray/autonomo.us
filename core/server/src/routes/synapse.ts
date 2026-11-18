@@ -140,6 +140,7 @@ export async function synapseRoutes(
 		features,
 		fetchPage,
 		agentTokens,
+		agentName,
 		onProposalDecided,
 	}: {
 		synapse: SynapseService;
@@ -163,6 +164,14 @@ export async function synapseRoutes(
 		/** Who has an agent space here: agent tokens and the gateway's bots. */
 		agentTokens: Pick<AgentTokenStore, "ids">;
 		/**
+		 * An agent's name by its id, for a briefing asked for on its behalf:
+		 * rules and commitments are addressed to agents by name.
+		 */
+		agentName?: (
+			workspace: { id: string; isDefault: boolean },
+			agentId: string,
+		) => Promise<string | null>;
+		/**
 		 * Called once a proposal is decided, so its author can follow up. The
 		 * decision stands whatever this does.
 		 */
@@ -174,7 +183,7 @@ export async function synapseRoutes(
 ) {
 	const { capture, retriever, commitments, briefing, maintenance } =
 		features ?? synapseFeatures(synapse);
-	/** A person, for what only a person may do: approve, review, restore. */
+	/** A person, for what only a person may do: approve an answer, review a batch. */
 	const person = (request: FastifyRequest): SynapseActor => {
 		const member = signedInMember(request);
 		return { kind: "user", id: member.id, name: member.name || member.email };
@@ -773,7 +782,14 @@ export async function synapseRoutes(
 			return briefing.brief(
 				{
 					shared: sharedSpaceId(workspace),
-					...(agent === undefined ? {} : { own: agentSpaceId(agent) }),
+					...(agent === undefined
+						? {}
+						: {
+								own: agentSpaceId(agent),
+								agentName:
+									(await agentName?.(workspace, agent).catch(() => null)) ??
+									undefined,
+							}),
 				},
 				brief,
 			);

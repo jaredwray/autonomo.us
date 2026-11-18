@@ -32,6 +32,8 @@ import { words } from "./text.js";
 
 export const MAX_FINDINGS = 200;
 const PAGE = 500;
+/** Times a merge folds into the kept note when that note keeps changing. */
+const MERGE_ATTEMPTS = 3;
 const DAY_MS = 86_400_000;
 /** Titles a digest line names before it says how many more there are. */
 const NAMED = 5;
@@ -226,7 +228,15 @@ export class SynapseMaintenance {
 			const startedAt = this.at();
 			const previous = await repository.getMaintenance(space);
 			const batch = await this.inspect(space, previous, startedAt);
-			await repository.finishMaintenance(space, lease.id, batch, startedAt);
+			// A run that outlived its lease lost the space to another runner: what
+			// it found was not saved, so it is not handed back as the batch.
+			if (
+				!(await repository.finishMaintenance(space, lease.id, batch, startedAt))
+			)
+				throw new SynapseError(
+					"This maintenance run took too long and another one replaced it. Reload the batch.",
+					409,
+				);
 			return publicBatch(batch);
 		} catch (error) {
 			await repository.releaseMaintenance(space, lease.id).catch(() => {});
@@ -814,41 +824,81 @@ export class SynapseMaintenance {
 			);
 		if (!from) throw gone(fromTitle);
 		if (!into) throw gone(intoTitle);
-		const heading = `## Merged from ${from.title}`;
-		// A merge interrupted after this step does not add the body twice.
-		const body =
-			from.body.trim() === "" || into.body.includes(heading)
-				? into.body
-				: `${into.body.trimEnd()}${into.body.trim() ? "\n\n" : ""}${heading}\n${from.body.trim()}`;
-		if (body.length > MAX_BODY_LENGTH)
-			throw new SynapseError(
-				`"${into.title}" would be too long with "${from.title}" merged into it. Merge them by hand.`,
-			);
-		const properties: SynapseProperties = { ...into.properties };
-		for (const [key, value] of Object.entries(from.properties)) {
-			const mine = properties[key];
-			if (Array.isArray(mine) && Array.isArray(value))
-				properties[key] = [...new Set([...mine, ...value])].slice(
+		const merged = (target: StoredNote) => {
+			const own = target.body.trimEnd();
+			const body =
+				from.body.trim() === ""
+					? target.body
+					: `${own}${own ? "\n\n" : ""}## Merged from ${from.title}\n${from.body.trim()}`;
+			if (body.length > MAX_BODY_LENGTH)
+				throw new SynapseError(
+					`"${target.title}" would be too long with "${from.title}" merged into it. Merge them by hand.`,
+				);
+			const properties: SynapseProperties = { ...target.properties };
+			for (const [key, value] of Object.entries(from.properties)) {
+				const mine = properties[key];
+				if (Array.isArray(mine) && Array.isArray(value))
+					properties[key] = [...new Set([...mine, ...value])].slice(
+						0,
+						PROPERTY_LIST_MAX_ITEMS,
+					);
+				else if (mine === undefined || mine === null || mine === "")
+					properties[key] = value;
+			}
+			const aliases = propertyTargets(properties.aliases);
+			if (!aliases.some((alias) => titleKey(alias) === from.titleKey))
+				properties.aliases = [...aliases, from.title].slice(
 					0,
 					PROPERTY_LIST_MAX_ITEMS,
 				);
-			else if (mine === undefined || mine === null || mine === "")
-				properties[key] = value;
+			return { body, properties };
+		};
+		// Checked before anything is deleted.
+		merged(into);
+		// The source goes first, and only at the revision read here: what is
+		// folded in is then exactly what was deleted, and an edit made to it
+		// meanwhile stops the merge instead of being lost. From here its
+		// content lives in this call and in its history.
+		await this.synapse.deleteNote(space, from.title, actor, from.revision);
+		try {
+			let target = into;
+			for (let attempt = 0; ; attempt++) {
+				try {
+					await this.synapse.updateNote(
+						space,
+						target.title,
+						{
+							...merged(target),
+							replaceProperties: true,
+							revision: target.revision,
+						},
+						actor,
+					);
+					break;
+				} catch (error) {
+					const current = await repository.getNote(space, into.titleKey);
+					if (
+						!(error instanceof SynapseError && error.statusCode === 409) ||
+						attempt + 1 >= MERGE_ATTEMPTS ||
+						!current
+					)
+						throw error;
+					// Someone edited the kept note: fold into what it says now.
+					target = current;
+				}
+			}
+		} catch (error) {
+			// The kept note could not take it: put the source back as it was.
+			await this.synapse
+				.createNote(
+					space,
+					{ title: from.title, body: from.body, properties: from.properties },
+					actor,
+				)
+				.catch(() => {});
+			throw error;
 		}
-		const aliases = propertyTargets(properties.aliases);
-		if (!aliases.some((alias) => titleKey(alias) === from.titleKey))
-			properties.aliases = [...aliases, from.title].slice(
-				0,
-				PROPERTY_LIST_MAX_ITEMS,
-			);
-		await this.synapse.updateNote(
-			space,
-			into.title,
-			{ body, properties, replaceProperties: true, revision: into.revision },
-			actor,
-		);
 		await this.synapse.relink(space, from.title, into.title, actor);
-		await this.synapse.deleteNote(space, from.title, actor);
 	}
 }
 

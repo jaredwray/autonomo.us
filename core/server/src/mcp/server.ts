@@ -116,6 +116,12 @@ export type McpToolSet = {
 		) => Promise<unknown>
 	>;
 	text?: (name: string, result: unknown) => string | undefined;
+	/**
+	 * Whether a tool's result carries words written outside the team, such
+	 * as a captured page. Whoever runs a model on the result decides what it
+	 * may still do afterwards.
+	 */
+	outside?: (name: string, result: unknown) => boolean;
 };
 
 /** Why `args` do not satisfy `schema`, or null when they do. */

@@ -13,6 +13,7 @@ import {
 	contentHash,
 	evidenceLine,
 	lineDiff,
+	MENTIONS_HEADING,
 	normalizeContent,
 } from "./evidence.js";
 import {
@@ -45,8 +46,6 @@ export const MAX_CAPTURE_LENGTH = 500_000;
 export const MAX_CAPTURE_ENTITIES = 50;
 /** Updates a capture prepares: one for each of the most-mentioned notes. */
 export const MAX_CAPTURE_UPDATES = 20;
-/** Where a mentioned note records the sources that mention it. */
-export const MENTIONS_HEADING = "Mentions";
 const SOURCES_KEY = "sources";
 const TITLE_ATTEMPTS = 20;
 const WRITE_ATTEMPTS = 3;
@@ -285,6 +284,19 @@ export class SynapseCapture {
 			);
 			status = "created";
 		}
+		// Two captures of the same content can both find nothing and both
+		// create. The earliest note for the content is the source; a capture
+		// that made a later one takes it back, so the content is kept once.
+		if (status === "created") {
+			const [first] = await this.withHash(space, hash);
+			if (first && first.id !== source.id) {
+				await this.synapse
+					.deleteNote(space, source.title, actor, source.revision)
+					.catch(() => {});
+				source = first;
+				status = "unchanged";
+			}
+		}
 
 		const entities = mentioned.slice(0, MAX_CAPTURE_ENTITIES).map(
 			(item): SynapseCaptureEntity => ({
@@ -300,6 +312,12 @@ export class SynapseCapture {
 			updates.push(
 				await this.update(space, source, item, input.apply, actor, scope),
 			);
+		const proposalId =
+			scope.propose &&
+			source.space !== scope.propose &&
+			updates.some((item) => item.state === "proposed")
+				? await this.proposeSource(source, actor, scope.propose)
+				: undefined;
 		const captured =
 			typeof source.properties.captured === "string" &&
 			DATE_PATTERN.test(source.properties.captured)
@@ -318,6 +336,7 @@ export class SynapseCapture {
 			truncated,
 			captured,
 			...(diff ? { diff } : {}),
+			...(proposalId ? { proposalId } : {}),
 		};
 		return {
 			source: result,
@@ -338,16 +357,8 @@ export class SynapseCapture {
 		hash: string,
 	): Promise<StoredNote | null> {
 		const { repository } = this.synapse;
-		const sources = (k: string, value: string) =>
-			repository.findNotes(
-				{
-					space,
-					categoryKey: SOURCES_KEY,
-					where: [{ k, v: propertyKeyValue(value) }],
-				},
-				{ sort: { by: "createdAt", direction: "asc" }, limit: 20 },
-			);
-		const [same] = await sources("hash", hash);
+		const sources = (k: string, value: string) => this.sources(space, k, value);
+		const [same] = await this.withHash(space, hash);
 		if (same) return same;
 		if (input.url) {
 			// `where` compares without case; an address is the same only exactly.
@@ -370,6 +381,66 @@ export class SynapseCapture {
 			);
 		}
 		return note;
+	}
+
+	/** The space's own source notes with a property value, the earliest first. */
+	private sources(space: SynapseSpaceId, k: string, value: string) {
+		return this.synapse.repository.findNotes(
+			{
+				space,
+				categoryKey: SOURCES_KEY,
+				where: [{ k, v: propertyKeyValue(value) }],
+			},
+			{ sort: { by: "createdAt", direction: "asc" }, limit: 20 },
+		);
+	}
+	private withHash(space: SynapseSpaceId, hash: string) {
+		return this.sources(space, "hash", hash);
+	}
+
+	/**
+	 * Proposes the source itself for the shared space. An agent's source lives
+	 * in its own space, which the shared space cannot see: without this, a
+	 * line approved into a shared note would cite a note nobody there can open.
+	 */
+	private async proposeSource(
+		source: StoredNote,
+		actor: SynapseActor,
+		shared: SynapseSpaceId,
+	): Promise<string | undefined> {
+		try {
+			// A note with this title there already answers the link, or is in its way.
+			if (await this.synapse.repository.getNote(shared, source.titleKey))
+				return undefined;
+			const pending = (
+				await this.synapse.listProposals({
+					authorId: actor.id,
+					status: "pending",
+				})
+			).find(
+				(proposal) =>
+					proposal.action === "create" &&
+					titleKey(proposal.title) === source.titleKey,
+			);
+			if (pending) return pending.id;
+			return (
+				await this.synapse.propose(
+					actor,
+					{
+						action: "create",
+						title: source.title,
+						body: source.body,
+						properties: source.properties,
+						reason:
+							"The source of the lines proposed for the notes it mentions, so they can be followed from the shared space.",
+					},
+					shared,
+				)
+			).id;
+		} catch (error) {
+			if (!(error instanceof SynapseError)) throw error;
+			return undefined;
+		}
 	}
 
 	private async create(
@@ -608,5 +679,9 @@ function summarize(
 		.filter(([state]) => count(state))
 		.map(([state, label]) => `${count(state)} ${label}`);
 	if (states.length) parts.push(`Updates: ${states.join(", ")}.`);
+	if (source.proposalId)
+		parts.push(
+			"The source is proposed for the shared space too, so those lines can be followed there.",
+		);
 	return parts.join(" ");
 }

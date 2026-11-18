@@ -10,6 +10,17 @@ import { DATE_PATTERN, linkTarget } from "./markdown.js";
 
 /** Where a note keeps the sources of its claims. */
 export const EVIDENCE_HEADING = "Evidence";
+/** Where a mentioned note records the sources that mention it. */
+export const MENTIONS_HEADING = "Mentions";
+/**
+ * Sections whose lines quote sources. What a source said is somebody
+ * else's words wherever it is copied to, so these are kept out of
+ * briefings and snippets and are labelled as source material in retrieval.
+ */
+export const QUOTING_SECTIONS: readonly string[] = [
+	MENTIONS_HEADING,
+	EVIDENCE_HEADING,
+];
 export const MAX_PASSAGE_LENGTH = 1000;
 /** Evidence lines read from one note. */
 export const MAX_EVIDENCE_LINES = 100;
@@ -88,7 +99,10 @@ export function sectionLines(body: string, heading: string): string[] {
 }
 
 /** A body without its `## <heading>` sections, each up to the next heading of its level or above. */
-export function withoutSections(body: string, headings: string[]): string {
+export function withoutSections(
+	body: string,
+	headings: readonly string[],
+): string {
 	let lines = body.split("\n");
 	for (const heading of headings)
 		for (;;) {

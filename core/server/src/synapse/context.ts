@@ -6,7 +6,6 @@ import type {
 	SynapsePassage,
 	SynapseSpaceId,
 } from "@autonomo.us/common";
-import { MENTIONS_HEADING } from "./capture.js";
 import {
 	byUrgency,
 	COMMITMENTS_KEY,
@@ -15,14 +14,18 @@ import {
 } from "./commitments.js";
 import { SynapseError } from "./errors.js";
 import {
-	EVIDENCE_HEADING,
 	propertyTargets,
+	QUOTING_SECTIONS,
 	standingOf,
 	withoutSections,
 } from "./evidence.js";
 import { DATE_PATTERN, plainText, titleKey } from "./markdown.js";
 import type { StoredNote } from "./repository.js";
-import { questionTerms, type SynapseRetriever } from "./retrieval.js";
+import {
+	MAX_QUESTION_LENGTH,
+	questionTerms,
+	type SynapseRetriever,
+} from "./retrieval.js";
 import { publicSpaceId, type SynapseService } from "./synapse.js";
 import { findMentions, type Named } from "./text.js";
 
@@ -47,11 +50,6 @@ const LIMITS = {
  * Commitments have a section of their own, and their bodies are activity logs.
  */
 const NOT_EVIDENCE = new Set(["sources", "clippings", COMMITMENTS_KEY]);
-/**
- * Sections that quote sources. What a source said does not belong in a
- * briefing either, wherever it was copied to.
- */
-const QUOTING_SECTIONS = [MENTIONS_HEADING, EVIDENCE_HEADING];
 /** A note's own words: its body without the sections that quote sources. */
 const ownWords = (body: string) =>
 	plainText(withoutSections(body, QUOTING_SECTIONS));
@@ -135,6 +133,11 @@ export class SynapseBriefing {
 	async brief(
 		scope: BriefingScope,
 		request: SynapseContextRequest = {},
+		/**
+		 * `titled: false` leaves the task out of the text. A briefing that
+		 * goes into a system prompt must not repeat there what someone asked.
+		 */
+		options: { titled?: boolean } = {},
 	): Promise<SynapseContext> {
 		const task =
 			typeof request.task === "string" && request.task.trim()
@@ -287,7 +290,11 @@ export class SynapseBriefing {
 				await this.retriever
 					.retrieve(
 						this.spaces(scope),
-						{ question: task, limit: LIMITS.evidence * 3 },
+						// A task may be longer than a question; its opening says what it is about.
+						{
+							question: task.slice(0, MAX_QUESTION_LENGTH),
+							limit: LIMITS.evidence * 3,
+						},
 						shown,
 					)
 					// A briefing without passages is still a briefing.
@@ -298,7 +305,7 @@ export class SynapseBriefing {
 						passage.standing !== "superseded" &&
 						// A note the briefing already lists says its piece there.
 						!named.has(titleKey(passage.title)) &&
-						!QUOTING_SECTIONS.includes(passage.heading ?? "") &&
+						passage.standing !== "source" &&
 						!passage.categories.some((category) =>
 							NOT_EVIDENCE.has(titleKey(category)),
 						),
@@ -306,7 +313,7 @@ export class SynapseBriefing {
 				.slice(0, LIMITS.evidence);
 
 		const context = { ...listed, evidence };
-		return { ...context, ...render(context) };
+		return { ...context, ...render(context, options.titled !== false) };
 	}
 }
 
@@ -318,7 +325,10 @@ const commitmentLine = (item: SynapseCommitment) =>
 	].join("; ")})`;
 
 /** The briefing as Markdown. Sections come in order of what an agent must not miss. */
-export function render(context: Omit<SynapseContext, "text" | "truncated">): {
+export function render(
+	context: Omit<SynapseContext, "text" | "truncated">,
+	titled = true,
+): {
 	text: string;
 	truncated: boolean;
 } {
@@ -346,7 +356,7 @@ export function render(context: Omit<SynapseContext, "text" | "truncated">): {
 			),
 		],
 	];
-	const head = `# Briefing${context.task ? `: ${cut(context.task, 160)}` : ""}`;
+	const head = `# Briefing${titled && context.task ? `: ${cut(context.task, 160)}` : ""}`;
 	const out = [head];
 	let length = head.length;
 	let truncated = false;

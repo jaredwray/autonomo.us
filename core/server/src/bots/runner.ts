@@ -683,11 +683,14 @@ export class BotRunner {
 		};
 		const tools: NonNullable<ChatExtras["tools"]> = {};
 		/**
-		 * Whether a web page has entered this reply. A page can say anything,
-		 * so from then on the reply keeps only web_fetch: it cannot read or
-		 * change the workspace's notes or channels on a page's say-so.
+		 * What has entered this reply from outside the team. `web`: a page,
+		 * fetched now. A page can say anything, so from then on the reply keeps
+		 * only web_fetch: it cannot read or change the workspace's notes or
+		 * channels on a page's say-so. `stored`: a page kept earlier, read back
+		 * from Synapse. The reply may go on reading, and can no longer write
+		 * to Synapse or fetch.
 		 */
-		const untrusted = { web: false };
+		const untrusted = { web: false, stored: false };
 		/** Hosts this reply has fetched, for the follow-up limit. */
 		const fetched: string[] = [];
 		const inScope = webScope(bot, run.mentioned);
@@ -725,6 +728,11 @@ export class BotRunner {
 						const web = readsWeb(definition.name, input);
 						if (web && !bot.web)
 							return "Refused: this bot has no web access. Send the text to capture instead of an address.";
+						// Captured material read back from Synapse is a page all the
+						// same. The reply may keep reading, but what it read cannot
+						// have it change the notes or carry them off to a site.
+						if (untrusted.stored && (web || WRITING_TOOLS.has(definition.name)))
+							return "Refused: this reply has read captured material (a source, a clipping, or what a note quotes from one), so it can no longer write to Synapse or fetch pages. Answer with what you have.";
 						if (!web && untrusted.web)
 							return "Refused: this reply has read a web page, so it can no longer use Synapse or channel tools. Answer with what you have.";
 						const host = web
@@ -754,6 +762,8 @@ export class BotRunner {
 								},
 							);
 							if (web && host && !fetched.includes(host)) fetched.push(host);
+							if (!web && set.outside?.(definition.name, result))
+								untrusted.stored = true;
 							// Where a page landed counts as fetched too, for same-site follow-ups.
 							// A fetch says where it landed; a capture, the address it kept.
 							const reached = result as {
