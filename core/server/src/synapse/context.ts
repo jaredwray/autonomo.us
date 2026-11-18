@@ -6,6 +6,7 @@ import type {
 	SynapsePassage,
 	SynapseSpaceId,
 } from "@autonomo.us/common";
+import { MENTIONS_HEADING } from "./capture.js";
 import {
 	byUrgency,
 	COMMITMENTS_KEY,
@@ -13,7 +14,12 @@ import {
 	MAX_COMMITMENTS,
 } from "./commitments.js";
 import { SynapseError } from "./errors.js";
-import { propertyTargets, standingOf } from "./evidence.js";
+import {
+	EVIDENCE_HEADING,
+	propertyTargets,
+	standingOf,
+	withoutSections,
+} from "./evidence.js";
 import { DATE_PATTERN, plainText, titleKey } from "./markdown.js";
 import type { StoredNote } from "./repository.js";
 import { questionTerms, type SynapseRetriever } from "./retrieval.js";
@@ -37,6 +43,14 @@ const LIMITS = {
 };
 /** Sources and clippings hold other people's words: a briefing cites notes about them, not them. */
 const OUTSIDE_MATERIAL = new Set(["sources", "clippings"]);
+/**
+ * Sections that quote sources. What a source said does not belong in a
+ * briefing either, wherever it was copied to.
+ */
+const QUOTING_SECTIONS = [MENTIONS_HEADING, EVIDENCE_HEADING];
+/** A note's own words: its body without the sections that quote sources. */
+const ownWords = (body: string) =>
+	plainText(withoutSections(body, QUOTING_SECTIONS));
 /** `applies_to` values that mean every agent. */
 const EVERYONE = new Set(["everyone", "all", "all agents", "agents"]);
 
@@ -80,7 +94,11 @@ export class SynapseBriefing {
 	}
 
 	/** A category's notes across the agent's spaces; its own note wins a shared title. */
-	private async category(scope: BriefingScope, key: string) {
+	private async category(
+		scope: BriefingScope,
+		key: string,
+		shown: Map<SynapseSpaceId, string[] | null>,
+	) {
 		const seen = new Set<string>();
 		const notes: StoredNote[] = [];
 		for (const space of this.spaces(scope))
@@ -90,6 +108,7 @@ export class SynapseBriefing {
 					sort: { by: "updatedAt", direction: "desc" },
 					limit: key === COMMITMENTS_KEY ? MAX_COMMITMENTS : CATEGORY_NOTES,
 				},
+				shown.get(space),
 			)) {
 				if (seen.has(note.titleKey)) continue;
 				seen.add(note.titleKey);
@@ -103,7 +122,7 @@ export class SynapseBriefing {
 		return {
 			title: note.title,
 			space: publicSpaceId(note.space),
-			text: cut(text ?? plainText(note.body)),
+			text: cut(text ?? ownWords(note.body)),
 			date: dateOf(note),
 			...(status ? { status } : {}),
 		};
@@ -123,13 +142,22 @@ export class SynapseBriefing {
 			);
 		const terms = task ? questionTerms(task) : [];
 		const agentKey = scope.agentName ? titleKey(scope.agentName) : null;
+		// Each space's own titles are read once for every read below.
+		const shown = new Map(
+			await Promise.all(
+				this.spaces(scope).map(
+					async (space) =>
+						[space, await this.synapse.ownTitles(space)] as const,
+				),
+			),
+		);
 		const [rules, projects, decisions, questions, commitments, remitNote] =
 			await Promise.all([
-				this.category(scope, "rules"),
-				this.category(scope, "projects"),
-				this.category(scope, "decisions"),
-				this.category(scope, "questions"),
-				this.category(scope, COMMITMENTS_KEY),
+				this.category(scope, "rules", shown),
+				this.category(scope, "projects", shown),
+				this.category(scope, "decisions", shown),
+				this.category(scope, "questions", shown),
+				this.category(scope, COMMITMENTS_KEY, shown),
 				scope.own
 					? this.synapse.repository.getNote(scope.own, "remit")
 					: Promise.resolve(null),
@@ -205,16 +233,18 @@ export class SynapseBriefing {
 		if (task && terms.length)
 			evidence = (
 				await this.retriever
-					.retrieve(this.spaces(scope), {
-						question: task,
-						limit: LIMITS.evidence * 2,
-					})
+					.retrieve(
+						this.spaces(scope),
+						{ question: task, limit: LIMITS.evidence * 3 },
+						shown,
+					)
 					// A briefing without passages is still a briefing.
 					.catch(() => ({ passages: [] as SynapsePassage[] }))
 			).passages
 				.filter(
 					(passage) =>
 						passage.standing !== "superseded" &&
+						!QUOTING_SECTIONS.includes(passage.heading ?? "") &&
 						!passage.categories.some((category) =>
 							OUTSIDE_MATERIAL.has(titleKey(category)),
 						),
@@ -222,14 +252,14 @@ export class SynapseBriefing {
 				.slice(0, LIMITS.evidence);
 
 		const remit =
-			[scope.remit?.trim(), remitNote ? plainText(remitNote.body) : ""]
+			[scope.remit?.trim(), remitNote ? ownWords(remitNote.body) : ""]
 				.filter(Boolean)
 				.map((text) => cut(text as string, REMIT_LENGTH))
 				.join("\n") || null;
 		const goalOf = (note: StoredNote) =>
 			typeof note.properties.goal === "string" && note.properties.goal.trim()
 				? note.properties.goal.trim()
-				: plainText(note.body);
+				: ownWords(note.body);
 		const active = projects.filter((note) => {
 			const status = propertyTargets(note.properties.status).map(titleKey);
 			return !status.some((item) =>

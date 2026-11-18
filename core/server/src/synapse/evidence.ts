@@ -87,6 +87,21 @@ export function sectionLines(body: string, heading: string): string[] {
 		.filter((_line, index) => found.outside[found.start + 1 + index]);
 }
 
+/** A body without its `## <heading>` sections, each up to the next heading of its level or above. */
+export function withoutSections(body: string, headings: string[]): string {
+	let lines = body.split("\n");
+	for (const heading of headings)
+		for (;;) {
+			const found = section(lines, heading);
+			if (!found) break;
+			lines = [
+				...lines.slice(0, found.start),
+				...(found.next === -1 ? [] : lines.slice(found.next)),
+			];
+		}
+	return lines.join("\n");
+}
+
 /** Text as it is compared: case and the kind and amount of whitespace do not matter. */
 export const comparable = (text: string) =>
 	text.replace(/\s+/g, " ").trim().toLowerCase();

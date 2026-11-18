@@ -32,6 +32,7 @@ import {
 } from "./synapse.js";
 import {
 	findMentions,
+	headingText,
 	type Named,
 	passageAround,
 	STOP_WORDS,
@@ -183,8 +184,13 @@ const withoutExtension = (name: string) =>
 function deriveTitle(input: CaptureInput, body: string, today: string): string {
 	const candidates: string[] = [];
 	if (input.name) candidates.push(withoutExtension(input.name));
-	const heading = /^ {0,3}#{1,2}\s+(.+?)\s*#*\s*$/m.exec(body.slice(0, 4000));
-	if (heading && input.kind !== "text") candidates.push(heading[1]);
+	if (input.kind !== "text")
+		for (const line of body.slice(0, 4000).split("\n")) {
+			const heading = headingText(line, 2);
+			if (!heading) continue;
+			candidates.push(heading);
+			break;
+		}
 	if (input.url) {
 		const url = new URL(input.url);
 		candidates.push(`${url.hostname}${url.pathname.replace(/\/$/, "")}`);

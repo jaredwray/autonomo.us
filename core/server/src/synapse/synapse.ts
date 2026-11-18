@@ -575,9 +575,23 @@ export class SynapseService {
 	index(space: SynapseSpaceId): Promise<NoteIndexEntry[]> {
 		return this.readIndex(space);
 	}
-	/** Notes a space shows that match `filter`, as stored. */
-	find(filter: NoteFilter, options: FindOptions): Promise<StoredNote[]> {
-		return this.readNotes(filter, options);
+	/**
+	 * Notes a space shows that match `filter`, as stored. A caller that
+	 * reads the same space several times passes its `ownTitles` once read.
+	 */
+	find(
+		filter: NoteFilter,
+		options: FindOptions,
+		ownTitles?: string[] | null,
+	): Promise<StoredNote[]> {
+		return this.readNotes(filter, options, ownTitles);
+	}
+	/**
+	 * The titles a space defines itself, lowercased, which hide Global's
+	 * notes of the same title; null for a space that inherits nothing.
+	 */
+	ownTitles(space: SynapseSpaceId): Promise<string[] | null> {
+		return this.overrides(space);
 	}
 	private async readNote(space: SynapseSpaceId, key: string) {
 		const own = await this.repository.getNote(space, key);

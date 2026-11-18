@@ -29,7 +29,7 @@ import {
 	publicSpaceId,
 	type SynapseService,
 } from "./synapse.js";
-import { root, STOP_WORDS, stem, words } from "./text.js";
+import { headingText, root, STOP_WORDS, stem, words } from "./text.js";
 import { localDate, validDate } from "./time.js";
 
 export const DEFAULT_PASSAGES = 8;
@@ -108,10 +108,10 @@ export function passagesOf(body: string): Piece[] {
 			paragraph.push(line);
 			continue;
 		}
-		const title = /^ {0,3}#{1,6}\s+(.*?)\s*#*\s*$/.exec(line);
-		if (title) {
+		const title = headingText(line);
+		if (title !== null) {
 			flush();
-			heading = title[1] || null;
+			heading = title || null;
 			continue;
 		}
 		if (line.trim() === "") flush();
@@ -164,6 +164,8 @@ export class SynapseRetriever {
 	async retrieve(
 		spaces: SynapseSpaceId[],
 		request: SynapseRetrieveRequest,
+		/** Each space's own titles, when the caller has read them already. */
+		shown?: Map<SynapseSpaceId, string[] | null>,
 	): Promise<SynapseRetrieval> {
 		const question =
 			typeof request.question === "string" ? request.question.trim() : "";
@@ -191,6 +193,7 @@ export class SynapseRetriever {
 							sort: { by: "updatedAt", direction: "desc" },
 							limit: CANDIDATES,
 						},
+						shown?.get(space),
 					),
 				),
 			)

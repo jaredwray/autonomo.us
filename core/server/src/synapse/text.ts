@@ -83,6 +83,23 @@ export function root(word: string): string {
 	return word.slice(0, Math.max(shared, Math.min(3, word.length)));
 }
 
+/**
+ * The text of an ATX heading line such as `## Title ##`, or null when the
+ * line is not a heading of at most `maxLevel`. Written without a pattern
+ * over the whole line, so a line of any length and content costs its length.
+ */
+export function headingText(line: string, maxLevel = 6): string | null {
+	const open = /^ {0,3}(#{1,6})(?:[ \t]|$)/.exec(line);
+	if (!open || open[1].length > maxLevel) return null;
+	const text = line.slice(open[0].length).trim();
+	// A closing run of #s counts only after a space, or as the whole heading.
+	let end = text.length;
+	while (end > 0 && text[end - 1] === "#") end--;
+	if (end === text.length) return text;
+	if (end === 0) return "";
+	return /[ \t]/.test(text[end - 1]) ? text.slice(0, end).trimEnd() : text;
+}
+
 /** A note that text may mention, by its title or one of its aliases. */
 export type Named<T> = { name: string; value: T };
 

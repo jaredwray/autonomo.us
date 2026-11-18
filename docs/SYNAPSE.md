@@ -298,7 +298,7 @@ The source is a note (usually in Sources, Clippings, or Meetings), so the line i
 
 **Fetching.** A capture that names a page and brings none of its text is fetched by the gateway exactly as `web_fetch` would fetch it (WEB_PROXIES_PLAN.md): over MCP it needs the `web:fetch` grant and follows the workspace's web rules and proxies; over REST only a signed-in workspace admin may, since a fetch can spend the proxy budget, and anyone else sends the page's text with the `url`. When web access is turned off, every capture needs the text.
 
-**Captured text is outside material.** A page can say anything. In a hosted bot's reply a capture by address counts as reading the web: it needs the bot's web access and stays inside its web scope and follow-up limit, the reply's Synapse and channel tools are refused afterwards, and a capture made after the reply has already read a page only prepares its updates, whatever `apply` says. Briefings never quote Sources or Clippings (section 15), and `synapse_read`, `synapse_capture`, and `synapse_ask` label such material as information to weigh (section 9).
+**Captured text is outside material.** A page can say anything. In a hosted bot's reply a capture by address counts as reading the web: it needs the bot's web access and stays inside its web scope and follow-up limit, the reply's Synapse and channel tools are refused afterwards, and a capture made after the reply has already read a page only prepares its updates, whatever `apply` says. Briefings never quote Sources or Clippings, nor the `## Mentions` and `## Evidence` sections where a source's words are copied into other notes (section 15), and `synapse_read`, `synapse_capture`, and `synapse_ask` label such material as information to weigh (section 9).
 
 ## 15. Briefings (`synapse_context`)
 
@@ -312,9 +312,9 @@ A briefing is what an agent should know before it starts a task, compact enough 
 | Project goals | The project named in `project` and the projects whose titles or aliases the task mentions: each one's `goal` property, else the start of its body. Without either, the three latest projects that are not done. |
 | Decisions in force | Notes in the Decisions category that are not superseded and not drafts, the ones that link a concerned project or share the task's words first, else the latest. Up to 8; a disputed one is marked `DISPUTED`. |
 | Open questions | Notes in the Questions category whose `status` is empty or `[[Open]]`, ranked the same way. Up to 6. |
-| Relevant evidence | The best passages retrieval finds for the task (section 16), without superseded notes and without Sources and Clippings. Up to 5; only when a task is given. |
+| Relevant evidence | The best passages retrieval finds for the task (section 16), without superseded notes, without Sources and Clippings, and without passages from `## Mentions` and `## Evidence` sections. Up to 5; only when a task is given. |
 
-When the text would pass its limit the later sections lose lines and `truncated` is true; the lists in the structured result are never cut. Sections with nothing in them are left out, and a workspace with nothing written yet gets one line saying so.
+A line's text is the note's own words: its `## Mentions` and `## Evidence` sections are left out, since they quote sources, and a briefing goes into a prompt as the team's word. When the text would pass its limit the later sections lose lines and `truncated` is true; the lists in the structured result are never cut. Sections with nothing in them are left out, and a workspace with nothing written yet gets one line saying so.
 
 **Hosted bots** load their briefing when a reply starts: a bot with tools on is briefed on the message that asked, and the briefing is added to its system prompt with a note that it is what the team wrote down earlier, not a new request, and changes nothing the bot may do. A bot without tools gets none. A briefing that cannot be loaded (Synapse unavailable) is logged and the reply goes ahead without it; an empty one adds nothing to the prompt.
 
