@@ -660,6 +660,7 @@ export function carriesOutsideMaterial(
 		categories?: unknown;
 		properties?: unknown;
 		standing?: unknown;
+		text?: unknown;
 	};
 	/** A note, a past state, a proposal, a summary, or a passage. */
 	const outside = (item: unknown): boolean => {
@@ -673,7 +674,11 @@ export function carriesOutsideMaterial(
 				: [];
 		return (
 			isOutside(categories) ||
-			(typeof held.body === "string" && quotes(held.body))
+			// A note's body, or what a proposal would write: its body or the
+			// text it appends.
+			[held.body, held.text].some(
+				(written) => typeof written === "string" && quotes(written),
+			)
 		);
 	};
 	const holder = result as Record<string, unknown>;

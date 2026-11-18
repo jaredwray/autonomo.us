@@ -1430,10 +1430,18 @@ export class SynapseService {
 		actor: SynapseActor,
 		/** Deletes only this revision; a newer one is a conflict. */
 		expectedRevision?: number,
+		/**
+		 * Deletes only this note. A title can be deleted and taken by a new
+		 * note that reaches the same revision number; that note is another one.
+		 */
+		expectedId?: string,
 	): Promise<void> {
 		const note = await this.mustGet(space, title);
 		this.assertOwn(space, note);
-		if (expectedRevision !== undefined && note.revision !== expectedRevision)
+		if (
+			(expectedRevision !== undefined && note.revision !== expectedRevision) ||
+			(expectedId !== undefined && note.id !== expectedId)
+		)
 			throw changed();
 		if (!(await this.repository.deleteNote(note.id, expectedRevision)))
 			throw expectedRevision === undefined ? notFound(title) : changed();

@@ -636,14 +636,20 @@ export class SynapseCapture {
 					titleKey(pending.title) === note.titleKey &&
 					pending.reason === reason,
 			);
-			const waiting = lines.find((pending) => pending.body === change.body);
+			// One proposed against an earlier revision of the note would be
+			// refused on approval, so it does not stand in for this one.
+			const waiting = lines.find(
+				(pending) =>
+					pending.body === change.body &&
+					pending.baseRevision === note.revision,
+			);
 			// A line proposed for an earlier version of the source is taken back.
 			for (const stale of lines)
 				if (stale !== waiting)
 					await this.synapse.withdrawProposal(
 						stale.id,
 						actor,
-						"Withdrawn: the source was captured again and has changed. A newer proposal replaces this one.",
+						"Withdrawn: the source or the note has changed since. A newer proposal replaces this one.",
 					);
 			const proposal =
 				waiting ??

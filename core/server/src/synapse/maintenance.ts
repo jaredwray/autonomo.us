@@ -91,7 +91,15 @@ const findingId = (
 	fix: SynapseFix | null,
 ) =>
 	createHash("sha256")
-		.update([kind, ...[...keys].sort(), fix?.action ?? ""].join("\n"))
+		.update(
+			[
+				kind,
+				...[...keys].sort(),
+				fix?.action ?? "",
+				// One note may have several aliases to repair, each its own finding.
+				...(fix?.action === "relink" ? [titleKey(fix.from)] : []),
+			].join("\n"),
+		)
 		.digest("hex")
 		.slice(0, 16);
 
@@ -317,11 +325,19 @@ export class SynapseMaintenance {
 
 		// Links to a title that has no note, but that a note lists as an
 		// alias: what a merge leaves when it is cut short before its links.
-		const linked = new Set(notes.flatMap((note) => note.linkKeys));
+		const linkedFrom = new Map<string, Set<string>>();
+		for (const note of notes)
+			for (const key of note.linkKeys)
+				linkedFrom.set(key, (linkedFrom.get(key) ?? new Set()).add(note.id));
 		for (const note of notes)
 			for (const alias of propertyTargets(note.properties.aliases)) {
 				const key = titleKey(alias);
-				if (!linked.has(key) || byKey.has(key)) continue;
+				// An alias written as a link is the note naming itself, not a
+				// link to repair: only other notes' links count.
+				const others = [...(linkedFrom.get(key) ?? [])].some(
+					(id) => id !== note.id,
+				);
+				if (!others || byKey.has(key)) continue;
 				add(
 					"duplicate",
 					[note],
@@ -820,10 +836,80 @@ export class SynapseMaintenance {
 			return;
 		}
 		if (fix.action === "relink") {
-			await this.synapse.relink(space, fix.from, fix.into, actor);
+			await this.relinkAlias(space, fix.from, fix.into, actor);
 			return;
 		}
 		await this.merge(space, fix.from, fix.into, actor);
+	}
+
+	/**
+	 * Points links to an alias at the note that goes by it. The finding was
+	 * made by an earlier run, so it is checked again first: a note may have
+	 * been created under the alias since, or the alias dropped, and then the
+	 * links are right as they are.
+	 */
+	private async relinkAlias(
+		space: SynapseSpaceId,
+		alias: string,
+		intoTitle: string,
+		actor: SynapseActor,
+	) {
+		const { repository } = this.synapse;
+		const [taken, into] = await Promise.all([
+			this.synapse.findNote(space, alias),
+			repository.getNote(space, titleKey(intoTitle)),
+		]);
+		const names = (note: StoredNote) =>
+			propertyTargets(note.properties.aliases).some(
+				(item) => titleKey(item) === titleKey(alias),
+			);
+		if (taken)
+			throw new SynapseError(
+				`"${taken.title}" is a note now, so links to it are left as they are.`,
+				409,
+			);
+		if (!into || !names(into))
+			throw new SynapseError(
+				`"${intoTitle}" no longer goes by "${alias}", so links to "${alias}" are left as they are.`,
+				409,
+			);
+		await this.synapse.relink(space, alias, into.title, actor);
+		await this.keepAlias(space, into.title, alias, actor);
+	}
+
+	/**
+	 * Makes sure a note still lists an alias after links to that alias were
+	 * moved. An alias written as a link (`[[Old name]]`) is rewritten with
+	 * the rest, which would leave the note listing its own title.
+	 */
+	private async keepAlias(
+		space: SynapseSpaceId,
+		title: string,
+		alias: string,
+		actor: SynapseActor,
+	) {
+		const note = await this.synapse.repository.getNote(space, titleKey(title));
+		if (!note) return;
+		const aliases = propertyTargets(note.properties.aliases).filter(
+			(item) => titleKey(item) !== note.titleKey,
+		);
+		if (aliases.some((item) => titleKey(item) === titleKey(alias))) return;
+		await this.synapse
+			.updateNote(
+				space,
+				note.title,
+				{
+					properties: {
+						aliases: [...aliases, alias].slice(0, PROPERTY_LIST_MAX_ITEMS),
+					},
+					revision: note.revision,
+				},
+				actor,
+			)
+			// Someone edited the note meanwhile; the next run reports what is left.
+			.catch((error) => {
+				if (!(error instanceof SynapseError)) throw error;
+			});
 	}
 
 	/**
@@ -910,7 +996,13 @@ export class SynapseMaintenance {
 		// The other note goes only at the revision that was folded in: an
 		// edit made to it meanwhile stops the merge instead of being lost.
 		try {
-			await this.synapse.deleteNote(space, from.title, actor, from.revision);
+			await this.synapse.deleteNote(
+				space,
+				from.title,
+				actor,
+				from.revision,
+				from.id,
+			);
 		} catch (error) {
 			if (!(error instanceof SynapseError)) throw error;
 			// Both notes stay. The kept one gives back what it took, unless it
@@ -941,6 +1033,7 @@ export class SynapseMaintenance {
 		// Last, the links. If this is cut short, the links to the deleted title
 		// are found by the next run, which offers to point them at the kept note.
 		await this.synapse.relink(space, from.title, into.title, actor);
+		await this.keepAlias(space, into.title, from.title, actor);
 	}
 }
 
