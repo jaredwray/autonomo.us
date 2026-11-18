@@ -87,6 +87,49 @@ const synapseRoutes = (base: string) =>
 		// A whole space in one response, so it needs the write-level grant.
 		[`GET ${base}/spaces/:space/export`, workspace("synapse:edit")],
 		[`POST ${base}/spaces/:space/import`, workspace("synapse:edit")],
+		[
+			`GET ${base}/spaces/:space/notes/:title/history`,
+			workspace("synapse:read"),
+		],
+		[
+			`GET ${base}/spaces/:space/notes/:title/history/:revision`,
+			workspace("synapse:read"),
+		],
+		[
+			`POST ${base}/spaces/:space/notes/:title/history/:revision/restore`,
+			workspace("synapse:edit"),
+		],
+		[
+			`POST ${base}/spaces/:space/notes/:title/evidence`,
+			workspace("synapse:edit"),
+		],
+		[
+			`POST ${base}/spaces/:space/notes/:title/status`,
+			workspace("synapse:edit"),
+		],
+		// The handler also needs a signed-in person: approving is not for tokens.
+		[
+			`POST ${base}/spaces/:space/notes/:title/approve`,
+			workspace("synapse:edit"),
+		],
+		[`POST ${base}/spaces/:space/capture`, workspace("synapse:edit")],
+		[`GET ${base}/spaces/:space/retrieve`, workspace("synapse:read")],
+		[`POST ${base}/spaces/:space/answers`, workspace("synapse:edit")],
+		[`GET ${base}/spaces/:space/commitments`, workspace("synapse:read")],
+		[`POST ${base}/spaces/:space/commitments`, workspace("synapse:edit")],
+		[
+			`POST ${base}/spaces/:space/commitments/:title/events`,
+			workspace("synapse:edit"),
+		],
+		// A briefing only reads, though it is asked for with a POST.
+		[`POST ${base}/context`, workspace("synapse:read")],
+		[`GET ${base}/spaces/:space/maintenance`, workspace("synapse:read")],
+		[`POST ${base}/spaces/:space/maintenance/run`, workspace("synapse:edit")],
+		// The handler also needs a signed-in person: a review is not for tokens.
+		[
+			`POST ${base}/spaces/:space/maintenance/decide`,
+			workspace("synapse:edit"),
+		],
 		[`GET ${base}/proposals`, workspace("synapse:read")],
 		// Not a token permission: approvals need a person.
 		[`POST ${base}/proposals/:id/decide`, workspace("synapse:decide")],

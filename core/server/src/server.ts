@@ -1,3 +1,4 @@
+import { WEB_LIMITS, type WebFetchResult } from "@autonomo.us/common";
 import cors from "@fastify/cors";
 import Fastify from "fastify";
 import packageJson from "../package.json" with { type: "json" };
@@ -13,7 +14,11 @@ import {
 } from "./agent-webhooks/repository.js";
 import type { WebhookTiming } from "./agent-webhooks/state.js";
 import { AgentWebhooks } from "./agent-webhooks/webhooks.js";
-import { registerApiAccess, requireRouteScopes } from "./auth/access.js";
+import {
+	registerApiAccess,
+	requestWorkspace,
+	requireRouteScopes,
+} from "./auth/access.js";
 import { AccountStore } from "./auth/accounts.js";
 import { AgentTokenStore } from "./auth/agent-tokens.js";
 import { ApiTokenStore } from "./auth/tokens.js";
@@ -73,10 +78,16 @@ import { webRoutes } from "./routes/web.js";
 import { memberRoutes, workspaceRoutes } from "./routes/workspaces.js";
 import { ModelRouter } from "./routing/router.js";
 import { RoutingSettingsStore } from "./routing/settings.js";
+import { MAX_TASK_LENGTH } from "./synapse/context.js";
+import { synapseFeatures } from "./synapse/features.js";
 import { synapseToolSet } from "./synapse/mcp.js";
 import { MemorySynapseRepository } from "./synapse/memory-repository.js";
 import { MongoSynapseRepository } from "./synapse/mongo-repository.js";
-import { SynapseService } from "./synapse/synapse.js";
+import {
+	agentSpaceId,
+	SynapseService,
+	sharedSpaceId,
+} from "./synapse/synapse.js";
 import { MongoTelemetrySink } from "./telemetry/mongo.js";
 import { TelemetryService } from "./telemetry/telemetry.js";
 import {
@@ -251,6 +262,13 @@ export function createServer(options: CreateServerOptions = {}) {
 		// Agents hear of notes that change around them through their webhooks.
 		onChange: (change) => appEvents.onSynapseChanged(change),
 	});
+	// What is built on the notes: capture, retrieval, commitments, briefings,
+	// and the maintenance job the background sweep runs.
+	const knowledge = synapseFeatures(synapse, {
+		maintenance: {
+			log: (message, details) => server.log.error(details, message),
+		},
+	});
 	// Channels share the control-plane client, so a Worker request that
 	// authenticates and posts stays on one MongoDB connection.
 	const channelRepository = mongo
@@ -319,6 +337,23 @@ export function createServer(options: CreateServerOptions = {}) {
 		// A message that mentions one of the gateway's own bots starts its
 		// reply; one meant for an agent elsewhere wakes it through its webhook.
 		onMessage: async (channel, message, context) => {
+			// A message that links a commitment is recorded on it first, so a
+			// bot answering the same message is briefed with the change.
+			if (message.body.includes("[["))
+				await workspaces
+					.get(channel.workspaceId)
+					.then(
+						(workspace) =>
+							workspace &&
+							knowledge.commitments.onMessage(sharedSpaceId(workspace), {
+								channelId: channel.id,
+								channelName: channel.name,
+								seq: message.seq,
+								body: message.body,
+								author: message.author,
+							}),
+					)
+					.catch(() => {});
 			await Promise.allSettled([
 				botRunner.onMessage(channel, message),
 				agentWebhooks.onMessage(channel, message, context),
@@ -477,12 +512,26 @@ export function createServer(options: CreateServerOptions = {}) {
 		telemetry,
 		disabled: config.web?.disabled ?? false,
 	});
+	const webTools = web.available ? webToolSet(web) : undefined;
 	const toolSets = [
-		synapseToolSet(synapse),
+		synapseToolSet(synapse, {
+			features: knowledge,
+			// A capture that names a page reads it as `web_fetch` would.
+			...(webTools
+				? {
+						fetchPage: (agent, url, context) =>
+							webTools.handlers.web_fetch(
+								agent,
+								{ url, maxChars: WEB_LIMITS.maxChars },
+								context,
+							) as Promise<WebFetchResult>,
+					}
+				: {}),
+		}),
 		channelToolSet(channels),
 		modelToolSet({ providers, routing, router, telemetry }),
 		// The operator's off switch removes the tool, not just its answers.
-		...(web.available ? [webToolSet(web)] : []),
+		...(webTools ? [webTools] : []),
 	];
 	const botRunner: BotRunner = new BotRunner({
 		bots: botRepository,
@@ -491,6 +540,31 @@ export function createServer(options: CreateServerOptions = {}) {
 		workspaces,
 		toolSets,
 		webRequests: botWebRequests,
+		// A bot that uses Synapse starts each reply knowing what applies to it.
+		briefing: async (bot, workspace, task) => {
+			const brief = await knowledge.briefing.brief(
+				{
+					own: agentSpaceId(bot.id),
+					shared: sharedSpaceId(workspace),
+					agentName: bot.name,
+				},
+				{ task: task.slice(0, MAX_TASK_LENGTH) },
+				// The message is in the conversation already; a system prompt
+				// does not repeat what someone in a channel wrote.
+				{ titled: false },
+			);
+			const holds =
+				brief.remit ||
+				[
+					brief.rules,
+					brief.goals,
+					brief.decisions,
+					brief.evidence,
+					brief.questions,
+					brief.commitments,
+				].some((items) => items.length);
+			return holds ? brief.text : null;
+		},
 		// A Worker reply has about 30 seconds after its response; a proxy can take most of that.
 		minProxyMs: options.webTransport === "fetch" ? 20_000 : 5_000,
 		log: (message, details) => server.log.error(details, message),
@@ -612,7 +686,27 @@ export function createServer(options: CreateServerOptions = {}) {
 			scoped.register(memberRoutes, { accounts });
 			scoped.register(synapseRoutes, {
 				synapse,
+				features: knowledge,
+				...(web.available
+					? {
+							fetchPage: (request, url, deadline) =>
+								web.fetch(
+									requestWorkspace(request),
+									request.telemetryCaller ?? {
+										id: "synapse:capture",
+										name: "Synapse capture",
+										kind: "user" as const,
+									},
+									{ url, maxChars: WEB_LIMITS.maxChars },
+									{ deadline },
+								),
+						}
+					: {}),
 				agentTokens: agentIds,
+				agentName: async (workspace, id) =>
+					(await bots.bots(workspace.id)).find((bot) => bot.id === id)?.name ??
+					(await agentTokens.find(id))?.name ??
+					null,
 				// The proposing agent hears the decision through its webhook.
 				onProposalDecided: (workspaceId, proposal) =>
 					agentWebhooks.onProposalDecided(workspaceId, proposal),
@@ -736,6 +830,7 @@ export function createServer(options: CreateServerOptions = {}) {
 			sweeper = setInterval(() => {
 				botRunner.sweep().catch(() => {});
 				agentWebhooks.sweep().catch(() => {});
+				knowledge.maintenance.sweep().catch(() => {});
 				mcpEvents?.catchUp();
 			}, BOT_SWEEP_INTERVAL_MS);
 			sweeper.unref();
@@ -747,12 +842,14 @@ export function createServer(options: CreateServerOptions = {}) {
 			await botRunner.idle();
 			await agentWebhooks.idle();
 			await mcpEvents?.idle();
+			await knowledge.maintenance.idle();
 		},
 		sweep: async (maxMcpEvents = 50) => {
 			await Promise.all([
 				botRunner.sweep(),
 				agentWebhooks.sweep(),
 				mcpEvents?.sweep(maxMcpEvents),
+				knowledge.maintenance.sweep(),
 			]);
 		},
 		catchUp: () => {
@@ -766,6 +863,7 @@ export function createServer(options: CreateServerOptions = {}) {
 			botRunner.close(),
 			agentWebhooks.close(),
 			mcpEvents?.close(),
+			knowledge.maintenance.close(),
 		]);
 		return backgroundClosing;
 	};

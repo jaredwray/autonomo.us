@@ -60,6 +60,7 @@ describe("a client whose first connection attempt timed out", () => {
 				["synapse.storage_ready", "connect"],
 				["synapse.storage_ready", "indexes.notes"],
 				["synapse.storage_ready", "indexes.proposals"],
+				["synapse.storage_ready", "indexes.revisions"],
 			]);
 		} finally {
 			await repository.close();

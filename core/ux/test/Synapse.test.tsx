@@ -82,16 +82,14 @@ const noteRegion = () => screen.getByRole("region", { name: "Note" });
  * option it does not have yet would choose none.
  */
 const pickSpace = async (id: string) => {
+	// Wait for the list on something that only reads the page. Opening the
+	// dropdown inside `waitFor` changes the page, which runs the check again
+	// at once, and that loop can keep the response from ever arriving.
+	await screen.findByText(/Dates and daily notes use/);
 	const select = screen.getByLabelText("Space") as HTMLSelectElement;
-	await waitFor(
-		() =>
-			expect(
-				dropdownOptions(select).map((option) =>
-					option.getAttribute("data-value"),
-				),
-			).toContain(id),
-		{ timeout: 3000 },
-	);
+	expect(
+		dropdownOptions(select).map((option) => option.getAttribute("data-value")),
+	).toContain(id);
 	changeControl(select, { target: { value: id } });
 };
 const graphRegion = () => screen.getByRole("region", { name: "Graph" });
@@ -485,14 +483,41 @@ it("moves between Synapse tabs with the arrow keys and keeps field ids unique", 
 		"synapse-tab-notes",
 	);
 	notesTab.focus();
+	// Right moves to the next tab, and the panel follows it.
 	fireEvent.keyDown(notesTab, { key: "ArrowRight" });
+	const captureTab = screen.getByRole("tab", { name: "Save to Synapse" });
+	await waitFor(() =>
+		expect(captureTab.getAttribute("aria-selected")).toBe("true"),
+	);
+	expect(document.activeElement).toBe(captureTab);
+	expect(captureTab.tabIndex).toBe(0);
+	expect(screen.getByRole("tab", { name: "Notes" }).tabIndex).toBe(-1);
+	expect(screen.getByRole("tabpanel").getAttribute("aria-labelledby")).toBe(
+		"synapse-tab-capture",
+	);
+	// End jumps to the last tab; Left from the first wraps round to it too.
+	fireEvent.keyDown(captureTab, { key: "End" });
 	const proposalsTab = screen.getByRole("tab", { name: "Proposals" });
 	await waitFor(() =>
 		expect(proposalsTab.getAttribute("aria-selected")).toBe("true"),
 	);
 	expect(document.activeElement).toBe(proposalsTab);
 	expect(proposalsTab.tabIndex).toBe(0);
+	expect(captureTab.tabIndex).toBe(-1);
 	expect(screen.getByRole("tab", { name: "Notes" }).tabIndex).toBe(-1);
+	fireEvent.keyDown(proposalsTab, { key: "ArrowRight" });
+	await waitFor(() =>
+		expect(
+			screen.getByRole("tab", { name: "Notes" }).getAttribute("aria-selected"),
+		).toBe("true"),
+	);
+	fireEvent.keyDown(screen.getByRole("tab", { name: "Notes" }), {
+		key: "ArrowLeft",
+	});
+	await waitFor(() =>
+		expect(proposalsTab.getAttribute("aria-selected")).toBe("true"),
+	);
+	expect(document.activeElement).toBe(proposalsTab);
 	fireEvent.keyDown(proposalsTab, { key: "Home" });
 	await waitFor(() =>
 		expect(

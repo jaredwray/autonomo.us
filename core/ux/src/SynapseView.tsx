@@ -23,7 +23,11 @@ import {
 import { Dropdown } from "./Dropdown.js";
 import { Icon } from "./Icons.js";
 import { PageTabs } from "./PageTabs.js";
+import { SynapseAsk } from "./SynapseAsk.js";
+import { SynapseCapture } from "./SynapseCapture.js";
+import { SynapseCommitments } from "./SynapseCommitments.js";
 import { SynapseGraph } from "./SynapseGraph.js";
+import { SynapseMaintenance } from "./SynapseMaintenance.js";
 import { SynapseNote, shortDate } from "./SynapseNote.js";
 import { SynapseProposals } from "./SynapseProposals.js";
 import {
@@ -36,15 +40,20 @@ import {
 	noteHash,
 	parseSynapseRoute,
 	type SynapseRoute,
+	type SynapseTab,
 	synapseHash,
 } from "./synapse-route.js";
 
 type Panel = { kind: "new"; title: string } | { kind: "import" };
 
-const SYNAPSE_TABS = [
+const SYNAPSE_TABS: readonly { id: SynapseTab; label: string }[] = [
 	{ id: "notes", label: "Notes" },
+	{ id: "capture", label: "Save to Synapse" },
+	{ id: "ask", label: "Ask" },
+	{ id: "commitments", label: "Commitments" },
+	{ id: "maintenance", label: "Maintenance" },
 	{ id: "proposals", label: "Proposals" },
-] as const;
+];
 
 /** Counts are each space's own notes; Shared also shows Global's notes. */
 const spaceLabel = (space: SynapseSpace) =>
@@ -590,7 +599,13 @@ export function SynapseView({
 		parseSynapseRoute(window.location.hash),
 	);
 	useEffect(() => {
-		const sync = () => setRoute(parseSynapseRoute(window.location.hash));
+		// A tab's address names no space, so going back or forward to one keeps
+		// the space the view was showing.
+		const sync = () =>
+			setRoute((current) => {
+				const next = parseSynapseRoute(window.location.hash);
+				return next.tab === "notes" ? next : { ...next, space: current.space };
+			});
 		window.addEventListener("hashchange", sync);
 		return () => window.removeEventListener("hashchange", sync);
 	}, []);
@@ -690,12 +705,9 @@ export function SynapseView({
 	useEffect(() => {
 		if (route.title) setLastNote({ space: route.space, title: route.title });
 	}, [route.space, route.title]);
-	const showTab = (tab: SynapseRoute["tab"]) =>
-		navigate(
-			tab === "notes"
-				? { tab: "notes", space: route.space, title: null }
-				: { ...route, tab: "proposals" },
-		);
+	/** Every tab acts on the space the view is showing. */
+	const showTab = (tab: SynapseTab) =>
+		navigate({ tab, space: route.space, title: null });
 	const exportZip = async () => {
 		setExporting(true);
 		setError("");
@@ -716,6 +728,30 @@ export function SynapseView({
 	const canDecide = workspace.role === "admin";
 	const canEdit =
 		route.space !== SYNAPSE_GLOBAL_SPACE || user.role !== "member";
+	// The picker stays on every tab that acts on a space; choosing one keeps the tab.
+	const spacePicker = (
+		<div className="form-field synapse-space-field">
+			<label htmlFor="synapse-space">Space</label>
+			<Dropdown
+				id="synapse-space"
+				value={route.space}
+				onValueChange={(value) =>
+					navigate({ tab: route.tab, space: value, title: null })
+				}
+			>
+				{spaceOptions.map((space) => (
+					<option key={space.id} value={space.id}>
+						{spaceLabel(space)}
+					</option>
+				))}
+			</Dropdown>
+			<span className="field-hint">
+				{spaceHint(route.space)}
+				{spaces && ` Dates and daily notes use ${spaces.timeZone}.`}
+			</span>
+		</div>
+	);
+	const tool = { space: route.space, canEdit, onNavigate: openNote };
 	return (
 		<div className={`dashboard synapse-view${expanded ? " is-expanded" : ""}`}>
 			{expanded ? (
@@ -811,6 +847,27 @@ export function SynapseView({
 						version={version}
 						onDecided={changed}
 					/>
+				) : route.tab !== "notes" ? (
+					<div className="synapse-tool">
+						{spacePicker}
+						{route.tab === "capture" ? (
+							<SynapseCapture key={route.space} {...tool} onChanged={changed} />
+						) : route.tab === "ask" ? (
+							<SynapseAsk key={route.space} {...tool} onChanged={changed} />
+						) : route.tab === "commitments" ? (
+							<SynapseCommitments
+								key={route.space}
+								{...tool}
+								onChanged={changed}
+							/>
+						) : (
+							<SynapseMaintenance
+								key={route.space}
+								{...tool}
+								onChanged={changed}
+							/>
+						)}
+					</div>
 				) : (
 					<>
 						{panel?.kind === "new" && (
@@ -837,30 +894,7 @@ export function SynapseView({
 						)}
 						<div className="synapse-layout">
 							<div className="synapse-side" hidden={expanded}>
-								<div className="form-field synapse-space-field">
-									<label htmlFor="synapse-space">Space</label>
-									<Dropdown
-										id="synapse-space"
-										value={route.space}
-										onValueChange={(value) =>
-											navigate({
-												tab: "notes",
-												space: value,
-												title: null,
-											})
-										}
-									>
-										{spaceOptions.map((space) => (
-											<option key={space.id} value={space.id}>
-												{spaceLabel(space)}
-											</option>
-										))}
-									</Dropdown>
-									<span className="field-hint">
-										{spaceHint(route.space)}
-										{spaces && ` Dates and daily notes use ${spaces.timeZone}.`}
-									</span>
-								</div>
+								{spacePicker}
 								<NotesList
 									key={route.space}
 									space={route.space}

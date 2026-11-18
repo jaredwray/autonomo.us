@@ -1,18 +1,23 @@
 import { randomUUID } from "node:crypto";
 import {
 	type AppendSynapseNoteRequest,
+	type CiteSynapseEvidenceRequest,
 	type CreateSynapseNoteRequest,
 	type CreateSynapseProposalRequest,
 	type DecideSynapseProposalRequest,
+	type SetSynapseDecisionStatusRequest,
+	SYNAPSE_DECISION_STATUSES,
 	SYNAPSE_GLOBAL_SPACE,
 	SYNAPSE_SHARED_SPACE,
 	SYNAPSE_SPACE_ID_PATTERN,
 	type SynapseActor,
 	type SynapseCategory,
 	type SynapseDaily,
+	type SynapseEvidence,
 	type SynapseExport,
 	type SynapseGraph,
 	type SynapseGraphNode,
+	type SynapseHistory,
 	type SynapseImportRequest,
 	type SynapseImportResult,
 	type SynapseNote,
@@ -24,6 +29,9 @@ import {
 	type SynapseProposalAction,
 	type SynapseQuery,
 	type SynapseRelatedNote,
+	type SynapseRevision,
+	type SynapseRevisionChange,
+	type SynapseRevisionSummary,
 	type SynapseSpace,
 	type SynapseSpaceId,
 	type SynapseSpaceList,
@@ -32,6 +40,19 @@ import {
 	type UpdateSynapseNoteRequest,
 } from "@autonomo.us/common";
 import { SynapseError } from "./errors.js";
+import {
+	appendSectionLine,
+	cleanPassage,
+	comparable,
+	EVIDENCE_HEADING,
+	evidenceLine,
+	evidenceState,
+	parseEvidence,
+	propertyTargets,
+	QUOTING_SECTIONS,
+	standingOf,
+	withoutSections,
+} from "./evidence.js";
 import {
 	assertTitle,
 	extractCategories,
@@ -56,9 +77,10 @@ import type {
 	PropertyIndexEntry,
 	ProposalFilter,
 	StoredNote,
+	StoredRevision,
 	SynapseRepository,
 } from "./repository.js";
-import { propertyKeyValue } from "./repository.js";
+import { propertyKeyValue, revisionId } from "./repository.js";
 import {
 	BUILTIN_TEMPLATES,
 	DAILY_TEMPLATE,
@@ -78,6 +100,11 @@ export const MAX_PENDING_PROPOSALS = 50;
 /** How long an approval holds a proposal while it applies; a crash only delays the decision this long. */
 export const PROPOSAL_CLAIM_MS = 60_000;
 export const MAX_REASON_LENGTH = 2000;
+/**
+ * Past states kept for one note. Older ones are dropped, so a daily note
+ * that is logged to hundreds of times does not grow without bound.
+ */
+export const MAX_REVISIONS_PER_NOTE = 200;
 export const DEFAULT_QUERY_LIMIT = 50;
 export const MAX_QUERY_LIMIT = 200;
 const BACKLINK_LIMIT = 100;
@@ -190,41 +217,7 @@ function appendText(body: string, text: string) {
 
 /** Adds `line` to the `## Log` section, creating the heading at the end if needed. */
 export function appendLogLine(body: string, line: string): string {
-	const lines = body.split("\n");
-	// Headings inside fenced code are text, not sections.
-	// A block closes only on a bare fence of the same character, at least as
-	// long as the opener (CommonMark), so ```ts inside a block stays content.
-	const outside: boolean[] = [];
-	let fence: { char: string; length: number } | null = null;
-	for (const item of lines) {
-		const match = /^\s{0,3}(`{3,}|~{3,})(.*)$/.exec(item);
-		outside.push(fence === null && !match);
-		if (!match) continue;
-		const [, marker, rest] = match;
-		if (fence === null) fence = { char: marker[0], length: marker.length };
-		else if (
-			marker[0] === fence.char &&
-			marker.length >= fence.length &&
-			rest.trim() === ""
-		)
-			fence = null;
-	}
-	const heading = lines.findIndex(
-		(item, index) => outside[index] && /^## Log\s*$/.test(item),
-	);
-	if (heading === -1) {
-		const base = body.trimEnd();
-		return `${base ? `${base}\n\n` : ""}## Log\n${line}`;
-	}
-	const next = lines.findIndex(
-		(item, index) =>
-			index > heading && outside[index] && /^#{1,2}\s/.test(item),
-	);
-	let end = next === -1 ? lines.length : next;
-	while (end > heading + 1 && lines[end - 1].trim() === "") end--;
-	// Blank lines before the next section stay; trailing ones go.
-	lines.splice(end, next === -1 ? lines.length - end : 0, line);
-	return lines.join("\n");
+	return appendSectionLine(body, "Log", line);
 }
 
 function indexValues(properties: SynapseProperties): PropertyIndexEntry[] {
@@ -259,6 +252,8 @@ function derive(title: string, properties: SynapseProperties, body: string) {
 		tagKeys: tags,
 		searchText: [title, body, ...values].join("\n").toLowerCase(),
 		propertyKeys: indexValues(properties),
+		// Obsidian's `aliases` property: other names the note goes by.
+		aliasKeys: propertyTargets(properties.aliases).map(titleKey),
 	};
 }
 
@@ -290,7 +285,8 @@ function summary(note: StoredNote, terms: string[] = []): SynapseNoteSummary {
 		createdAt: note.createdAt,
 		updatedAt: note.updatedAt,
 		revision: note.revision,
-		snippet: snippet(note.body, terms),
+		// A snippet shows the note's own words, not what it quotes from sources.
+		snippet: snippet(withoutSections(note.body, QUOTING_SECTIONS), terms),
 	};
 }
 
@@ -386,6 +382,61 @@ export class SynapseService {
 	}
 	private now() {
 		return new Date(this.clock()).toISOString();
+	}
+	/** The service's clock, for the parts of Synapse built on it. */
+	nowMs(): number {
+		return this.clock();
+	}
+
+	private snapshot(
+		note: StoredNote,
+		change: SynapseRevisionChange,
+	): StoredRevision {
+		return {
+			id: revisionId(note.id, note.revision),
+			noteId: note.id,
+			space: note.space,
+			title: note.title,
+			titleKey: note.titleKey,
+			revision: note.revision,
+			change,
+			at: note.updatedAt,
+			by: note.updatedBy,
+			properties: note.properties,
+			body: note.body,
+		};
+	}
+	/**
+	 * Records a note's new state in its history. `previous` is the state it
+	 * replaced: it is recorded too when it is not there yet, which covers
+	 * notes written before history was kept and a record that failed to
+	 * write. The note's own write stands whatever happens here.
+	 */
+	private async remember(
+		note: StoredNote,
+		change: SynapseRevisionChange,
+		previous?: StoredNote,
+	) {
+		try {
+			await Promise.all([
+				previous
+					? this.repository.insertRevision(
+							this.snapshot(
+								previous,
+								previous.revision === 1 ? "created" : "updated",
+							),
+						)
+					: undefined,
+				this.repository.insertRevision(this.snapshot(note, change)),
+			]);
+			if (note.revision > MAX_REVISIONS_PER_NOTE)
+				await this.repository.pruneRevisions(
+					note.id,
+					note.revision - MAX_REVISIONS_PER_NOTE,
+				);
+		} catch {
+			// The next change to the note records this state as its `previous`.
+		}
 	}
 	today(): string {
 		return localDate(this.clock(), this.timeZone);
@@ -519,6 +570,32 @@ export class SynapseService {
 	}
 	// Reads through inheritance: a space's own notes, then its parent's notes
 	// whose titles it does not define. Writes always go to the space itself.
+	/** A note as stored, through inheritance, or null. */
+	findNote(space: SynapseSpaceId, title: string): Promise<StoredNote | null> {
+		return this.readNote(space, titleKey(title));
+	}
+	/** Every note a space shows, without bodies. */
+	index(space: SynapseSpaceId): Promise<NoteIndexEntry[]> {
+		return this.readIndex(space);
+	}
+	/**
+	 * Notes a space shows that match `filter`, as stored. A caller that
+	 * reads the same space several times passes its `ownTitles` once read.
+	 */
+	find(
+		filter: NoteFilter,
+		options: FindOptions,
+		ownTitles?: string[] | null,
+	): Promise<StoredNote[]> {
+		return this.readNotes(filter, options, ownTitles);
+	}
+	/**
+	 * The titles a space defines itself, lowercased, which hide Global's
+	 * notes of the same title; null for a space that inherits nothing.
+	 */
+	ownTitles(space: SynapseSpaceId): Promise<string[] | null> {
+		return this.overrides(space);
+	}
 	private async readNote(space: SynapseSpaceId, key: string) {
 		const own = await this.repository.getNote(space, key);
 		const parent = this.parentOf(space);
@@ -642,7 +719,8 @@ export class SynapseService {
 				template?.description ?? "",
 				SYSTEM_ACTOR,
 			);
-			await this.repository.insertNote(note);
+			if (await this.repository.insertNote(note))
+				await this.remember(note, "created");
 		}
 	}
 	private async afterWrite(
@@ -687,6 +765,7 @@ export class SynapseService {
 		await this.assertRoom(space);
 		const note = this.newNote(space, title, properties, body, actor);
 		if (!(await this.repository.insertNote(note))) throw titleTaken(title);
+		await this.remember(note, "created");
 		await this.afterWrite(space, actor, note.categories);
 		await this.report(note, "created", actor);
 		return publicNote(note);
@@ -806,7 +885,357 @@ export class SynapseService {
 			related: await this.related(space, note, index, overrides),
 			categoryMembers: members.map((item) => summary(item)),
 			markdown: renderMarkdown(note.properties, note.body),
+			standing: standingOf(note.properties),
+			evidence: await this.evidenceOf(space, note, overrides),
 		};
+	}
+
+	/** A note's evidence lines, each checked against its source as it stands. */
+	async evidenceOf(
+		space: SynapseSpaceId,
+		note: Pick<StoredNote, "body">,
+		overrides?: string[] | null,
+	): Promise<SynapseEvidence[]> {
+		const cited = parseEvidence(note.body);
+		if (!cited.length) return [];
+		const keys = [...new Set(cited.map((item) => titleKey(item.source)))];
+		const sources = new Map(
+			(
+				await this.readNotes(
+					{ space, titleKeys: keys },
+					{ sort: { by: "titleKey", direction: "asc" }, limit: keys.length },
+					overrides,
+				)
+			).map((source) => [source.titleKey, source.body]),
+		);
+		return cited.map((item) => ({
+			...item,
+			state: evidenceState(
+				item.passage,
+				sources.get(titleKey(item.source)) ?? null,
+			),
+		}));
+	}
+
+	/**
+	 * Cites a source for a note: checks that the source contains the passage
+	 * and adds a line to the note's `## Evidence` section, with the source's
+	 * revision and today's date. Citing the same passage twice adds nothing.
+	 */
+	async cite(
+		space: SynapseSpaceId,
+		title: string,
+		request: CiteSynapseEvidenceRequest,
+		actor: SynapseActor,
+	): Promise<{ note: SynapseNote; evidence: SynapseEvidence }> {
+		const note = await this.mustGet(space, title);
+		this.assertOwn(space, note);
+		const source = await this.mustGet(space, assertTitle(request.source));
+		const passage = cleanPassage(
+			typeof request.passage === "string" ? request.passage : "",
+		);
+		if (!passage)
+			throw new SynapseError(
+				"A passage is required: the words in the source that support the note.",
+			);
+		if (evidenceState(passage, source.body) !== "verified")
+			throw new SynapseError(
+				`"${source.title}" does not contain that passage. Quote its words exactly.`,
+			);
+		const evidence: SynapseEvidence = {
+			source: source.title,
+			revision: source.revision,
+			date: this.today(),
+			passage,
+			state: "verified",
+		};
+		const cited = (body: string) =>
+			parseEvidence(body).some(
+				(item) =>
+					titleKey(item.source) === source.titleKey &&
+					comparable(item.passage) === comparable(passage),
+			);
+		if (cited(note.body)) return { note: publicNote(note), evidence };
+		const line = evidenceLine({
+			source: source.title,
+			revision: source.revision,
+			date: this.today(),
+			passage,
+		});
+		const next = await this.change(space, title, (current) =>
+			cited(current.body)
+				? current
+				: this.revise(
+						current,
+						current.title,
+						current.properties,
+						assertBody(appendSectionLine(current.body, EVIDENCE_HEADING, line)),
+						actor,
+					),
+		);
+		await this.afterWrite(space, actor, next.categories);
+		await this.report(next, "updated", actor);
+		return { note: publicNote(next), evidence };
+	}
+
+	/**
+	 * Marks a decision active, disputed, or superseded. The status goes in the
+	 * `status` property, the day in `reviewed`, and a dated line in the note's
+	 * `## Status` section. Superseding names the decision that replaces it,
+	 * which records in turn what it replaced.
+	 */
+	async setDecisionStatus(
+		space: SynapseSpaceId,
+		title: string,
+		request: SetSynapseDecisionStatusRequest,
+		actor: SynapseActor,
+	): Promise<SynapseNote> {
+		if (!SYNAPSE_DECISION_STATUSES.includes(request.status))
+			throw new SynapseError("A decision is active, disputed, or superseded.");
+		const decision = (note: StoredNote) => {
+			if (!note.categoryKeys.includes("decisions"))
+				throw new SynapseError(
+					`"${note.title}" is not a decision: only notes in the Decisions category carry this status.`,
+				);
+			return note;
+		};
+		const note = decision(await this.mustGet(space, title));
+		this.assertOwn(space, note);
+		let by: StoredNote | undefined;
+		if (request.status === "superseded") {
+			if (request.supersededBy === undefined)
+				throw new SynapseError(
+					"Say which decision supersedes this one (supersededBy).",
+				);
+			by = decision(
+				await this.mustGet(space, assertTitle(request.supersededBy)),
+			);
+			if (by.id === note.id)
+				throw new SynapseError("A decision cannot supersede itself.");
+		} else if (request.supersededBy !== undefined)
+			throw new SynapseError(
+				"supersededBy applies only when the status is superseded.",
+			);
+		const reason =
+			request.reason === undefined || request.reason.trim() === ""
+				? ""
+				: assertReason(request.reason, "A status change").trim();
+		const label = `${request.status[0].toUpperCase()}${request.status.slice(1)}`;
+		const today = this.today();
+		const line = `- ${today} ${label}${by ? ` by [[${by.title}]]` : ""} (${actor.name})${reason ? `: ${reason}` : ""}`;
+		const { superseded_by: _replaced, ...kept } = note.properties;
+		const updated = await this.updateNote(
+			space,
+			note.title,
+			{
+				properties: {
+					...kept,
+					status: [`[[${label}]]`],
+					reviewed: today,
+					...(by ? { superseded_by: [`[[${by.title}]]`] } : {}),
+				},
+				replaceProperties: true,
+				body: appendSectionLine(note.body, "Status", line),
+				revision: note.revision,
+			},
+			actor,
+		);
+		// A decision that no longer replaces this one stops saying it does:
+		// one reactivated, or superseded now by another.
+		for (const former of propertyTargets(note.properties.superseded_by)) {
+			if (by && titleKey(former) === by.titleKey) continue;
+			// The status is saved. The other decision may be changing too, so
+			// this is tried against a fresh copy each time; if it still cannot
+			// be written, the status stands and maintenance reports the pair.
+			for (let attempt = 0; attempt < WRITE_ATTEMPTS; attempt++) {
+				const replacer = await this.repository.getNote(space, titleKey(former));
+				if (!replacer) break;
+				const supersedes = propertyTargets(replacer.properties.supersedes);
+				const remaining = supersedes.filter(
+					(item) => titleKey(item) !== note.titleKey,
+				);
+				if (remaining.length === supersedes.length) break;
+				const written = await this.updateNote(
+					space,
+					replacer.title,
+					{
+						properties: {
+							supersedes: remaining.map((item) => `[[${item}]]`),
+						},
+						revision: replacer.revision,
+					},
+					actor,
+				).then(
+					() => true,
+					(error) => {
+						if (error instanceof SynapseError && error.statusCode === 409)
+							return false;
+						throw error;
+					},
+				);
+				if (written) break;
+			}
+		}
+		// The replacing decision says what it replaced, when it is this space's own.
+		if (by && by.space === space) {
+			const supersedes = propertyTargets(by.properties.supersedes);
+			if (!supersedes.some((item) => titleKey(item) === note.titleKey))
+				await this.updateNote(
+					space,
+					by.title,
+					{
+						properties: {
+							supersedes: [...supersedes, note.title].map(
+								(item) => `[[${item}]]`,
+							),
+						},
+					},
+					actor,
+				);
+		}
+		return updated;
+	}
+
+	private revisionSummary(revision: StoredRevision): SynapseRevisionSummary {
+		return {
+			revision: revision.revision,
+			title: revision.title,
+			change: revision.change,
+			at: revision.at,
+			by: revision.by,
+			size: revision.body.length,
+		};
+	}
+	/** A note's recorded states. One written before history was kept shows its current state. */
+	private async revisionsOf(space: SynapseSpaceId, title: string) {
+		const note = await this.readNote(space, titleKey(title));
+		let revisions = note
+			? await this.repository.listRevisions(
+					note.space,
+					{ noteId: note.id },
+					MAX_REVISIONS_PER_NOTE,
+				)
+			: await this.repository.listRevisions(
+					space,
+					{ titleKey: titleKey(title) },
+					MAX_REVISIONS_PER_NOTE,
+				);
+		if (note && !revisions.some((item) => item.revision === note.revision))
+			revisions = [
+				this.snapshot(note, note.revision === 1 ? "created" : "updated"),
+				...revisions,
+			];
+		if (!revisions.length) throw notFound(title);
+		return { note, revisions };
+	}
+
+	/** A note's past states, newest first. A deleted note's history is found by its last title. */
+	async history(space: SynapseSpaceId, title: string): Promise<SynapseHistory> {
+		const { note, revisions } = await this.revisionsOf(space, title);
+		return {
+			title: note?.title ?? revisions[0].title,
+			exists: note !== null,
+			revisions: revisions.map((item) => this.revisionSummary(item)),
+		};
+	}
+
+	/** One past state of a note in full. */
+	async revision(
+		space: SynapseSpaceId,
+		title: string,
+		revision: number,
+	): Promise<SynapseRevision> {
+		const { revisions } = await this.revisionsOf(space, title);
+		const found = revisions.find((item) => item.revision === revision);
+		if (!found)
+			throw new SynapseError(
+				`"${revisions[0].title}" has no revision ${revision} in its history.`,
+				404,
+			);
+		return {
+			...this.revisionSummary(found),
+			properties: found.properties,
+			body: found.body,
+			markdown: renderMarkdown(found.properties, found.body),
+		};
+	}
+
+	/**
+	 * Brings a past state back as the note's newest revision. A deleted note
+	 * is created again with what the state held.
+	 */
+	async restoreRevision(
+		space: SynapseSpaceId,
+		title: string,
+		revision: number,
+		actor: SynapseActor,
+		/**
+		 * The note's revision as the caller last saw it, 0 for a note that was
+		 * gone. A note that has moved on since, or exists now, is a conflict,
+		 * so a restore never replaces an edit its caller has not seen. Without
+		 * it, the restore goes over whatever is there.
+		 */
+		expectedRevision?: number,
+	): Promise<SynapseNote> {
+		const past = await this.revision(space, title, revision);
+		const current = await this.repository.getNote(space, titleKey(title));
+		if (
+			expectedRevision !== undefined &&
+			(current?.revision ?? 0) !== expectedRevision
+		)
+			throw changed();
+		if (!current) {
+			// A note created from here on has the title, and creating refuses it.
+			// An inherited note is not this space's to restore.
+			const shown = await this.readNote(space, titleKey(title));
+			if (shown) throw inherited(shown.title);
+			return this.createNote(
+				space,
+				{ title: past.title, body: past.body, properties: past.properties },
+				actor,
+			);
+		}
+		return this.updateNote(
+			space,
+			current.title,
+			{
+				body: past.body,
+				properties: past.properties,
+				replaceProperties: true,
+				// Against the note as read here, whatever the caller expected.
+				revision: current.revision,
+			},
+			actor,
+		);
+	}
+
+	/**
+	 * Takes back a pending proposal of the author's own, as one that a newer
+	 * proposal replaces. It is recorded as rejected by its author with the
+	 * reason, and nothing is logged to the author's daily note.
+	 */
+	async withdrawProposal(
+		id: string,
+		author: SynapseActor,
+		reason: string,
+	): Promise<boolean> {
+		const proposal = await this.repository.getProposal(id);
+		if (
+			!proposal ||
+			proposal.status !== "pending" ||
+			proposal.author.id !== author.id
+		)
+			return false;
+		return this.repository.decideProposal(
+			id,
+			{
+				status: "rejected",
+				decidedAt: this.now(),
+				decidedBy: author,
+				decisionReason: assertReason(reason, "Withdrawing a proposal"),
+			},
+			{ now: this.now() },
+		);
 	}
 
 	/** Retries a compare-and-set change against a fresh copy of the note. */
@@ -824,8 +1253,10 @@ export class SynapseService {
 			if (!current) throw notFound(title);
 			this.assertOwn(space, current);
 			const next = await apply(current);
-			if (await this.repository.replaceNote(next, current.revision))
+			if (await this.repository.replaceNote(next, current.revision)) {
+				await this.remember(next, "updated", current);
 				return next;
+			}
 		}
 		throw changed();
 	}
@@ -870,6 +1301,7 @@ export class SynapseService {
 			throw renamed && (await this.repository.getNote(space, next.titleKey))
 				? titleTaken(newTitle)
 				: changed();
+		await this.remember(next, "updated", current);
 		if (renamed) {
 			await this.rewriteLinksTo(space, current.title, newTitle, actor);
 			if (space === SYNAPSE_GLOBAL_SPACE)
@@ -906,6 +1338,18 @@ export class SynapseService {
 			if (await inherits())
 				await this.rewriteLinksTo(space, from, to, actor, inherits);
 		}
+	}
+
+	/** Points every [[from]] link in a space at `to`, as a rename does. */
+	relink(
+		space: SynapseSpaceId,
+		from: string,
+		to: string,
+		actor: SynapseActor,
+		/** Asked before each note is rewritten; false stops there. */
+		proceed?: () => Promise<boolean>,
+	) {
+		return this.rewriteLinksTo(space, from, to, actor, proceed);
 	}
 
 	/** Rewrites [[Old]] links note by note; not a transaction (docs/SYNAPSE.md §3). */
@@ -995,13 +1439,32 @@ export class SynapseService {
 		actor: SynapseActor,
 		/** Deletes only this revision; a newer one is a conflict. */
 		expectedRevision?: number,
+		/**
+		 * Deletes only this note. A title can be deleted and taken by a new
+		 * note that reaches the same revision number; that note is another one.
+		 */
+		expectedId?: string,
 	): Promise<void> {
 		const note = await this.mustGet(space, title);
 		this.assertOwn(space, note);
-		if (expectedRevision !== undefined && note.revision !== expectedRevision)
+		if (
+			(expectedRevision !== undefined && note.revision !== expectedRevision) ||
+			(expectedId !== undefined && note.id !== expectedId)
+		)
 			throw changed();
 		if (!(await this.repository.deleteNote(note.id, expectedRevision)))
 			throw expectedRevision === undefined ? notFound(title) : changed();
+		// The last record of a deleted note holds what was deleted.
+		await this.remember(
+			{
+				...note,
+				revision: note.revision + 1,
+				updatedAt: this.now(),
+				updatedBy: actor,
+			},
+			"deleted",
+			note,
+		);
 		await this.touchSpace(space, actor);
 		await this.report(note, "deleted", actor);
 	}
@@ -1394,6 +1857,7 @@ export class SynapseService {
 					skip("This note changed during the import.");
 					continue;
 				}
+				await this.remember(next, "updated", existing);
 				imported.push(next);
 				(placeholder ? result.created : result.updated).push(existing.title);
 				for (const category of next.categories) categories.add(category);
@@ -1410,6 +1874,7 @@ export class SynapseService {
 				skip("A note with this title already exists.");
 				continue;
 			}
+			await this.remember(note, "created");
 			count++;
 			imported.push(note);
 			result.created.push(title);
@@ -1456,6 +1921,14 @@ export class SynapseService {
 		request: CreateSynapseProposalRequest,
 		/** The shared space of the author's workspace. */
 		space: SynapseSpaceId = SYNAPSE_SHARED_SPACE,
+		/**
+		 * The revision of the note the request was built from, null for no
+		 * note. A proposal whose body was computed from a note records that
+		 * note's revision as its base only if the note is still there: built
+		 * from one revision and based on a later one, its approval would
+		 * replace an edit its author never read.
+		 */
+		builtFrom?: number | null,
 	): Promise<SynapseProposal> {
 		if (!PROPOSAL_ACTIONS.includes(request.action))
 			throw new SynapseError(
@@ -1474,6 +1947,8 @@ export class SynapseService {
 		// Proposals change the workspace's own notes. Creating a note with an
 		// inherited title overrides the global note; the others need its own note.
 		const existing = await this.repository.getNote(space, titleKey(title));
+		if (builtFrom !== undefined && (existing?.revision ?? null) !== builtFrom)
+			throw changed();
 		if (!existing && request.action !== "create") {
 			const global = await this.readNote(space, titleKey(title));
 			if (global) throw inherited(global.title);

@@ -1,4 +1,8 @@
-import type { SynapseProposal, SynapseSpaceId } from "@autonomo.us/common";
+import type {
+	SynapseMaintenanceBatch,
+	SynapseProposal,
+	SynapseSpaceId,
+} from "@autonomo.us/common";
 import { type Document, MongoClient } from "mongodb";
 import {
 	MONGO_SELECTION_TIMEOUT_MS,
@@ -10,6 +14,8 @@ import { SynapseError, synapseUnavailable } from "./errors.js";
 import type {
 	FindOptions,
 	InstantRange,
+	MaintenanceLease,
+	MaintenanceRecord,
 	NoteFilter,
 	NoteIndexEntry,
 	ProposalClaim,
@@ -18,6 +24,7 @@ import type {
 	SpaceRecord,
 	SpaceStats,
 	StoredNote,
+	StoredRevision,
 	SynapseRepository,
 } from "./repository.js";
 import { DAILY_DATE_PROPERTIES, escapeRegex } from "./repository.js";
@@ -25,6 +32,8 @@ import { DAILY_DATE_PROPERTIES, escapeRegex } from "./repository.js";
 export const SYNAPSE_NOTES_COLLECTION = "synapse_notes";
 export const SYNAPSE_SPACES_COLLECTION = "synapse_spaces";
 export const SYNAPSE_PROPOSALS_COLLECTION = "synapse_proposals";
+export const SYNAPSE_REVISIONS_COLLECTION = "synapse_revisions";
+export const SYNAPSE_MAINTENANCE_COLLECTION = "synapse_maintenance";
 
 type NoteDocument = Omit<StoredNote, "id"> & { _id: string };
 type SpaceDocument = Omit<SpaceRecord, "id"> & { _id: string };
@@ -35,12 +44,35 @@ type ProposalDocument = Omit<SynapseProposal, "id"> & {
 };
 const proposalOf = ({ _id, claim, ...rest }: ProposalDocument) =>
 	({ id: _id, ...rest }) as SynapseProposal;
+type RevisionDocument = Omit<StoredRevision, "id"> & { _id: string };
+/** One document per space, keyed by its storage key. */
+type MaintenanceDocument = Omit<MaintenanceRecord, "space"> & {
+	_id: string;
+	/** Internal: a run in progress. Never returned to callers. */
+	lease?: MaintenanceLease;
+};
+const maintenanceOf = ({
+	_id,
+	lease,
+	...rest
+}: MaintenanceDocument): MaintenanceRecord => ({
+	space: _id as SynapseSpaceId,
+	lastRunAt: rest.lastRunAt ?? null,
+	batch: rest.batch ?? null,
+	dismissed: rest.dismissed ?? [],
+});
 /** No unexpired claim holds the proposal. ISO timestamps compare as strings. */
 const unclaimed = (now: string): Document => ({
 	$or: [{ claim: { $exists: false } }, { "claim.until": { $lte: now } }],
 });
 
 const DUPLICATE_KEY = 11000;
+/**
+ * A filter value compared as a value. `$eq` never reads its operand as query
+ * operators, so a value that somehow arrived as an object matches nothing
+ * instead of changing what the query means.
+ */
+const is = <T>(value: T) => ({ $eq: value });
 /** Indexes are created once per process for each database. */
 const indexed = new Map<string, Promise<void>>();
 
@@ -54,6 +86,7 @@ const INDEX_PROJECTION = {
 	categoryKeys: 1,
 	tags: 1,
 	tagKeys: 1,
+	aliasKeys: 1,
 	createdAt: 1,
 	updatedAt: 1,
 	revision: 1,
@@ -88,6 +121,10 @@ function noteQuery(filter: NoteFilter): Document {
 		};
 	for (const term of filter.terms ?? [])
 		and.push({ searchText: { $regex: escapeRegex(term) } });
+	if (filter.anyTerms?.length)
+		and.push({
+			searchText: { $regex: filter.anyTerms.map(escapeRegex).join("|") },
+		});
 	for (const entry of filter.where ?? [])
 		and.push({ propertyKeys: { $elemMatch: { k: entry.k, v: entry.v } } });
 	if (and.length) query.$and = and;
@@ -132,6 +169,16 @@ export class MongoSynapseRepository implements SynapseRepository {
 			SYNAPSE_PROPOSALS_COLLECTION,
 		);
 	}
+	private revisions() {
+		return this.database().collection<RevisionDocument>(
+			SYNAPSE_REVISIONS_COLLECTION,
+		);
+	}
+	private maintenance() {
+		return this.database().collection<MaintenanceDocument>(
+			SYNAPSE_MAINTENANCE_COLLECTION,
+		);
+	}
 	private async createIndexes() {
 		await this.diagnose("initialize", "connect", () =>
 			this.database().command({ ping: 1 }),
@@ -154,6 +201,14 @@ export class MongoSynapseRepository implements SynapseRepository {
 				// Each workspace lists the proposals for its own shared space.
 				{ key: { space: 1, status: 1, createdAt: -1 }, name: "space_status" },
 				{ key: { space: 1, decidedAt: -1 }, name: "space_decided" },
+			]),
+		);
+		await this.diagnose("initialize", "indexes.revisions", () =>
+			this.revisions().createIndexes([
+				{ key: { noteId: 1, revision: -1 }, name: "note_revision" },
+				// A deleted note's history is found by the title it had.
+				{ key: { space: 1, titleKey: 1, at: -1 }, name: "space_title_at" },
+				{ key: { space: 1, at: -1 }, name: "space_at" },
 			]),
 		);
 	}
@@ -464,6 +519,181 @@ export class MongoSynapseRepository implements SynapseRepository {
 			this.proposals().updateOne(
 				{ _id: id, "claim.id": claimId },
 				{ $unset: { claim: "" } },
+			),
+		);
+		return result.matchedCount > 0;
+	}
+	async insertRevision(revision: StoredRevision) {
+		await this.storage("insertRevision", async () => {
+			try {
+				await this.revisions().insertOne(toDocument(revision));
+			} catch (error) {
+				// The same state recorded twice is one record.
+				if ((error as { code?: unknown }).code !== DUPLICATE_KEY) throw error;
+			}
+		});
+	}
+	async listRevisions(
+		space: SynapseSpaceId,
+		note: { noteId: string } | { titleKey: string },
+		limit: number,
+	) {
+		const found = await this.storage("listRevisions", async () => {
+			// A title may have named several notes over time: the latest one's history.
+			const noteId =
+				"noteId" in note
+					? note.noteId
+					: (
+							await this.revisions().findOne(
+								{ space: is(space), titleKey: is(note.titleKey) },
+								{
+									sort: { at: -1, revision: -1, _id: -1 },
+									projection: { noteId: 1 },
+								},
+							)
+						)?.noteId;
+			if (noteId === undefined) return [];
+			return this.revisions()
+				.find({ space: is(space), noteId: is(noteId) })
+				.sort({ at: -1, revision: -1, _id: -1 })
+				.limit(limit)
+				.toArray();
+		});
+		return found.map(
+			({ _id, ...rest }): StoredRevision => ({ id: _id, ...rest }),
+		);
+	}
+	async getRevision(noteId: string, revision: number) {
+		const found = await this.storage("getRevision", () =>
+			this.revisions().findOne({
+				noteId: is(noteId),
+				revision: is(Number(revision)),
+			}),
+		);
+		if (!found) return null;
+		const { _id, ...rest } = found;
+		return { id: _id, ...rest };
+	}
+	async pruneRevisions(noteId: string, revision: number) {
+		await this.storage("pruneRevisions", () =>
+			this.revisions().deleteMany({
+				noteId: is(noteId),
+				revision: { $lte: Number(revision) },
+			}),
+		);
+	}
+	async revisionsSince(space: SynapseSpaceId, since: string, limit: number) {
+		const found = await this.storage("revisionsSince", () =>
+			this.revisions()
+				.find({ space: is(space), at: { $gt: String(since) } })
+				.sort({ at: -1, revision: -1, _id: -1 })
+				.limit(limit)
+				.toArray(),
+		);
+		return found.map(
+			({ _id, ...rest }): StoredRevision => ({ id: _id, ...rest }),
+		);
+	}
+	async getMaintenance(space: SynapseSpaceId) {
+		const found = await this.storage("getMaintenance", () =>
+			this.maintenance().findOne({ _id: is(space) }),
+		);
+		return found ? maintenanceOf(found) : null;
+	}
+	async listMaintenanceRuns() {
+		const found = await this.storage("listMaintenanceRuns", () =>
+			this.maintenance()
+				.find({}, { projection: { lastRunAt: 1 } })
+				.toArray(),
+		);
+		return found.map((document) => ({
+			space: document._id as SynapseSpaceId,
+			lastRunAt: document.lastRunAt ?? null,
+		}));
+	}
+	async claimMaintenance(
+		space: SynapseSpaceId,
+		lease: MaintenanceLease,
+		now: string,
+		dueBefore: string,
+	) {
+		return this.storage("claimMaintenance", async () => {
+			try {
+				// A space with no record yet is created by the claim. One whose
+				// record does not match is held or not due: the upsert then
+				// collides with it and the claim fails.
+				const result = await this.maintenance().updateOne(
+					{
+						_id: is(space),
+						$and: [
+							{
+								$or: [
+									{ lease: { $exists: false } },
+									{ "lease.until": { $lte: String(now) } },
+								],
+							},
+							{
+								$or: [
+									{ lastRunAt: null },
+									{ lastRunAt: { $lt: String(dueBefore) } },
+								],
+							},
+						],
+					},
+					{
+						$set: { lease },
+						$setOnInsert: { lastRunAt: null, batch: null, dismissed: [] },
+					},
+					{ upsert: true },
+				);
+				return result.matchedCount > 0 || result.upsertedCount > 0;
+			} catch (error) {
+				if ((error as { code?: unknown }).code === DUPLICATE_KEY) return false;
+				throw error;
+			}
+		});
+	}
+	async finishMaintenance(
+		space: SynapseSpaceId,
+		leaseId: string,
+		batch: SynapseMaintenanceBatch,
+		at: string,
+	) {
+		const result = await this.storage("finishMaintenance", () =>
+			this.maintenance().updateOne(
+				{ _id: is(space), "lease.id": is(leaseId) },
+				{ $set: { batch, lastRunAt: at }, $unset: { lease: "" } },
+			),
+		);
+		return result.matchedCount > 0;
+	}
+	async releaseMaintenance(space: SynapseSpaceId, leaseId: string) {
+		await this.storage("releaseMaintenance", () =>
+			this.maintenance().updateOne(
+				{ _id: is(space), "lease.id": is(leaseId) },
+				{ $unset: { lease: "" } },
+			),
+		);
+	}
+	async reviewMaintenance(
+		space: SynapseSpaceId,
+		batch: SynapseMaintenanceBatch,
+		expectedRevision: number,
+		dismissed: string[],
+	) {
+		const result = await this.storage("reviewMaintenance", () =>
+			this.maintenance().updateOne(
+				{
+					_id: is(space),
+					"batch.id": is(batch.id),
+					"batch.revision": is(Number(expectedRevision)),
+				},
+				{
+					$set: { batch },
+					...(dismissed.length
+						? { $addToSet: { dismissed: { $each: dismissed } } }
+						: {}),
+				},
 			),
 		);
 		return result.matchedCount > 0;

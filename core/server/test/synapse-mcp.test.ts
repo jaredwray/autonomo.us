@@ -332,6 +332,17 @@ describe("MCP endpoint", () => {
 			"synapse_templates",
 			"synapse_propose",
 			"synapse_proposals",
+			"synapse_context",
+			"synapse_capture",
+			"synapse_cite",
+			"synapse_decision_status",
+			"synapse_history",
+			"synapse_ask",
+			"synapse_save_answer",
+			"synapse_commit",
+			"synapse_commitments",
+			"synapse_commitment_update",
+			"synapse_digest",
 		]);
 		for (const tool of tools) {
 			expect(tool.description.length).toBeGreaterThan(20);
@@ -445,7 +456,7 @@ describe("MCP endpoint", () => {
 		const templates = await callTool(alice.secret, "synapse_templates");
 		expect(
 			(templates.structuredContent as { templates: unknown[] }).templates,
-		).toHaveLength(13);
+		).toHaveLength(18);
 		expect(JSON.parse(templates.content[0].text)).toEqual(
 			templates.structuredContent,
 		);

@@ -11,14 +11,18 @@ import {
 	updateSynapseNote,
 } from "./api.js";
 import { LoadingBanner } from "./LoadingBanner.js";
+import { SynapseEvidence } from "./SynapseEvidence.js";
+import { SynapseHistory } from "./SynapseHistory.js";
+import { SynapseStanding } from "./SynapseStanding.js";
 import {
 	type InlineOptions,
 	Markdown,
 	renderInline,
 } from "./synapse-markdown.js";
 import { noteHash } from "./synapse-route.js";
+import { shortDate } from "./synapse-shared.js";
 
-export const shortDate = (value: string) => value.slice(0, 10);
+export { shortDate };
 
 type Mode = "read" | "edit" | "rename" | "delete";
 
@@ -119,6 +123,7 @@ export function SynapseNote({
 	const [conflict, setConflict] = useState(false);
 	/** The revision the draft was written against; saves send it, so a change made meanwhile is a 409, not an overwrite. */
 	const [base, setBase] = useState(0);
+	const [showHistory, setShowHistory] = useState(false);
 	const sequence = useRef(0);
 	const heading = useRef<HTMLHeadingElement>(null);
 
@@ -250,6 +255,11 @@ export function SynapseNote({
 			setBusy(false);
 		}
 	};
+	/** After a status, evidence, or history action: the parent refreshes and the note re-reads. */
+	const acted = async () => {
+		onChanged(title);
+		await load();
+	};
 	/** Re-reads the note after a conflict; the editor keeps its draft but waits for the fresh revision. */
 	const reload = async () => {
 		setBusy(true);
@@ -279,6 +289,28 @@ export function SynapseNote({
 					>
 						Create “{title}”
 					</button>
+				)}
+				{/* A deleted note keeps its history, and can be brought back from it. */}
+				<p className="card-note">
+					If a note with this title was deleted or merged into another, its
+					history still holds what it said.
+				</p>
+				<button
+					className="button"
+					type="button"
+					aria-expanded={showHistory}
+					onClick={() => setShowHistory((shown) => !shown)}
+				>
+					History
+				</button>
+				{showHistory && (
+					<SynapseHistory
+						space={space}
+						title={title}
+						current={0}
+						writable={canEdit}
+						onRestored={acted}
+					/>
 				)}
 			</div>
 		) : (
@@ -312,29 +344,42 @@ export function SynapseNote({
 						{`Updated ${shortDate(note.updatedAt)} by ${note.updatedBy.name} · created ${shortDate(note.createdAt)} by ${note.createdBy.name} · revision ${note.revision}`}
 					</p>
 				</div>
-				{mode === "read" && writable && (
+				{mode === "read" && (
 					<div className="token-actions">
 						<button
 							className="button"
 							type="button"
-							onClick={() => start("edit")}
+							aria-expanded={showHistory}
+							aria-controls={showHistory ? "synapse-history" : undefined}
+							onClick={() => setShowHistory((value) => !value)}
 						>
-							Edit
+							History
 						</button>
-						<button
-							className="button"
-							type="button"
-							onClick={() => start("rename")}
-						>
-							Rename
-						</button>
-						<button
-							className="button danger"
-							type="button"
-							onClick={() => start("delete")}
-						>
-							Delete
-						</button>
+						{writable && (
+							<>
+								<button
+									className="button"
+									type="button"
+									onClick={() => start("edit")}
+								>
+									Edit
+								</button>
+								<button
+									className="button"
+									type="button"
+									onClick={() => start("rename")}
+								>
+									Rename
+								</button>
+								<button
+									className="button danger"
+									type="button"
+									onClick={() => start("delete")}
+								>
+									Delete
+								</button>
+							</>
+						)}
 					</div>
 				)}
 			</header>
@@ -480,6 +525,23 @@ export function SynapseNote({
 			)}
 			{mode !== "edit" && (
 				<>
+					<SynapseStanding
+						space={space}
+						note={note}
+						standing={view.standing}
+						writable={writable && mode === "read"}
+						onNavigate={onNavigate}
+						onChanged={acted}
+					/>
+					{showHistory && mode === "read" && (
+						<SynapseHistory
+							space={space}
+							title={title}
+							current={note.revision}
+							writable={writable}
+							onRestored={acted}
+						/>
+					)}
 					{properties.length > 0 && (
 						<table className="synapse-properties">
 							<caption className="visually-hidden">Properties</caption>
@@ -511,6 +573,14 @@ export function SynapseNote({
 							))}
 						</p>
 					)}
+					<SynapseEvidence
+						space={space}
+						title={title}
+						evidence={view.evidence}
+						writable={writable && mode === "read"}
+						onNavigate={onNavigate}
+						onChanged={acted}
+					/>
 					<div className="synapse-sections">
 						<section aria-labelledby="synapse-backlinks">
 							<h3 id="synapse-backlinks">
