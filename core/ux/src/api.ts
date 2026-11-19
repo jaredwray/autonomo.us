@@ -1240,3 +1240,11 @@ export function organizationRequest<T>(
 ): Promise<T> {
 	return apiRequest(ws(`/organization${path}`, workspaceId), options);
 }
+
+export function loopsRequest<T>(
+	workspaceId: string,
+	path: string,
+	options?: Parameters<typeof apiRequest>[1],
+): Promise<T> {
+	return apiRequest(ws(`/loops${path}`, workspaceId), options);
+}

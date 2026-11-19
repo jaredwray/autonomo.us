@@ -216,11 +216,15 @@ everywhere. Rolling back to a release from before workspaces is safe only
 while Default is the only workspace: older releases merge every workspace's
 connections and accept every token gateway-wide.
 
+## Loops
+
+Use **Loops** in a workspace to track a metric, review pending decisions, and design or inspect the workflow for each loop. Agents and source systems can report observations, and assigned agents can claim work and return verification evidence. [Workspace loops and agent integration](docs/LOOPS.md)
+
 ## Gateway
 
 The dashboard has a collapsible sidebar with a workspace switcher and
 **Dashboard**, **Models**, **Proxies**, **Synapse**, **Channels**,
-**Agents**, **API Tokens**, **Workspaces**, and **Team** views. All but Workspaces and
+**Organization**, **Loops**, **Agents**, **API Tokens**, **Workspaces**, and **Team** views. All but Workspaces and
 Team show the selected workspace, and their URLs name it
 (`#/w/<workspace id>/models`).
 **Models** has two tabs: **Models** and **Routing** (`#/w/<workspace id>/models/routing`;

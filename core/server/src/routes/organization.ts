@@ -65,10 +65,14 @@ export async function organizationRoutes(
 		},
 		(r) => s.branch(caller(r), r.query),
 	);
-	server.get<{ Querystring: { q?: string } }>(
+	server.get<{ Querystring: { q?: string; loopAct?: boolean } }>(
 		"/organization/identities",
-		{ schema: { querystring: object({ q: text(140) }) } },
-		(r) => s.identities(caller(r), r.query.q),
+		{
+			schema: {
+				querystring: object({ q: text(140), loopAct: { type: "boolean" } }),
+			},
+		},
+		(r) => s.identities(caller(r), r.query.q, r.query.loopAct),
 	);
 	server.get<{ Params: IdParams }>("/organization/positions/:id", (r) =>
 		s.detail(caller(r), r.params.id),
@@ -125,7 +129,7 @@ export async function organizationRoutes(
 	);
 	server.get<{
 		Querystring: {
-			view?: "assigned" | "requested" | "triage";
+			view?: "assigned" | "requested" | "triage" | "pending";
 			after?: string;
 			limit?: number;
 		};
@@ -135,12 +139,15 @@ export async function organizationRoutes(
 			schema: {
 				querystring: object({
 					...paging,
-					view: { enum: ["assigned", "requested", "triage"] },
+					view: { enum: ["assigned", "requested", "triage", "pending"] },
 				}),
 			},
 		},
 		(r) => s.list(caller(r), r.query),
 	);
+	server.get("/organization/cases/pending-count", async (r) => ({
+		count: await s.pendingCount(caller(r)),
+	}));
 	server.get<{ Params: IdParams }>("/organization/cases/:id", (r) =>
 		s.read(caller(r), r.params.id),
 	);

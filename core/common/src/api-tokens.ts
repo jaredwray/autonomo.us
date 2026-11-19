@@ -7,6 +7,7 @@ export const API_TOKEN_PERMISSIONS = {
 	"routing:read": "Routing: Read",
 	"routing:edit": "Routing: Edit",
 	"inference:run": "Inference: Run",
+	"loops:report": "Loops: Report observations",
 	"telemetry:read": "Telemetry: Read",
 	"synapse:read": "Synapse: Read",
 	"synapse:edit": "Synapse: Edit",

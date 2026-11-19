@@ -39,6 +39,7 @@ function setup(repo: OrganizationRepository) {
 				type: c.actor.kind === "user" ? "human" : "token",
 			},
 			use: true,
+			loopAct: c.actor.kind === "user",
 			manage: c === admin,
 			decide: c !== editor,
 		});

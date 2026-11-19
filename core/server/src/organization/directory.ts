@@ -1,4 +1,6 @@
 import type {
+	AgentTokenPermission,
+	Bot,
 	DecisionEvidence,
 	OrgActorRef,
 	OrgIdentity,
@@ -14,6 +16,7 @@ export type OrgPrincipal = {
 	identity: OrgIdentity;
 	use: boolean;
 	decide: boolean;
+	loopAct: boolean;
 	manage: boolean;
 };
 export type OrganizationDirectory = {
@@ -22,13 +25,18 @@ export type OrganizationDirectory = {
 		workspaceId: string,
 		actor: OrgActorRef,
 	): Promise<OrgPrincipal | null>;
-	list(workspaceId: string): Promise<OrgIdentity[]>;
+	list(workspaceId: string, loopAct?: boolean): Promise<OrgIdentity[]>;
 	evidence(
 		workspaceId: string,
 		actor: OrgActorRef,
 		ref: DecisionEvidence,
 	): Promise<boolean>;
 };
+
+const hostedLoopAct = (bot: Pick<Bot, "tools" | "loopPermissions">) =>
+	bot.tools && bot.loopPermissions?.includes("loops:act") === true;
+const agentLoopAct = (grants: readonly AgentTokenPermission[]) =>
+	grants.includes("mcp:call") && grants.includes("loops:act");
 
 export function organizationDirectory(
 	workspaces: WorkspaceStore,
@@ -56,6 +64,7 @@ export function organizationDirectory(
 							},
 							use: true,
 							decide: true,
+							loopAct: true,
 							manage: m.role === "admin",
 						}
 					: null;
@@ -72,6 +81,7 @@ export function organizationDirectory(
 							},
 							use: bot.tools,
 							decide: bot.tools && bot.organizationDecisions === true,
+							loopAct: hostedLoopAct(bot),
 							manage: false,
 						}
 					: null;
@@ -85,6 +95,7 @@ export function organizationDirectory(
 			const connected =
 				agent.auth !== "oauth" ||
 				(await oauth.connections(w, agent.id)).length > 0;
+			const use = connected && agent.permissions.includes("mcp:call");
 			return {
 				identity: {
 					kind: "agent",
@@ -92,22 +103,24 @@ export function organizationDirectory(
 					name: agent.name,
 					type: agent.auth,
 				},
-				use: connected && agent.permissions.includes("mcp:call"),
-				decide:
-					connected &&
-					agent.permissions.includes("organization:decide") &&
-					agent.permissions.includes("mcp:call"),
+				use,
+				decide: use && agent.permissions.includes("organization:decide"),
+				loopAct: connected && agentLoopAct(agent.permissions),
 				manage: false,
 			};
 		},
-		async list(w) {
+		async list(w, loopAct = false) {
 			const workspace = await workspaces.get(w);
 			if (!workspace) return [];
-			const [people, external, hosted] = await Promise.all([
+			const [people, external, hosted, connections] = await Promise.all([
 				accounts.workspaceMembers(workspace),
 				tokens.settings(workspace, true),
 				bots.listBots(w),
+				loopAct ? oauth.connections(w) : [],
 			]);
+			const connectedAgents = new Set(
+				connections.map((connection) => connection.agentId),
+			);
 			return [
 				...people.members.map((m) => ({
 					kind: "user" as const,
@@ -116,7 +129,13 @@ export function organizationDirectory(
 					type: "human" as const,
 				})),
 				...external.tokens
-					.filter((a) => a.status === "active")
+					.filter(
+						(a) =>
+							a.status === "active" &&
+							(!loopAct ||
+								(agentLoopAct(a.permissions) &&
+									(a.auth !== "oauth" || connectedAgents.has(a.id)))),
+					)
 					.map((a) => ({
 						kind: "agent" as const,
 						id: a.id,
@@ -124,7 +143,7 @@ export function organizationDirectory(
 						type: a.auth,
 					})),
 				...hosted
-					.filter((b) => b.enabled)
+					.filter((b) => b.enabled && (!loopAct || hostedLoopAct(b)))
 					.map((b) => ({
 						kind: "agent" as const,
 						id: b.id,

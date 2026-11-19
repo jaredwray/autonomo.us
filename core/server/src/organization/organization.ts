@@ -36,7 +36,7 @@ const notFound = () =>
 const iso = (ms: number) => new Date(ms).toISOString();
 const RECHECK_MS = 60_000;
 type CaseListQuery = {
-	view?: "assigned" | "requested" | "triage";
+	view?: "assigned" | "requested" | "triage" | "pending";
 	limit?: number;
 	after?: string;
 };
@@ -281,8 +281,15 @@ export class OrganizationService extends OrganizationChart {
 		// The authorized reviewer receives a receipt for their successful handoff.
 		// Later reads and mutations always recheck the new assignment.
 		if (!acceptedHandoff && !this.visible(row, who)) throw notFound();
-		const { workspaceId, stepIndex, checkAt, notices, changeIds, ...result } =
-			row;
+		const {
+			workspaceId,
+			stepIndex,
+			checkAt,
+			notices,
+			changeIds,
+			loopOwned,
+			...result
+		} = row;
 		const permitted = await Promise.all(
 			result.evidence.map((e) =>
 				this.directory.evidence(workspaceId, who.identity, e),
@@ -301,7 +308,18 @@ export class OrganizationService extends OrganizationChart {
 				(canAct && stepIndex < row.route.steps.length - 1),
 		};
 	}
-	async open(c: OrgCaller, input: OpenDecisionCase): Promise<DecisionCase> {
+	open(c: OrgCaller, input: OpenDecisionCase): Promise<DecisionCase> {
+		return this.openCase(c, input, false);
+	}
+	/** Only Loops may bind a case to an executable run. */
+	openLoopCase(c: OrgCaller, input: OpenDecisionCase): Promise<DecisionCase> {
+		return this.openCase(c, input, true);
+	}
+	private async openCase(
+		c: OrgCaller,
+		input: OpenDecisionCase,
+		fromLoop: boolean,
+	): Promise<DecisionCase> {
 		const sourceWorkId = boundedText(input.sourceWorkId, "Source work ID", 200),
 			sourceRevision = boundedText(
 				input.sourceRevision,
@@ -310,6 +328,11 @@ export class OrganizationService extends OrganizationChart {
 			);
 		const key = decisionKey(input.decisionKey),
 			question = boundedText(input.question, "Question", 3000);
+		const reserved = sourceWorkId.startsWith("loop-run:");
+		if (fromLoop && !reserved)
+			throw new ServiceError(
+				"This work ID is reserved for loop workflow runs.",
+			);
 		const id = createHash("sha256")
 			.update(
 				JSON.stringify([c.workspaceId, sourceWorkId, sourceRevision, key]),
@@ -327,6 +350,15 @@ export class OrganizationService extends OrganizationChart {
 		for (let attempt = 0; attempt < 12; attempt++) {
 			const who = await this.principal(c);
 			const existing = await this.repo.getCase(c.workspaceId, id);
+			// Older organization callers may already have used this prefix. Allow
+			// them to replay their original case, never to create or advance a loop case.
+			if (
+				reserved &&
+				(existing ? (existing.loopOwned === true) !== fromLoop : !fromLoop)
+			)
+				throw new ServiceError(
+					"This work ID is reserved for loop workflow runs.",
+				);
 			if (existing) {
 				if (
 					!sameActor(c.actor, existing.requester) ||
@@ -350,6 +382,7 @@ export class OrganizationService extends OrganizationChart {
 			const { route, graphRevision } = await this.routing(c, who, input);
 			const at = iso(this.now());
 			const row: StoredCase = {
+				...(fromLoop ? { loopOwned: true as const } : {}),
 				id,
 				workspaceId: c.workspaceId,
 				revision: 0,
@@ -543,6 +576,12 @@ export class OrganizationService extends OrganizationChart {
 			const current = await this.reconcile(row);
 			if (!this.visible(current, who)) continue;
 			if (
+				q.view === "pending" &&
+				current.status !== "open" &&
+				current.status !== "triage"
+			)
+				continue;
+			if (
 				q.view === "assigned" &&
 				(current.status !== "open" || !sameActor(current.assignee, c.actor))
 			)
@@ -557,11 +596,11 @@ export class OrganizationService extends OrganizationChart {
 	async list(c: OrgCaller, q: CaseListQuery = {}): Promise<DecisionCasePage> {
 		const who = await this.principal(c),
 			view = q.view ?? "assigned";
-		if (!["assigned", "requested", "triage"].includes(view))
-			throw new ServiceError("Choose assigned, requested or triage.");
+		if (!["assigned", "requested", "triage", "pending"].includes(view))
+			throw new ServiceError("Choose pending, assigned, requested or triage.");
 		if (view === "triage" && !who.manage) throw forbidden();
 		const own =
-			view === "assigned"
+			view === "assigned" || (view === "pending" && !who.manage)
 				? (await this.repo.occupied(c.workspaceId, c.actor)).positionIds
 				: [];
 		return this.page(c, who, {
@@ -572,6 +611,37 @@ export class OrganizationService extends OrganizationChart {
 			limit: pageLimit(q.limit),
 			after: q.after,
 		});
+	}
+	/** Count the same live, visible pending cases as the paged queue. */
+	async pendingCount(c: OrgCaller): Promise<number> {
+		const principal = await this.principal(c);
+		if (principal.manage) return this.repo.countPendingCases(c.workspaceId);
+		const assignedPositions = (await this.repo.occupied(c.workspaceId, c.actor))
+			.positionIds;
+		let after: string | undefined;
+		// Requester visibility survives routing changes. Only assigned cases need a fresh authority check.
+		let count = await this.repo.countPendingCases(c.workspaceId, c.actor);
+		for (;;) {
+			const rows = await this.repo.listCases(c.workspaceId, {
+				view: "assigned",
+				actor: c.actor,
+				admin: principal.manage,
+				assignedPositions,
+				limit: 100,
+				after,
+			});
+			for (const row of rows) {
+				if (sameActor(row.requester, c.actor)) continue;
+				const live = await this.reconcile(row);
+				if (
+					(live.status === "open" || live.status === "triage") &&
+					this.visible(live, principal)
+				)
+					count++;
+			}
+			if (rows.length < 100) return count;
+			after = rows[rows.length - 1].id;
+		}
 	}
 	async detail(c: OrgCaller, id: string): Promise<OrgPositionDetail> {
 		const who = await this.principal(c),

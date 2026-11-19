@@ -1,5 +1,6 @@
 import type {
 	DecisionRoute,
+	OrgActorRef,
 	OrgBranch,
 	OrgIdentity,
 	OrgPositionDetail,
@@ -135,6 +136,7 @@ export function PositionPicker({
 	label,
 	value,
 	onChange,
+	occupiedOnly = false,
 	humanOnly = false,
 	ownOnly = false,
 	exclude = [],
@@ -144,6 +146,7 @@ export function PositionPicker({
 	label: string;
 	value: string;
 	onChange: (id: string) => void;
+	occupiedOnly?: boolean;
 	humanOnly?: boolean;
 	ownOnly?: boolean;
 	exclude?: string[];
@@ -165,6 +168,7 @@ export function PositionPicker({
 		.filter(
 			(p) =>
 				!p.archived &&
+				(!occupiedOnly || !!p.occupant) &&
 				!excluded.has(p.id) &&
 				(!ownOnly || results.data?.viewerPositionIds.includes(p.id)) &&
 				(!humanOnly || p.occupant?.kind === "user"),
@@ -211,11 +215,15 @@ export function PositionPicker({
 
 export function OccupantPicker({
 	workspace,
+	label = "Occupant",
+	loopAct = false,
 	value,
 	onChange,
 }: {
 	workspace: string;
-	value: OrgIdentity | null;
+	label?: string;
+	loopAct?: boolean;
+	value: (OrgActorRef & { name?: string }) | null;
 	onChange: (identity: OrgIdentity | null) => void;
 }) {
 	const [open, setOpen] = useState(false);
@@ -223,21 +231,25 @@ export function OccupantPicker({
 	const term = useDebouncedQuery(search);
 	const results = useOrgRead<{ identities: OrgIdentity[] }>(
 		workspace,
-		open ? queryPath("/identities", { q: term }) : null,
+		open
+			? queryPath("/identities", { q: term, loopAct: loopAct ? "true" : null })
+			: null,
 	);
 	const identities = results.data?.identities ?? [];
-	const key = (i: OrgIdentity) => `${i.kind}:${i.id}`;
+	const key = (i: OrgActorRef) => `${i.kind}:${i.id}`;
 	return (
 		<div className="org-picker">
-			<span>Occupant</span>
+			<span>{label}</span>
 			<button
 				type="button"
 				className="button"
-				aria-label="Occupant"
+				aria-label={label}
 				aria-expanded={open}
 				onClick={() => setOpen(!open)}
 			>
-				{value?.name ?? "Vacant"}
+				{value?.name ??
+					value?.id ??
+					(label === "Occupant" ? "Vacant" : "Choose person or agent")}
 			</button>
 			{open && (
 				<ChoiceList

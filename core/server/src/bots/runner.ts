@@ -14,6 +14,7 @@ import {
 } from "@autonomo.us/common";
 import { jsonSchema, stepCountIs, tool } from "ai";
 import type { ChannelCaller, ChannelService } from "../channels/channels.js";
+import { LOOP_TOOL_GRANTS } from "../loops/mcp.js";
 import {
 	argumentProblem,
 	type McpAgent,
@@ -76,6 +77,8 @@ const BOT_TOOLS = new Set([
 const WEB_TOOLS = new Set(["web_fetch"]);
 /** The tools among them that change something and cannot be repeated safely. */
 const WRITING_TOOLS = new Set([
+	"loops_observe",
+	"loops_run_action",
 	"organization_open_case",
 	"organization_act",
 	"synapse_create",
@@ -689,6 +692,7 @@ export class BotRunner {
 					"mcp:read",
 					"mcp:call",
 					...(bot.web ? (["web:fetch"] as const) : []),
+					...(bot.tools ? (bot.loopPermissions ?? []) : []),
 					...(bot.tools && bot.organizationDecisions
 						? (["organization:decide"] as const)
 						: []),
@@ -729,8 +733,11 @@ export class BotRunner {
 		};
 		for (const set of this.options.toolSets)
 			for (const definition of set.tools) {
+				const loopGrant = LOOP_TOOL_GRANTS[definition.name];
 				const allowed =
-					(bot.tools && BOT_TOOLS.has(definition.name)) ||
+					(bot.tools &&
+						(BOT_TOOLS.has(definition.name) ||
+							(loopGrant && agent.token.permissions.includes(loopGrant)))) ||
 					(bot.web && WEB_TOOLS.has(definition.name));
 				if (
 					!allowed ||

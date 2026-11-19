@@ -1,7 +1,8 @@
-import type {
-	CreateBotRequest,
-	DecideBotWebRequest,
-	UpdateBotRequest,
+import {
+	type CreateBotRequest,
+	type DecideBotWebRequest,
+	LOOP_AGENT_PERMISSIONS,
+	type UpdateBotRequest,
 } from "@autonomo.us/common";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { requestWorkspace, signedInMember } from "../auth/access.js";
@@ -25,6 +26,12 @@ const fields = {
 	enabled: { type: "boolean" },
 	tools: { type: "boolean" },
 	organizationDecisions: { type: "boolean" },
+	loopPermissions: {
+		type: "array",
+		uniqueItems: true,
+		maxItems: LOOP_AGENT_PERMISSIONS.length,
+		items: { type: "string", enum: LOOP_AGENT_PERMISSIONS },
+	},
 	web: { type: "boolean" },
 	webScope: { enum: ["any", "mentioned", "approved"] },
 	webFollowUps: { enum: ["any", "same-site", "none"] },

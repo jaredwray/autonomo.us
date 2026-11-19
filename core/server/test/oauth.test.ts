@@ -254,6 +254,9 @@ describe("OAuth sign-in to the MCP endpoint", () => {
 					"web:fetch",
 					"models:chat",
 					"video:generate",
+					"loops:read",
+					"loops:report",
+					"loops:act",
 					"organization:decide",
 				],
 			});

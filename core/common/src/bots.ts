@@ -4,6 +4,7 @@
  * the workspace's own connections and posts the reply. See
  * docs/CHANNELS_PLAN.md §16.
  */
+import type { LOOP_AGENT_PERMISSIONS } from "./agent-tokens.js";
 import type { TokenUsage } from "./types.js";
 
 export const BOT_LIMITS = {
@@ -82,6 +83,8 @@ export type Bot = {
 	tools: boolean;
 	/** Allows outcomes on assigned cases when tools are enabled. Absent on older bots. */
 	organizationDecisions?: boolean;
+	/** Optional workspace loop tools; older bots have no loop grants. */
+	loopPermissions?: (typeof LOOP_AGENT_PERMISSIONS)[number][];
 	/** Whether a reply may read web pages with `web_fetch`, through the workspace's proxies when needed. */
 	web: boolean;
 	/** What the bot may fetch; see `BOT_WEB_SCOPES`. */
@@ -151,6 +154,8 @@ export type CreateBotRequest = {
 	agentHops?: number;
 	tools?: boolean;
 	organizationDecisions?: boolean;
+	/** Optional workspace loop tools; older bots have no loop grants. */
+	loopPermissions?: (typeof LOOP_AGENT_PERMISSIONS)[number][];
 	web?: boolean;
 	webScope?: BotWebScope;
 	webFollowUps?: BotWebFollowUps;

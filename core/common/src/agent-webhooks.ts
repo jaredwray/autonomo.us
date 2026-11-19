@@ -60,9 +60,15 @@ export const AGENT_WEBHOOK_EVENT_GROUPS = {
 	},
 	organization: {
 		area: "workspace",
-		label: "Decision inbox",
+		label: "Decisions",
 		hint: "A case needs this agent's review, or its own blocked work received an outcome. Retrieve the case to read it.",
 		types: ["decision.assigned", "decision.outcome"],
+	},
+	loops: {
+		area: "workspace",
+		label: "Loop assignments",
+		hint: "A loop workflow step is ready for this agent to perform or verify.",
+		types: ["loop.assigned"],
 	},
 	proposals: {
 		area: "synapse",
@@ -192,6 +198,8 @@ export function agentWakeEventGroup(
 		case "channel.archived":
 		case "channel.unarchived":
 			return "channels";
+		case "loop.assigned":
+			return "loops";
 		case "decision.assigned":
 		case "decision.outcome":
 			return "organization";
@@ -490,6 +498,13 @@ export type AgentWakeSpace = "shared" | "global" | "agent";
 
 /** One thing that happened, as a POST lists it. */
 export type AgentWakeEvent =
+	| {
+			type: "loop.assigned";
+			at: string;
+			loopId: string;
+			runId: string;
+			stepIndex: number;
+	  }
 	| {
 			type: "decision.assigned" | "decision.outcome";
 			at: string;

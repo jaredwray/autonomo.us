@@ -8,6 +8,7 @@ import {
 	type AgentWebhookHeader,
 	type AgentWebhookSecret,
 	type AgentWebhookTestResult,
+	agentWakeEventGroup,
 	agentWebhookAuthKeyProblem,
 	agentWebhookHeaderProblem,
 	agentWebhookHeaderValueProblem,
@@ -70,6 +71,11 @@ export type AgentNoticeFor = (
 ) => AgentNotice | null | Promise<AgentNotice | null>;
 
 export type AgentWebhooksOptions = {
+	mayDeliverLoopAssignment?(
+		workspaceId: string,
+		agentId: string,
+		event: Extract<AgentWakeEvent, { type: "loop.assigned" }>,
+	): Promise<boolean>;
 	mayDeliverDecision?(
 		workspaceId: string,
 		agentId: string,
@@ -427,8 +433,8 @@ export class AgentWebhooks {
 		}
 	}
 
-	/** Let a failed enqueue propagate so the decision's durable outbox can retry. */
-	async onOrganizationNotice(
+	/** Source outboxes retry targeted wakeups if the webhook queue is unavailable. */
+	private async targetedNotice(
 		workspaceId: string,
 		agentId: string,
 		notice: AgentNotice,
@@ -436,8 +442,20 @@ export class AgentWebhooks {
 		const [webhook] = await this.options.repository.active(workspaceId, [
 			agentId,
 		]);
-		if (webhook && wants(webhook, "organization"))
+		if (webhook && wants(webhook, agentWakeEventGroup(notice.event)))
 			await this.enqueue(webhook, notice.event, notice.key);
+	}
+
+	onOrganizationNotice(
+		workspaceId: string,
+		agentId: string,
+		notice: AgentNotice,
+	) {
+		return this.targetedNotice(workspaceId, agentId, notice);
+	}
+
+	onLoopAssignment(workspaceId: string, agentId: string, notice: AgentNotice) {
+		return this.targetedNotice(workspaceId, agentId, notice);
 	}
 
 	/** Called after a workspace admin decides a proposal: its author follows up. */
@@ -641,6 +659,17 @@ export class AgentWebhooks {
 			event: AgentWakeEvent,
 			permissions: readonly string[],
 		) => {
+			if (event.type === "loop.assigned") {
+				return (
+					mayHear(event, permissions) &&
+					(this.options.mayDeliverLoopAssignment?.(
+						webhook.workspaceId,
+						webhook.agentId,
+						event,
+					) ??
+						false)
+				);
+			}
 			if (
 				event.type !== "decision.assigned" &&
 				event.type !== "decision.outcome"

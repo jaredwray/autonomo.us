@@ -34,6 +34,13 @@ import { type ApiConfig, configFromEnv } from "./config.js";
 import { registerDashboard } from "./dashboard.js";
 import { FailoverPolicyStore } from "./failover.js";
 import { GatewayData } from "./gateway-data.js";
+import { LoopsAssignments } from "./loops/assignments.js";
+import { loopsToolSet } from "./loops/mcp.js";
+import {
+	MemoryLoopRepository,
+	MongoLoopRepository,
+} from "./loops/repository.js";
+import { LoopsService } from "./loops/service.js";
 import { registerMaintenanceRoutes } from "./maintenance-control.js";
 import { mcpRoutes } from "./mcp/server.js";
 import { Callback } from "./mcp-events/callback.js";
@@ -74,6 +81,7 @@ import { chatRoutes } from "./routes/chat.js";
 import { decisionsRoutes } from "./routes/decisions.js";
 import { failoverRoutes } from "./routes/failover.js";
 import { healthRoutes } from "./routes/health.js";
+import { loopsRoutes } from "./routes/loops.js";
 import { catalogRoutes, modelsRoutes } from "./routes/models.js";
 import { oauthRoutes } from "./routes/oauth.js";
 import { organizationRoutes } from "./routes/organization.js";
@@ -139,7 +147,7 @@ const initializers = new WeakMap<
 >();
 
 export type CreateServerOptions = {
-	/** Clock for organization response deadlines. */
+	/** Clock for organization response deadlines and loop measurements. */
 	organizationNow?: () => number;
 	/** Enables dedicated-token internal maintenance routes on this server. */
 	maintenanceToken?: string;
@@ -322,6 +330,9 @@ export function createServer(options: CreateServerOptions = {}) {
 		},
 	};
 	const agentWebhooks: AgentWebhooks = new AgentWebhooks({
+		mayDeliverLoopAssignment: async (w, id, event) =>
+			!!(await directory.resolve(w, { kind: "agent", id }))?.loopAct &&
+			assignments.mayNotify(w, id, event),
 		mayDeliverDecision: (w, id, event) => organization.mayNotify(w, id, event),
 		repository: agentWebhookRepository,
 		agents: webhookAgents,
@@ -546,18 +557,20 @@ export function createServer(options: CreateServerOptions = {}) {
 	});
 	// The operator's off switch removes the tools, as it does `web_fetch`.
 	const videoTools = video.available ? videoToolSet(video) : undefined;
+	const orgRepository = mongo
+		? new MongoOrganizationRepository(mongo)
+		: new MemoryOrganizationRepository();
+	const directory = organizationDirectory(
+		workspaces,
+		accounts,
+		agentTokens,
+		botRepository,
+		channels,
+		oauth,
+	);
 	const organization: OrganizationService = new OrganizationService(
-		mongo
-			? new MongoOrganizationRepository(mongo)
-			: new MemoryOrganizationRepository(),
-		organizationDirectory(
-			workspaces,
-			accounts,
-			agentTokens,
-			botRepository,
-			channels,
-			oauth,
-		),
+		orgRepository,
+		directory,
 		{
 			now: options.organizationNow,
 			// Use the same durable-storage and pinned-transport capabilities as MCP push.
@@ -577,16 +590,37 @@ export function createServer(options: CreateServerOptions = {}) {
 				: {}),
 		},
 	);
+	const loopRepo = mongo
+		? new MongoLoopRepository(mongo)
+		: new MemoryLoopRepository();
+	const loops = new LoopsService(
+		loopRepo,
+		organization,
+		directory,
+		orgRepository,
+		options.organizationNow,
+	);
+	const assignments: LoopsAssignments = new LoopsAssignments(
+		loopRepo,
+		(row) => loops.reconcileRun(row),
+		eventRepository && webhookTransport.pinsAddress
+			? (w, id, notice) => agentWebhooks.onLoopAssignment(w, id, notice)
+			: undefined,
+	);
 	let orgSweep: Promise<void> | undefined;
 	let nextOrgSweep = 0;
 	const sweepOrganization = () => {
-		orgSweep ??= organization.sweep().finally(() => {
-			orgSweep = undefined;
-		});
+		orgSweep ??= organization
+			.sweep()
+			.then(() => assignments.sweep())
+			.finally(() => {
+				orgSweep = undefined;
+			});
 		return orgSweep;
 	};
 	const toolSets = [
 		organizationToolSet(organization),
+		loopsToolSet(loops, assignments),
 		synapseToolSet(synapse, {
 			features: knowledge,
 			// A capture that names a page reads it as `web_fetch` would.
@@ -809,6 +843,7 @@ export function createServer(options: CreateServerOptions = {}) {
 			});
 			scoped.register(channelRoutes, { channels });
 			scoped.register(organizationRoutes, { organization });
+			scoped.register(loopsRoutes, { loops, organization, assignments });
 			scoped.register(botRoutes, { bots, webRequests: botWebRequests });
 			scoped.register(webRoutes, {
 				store: proxies,

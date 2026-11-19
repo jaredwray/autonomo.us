@@ -70,6 +70,7 @@ const MCP_GRANTS = ["mcp:read", "mcp:call"] as const;
 const GROUP_GRANTS: Partial<Record<AgentWebhookEventGroup, readonly string[]>> =
 	{
 		organization: MCP_GRANTS,
+		loops: [...MCP_GRANTS, "loops:act"],
 		"message-changes": MCP_GRANTS,
 		membership: MCP_GRANTS,
 		channels: MCP_GRANTS,

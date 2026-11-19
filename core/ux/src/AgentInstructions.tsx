@@ -11,6 +11,7 @@ import {
 	type BotWebScope,
 	type CreateBotRequest,
 	DEFAULT_BOT_LIMITS,
+	LOOP_AGENT_PERMISSIONS,
 } from "@autonomo.us/common";
 import {
 	Fragment,
@@ -315,6 +316,12 @@ function WebScopeFields({
  * Creates an agent the gateway runs, or edits one. Remounted when the
  * agent's revision changes.
  */
+const loopGrantLabels = {
+	"loops:read": "Read loop activity",
+	"loops:report": "Report loop observations",
+	"loops:act": "Act on assigned loop steps",
+} as const;
+
 export function InstructionsForm({
 	bot,
 	choices,
@@ -336,6 +343,9 @@ export function InstructionsForm({
 	const [tools, setTools] = useState(bot?.tools ?? false);
 	const [organizationDecisions, setOrganizationDecisions] = useState(
 		bot?.organizationDecisions ?? false,
+	);
+	const [loopPermissions, setLoopPermissions] = useState(
+		bot?.loopPermissions ?? [],
 	);
 	const [web, setWeb] = useState(bot?.web ?? false);
 	const [webScope, setWebScope] = useState(() => webScopeOf(bot).webScope);
@@ -382,6 +392,7 @@ export function InstructionsForm({
 		enabled,
 		tools,
 		organizationDecisions: tools && organizationDecisions,
+		loopPermissions: tools ? loopPermissions : [],
 		web,
 		webScope,
 		webFollowUps,
@@ -406,6 +417,7 @@ export function InstructionsForm({
 				tools: bot.tools,
 				organizationDecisions:
 					bot.tools && (bot.organizationDecisions ?? false),
+				loopPermissions: bot.tools ? (bot.loopPermissions ?? []) : [],
 				web: bot.web ?? false,
 				...webScopeOf(bot),
 				agentHops: bot.agentHops,
@@ -544,6 +556,23 @@ export function InstructionsForm({
 						Allows this agent to approve, request changes, or hand off decisions
 						assigned to its position.
 					</span>
+					{LOOP_AGENT_PERMISSIONS.map((grant) => (
+						<label key={grant} className="failover-enable">
+							<input
+								type="checkbox"
+								disabled={!tools}
+								checked={tools && loopPermissions.includes(grant)}
+								onChange={(e) =>
+									setLoopPermissions((current) =>
+										e.target.checked
+											? [...current, grant]
+											: current.filter((g) => g !== grant),
+									)
+								}
+							/>
+							{loopGrantLabels[grant]}
+						</label>
+					))}
 					<label className="failover-enable">
 						<input
 							type="checkbox"
@@ -647,6 +676,12 @@ function BotFacts({ bot }: { bot: BotDetails }) {
 			<dd>{bot.tools ? "On" : "Off"}</dd>
 			<dt>Organization decisions</dt>
 			<dd>{bot.tools && bot.organizationDecisions ? "On" : "Off"}</dd>
+			<dt>Loop permissions</dt>
+			<dd>
+				{bot.tools && bot.loopPermissions?.length
+					? bot.loopPermissions.map((g) => loopGrantLabels[g]).join(", ")
+					: "None"}
+			</dd>
 			<dt>Web access</dt>
 			<dd>{bot.web ? "On" : "Off"}</dd>
 			{bot.web && (

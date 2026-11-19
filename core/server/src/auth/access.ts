@@ -150,6 +150,7 @@ const organizationRoutes = (base: string) =>
 		[`POST ${base}/preview`, workspace("workspace:read")],
 		[`GET ${base}/cases`, workspace("workspace:read")],
 		[`GET ${base}/cases/:id`, workspace("workspace:read")],
+		[`GET ${base}/cases/pending-count`, workspace("workspace:read")],
 		[`POST ${base}/cases`, workspace("workspace:read")],
 		[`POST ${base}/cases/:id/act`, workspace("workspace:read")],
 	] as const;
@@ -278,6 +279,19 @@ export const ROUTE_RULES = new Map<string, RouteRule>([
 	...synapseRoutes("/v1/:workspace/synapse"),
 	...channelRoutes("/v1/:workspace/channels"),
 	...organizationRoutes("/v1/:workspace/organization"),
+	["GET /v1/:workspace/loops", workspace("workspace:read")],
+	["POST /v1/:workspace/loops", workspace("workspace:update")],
+	["POST /v1/:workspace/loops/preview", workspace("workspace:update")],
+	["GET /v1/:workspace/loops/:id/samples", workspace("workspace:read")],
+	["GET /v1/:workspace/loops/:id", workspace("workspace:read")],
+	["GET /v1/:workspace/loops/:id/runs/:runId", workspace("workspace:read")],
+	["GET /v1/:workspace/loops/assignments", workspace("workspace:read")],
+	["PUT /v1/:workspace/loops/:id/workflow", workspace("workspace:update")],
+	["POST /v1/:workspace/loops/:id/observations", workspace("loops:report")],
+	[
+		"POST /v1/:workspace/loops/:id/runs/:runId/actions",
+		workspace("workspace:read"),
+	],
 	// Agents the gateway runs. Dashboard only: no token holds these actions.
 	["GET /v1/:workspace/bots", workspace("agents:read")],
 	["POST /v1/:workspace/bots", workspace("agents:manage")],
@@ -318,6 +332,7 @@ export const ROUTE_RULES = new Map<string, RouteRule>([
 
 /** What each workspace role may do, as a signed-in member. */
 const MEMBER_ACTIONS = new Set<WorkspaceAction>([
+	"loops:report",
 	"workspace:read",
 	"models:read",
 	"routing:read",
