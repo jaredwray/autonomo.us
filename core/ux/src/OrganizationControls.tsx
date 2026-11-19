@@ -157,7 +157,9 @@ export function PositionPicker({
 	const term = useDebouncedQuery(search);
 	const results = useOrgRead<OrgBranch>(
 		workspace,
-		open ? queryPath("/branch", { q: term, limit: "25" }) : null,
+		open && term === search.trim()
+			? queryPath("/branch", { q: term, limit: "25" })
+			: null,
 	);
 	const current = useOrgRead<OrgPositionDetail>(
 		workspace,
@@ -231,7 +233,7 @@ export function OccupantPicker({
 	const term = useDebouncedQuery(search);
 	const results = useOrgRead<{ identities: OrgIdentity[] }>(
 		workspace,
-		open
+		open && term === search.trim()
 			? queryPath("/identities", { q: term, loopAct: loopAct ? "true" : null })
 			: null,
 	);

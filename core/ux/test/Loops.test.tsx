@@ -200,12 +200,18 @@ it("builds a loop from an empty workspace and requires an independent verifier",
 	fill("Target (%)", "80");
 	fill("Decision rule key", "visual-continuity");
 	fireEvent.click(screen.getByRole("button", { name: "Accountable position" }));
+	const directorOption = { name: /Studio Director · Captain/ };
+	await screen.findByRole("button", directorOption);
 	fireEvent.change(screen.getByRole("searchbox"), {
 		target: { value: "Studio Director" },
 	});
-	fireEvent.click(
-		await screen.findByRole("button", { name: /Studio Director · Captain/ }),
-	);
+	expect(screen.queryByRole("button", directorOption)).toBeNull();
+	fireEvent.click(await screen.findByRole("button", directorOption));
+	expect(
+		screen
+			.getByRole("button", { name: "Accountable position" })
+			.getAttribute("aria-expanded"),
+	).toBe("false");
 	fireEvent.click(screen.getByRole("button", { name: /2 · action/ }));
 	fireEvent.click(screen.getByRole("button", { name: "Assigned to" }));
 	fireEvent.click(
