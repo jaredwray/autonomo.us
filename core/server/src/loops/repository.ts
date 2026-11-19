@@ -335,13 +335,13 @@ export class MongoLoopRepository implements LoopRepository {
 	async list(w: string) {
 		await this.ready();
 		return this.defs()
-			.find({ workspaceId: w }, { projection: { _id: 0 } })
+			.find({ workspaceId: { $eq: w } }, { projection: { _id: 0 } })
 			.sort({ name: 1, id: 1 })
 			.toArray();
 	}
 	async get(w: string, id: string) {
 		return this.defs().findOne(
-			{ _id: key(w, id), workspaceId: w },
+			{ _id: { $eq: key(w, id) }, workspaceId: { $eq: w } },
 			{ projection: { _id: 0 } },
 		);
 	}
@@ -359,7 +359,11 @@ export class MongoLoopRepository implements LoopRepository {
 		return (
 			(
 				await this.defs().replaceOne(
-					{ _id, workspaceId: d.workspaceId, version: expected },
+					{
+						_id: { $eq: _id },
+						workspaceId: { $eq: d.workspaceId },
+						version: { $eq: expected },
+					},
 					d,
 				)
 			).matchedCount === 1
@@ -373,7 +377,7 @@ export class MongoLoopRepository implements LoopRepository {
 		} catch (e) {
 			if (!isDuplicateKey(e)) throw e;
 			const old = await this.obs().findOne(
-				{ _id, workspaceId: r.workspaceId },
+				{ _id: { $eq: _id }, workspaceId: { $eq: r.workspaceId } },
 				{ projection: { _id: 0 } },
 			);
 			if (!old) throw e;
@@ -384,11 +388,11 @@ export class MongoLoopRepository implements LoopRepository {
 		await this.ready();
 		return this.obs().countDocuments(
 			{
-				workspaceId: r.workspaceId,
-				loopId: r.loopId,
-				version: r.version,
-				"observation.workId": r.observation.workId,
-				"observation.workRevision": r.observation.workRevision,
+				workspaceId: { $eq: r.workspaceId },
+				loopId: { $eq: r.loopId },
+				version: { $eq: r.version },
+				"observation.workId": { $eq: r.observation.workId },
+				"observation.workRevision": { $eq: r.observation.workRevision },
 				"observation.trigger": true,
 			},
 			{ limit: threshold },
@@ -406,8 +410,8 @@ export class MongoLoopRepository implements LoopRepository {
 		const rows = await this.obs()
 			.find(
 				{
-					workspaceId: w,
-					loopId: id,
+					workspaceId: { $eq: w },
+					loopId: { $eq: id },
 					"observation.denominator": { $gt: 0 },
 					"observation.observedAt": { $gte: from, $lt: to },
 					...(before
@@ -415,7 +419,7 @@ export class MongoLoopRepository implements LoopRepository {
 								$or: [
 									{ "observation.observedAt": { $lt: before.observedAt } },
 									{
-										"observation.observedAt": before.observedAt,
+										"observation.observedAt": { $eq: before.observedAt },
 										"observation.eventId": { $lt: before.eventId },
 									},
 								],
@@ -434,7 +438,7 @@ export class MongoLoopRepository implements LoopRepository {
 		return (
 			await this.obs()
 				.find(
-					{ workspaceId: w, loopId: id },
+					{ workspaceId: { $eq: w }, loopId: { $eq: id } },
 					{ projection: { observation: 1, _id: 0 } },
 				)
 				.sort({ "observation.observedAt": -1, "observation.eventId": -1 })
@@ -447,7 +451,11 @@ export class MongoLoopRepository implements LoopRepository {
 		return (
 			(
 				await this.obs().findOne(
-					{ workspaceId: w, loopId: id, "observation.denominator": { $gt: 0 } },
+					{
+						workspaceId: { $eq: w },
+						loopId: { $eq: id },
+						"observation.denominator": { $gt: 0 },
+					},
 					{
 						sort: { "observation.observedAt": -1 },
 						projection: { "observation.observedAt": 1 },
@@ -462,8 +470,8 @@ export class MongoLoopRepository implements LoopRepository {
 			.aggregate<Day>([
 				{
 					$match: {
-						workspaceId: w,
-						loopId: id,
+						workspaceId: { $eq: w },
+						loopId: { $eq: id },
 						"observation.observedAt": { $gte: from },
 					},
 				},
@@ -480,7 +488,7 @@ export class MongoLoopRepository implements LoopRepository {
 	}
 	async run(w: string, id: string, runId: string) {
 		return this.work().findOne(
-			{ _id: key(w, id, runId), workspaceId: w },
+			{ _id: { $eq: key(w, id, runId) }, workspaceId: { $eq: w } },
 			{ projection: { _id: 0 } },
 		);
 	}
@@ -498,7 +506,11 @@ export class MongoLoopRepository implements LoopRepository {
 		return (
 			(
 				await this.work().replaceOne(
-					{ _id, workspaceId: r.workspaceId, "run.revision": expected },
+					{
+						_id: { $eq: _id },
+						workspaceId: { $eq: r.workspaceId },
+						"run.revision": { $eq: expected },
+					},
 					{ ...r, ...assignmentFields(r) },
 				)
 			).matchedCount === 1
@@ -508,9 +520,9 @@ export class MongoLoopRepository implements LoopRepository {
 		await this.ready();
 		return this.work()
 			.find({
-				workspaceId: w,
-				assignedKind: actor.kind,
-				assignedId: actor.id,
+				workspaceId: { $eq: w },
+				assignedKind: { $eq: actor.kind },
+				assignedId: { $eq: actor.id },
 				"run.id": { $gt: after },
 			})
 			.sort({ "run.id": 1 })
@@ -527,9 +539,9 @@ export class MongoLoopRepository implements LoopRepository {
 	}
 	private sameRunRevision(row: RunRecord) {
 		return {
-			_id: key(row.workspaceId, row.run.loopId, row.run.id),
-			workspaceId: row.workspaceId,
-			"run.revision": row.run.revision,
+			_id: { $eq: key(row.workspaceId, row.run.loopId, row.run.id) },
+			workspaceId: { $eq: row.workspaceId },
+			"run.revision": { $eq: row.run.revision },
 		};
 	}
 	async deferAssignment(
@@ -552,7 +564,10 @@ export class MongoLoopRepository implements LoopRepository {
 	async runs(w: string, id: string, limit: number) {
 		await this.ready();
 		return this.work()
-			.find({ workspaceId: w, "run.loopId": id }, { projection: { _id: 0 } })
+			.find(
+				{ workspaceId: { $eq: w }, "run.loopId": { $eq: id } },
+				{ projection: { _id: 0 } },
+			)
 			.sort({ createdAt: -1, "run.id": -1 })
 			.limit(limit)
 			.toArray();
@@ -561,7 +576,7 @@ export class MongoLoopRepository implements LoopRepository {
 		await this.ready();
 		return this.work()
 			.find(
-				{ workspaceId: w, "run.loopId": id, waiting: true },
+				{ workspaceId: { $eq: w }, "run.loopId": { $eq: id }, waiting: true },
 				{ projection: { _id: 0 } },
 			)
 			.toArray();
@@ -569,8 +584,8 @@ export class MongoLoopRepository implements LoopRepository {
 	async active(w: string, id: string) {
 		await this.ready();
 		return this.work().countDocuments({
-			workspaceId: w,
-			"run.loopId": id,
+			workspaceId: { $eq: w },
+			"run.loopId": { $eq: id },
 			"run.status": "active",
 		});
 	}

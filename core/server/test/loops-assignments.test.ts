@@ -184,6 +184,54 @@ it("reconciles pending organization cases without opening the page and wakes the
 });
 
 describe.skipIf(!(await mongoAvailable()))("MongoDB assignments", () => {
+	it("sends workspace, assignee and revision values as explicit equality operands", async () => {
+		const uri = uniqueMongoUrl("lfilter");
+		const client = new MongoClient(uri, { monitorCommands: true });
+		const conn = new MongoConnection(uri, () => client);
+		const repo = new MongoLoopRepository(conn);
+		const row = run("filter-check");
+		const filters: unknown[] = [];
+		client.on("commandStarted", ({ commandName, command }) => {
+			if (commandName === "find") filters.push(command.filter);
+			if (commandName === "update") filters.push(command.updates[0].q);
+			if (commandName === "aggregate") filters.push(command.pipeline[0].$match);
+		});
+		try {
+			await repo.saveRun(row, 0);
+			expect(await repo.assigned("studio", performer, "", 5)).toHaveLength(1);
+			row.run.revision++;
+			expect(await repo.saveRun(row, 1)).toBe(true);
+			expect(await repo.saveRun(row, 1)).toBe(false);
+			await repo.days("studio", "continuity", row.createdAt);
+			const revisionFilter = {
+				_id: { $eq: JSON.stringify(["studio", "continuity", "filter-check"]) },
+				workspaceId: { $eq: "studio" },
+				"run.revision": { $eq: 1 },
+			};
+			expect(filters).toEqual([
+				{
+					workspaceId: { $eq: "studio" },
+					assignedKind: { $eq: performer.kind },
+					assignedId: { $eq: performer.id },
+					"run.id": { $gt: "" },
+				},
+				revisionFilter,
+				revisionFilter,
+				{
+					workspaceId: { $eq: "studio" },
+					loopId: { $eq: "continuity" },
+					"observation.observedAt": { $gte: row.createdAt },
+				},
+			]);
+		} finally {
+			try {
+				await client.db().dropDatabase();
+			} finally {
+				await conn.close();
+			}
+		}
+	});
+
 	it("stores, retries and acknowledges the same handoff across gateway instances", async () => {
 		const uri = uniqueMongoUrl("lass"),
 			conn = new MongoConnection(uri, (u) => new MongoClient(u));
