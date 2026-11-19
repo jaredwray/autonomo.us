@@ -9,6 +9,9 @@ import type { Document, Filter } from "mongodb";
 import { isDuplicateKey, type MongoConnection } from "../mongo.js";
 import { ServiceError } from "../service-error.js";
 
+export const WORKSPACE_ORGANIZATIONS_COLLECTION = "workspace_organizations";
+export const WORKSPACE_DECISION_CASES_COLLECTION = "workspace_decision_cases";
+
 export type OrgGraph = OrgSettings & {
 	revision: number;
 	positions: OrgPosition[];
@@ -266,10 +269,10 @@ export class MongoOrganizationRepository implements OrganizationRepository {
 	private indexed?: Promise<void>;
 	constructor(private readonly mongo: MongoConnection) {}
 	private graphs() {
-		return this.mongo.collection<GraphDoc>("workspace_organizations");
+		return this.mongo.collection<GraphDoc>(WORKSPACE_ORGANIZATIONS_COLLECTION);
 	}
 	private cases() {
-		return this.mongo.collection<CaseDoc>("workspace_decision_cases");
+		return this.mongo.collection<CaseDoc>(WORKSPACE_DECISION_CASES_COLLECTION);
 	}
 	private async ready() {
 		this.indexed ??= Promise.all([
