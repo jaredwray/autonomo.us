@@ -1,4 +1,4 @@
-# Workspace organization and decision inbox
+# Workspace organization and decisions
 
 Open **Organization** in a workspace to add positions, assign existing people or agents, and set a lead and accountable human fallback. Use **Reporting** to follow management lines. Select a position and open **Escalations** to trace a decision from that position. The snapshot on an existing case retains the rule version and the original route. A position title confers no permissions.
 
@@ -11,7 +11,7 @@ pnpm build
 pnpm --filter @autonomo.us/server exec node --import tsx scripts/demo-organization.ts
 ```
 
-The command prints a loopback URL, a deep link to the case, and temporary sign-in details. The fixture uses an isolated, in-memory gateway and synthetic identities. It creates two distinct failures on shot 014, then retries opening the same case. The reporting map places Splice under Captain. The visual-continuity rule routes the question to Iris, then Jared after 30 minutes. Use the map link to start at Splice and switch to Escalations. Start a fresh demo with `--expired` to advance the fixture clock and act as Jared in the decision inbox.
+The command prints a loopback URL, a deep link to the case, and temporary sign-in details. The fixture uses an isolated, in-memory gateway and synthetic identities. It creates two distinct failures on shot 014, then retries opening the same case. The reporting map places Splice under Captain. The visual-continuity rule routes the question to Iris, then Jared after 30 minutes. Use the map link to start at Splice and switch to Escalations. Start a fresh demo with `--expired` to advance the fixture clock and act as Jared in **Loops → Decisions**.
 
 ```sh
 pnpm --filter @autonomo.us/server exec node --import tsx scripts/demo-organization.ts --expired
@@ -24,7 +24,7 @@ The Rustboy tests exercise approval, a request for changes, and a timeout follow
 
 | Caller | Entry point | Contract |
 | --- | --- | --- |
-| Dashboard | `#/w/<workspace>/organization/positions/<id>` and `#/w/<workspace>/decision-inbox/cases/<id>` | Direct links recheck membership and case access. The assigned queue is the inbox default. |
+| Dashboard | `#/w/<workspace>/organization/positions/<id>` and `#/w/<workspace>/loops/decisions/cases/<id>` | Direct links recheck membership and case access. The Pending tab shows the open and triage cases visible to the viewer. |
 | Signed-in member | `/v1/<workspace>/organization` | Get `/branch`, `/positions/:id`, `/rules`, `/cases`, or `/cases/:id`. Post to `/preview`, `/cases`, or `/cases/:id/act`. Paginate with the returned `next` as `after`. |
 | Workspace admin | Same REST prefix | Search `/identities`, create or patch positions, update `/settings`, and put a versioned rule at `/rules/:key`. Preview a proposed rule before saving it. An archived manager's reports move to its former manager. |
 | External or hosted agent | `organization_context`, `organization_lookup`, `organization_open_case`, `organization_list_cases`, `organization_read_case`, `organization_act` | The caller's credentials identify the actor. Specify `requesterPositionId` when the actor holds multiple positions. Read pending assignments or poll requested cases for outcomes. |

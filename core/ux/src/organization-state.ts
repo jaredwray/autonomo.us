@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
-import { organizationRequest } from "./api.js";
+import { useEffect, useRef, useState } from "react";
+import { ApiError, organizationRequest } from "./api.js";
 
 export function orgLink(
 	workspace: string,
-	view: "organization" | "decision-inbox",
+	view: "organization" | "loops/decisions",
 	resource?: string,
 	id?: string,
 ) {
@@ -45,27 +45,64 @@ export function useOrgRead<T>(
 	workspace: string,
 	path: string | null,
 	revision = 0,
+	request = organizationRequest,
+	live = false,
 ) {
 	const key = JSON.stringify([workspace, path, revision]);
+	const lastRead = useRef<string | null>(null);
 	const [result, setResult] = useState<{
 		key: string;
 		data?: T;
 		error?: string;
 	}>();
 	useEffect(() => {
-		if (!path) return;
+		if (path === null) {
+			lastRead.current = null;
+			return;
+		}
 		const controller = new AbortController();
-		organizationRequest<T>(workspace, path, { signal: controller.signal }).then(
-			(data) => {
-				if (!controller.signal.aborted) setResult({ key, data });
-			},
-			(cause) => {
-				if (!controller.signal.aborted)
-					setResult({ key, error: messageFrom(cause) });
-			},
-		);
-		return () => controller.abort();
-	}, [key, workspace, path]);
+		let pending = false;
+		const read = async () => {
+			if (pending || controller.signal.aborted || (live && document.hidden))
+				return;
+			pending = true;
+			try {
+				const data = await request<T>(workspace, path, {
+					signal: controller.signal,
+				});
+				if (!controller.signal.aborted) {
+					lastRead.current = key;
+					setResult({ key, data });
+				}
+			} catch (cause) {
+				if (controller.signal.aborted) return;
+				lastRead.current = key;
+				const inaccessible =
+					cause instanceof ApiError && [401, 403, 404].includes(cause.status);
+				setResult((previous) =>
+					live &&
+					!inaccessible &&
+					previous?.key === key &&
+					previous.data !== undefined
+						? previous
+						: { key, error: messageFrom(cause) },
+				);
+			} finally {
+				pending = false;
+			}
+		};
+		if (live || lastRead.current !== key) void read();
+		if (!live) return () => controller.abort();
+		const timer = window.setInterval(read, 30_000);
+		window.addEventListener("focus", read);
+		document.addEventListener("visibilitychange", read);
+		return () => {
+			controller.abort();
+			window.clearInterval(timer);
+			window.removeEventListener("focus", read);
+			document.removeEventListener("visibilitychange", read);
+		};
+	}, [key, workspace, path, request, live]);
 	return result?.key === key ? result : { key };
 }
 

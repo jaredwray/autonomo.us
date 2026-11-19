@@ -170,7 +170,7 @@ function PositionDetails({
 				<ul>
 					{cases.map((c) => (
 						<li key={c.id}>
-							<a href={orgLink(workspace, "decision-inbox", "cases", c.id)}>
+							<a href={orgLink(workspace, "loops/decisions", "cases", c.id)}>
 								{c.question}
 							</a>{" "}
 							· {c.status.replaceAll("_", " ")}

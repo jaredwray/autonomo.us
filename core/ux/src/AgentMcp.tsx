@@ -46,6 +46,12 @@ export const agentTokenConfig: TokenViewConfig<AgentTokenPermission> = {
 	permissionGroups: [
 		{ resource: "mcp", label: "MCP", choices: ["mcp:read", "mcp:call"] },
 		{
+			resource: "loops",
+			label: "Loops",
+			choices: ["loops:read", "loops:report", "loops:act"],
+			hint: "Read loop activity, report measurements, or act on assigned workflow steps.",
+		},
+		{
 			resource: "channels",
 			label: "Channels",
 			choices: ["channels:manage"],

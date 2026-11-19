@@ -41,6 +41,8 @@ export type CaseNotice = {
 	outcomeId: string | null;
 };
 export type StoredCase = Omit<DecisionCase, "canAct" | "canHandoff"> & {
+	/** Set only when the gateway opens a case for an executable loop run. */
+	loopOwned?: true;
 	workspaceId: string;
 	stepIndex: number;
 	checkAt: string | null;
@@ -50,7 +52,7 @@ export type StoredCase = Omit<DecisionCase, "canAct" | "canHandoff"> & {
 };
 export type CaseFilter = {
 	actor?: OrgActorRef;
-	view?: "assigned" | "requested" | "triage";
+	view?: "assigned" | "requested" | "triage" | "pending";
 	assignedPositions?: string[];
 	admin?: boolean;
 	positionId?: string;
@@ -81,6 +83,10 @@ export interface OrganizationRepository {
 		graphRevision: number,
 	): Promise<boolean>;
 	listCases(workspaceId: string, query: CaseFilter): Promise<StoredCase[]>;
+	countPendingCases(
+		workspaceId: string,
+		requester?: OrgActorRef,
+	): Promise<number>;
 	due(now: string, limit: number): Promise<StoredCase[]>;
 	checkLater(row: StoredCase, checkAt: string): Promise<void>;
 	undelivered(limit: number): Promise<StoredCase[]>;
@@ -116,6 +122,15 @@ function matchesCase(row: StoredCase, q: CaseFilter) {
 		)
 	)
 		return false;
+	if (q.view === "pending") {
+		return (
+			(row.status === "open" || row.status === "triage") &&
+			(q.admin ||
+				sameActor(row.requester, q.actor) ||
+				sameActor(row.assignee, q.actor) ||
+				q.assignedPositions?.includes(row.assigneePositionId ?? ""))
+		);
+	}
 	if (q.view === "triage") return q.admin && row.status === "triage";
 	if (q.view === "assigned")
 		return (
@@ -172,6 +187,14 @@ export class MemoryOrganizationRepository implements OrganizationRepository {
 			return false;
 		this.cases.set(row.id, clone(row));
 		return true;
+	}
+	async countPendingCases(w: string, requester?: OrgActorRef) {
+		return [...this.cases.values()].filter(
+			(row) =>
+				row.workspaceId === w &&
+				(!requester || sameActor(row.requester, requester)) &&
+				(row.status === "open" || row.status === "triage"),
+		).length;
 	}
 	async listCases(w: string, q: CaseFilter) {
 		return clone(
@@ -479,6 +502,15 @@ export class MongoOrganizationRepository implements OrganizationRepository {
 			return reserved.modifiedCount === 1 && this.finish(w, intent);
 		});
 	}
+	async countPendingCases(w: string, requester?: OrgActorRef) {
+		return this.storage(() =>
+			this.cases().countDocuments({
+				workspaceId: w,
+				status: { $in: ["open", "triage"] },
+				...(requester ? actorFilter("requester", requester) : {}),
+			}),
+		);
+	}
 	async listCases(w: string, q: CaseFilter) {
 		const filter: Filter<CaseDoc> = { workspaceId: w };
 		if (q.after) filter._id = { $gt: q.after };
@@ -490,7 +522,15 @@ export class MongoOrganizationRepository implements OrganizationRepository {
 					{ assigneePositionId: { $in: q.assignedPositions ?? [] } },
 				],
 			});
-		else if (q.view === "requested")
+		else if (q.view === "pending") {
+			filter.status = { $in: ["open", "triage"] };
+			if (!q.admin)
+				filter.$or = [
+					actorFilter("requester", q.actor),
+					actorFilter("assignee", q.actor),
+					{ assigneePositionId: { $in: q.assignedPositions ?? [] } },
+				];
+		} else if (q.view === "requested")
 			Object.assign(filter, actorFilter("requester", q.actor));
 		else if (q.view === "triage") filter.status = "triage";
 		else if (!q.admin)

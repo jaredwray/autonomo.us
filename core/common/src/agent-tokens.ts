@@ -29,8 +29,16 @@ export const AGENT_TOKEN_PERMISSIONS = {
 	"web:fetch": "Web: Fetch",
 	"models:chat": "Models: Chat",
 	"video:generate": "Video: Generate",
+	"loops:read": "Loops: Read",
+	"loops:report": "Loops: Report observations",
+	"loops:act": "Loops: Perform assigned steps",
 	"organization:decide": "Organization: Decide assigned cases",
 } as const;
+export const LOOP_AGENT_PERMISSIONS = [
+	"loops:read",
+	"loops:report",
+	"loops:act",
+] as const satisfies readonly (keyof typeof AGENT_TOKEN_PERMISSIONS)[];
 export type AgentTokenPermission = keyof typeof AGENT_TOKEN_PERMISSIONS;
 export const DEFAULT_AGENT_TOKEN_PERMISSIONS: readonly AgentTokenPermission[] =
 	[];

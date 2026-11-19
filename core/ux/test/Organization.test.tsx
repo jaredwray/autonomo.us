@@ -66,7 +66,8 @@ it("links a reporting position to its decision route and lets the assigned human
 			.map((a) => a.textContent),
 	).toEqual(["Shot Editor", "Art Director", "Executive Producer"]);
 	expect(screen.getByText(/Response window 30 min/)).toBeTruthy();
-	fireEvent.click(screen.getByRole("link", { name: "Decision inbox" }));
+	fireEvent.click(screen.getByRole("link", { name: "Loops" }));
+	fireEvent.click(await screen.findByRole("tab", { name: /^Decisions/ }));
 	await screen.findByRole("heading", { name: record.question });
 	expect(screen.getByText("Rejected cut")).toBeTruthy();
 	fireEvent.click(screen.getByRole("button", { name: "Request changes" }));

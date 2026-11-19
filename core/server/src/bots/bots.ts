@@ -13,6 +13,7 @@ import {
 	type BotSummary,
 	type CreateBotRequest,
 	DEFAULT_BOT_LIMITS,
+	LOOP_AGENT_PERMISSIONS,
 	type UpdateBotRequest,
 } from "@autonomo.us/common";
 import { BotError } from "./errors.js";
@@ -137,6 +138,16 @@ export class BotService {
 		if (input.tools !== undefined) bot.tools = input.tools === true;
 		if (input.organizationDecisions !== undefined)
 			bot.organizationDecisions = input.organizationDecisions === true;
+		if (input.loopPermissions !== undefined) {
+			if (
+				!Array.isArray(input.loopPermissions) ||
+				input.loopPermissions.some(
+					(grant) => !LOOP_AGENT_PERMISSIONS.includes(grant),
+				)
+			)
+				throw new BotError("Choose supported loop permissions.");
+			bot.loopPermissions = [...new Set(input.loopPermissions)];
+		}
 		if (input.web !== undefined) bot.web = input.web === true;
 		if (input.webScope !== undefined) {
 			if (!(BOT_WEB_SCOPES as readonly string[]).includes(input.webScope))

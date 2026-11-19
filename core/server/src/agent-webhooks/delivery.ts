@@ -82,6 +82,7 @@ const MODELS_CHANGE = {
 
 /** What to do about the events of one kind, said once below the list. */
 const NEXT = {
+	loops: "Call loops_assignments to retrieve your current loop assignments.",
 	organization:
 		"Use organization_read_case with the case ID. Consume a work outcome once using its stable outcome ID.",
 	channels:
@@ -184,6 +185,12 @@ export function wakeText(
 				next.add("membership");
 				lines.push(
 					`- ${who(event.by)} ${event.type === "channel.archived" ? "archived" : "unarchived"} #${event.channel}.`,
+				);
+				break;
+			case "loop.assigned":
+				next.add("loops");
+				lines.push(
+					`- A workflow step is ready in loop run ${line(event.runId)}.`,
 				);
 				break;
 			case "decision.assigned":

@@ -6,9 +6,10 @@ import type {
 	OpenDecisionCase,
 	WorkspaceAccess,
 } from "@autonomo.us/common";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { organizationRequest } from "./api.js";
 import { Dropdown } from "./Dropdown.js";
+import { loopLink } from "./loops-state.js";
 import {
 	PositionPicker,
 	RouteTrace,
@@ -119,15 +120,17 @@ function CaseDetail({
 	revision: number;
 	refresh: () => void;
 }) {
-	const resource = useOrgRead<DecisionCase>(
-		workspace,
-		`/cases/${encodeURIComponent(id)}`,
-		revision,
-	);
 	const [choice, setChoice] = useState<DecisionAction | null>(null);
 	const [reason, setReason] = useState("");
 	const [target, setTarget] = useState("");
 	const action = useOrgAction();
+	const resource = useOrgRead<DecisionCase>(
+		workspace,
+		`/cases/${encodeURIComponent(id)}`,
+		revision,
+		organizationRequest,
+		!choice && !action.busy,
+	);
 	const c = resource.data;
 	if (resource.error)
 		return (
@@ -144,7 +147,7 @@ function CaseDetail({
 	async function act(record: DecisionCase, kind: DecisionAction) {
 		window.location.hash = orgLink(
 			workspace,
-			"decision-inbox",
+			"loops/decisions",
 			"cases",
 			record.id,
 		);
@@ -167,6 +170,7 @@ function CaseDetail({
 			refresh();
 		}
 	}
+	const linkedRun = /^loop-run:([\w-]+):([\w-]+)$/.exec(c.sourceWorkId);
 	return (
 		<article className="card org-case">
 			<p className="eyebrow">
@@ -176,7 +180,22 @@ function CaseDetail({
 			<dl>
 				<dt>Blocked work</dt>
 				<dd>
-					{c.sourceWorkId} · revision {c.sourceRevision}
+					{linkedRun ? (
+						<a
+							href={loopLink(
+								workspace,
+								linkedRun[1],
+								"workflow",
+								"activity",
+								linkedRun[2],
+							)}
+						>
+							View workflow run
+						</a>
+					) : (
+						c.sourceWorkId
+					)}{" "}
+					· revision {c.sourceRevision}
 				</dd>
 				<dt>Requested by</dt>
 				<dd>{c.requester.name}</dd>
@@ -338,39 +357,53 @@ function CaseDetail({
 	);
 }
 
-type QueueView = "assigned" | "requested" | "triage";
+type QueueView = "pending" | "assigned" | "requested" | "triage";
 export function DecisionInbox({
 	workspace,
 	route,
+	onChange,
 }: {
 	workspace: WorkspaceAccess;
 	route: string;
+	onChange: () => void;
 }) {
 	const selected = routeItem(route, "cases");
-	const [view, setView] = useState<QueueView>("assigned");
+	const [view, setView] = useState<QueueView>("pending");
 	const [cursor, setCursor] = useState<string | null>(null);
 	const [creating, setCreating] = useState(false);
 	const [revision, setRevision] = useState(0);
-	const refresh = () => setRevision((v) => v + 1);
+	const refresh = () => {
+		setRevision((v) => v + 1);
+		onChange();
+	};
+	const queue = queryPath("/cases", { view, after: cursor });
+	const [selection, setSelection] = useState<{ queue: string; id: string }>();
 	const list = useOrgRead<DecisionCasePage>(
 		workspace.id,
-		queryPath("/cases", { view, after: cursor }),
+		queue,
 		revision,
+		organizationRequest,
+		!creating,
 	);
 	const tabs: { id: QueueView; label: string }[] = [
+		{ id: "pending", label: "Pending" },
 		{ id: "assigned", label: "Assigned to me" },
 		{ id: "requested", label: "Requested by me" },
 	];
 	if (workspace.role === "admin")
 		tabs.push({ id: "triage", label: "Human triage" });
-	const focus = selected ?? list.data?.cases[0]?.id;
+	const first = list.data?.cases[0]?.id;
+	useEffect(() => {
+		if (!selected && first)
+			setSelection((previous) =>
+				previous?.queue === queue ? previous : { queue, id: first },
+			);
+	}, [selected, queue, first]);
+	const focus = selected ?? (selection?.queue === queue ? selection.id : first);
 	return (
-		<div className="dashboard">
+		<div>
 			<header className="dashboard-header">
-				<div>
-					<p className="eyebrow">{workspace.name}</p>
-					<h1>Decision inbox</h1>
-				</div>
+				<h2>Decisions</h2>
 				<button
 					className="button primary"
 					type="button"
@@ -389,7 +422,7 @@ export function DecisionInbox({
 						setCursor(null);
 						window.location.hash = orgLink(
 							workspace.id,
-							"decision-inbox",
+							"loops/decisions",
 							"cases",
 							c.id,
 						);
@@ -405,7 +438,7 @@ export function DecisionInbox({
 				onSelect={(next) => {
 					setView(next);
 					setCursor(null);
-					window.location.hash = orgLink(workspace.id, "decision-inbox");
+					window.location.hash = orgLink(workspace.id, "loops/decisions");
 				}}
 			/>
 			<div
@@ -416,7 +449,7 @@ export function DecisionInbox({
 			>
 				<div className="card">
 					<div className="section-heading">
-						<h2>Decisions</h2>
+						<h3>Decisions in this queue</h3>
 						<button type="button" className="button" onClick={refresh}>
 							Refresh
 						</button>
@@ -433,14 +466,17 @@ export function DecisionInbox({
 										aria-current={focus === c.id ? "true" : undefined}
 										href={orgLink(
 											workspace.id,
-											"decision-inbox",
+											"loops/decisions",
 											"cases",
 											c.id,
 										)}
 									>
 										<strong>{c.question}</strong>
 										<small>
-											{c.sourceWorkId} · {c.status.replaceAll("_", " ")}
+											{c.assignee?.name ?? "Human triage"} ·{" "}
+											{c.status.replaceAll("_", " ")}
+											{c.deadline &&
+												` · Due ${new Date(c.deadline).toLocaleString()}`}
 										</small>
 									</a>
 								</li>

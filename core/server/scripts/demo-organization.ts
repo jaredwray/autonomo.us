@@ -23,7 +23,7 @@ try {
 	}
 	const url = await server.listen({ host: "127.0.0.1", port: 0 });
 	console.info(
-		`Rustboy development workspace\nReporting map: ${url}/#/w/${studio.workspaceId}/organization/positions/${studio.splice.id}\nDecision: ${url}/#/w/${studio.workspaceId}/decision-inbox/cases/${record.id}\nSign in as ${studio.email} with this temporary password: ${studio.password}\nCtrl+C closes the demo.`,
+		`Rustboy development workspace\nReporting map: ${url}/#/w/${studio.workspaceId}/organization/positions/${studio.splice.id}\nDecision: ${url}/#/w/${studio.workspaceId}/loops/decisions/cases/${record.id}\nSign in as ${studio.email} with this temporary password: ${studio.password}\nCtrl+C closes the demo.`,
 	);
 } finally {
 	shots.close();

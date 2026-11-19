@@ -9,6 +9,7 @@ export {
 	type AgentTokenTtl,
 	type CreateAgentTokenRequest,
 	DEFAULT_AGENT_TOKEN_PERMISSIONS,
+	LOOP_AGENT_PERMISSIONS,
 	type RollAgentTokenRequest,
 	type UpdateAgentTokenRequest,
 } from "./agent-tokens.js";
@@ -139,6 +140,24 @@ export {
 	splitChannelMentions,
 	type UpdateChannelRequest,
 } from "./channels.js";
+export type {
+	CreateLoop,
+	LoopDetail,
+	LoopMetric,
+	LoopMetricPoint,
+	LoopObservation,
+	LoopObservationInput,
+	LoopPreview,
+	LoopPreviewInput,
+	LoopRun,
+	LoopRunCommand,
+	LoopSamplesPage,
+	LoopSourceActor,
+	LoopStep,
+	LoopSummary,
+	LoopWorkflow,
+	PublishLoopWorkflow,
+} from "./loops.js";
 export type {
 	ActOnDecision,
 	DecisionAction,

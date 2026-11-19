@@ -9,7 +9,7 @@ export function Icon({
 		| "synapse"
 		| "channels"
 		| "organization"
-		| "decision-inbox"
+		| "loops"
 		| "agents"
 		| "api-tokens"
 		| "team"
@@ -38,7 +38,8 @@ export function Icon({
 			"M12 5v15 M12 5a3 3 0 0 0-5.6-1.5A3 3 0 0 0 4 7.5a3 3 0 0 0 .6 4.5A3 3 0 0 0 5 17a3 3 0 0 0 4 2.6A3 3 0 0 0 12 20 M12 5a3 3 0 0 1 5.6-1.5A3 3 0 0 1 20 7.5a3 3 0 0 1-.6 4.5A3 3 0 0 1 19 17a3 3 0 0 1-4 2.6A3 3 0 0 1 12 20 M7 9.5h5 M12 13.5h5",
 		organization:
 			"M9 2h6v5H9z M2 16h6v5H2z M16 16h6v5h-6z M12 7v5H5v4 M12 12h7v4",
-		"decision-inbox": "M3 13l3-9h12l3 9v7H3z M3 13h5l2 3h4l2-3h5",
+		loops:
+			"M20 8a8 8 0 0 0-14-3L3 8m0-5v5h5 M4 16a8 8 0 0 0 14 3l3-3m0 5v-5h-5",
 		channels: "M4 5h16v11H10l-5 4v-4H4z M8 9h8 M8 12h5",
 		agents:
 			"M12 3v3 M5 6h14v14H5z M2 10v6 M22 10v6 M9 11h.01 M15 11h.01 M9 16h6",

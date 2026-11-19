@@ -31,9 +31,9 @@ import {
 import { ChannelsView } from "./ChannelsView.js";
 import { channelAttention, useChannelList } from "./channels-list.js";
 import { Dashboard } from "./Dashboard.js";
-import { DecisionInbox } from "./DecisionInbox.js";
 import { Icon } from "./Icons.js";
 import { LoadingBanner } from "./LoadingBanner.js";
+import { LoopsView } from "./LoopsView.js";
 import { ModelsView } from "./ModelsView.js";
 import { OrganizationView } from "./OrganizationView.js";
 import { overviewBadges } from "./overview-items.js";
@@ -57,7 +57,7 @@ const workspaceViews = {
 	channels: "Channels",
 	agents: "Agents",
 	organization: "Organization",
-	"decision-inbox": "Decision inbox",
+	loops: "Loops",
 	"api-tokens": "API Tokens",
 };
 /**
@@ -94,7 +94,7 @@ function currentRoute(): Route {
 		window.location.hash,
 	);
 	if (scoped) {
-		const former = formerView(scoped[2] ?? "");
+		const former = formerView(scoped[2] ?? "", scoped[3] ?? "");
 		const view = (former?.view ?? scoped[2] ?? "dashboard") as View;
 		const known = isWorkspaceView(view);
 		return {
@@ -107,7 +107,7 @@ function currentRoute(): Route {
 	// A pre-workspace link such as #/models or #/synapse/shared/<note> opens
 	// in the remembered workspace.
 	const [name = "", ...rest] = window.location.hash.slice(2).split("/");
-	const former = formerView(name);
+	const former = formerView(name, rest.length ? `/${rest.join("/")}` : "");
 	const view = former?.view ?? name;
 	const known = view === "profile" || Object.hasOwn(viewLabels, view);
 	return {
@@ -119,7 +119,9 @@ function currentRoute(): Route {
 		renamed: Boolean(former),
 	};
 }
-function formerView(name: string) {
+function formerView(name: string, tail: string) {
+	if (name === "decision-inbox")
+		return { view: "loops" as const, rest: `/decisions${tail}` };
 	return Object.hasOwn(formerViews, name) ? formerViews[name] : undefined;
 }
 const href = (view: View, workspaceId: string | null, rest = "") =>
@@ -709,8 +711,12 @@ export function App() {
 							<ApiTokensView workspace={selected} />
 						) : shown === "organization" ? (
 							<OrganizationView workspace={selected} route={route.rest} />
-						) : shown === "decision-inbox" ? (
-							<DecisionInbox workspace={selected} route={route.rest} />
+						) : shown === "loops" ? (
+							<LoopsView
+								workspace={selected}
+								route={route.rest}
+								userId={user.id}
+							/>
 						) : shown === "models" ? (
 							<ModelsView workspace={selected} />
 						) : shown === "proxies" ? (

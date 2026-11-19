@@ -93,11 +93,11 @@ export class OrganizationChart {
 		if (!who?.use || (manage && !who.manage)) throw forbidden();
 		return who;
 	}
-	async identities(c: OrgCaller, q = "") {
+	async identities(c: OrgCaller, q = "", loopAct = false) {
 		await this.principal(c, true);
 		const needle = boundedText(q, "Search", 140, true).toLowerCase();
 		return {
-			identities: (await this.directory.list(c.workspaceId))
+			identities: (await this.directory.list(c.workspaceId, loopAct))
 				.filter((x) => x.name.toLowerCase().includes(needle))
 				.slice(0, 100),
 		};

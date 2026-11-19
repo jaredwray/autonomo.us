@@ -13,6 +13,12 @@ import { TokensView, type TokenViewConfig } from "./TokensView.js";
 
 const permissionGroups = [
 	{
+		resource: "loops",
+		label: "Loops",
+		choices: ["loops:report"],
+		hint: "Allows an external system to report loop measurements.",
+	},
+	{
 		resource: "models",
 		label: "Models",
 		choices: ["models:read", "models:edit"],

@@ -30,6 +30,7 @@ function setUp(options: {
 	agentStatus?: () => "active" | "expired" | "revoked";
 	permissions?: string[];
 	mayDeliverDecision?: () => Promise<boolean>;
+	mayDeliverLoopAssignment?: () => Promise<boolean>;
 	transport?: WebhookTransport;
 	resolver?: () => Promise<Array<{ address: string; family: 4 | 6 }>>;
 	log?: (message: string, details: Record<string, unknown>) => void;
@@ -67,6 +68,7 @@ function setUp(options: {
 		},
 		threadAuthor: async () => null,
 		mayDeliverDecision: options.mayDeliverDecision,
+		mayDeliverLoopAssignment: options.mayDeliverLoopAssignment,
 		transport,
 		resolver: options.resolver,
 		timing: { gapMs: 10, retryDelaysMs: [10] },
@@ -121,6 +123,59 @@ describe("agent webhook delivery in process", () => {
 			const body = JSON.parse(sent[0].body);
 			expect(body.data.events).toEqual([notice.event]);
 			expect(body.text).toContain("organization_read_case");
+		} finally {
+			await webhooks.close();
+		}
+	});
+	it("rechecks a loop step and live action grant, sending assignment IDs once", async () => {
+		const agentId = randomUUID(),
+			permissions = ["mcp:read", "mcp:call", "loops:act"];
+		let current = true;
+		const { webhooks, sent } = setUp({
+			permissions,
+			mayDeliverLoopAssignment: async () => current,
+		});
+		try {
+			await webhooks.create(
+				WORKSPACE,
+				agentId,
+				{ url: "https://hooks.example.com/loops", events: ["loops"] },
+				"Producer",
+			);
+			const event = {
+				type: "loop.assigned" as const,
+				at: new Date().toISOString(),
+				loopId: "loop",
+				runId: "run",
+				stepIndex: 1,
+			};
+			current = false;
+			await webhooks.onLoopAssignment(WORKSPACE, agentId, {
+				key: "old",
+				event,
+			});
+			await webhooks.idle();
+			current = true;
+			permissions.pop();
+			await webhooks.onLoopAssignment(WORKSPACE, agentId, {
+				key: "revoked",
+				event,
+			});
+			await webhooks.idle();
+			expect(sent).toHaveLength(0);
+			permissions.push("loops:act");
+			await webhooks.onLoopAssignment(WORKSPACE, agentId, {
+				key: "ready",
+				event,
+			});
+			await webhooks.onLoopAssignment(WORKSPACE, agentId, {
+				key: "ready",
+				event,
+			});
+			await webhooks.idle();
+			expect(sent).toHaveLength(1);
+			expect(JSON.parse(sent[0].body).data.events).toEqual([event]);
+			expect(JSON.parse(sent[0].body).text).toContain("loops_assignments");
 		} finally {
 			await webhooks.close();
 		}

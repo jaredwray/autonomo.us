@@ -595,6 +595,34 @@ describe("bots the gateway runs", () => {
 			by: { id: reviewer.id, type: "instructions" },
 		});
 	});
+	it("offers only the selected loop tools to an instruction agent", async () => {
+		const { createChannel, post, addAgent, bot, next, requests } =
+			await start();
+		const channel = await createChannel("quality");
+		const operator = await bot({
+			name: "Operator",
+			model: "stub/echo-model",
+			tools: true,
+			loopPermissions: ["loops:read", "loops:act"],
+		});
+		await addAgent(channel.id, operator.id);
+		const asked = await post(channel.id, `<@agent:${operator.id}> ready?`);
+		await next(channel.id, asked.seq);
+		const tools = (
+			requests.find((request) => request.tools?.length)?.tools as Array<{
+				function: { name: string };
+			}>
+		).map((entry) => entry.function.name);
+		expect(tools).toEqual(
+			expect.arrayContaining([
+				"loops_list",
+				"loops_read",
+				"loops_assignments",
+				"loops_run_action",
+			]),
+		);
+		expect(tools).not.toContain("loops_observe");
+	});
 	it("lets a bot with tools use its Synapse memory during a reply", async () => {
 		const { ok, createChannel, post, addAgent, bot, details, next, requests } =
 			await start();
@@ -621,6 +649,7 @@ describe("bots the gateway runs", () => {
 		expect(offered).toContain("channels_read");
 		expect(offered).toContain("organization_list_cases");
 		expect(offered).not.toContain("organization_act");
+		expect(offered.some((name) => name.startsWith("loops_"))).toBe(false);
 		for (const name of [
 			"channels_post",
 			"channels_create",
