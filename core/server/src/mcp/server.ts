@@ -84,6 +84,8 @@ export type McpCallContext = {
 	 * writes must then do no more than keep what it read.
 	 */
 	untrusted?: boolean;
+	/** The address the request reached the gateway at, for links a tool hands back. */
+	origin?: string;
 };
 /** The agent a request authenticated as, in its workspace. */
 export type McpAgent = {
@@ -541,6 +543,7 @@ export async function mcpRoutes(
 		try {
 			const result = await dispatch(agent, method, params, {
 				signal: closed.signal,
+				origin: options.origin(request),
 			});
 			return reply.send({ jsonrpc: "2.0", id, result });
 		} catch (error) {

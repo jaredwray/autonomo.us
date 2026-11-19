@@ -27,6 +27,7 @@
 			"/v1/*",
 			"/mcp",
 			"/oauth/*",
+			"/video/downloads/*",
 			"/.well-known/*",
 			"/health",
 			"/healthz"

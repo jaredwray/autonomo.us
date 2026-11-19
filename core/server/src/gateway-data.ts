@@ -26,6 +26,12 @@ import {
 	SYNAPSE_SPACES_COLLECTION,
 } from "./synapse/mongo-repository.js";
 import { TELEMETRY_COLLECTION } from "./telemetry/mongo.js";
+import { VIDEO_JOBS_COLLECTION } from "./video/jobs.js";
+import {
+	VIDEO_CONNECTIONS_COLLECTION,
+	VIDEO_POLICY_COLLECTION,
+	VIDEO_USAGE_COLLECTION,
+} from "./video/store.js";
 
 /**
  * Every collection the gateway writes except the setup marker
@@ -46,6 +52,10 @@ export const GATEWAY_COLLECTIONS = [
 	"gateway_web_policy",
 	"gateway_web_usage",
 	"gateway_web_reservations",
+	VIDEO_CONNECTIONS_COLLECTION,
+	VIDEO_POLICY_COLLECTION,
+	VIDEO_USAGE_COLLECTION,
+	VIDEO_JOBS_COLLECTION,
 	"gateway_routing",
 	"gateway_workspaces",
 	"gateway_instance",

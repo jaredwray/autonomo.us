@@ -274,6 +274,10 @@ through environment variables:
 | `CLOUDFLARE_BROWSER_API_TOKEN` | A Cloudflare Browser Run proxy named `cloudflare-browser` on `CLOUDFLARE_ACCOUNT_ID`; the token needs the Browser Rendering Edit permission, which a Workers AI token should not carry |
 | `BRIGHTDATA_API_KEY` + `BRIGHTDATA_ZONE` | A Bright Data Web Unlocker proxy named `brightdata`; `BRIGHTDATA_PRICE_PER_1000` sets your plan's price (default 1.5) |
 | `WEB_FETCH_DISABLED` | `true` turns web access off in every workspace and removes the `web_fetch` tool |
+| `GOOGLE_VIDEO_API_KEY` | A Google Gemini Omni connection named `google-video` for [video generation](#video-generation). A separate variable from `GEMINI_API_KEY` on purpose: a chat key does not start paid video |
+| `RUNWAY_API_KEY` | A Runway connection named `runway` for video generation; `RUNWAYML_API_SECRET` (Runway's own name) is an alias |
+| `LUMA_API_KEY` | A Luma Ray connection named `luma` for video generation; `LUMA_AGENTS_API_KEY` is an alias, and `LUMA_CREDIT_PRICE_USD` sets what a credit costs on your plan (default 0.01; 0 to 10) |
+| `VIDEO_DISABLED` | `true` turns video generation off in every workspace and removes the `video_*` tools |
 | `XAI_API_KEY` | Registers the native xAI Grok adapter as `xai`; `XAI_MODELS` overrides the advertised list (default `grok-4`) |
 | `OPENAI_COMPAT_BASE_URL` | Registers an OpenAI-compatible provider — Ollama, LM Studio, vLLM, llama.cpp (`OPENAI_COMPAT_NAME` defaults to `local`, plus optional `OPENAI_COMPAT_API_KEY` / `OPENAI_COMPAT_MODELS`) |
 | `MONGODB_URI` | Persists the setup marker, team accounts, invites, API tokens, agent tokens, provider settings, routing, Synapse notes, and telemetry. Compose uses `mongodb://autonomous:autonomous@mongo:27017/autonomous?authSource=admin` |
@@ -378,6 +382,8 @@ within that workspace:
 | Channels | None, Read, Post | Read lists channels and reads messages. Post also posts, edits and deletes the token's own messages. Neither creates or changes a channel or its agents. |
 | Proxies | None, Read, Edit | Read lists proxies, their usage, and the web policy. Edit also adds proxies, changes their keys, saves the policy, and runs a proxy's billable test. Keys are never returned. |
 | Web | None, Fetch | Fetch reads a page with `POST /v1/<workspace>/web/fetch`, through the workspace's proxies when needed, within its limits. |
+| Video | None, Read, Edit | Read lists video connections, their usage, the video policy, and the models the workspace can use. Edit also adds connections, changes their keys, and saves the policy. Keys are never returned. |
+| Video generation | None, Generate | Generate starts, follows, lists, and cancels videos with `/v1/<workspace>/video/jobs`, within the workspace's limits. It sees every job in the workspace. |
 
 Edit includes Read for that resource, but never Run. API token management and
 action history remain owner-only. Requests without the required permission
@@ -386,7 +392,7 @@ return 403 before any provider call. There is no per-model or per-pool scope yet
 The API accepts permission IDs `models:read`, `models:edit`, `routing:read`,
 `routing:edit`, `inference:run`, `telemetry:read`, `synapse:read`,
 `synapse:edit`, `channels:read`, `channels:edit`, `proxies:read`, `proxies:edit`,
-and `web:fetch`. For example, an observer
+`web:fetch`, `video:read`, `video:edit`, and `video:generate`. For example, an observer
 can use `["models:read", "routing:read", "telemetry:read"]`. The dashboard starts
 new tokens with every permission unchecked; select the access each token needs.
 API clients that omit permissions default to Models Read + Inference Run. Older stored tokens
@@ -425,9 +431,9 @@ Workspace admins create, change, and revoke every kind of agent in their
 workspace, and approve OAuth sign-ins to it. Members see the list. An agent
 acts only in its own workspace. Agents of the last two kinds use the MCP
 server at `POST /mcp`, which serves the [Synapse](#synapse),
-[Channels](#channels), [model](#models-for-agents), and
-[web](#web-access-and-proxies) tools, and hold MCP grants that an admin
-chooses. Each can also have a [webhook](#webhooks-that-wake-an-agent) that
+[Channels](#channels), [model](#models-for-agents),
+[web](#web-access-and-proxies), and [video](#video-generation) tools, and hold
+MCP grants that an admin chooses. Each can also have a [webhook](#webhooks-that-wake-an-agent) that
 wakes it when something happens that concerns it, anywhere in the app, so it
 does not have to poll.
 
@@ -450,7 +456,9 @@ grant, `web:fetch`, lets an agent read web pages with `web_fetch`, through the
 workspace's proxies when a site blocks it; see
 [Web access and proxies](#web-access-and-proxies). `models:chat` lets an
 agent call the workspace's models with `models_chat`; see
-[Models for agents](#models-for-agents). Another grant, `channels:manage`, lets an agent create, rename, and archive channels and
+[Models for agents](#models-for-agents). `video:generate` lets an agent start
+videos with `video_generate` and follow and cancel its own; see
+[Video generation](#video-generation). Another grant, `channels:manage`, lets an agent create, rename, and archive channels and
 change which agents are in them. That includes adding itself, so it opens every
 channel in the workspace to that agent. These grants do
 not authorize any REST endpoint: an agent token on `/v1/*` gets 401. Permission
@@ -1031,6 +1039,100 @@ month's usage, the policy, and the budget); `POST /proxies`
 `GET|PUT /web/policy` (`PUT` sends the `revision` it read, 409 if stale); and
 `POST /web/fetch` (`{ url, format?, maxChars?, skipDirect?, render? }`). The MCP
 tool takes the same arguments as `/web/fetch`.
+
+### Video generation
+
+Agents and scripts make short videos from a prompt through one interface,
+whichever provider makes them. A video takes from half a minute to several
+minutes, so starting one returns a job at once, and the job is followed until
+it finishes with a link to an MP4. The design, and how the three providers
+were chosen, is in [docs/VIDEO_MODELS_PLAN.md](docs/VIDEO_MODELS_PLAN.md).
+
+Three providers are supported, each a plain HTTPS API with its own key, so
+all of them work on Node and on the Worker:
+
+| Provider | Models | Rough list price |
+| --- | --- | --- |
+| [Google Gemini Omni](https://aistudio.google.com/docs/omni) (`google`) | `gemini-omni-1.2-flash`: text to video with sound, 3 to 10 s, 16:9 or 9:16, 360p or 720p | $0.023 a second at 360p, $0.07 at 720p |
+| [Runway](https://docs.dev.runwayml.com) (`runway`) | `seedance2_5` (default): text or image to video with sound, 4 to 30 s, 16:9, 9:16, or 1:1, 480p to 1080p. `gen4.5`: text or image, 2 to 10 s, 720p | Seedance 2.5 at 720p: $0.30 a second, $0.80 at least. Gen-4.5: $0.12 a second |
+| [Luma](https://docs.agents.lumalabs.ai) (`luma`) | `ray-3.2`: text or image to video, 5 or 10 s, 16:9, 9:16, or 1:1, 360p to 1080p | Credits per video (100 for 5 s at 720p), at your plan's credit price |
+
+OpenAI's Sora API and Veo on the Gemini API were shut down in 2026, so they
+are not among them. Runway also hosts Kling, Veo 3.1, and others, which can
+be added to its catalogue later without a new adapter.
+
+- **Jobs.** `video_generate` (or `POST /video/jobs`) checks the request,
+  holds its estimated cost, writes the job, and starts it on the first
+  connection that can make it: the policy's order, then the rest as added.
+  A caller may name a `provider` (a connection) and a `model`. A provider
+  error that cost nothing (a refused key, no credits, a rate limit, a
+  connection that was refused) moves on to the next connection. A refused
+  prompt, a rejected request, or a call that timed out or broke off after
+  the request may have arrived stops, since the provider may have taken it.
+  The job is followed with `video_status` (or `GET /video/jobs/:id`), which
+  asks the provider at most every 5 seconds and can wait up to 60 seconds
+  for it to finish. Nothing polls in the background, so it works the same on
+  the Worker. Job ids are the gateway's own (`vid_…`); provider ids never
+  leave the server.
+- **The video.** A finished job's `video.url` is a gateway link,
+  `/video/downloads/<token>`, that works without a credential, so an agent
+  can hand it on. For Runway and Luma it redirects to the provider's file;
+  Luma's links last an hour, so the gateway fetches a fresh one when needed.
+  Google returns the video only to its key, so the link streams it, always
+  as `video/mp4`, sandboxed and as an attachment. The gateway never stores
+  video bytes. A video expires when the provider stops keeping it (Runway
+  about a day, Luma about a week, Google 7 days here); the link then
+  answers 410. The gateway masks the token in its own request logs, but
+  Cloudflare's invocation logs record request URLs on a Worker deployment,
+  so whoever can read those logs can open the videos.
+- **Spend.** Each workspace has a **monthly budget** (default $25), a
+  **daily limit** of videos per person, token, or agent (default 10), and a
+  **longest video** (default 10 seconds). The estimated cost is held before
+  the provider is called; it is given back when the provider bills nothing.
+  A canceled job, or one that was started but never reported back, stays
+  counted, so counters read high, never low. Costs are estimates from list
+  prices; the provider's bill is the actual charge.
+- **Who may do what.** Members see the settings. Workspace admins add
+  connections, change keys, save the policy, and start videos. API tokens
+  use `video:read`, `video:edit`, and `video:generate`; agents need the
+  `video:generate` grant as well as `mcp:call`, and see only their own jobs.
+  `video_models` needs only `mcp:call`. Bots the gateway runs do not get the
+  video tools.
+- **Safety.** Keys travel in headers only and are never returned, logged,
+  or stored on a job; a provider's error text has keys and links removed
+  before anyone sees it. An image to start from must be an `https` URL on a
+  public host; the provider downloads it, never the gateway. A provider's
+  result link is followed only if it is `https` on a public host. Telemetry
+  (`gateway.video`) keeps the provider, model, settings, status, and
+  estimated cost, never the prompt or a link.
+
+Agents get five MCP tools: `video_models` (what the workspace can make),
+`video_generate` (`{ prompt, provider?, model?, durationSeconds?, aspectRatio?, resolution?, imageUrl? }`),
+`video_status` (`{ id, waitSeconds? }`), `video_cancel` (`{ id }`), and
+`video_list` (`{ limit? }`, the agent's own jobs). When a workspace has no
+usable connection the tools are still listed, and `video_models` says why
+nothing can be made.
+
+Connections live in `gateway_video_connections`, the policy in
+`gateway_video_policy`, spend counters in `gateway_video_usage`, and jobs in
+`gateway_video_jobs` (each job deletes itself after 30 days); without MongoDB
+they last until restart. Connections from environment variables belong to
+the default workspace and cannot be changed here. There is no dashboard page
+for video yet: admins use the REST API or environment variables, and the
+dashboard's token pages offer the new permissions.
+
+REST routes under `/v1/<workspace id>`: `GET /video` (connections with this
+month's usage, the policy, the budget, and whether video is available and
+set up); `GET /video/models`; `POST /video/connections`
+(`{ name, kind, apiKey, enabled?, defaultModel?, creditPriceUsd? }`, `kind` is
+`google`, `runway`, or `luma`); `PATCH|DELETE /video/connections/:name`;
+`PUT /video/policy` (`{ order, callerVideosPerDay, monthlyBudgetUsd, maxDurationSeconds, revision }`,
+409 if the revision is stale); `POST /video/jobs` (the `video_generate`
+arguments; 202 with the job, also when no provider accepted it, 409 when
+video is not set up, 429 when a limit is reached); `GET /video/jobs`
+(`?limit=&before=<job id>`); `GET /video/jobs/:id` (`?wait=<seconds>`); and
+`POST /video/jobs/:id/cancel`. With `VIDEO_DISABLED` every video route
+answers 503 except `GET /video`, which says `available: false`.
 
 ### Models for agents
 
