@@ -39,6 +39,12 @@ services:
       BRIGHTDATA_ZONE: ${BRIGHTDATA_ZONE:-}
       BRIGHTDATA_PRICE_PER_1000: ${BRIGHTDATA_PRICE_PER_1000:-}
       WEB_FETCH_DISABLED: ${WEB_FETCH_DISABLED:-}
+      # Video providers for agents' video_generate (default workspace); see README "Video generation".
+      GOOGLE_VIDEO_API_KEY: ${GOOGLE_VIDEO_API_KEY:-}
+      RUNWAY_API_KEY: ${RUNWAY_API_KEY:-}
+      LUMA_API_KEY: ${LUMA_API_KEY:-}
+      LUMA_CREDIT_PRICE_USD: ${LUMA_CREDIT_PRICE_USD:-}
+      VIDEO_DISABLED: ${VIDEO_DISABLED:-}
       # Defaults to the compose ollama service (start it with --profile llm).
       OPENAI_COMPAT_BASE_URL: ${OPENAI_COMPAT_BASE_URL:-http://ollama:11434/v1}
       OPENAI_COMPAT_NAME: ${OPENAI_COMPAT_NAME:-local}

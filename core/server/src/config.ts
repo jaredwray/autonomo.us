@@ -4,6 +4,7 @@ import {
 	MAX_FAILOVER_TIMEOUT_MS,
 } from "./failover.js";
 import { validTimeZone } from "./synapse/time.js";
+import type { VideoConfig } from "./video/types.js";
 import type { ProxyConfig } from "./web/types.js";
 
 export type AnthropicProviderConfig = {
@@ -63,6 +64,15 @@ export type ApiConfig = {
 	dashboardUrl?: string;
 	/** Web access for agents: proxies from the environment, and the off switch. */
 	web?: WebConfig;
+	/** Video generation: provider connections from the environment, and the off switch. */
+	video?: VideoGatewayConfig;
+};
+
+export type VideoGatewayConfig = {
+	/** `VIDEO_DISABLED`: no workspace can make videos, and the tools are not served. */
+	disabled: boolean;
+	/** Video connections from the environment, for the default workspace. */
+	connections: VideoConfig[];
 };
 
 export type WebConfig = {
@@ -268,6 +278,47 @@ export function configFromEnv(
 		});
 	}
 
+	// Video keys are their own variables: a chat key must not start paid video.
+	const videoConnections: VideoConfig[] = [];
+	if (env.GOOGLE_VIDEO_API_KEY || env.GOOGLE_VIDEO_BASE_URL)
+		videoConnections.push({
+			name: "google-video",
+			kind: "google",
+			apiKey: env.GOOGLE_VIDEO_API_KEY,
+			baseUrl: env.GOOGLE_VIDEO_BASE_URL,
+			enabled: true,
+		});
+	const runwayKey = env.RUNWAY_API_KEY || env.RUNWAYML_API_SECRET;
+	if (runwayKey || env.RUNWAY_BASE_URL)
+		videoConnections.push({
+			name: "runway",
+			kind: "runway",
+			apiKey: runwayKey,
+			baseUrl: env.RUNWAY_BASE_URL,
+			enabled: true,
+		});
+	const lumaKey = env.LUMA_API_KEY || env.LUMA_AGENTS_API_KEY;
+	if (lumaKey || env.LUMA_BASE_URL) {
+		const credit = env.LUMA_CREDIT_PRICE_USD
+			? Number(env.LUMA_CREDIT_PRICE_USD)
+			: undefined;
+		if (
+			credit !== undefined &&
+			!(Number.isFinite(credit) && credit >= 0 && credit <= 10)
+		)
+			throw new Error(
+				"LUMA_CREDIT_PRICE_USD is what one Luma credit costs in dollars, from 0 to 10, such as 0.01.",
+			);
+		videoConnections.push({
+			name: "luma",
+			kind: "luma",
+			apiKey: lumaKey,
+			baseUrl: env.LUMA_BASE_URL,
+			...(credit !== undefined ? { creditPriceUsd: credit } : {}),
+			enabled: true,
+		});
+	}
+
 	const corsOrigins = env.CORS_ORIGIN
 		? env.CORS_ORIGIN.split(",")
 				.map((origin) => origin.trim())
@@ -308,6 +359,10 @@ export function configFromEnv(
 			disabled:
 				env.WEB_FETCH_DISABLED === "true" || env.WEB_FETCH_DISABLED === "1",
 			proxies,
+		},
+		video: {
+			disabled: env.VIDEO_DISABLED === "true" || env.VIDEO_DISABLED === "1",
+			connections: videoConnections,
 		},
 	};
 }

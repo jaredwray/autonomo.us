@@ -175,6 +175,7 @@ describe("OAuth sign-in to the MCP endpoint", () => {
 					"channels:manage",
 					"web:fetch",
 					"models:chat",
+					"video:generate",
 				],
 			});
 		for (const path of [

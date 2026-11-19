@@ -40,6 +40,16 @@ const permissionGroups = [
 		choices: ["proxies:read", "proxies:edit"],
 	},
 	{ resource: "web", label: "Web", choices: ["web:fetch"] },
+	{
+		resource: "video",
+		label: "Video",
+		choices: ["video:read", "video:edit"],
+	},
+	{
+		resource: "video-generate",
+		label: "Video generation",
+		choices: ["video:generate"],
+	},
 ] as const;
 
 const config: TokenViewConfig<ApiTokenPermission> = {
@@ -49,7 +59,7 @@ const config: TokenViewConfig<ApiTokenPermission> = {
 	namePlaceholder: "Production gateway",
 	emptyMessage: "No API tokens yet. Create a token to connect an application.",
 	permissionHint:
-		"Applies within this workspace, except Synapse, which the whole gateway shares for now. Edit includes Read. Uncheck all permissions for no access. Run allows chat and decisions. Synapse: Edit also covers import and export; proposals are decided by people only. Channels: Post includes Read and posts under the token's name; channels are created and managed in the dashboard. Proxies: Edit changes proxy keys and the ladder. Web: Fetch reads pages through the ladder, including paid proxies, within the workspace's limits. Only owners and admins can manage API tokens.",
+		"Applies within this workspace, except Synapse, which the whole gateway shares for now. Edit includes Read. Uncheck all permissions for no access. Run allows chat and decisions. Synapse: Edit also covers import and export; proposals are decided by people only. Channels: Post includes Read and posts under the token's name; channels are created and managed in the dashboard. Proxies: Edit changes proxy keys and the ladder. Web: Fetch reads pages through the ladder, including paid proxies, within the workspace's limits. Video: Edit changes video provider keys and limits. Video: Generate starts videos on the workspace's providers, within its limits. Only owners and admins can manage API tokens.",
 	permissions: API_TOKEN_PERMISSIONS,
 	permissionGroups,
 	api: {

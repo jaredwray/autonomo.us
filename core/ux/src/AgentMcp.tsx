@@ -63,6 +63,12 @@ export const agentTokenConfig: TokenViewConfig<AgentTokenPermission> = {
 			choices: ["web:fetch"],
 			hint: "Lets this agent read web pages with web_fetch, through the workspace's paid proxies when a site blocks it, within the limits set in Proxies.",
 		},
+		{
+			resource: "video",
+			label: "Video",
+			choices: ["video:generate"],
+			hint: "Lets this agent start videos with video_generate on the workspace's video providers, within the workspace's daily and monthly limits, and follow its own.",
+		},
 	],
 	api: {
 		list: fetchAgentTokens,

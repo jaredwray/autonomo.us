@@ -74,6 +74,11 @@ import { routingRoutes } from "./routes/routing.js";
 import { synapseRoutes } from "./routes/synapse.js";
 import { teamRoutes } from "./routes/team.js";
 import { telemetryRoutes } from "./routes/telemetry.js";
+import {
+	redactDownloadUrl,
+	videoDownloadRoutes,
+	videoRoutes,
+} from "./routes/video.js";
 import { webRoutes } from "./routes/web.js";
 import { memberRoutes, workspaceRoutes } from "./routes/workspaces.js";
 import { ModelRouter } from "./routing/router.js";
@@ -90,6 +95,10 @@ import {
 } from "./synapse/synapse.js";
 import { MongoTelemetrySink } from "./telemetry/mongo.js";
 import { TelemetryService } from "./telemetry/telemetry.js";
+import { VideoJobStore } from "./video/jobs.js";
+import { videoToolSet } from "./video/mcp.js";
+import { VideoService } from "./video/service.js";
+import { VideoStore } from "./video/store.js";
 import {
 	type DirectTransport,
 	fetchTransport,
@@ -170,6 +179,8 @@ export type CreateServerOptions = {
 	webDirect?: { transport: DirectTransport; resolver?: Resolver };
 	/** How provider APIs are called, for tests. */
 	webFetch?: FetchLike;
+	/** How video provider APIs are called, for tests. */
+	videoFetch?: FetchLike;
 	/**
 	 * How agent webhooks are sent and paced, for tests. The transport
 	 * defaults to Node's HTTPS client, or `fetch` with `webTransport: "fetch"`.
@@ -513,6 +524,17 @@ export function createServer(options: CreateServerOptions = {}) {
 		disabled: config.web?.disabled ?? false,
 	});
 	const webTools = web.available ? webToolSet(web) : undefined;
+	const videoStore = new VideoStore(config.video?.connections ?? [], mongo);
+	const videoJobs = new VideoJobStore(mongo);
+	const video = new VideoService({
+		store: videoStore,
+		jobs: videoJobs,
+		...(options.videoFetch ? { fetchImpl: options.videoFetch } : {}),
+		telemetry,
+		disabled: config.video?.disabled ?? false,
+	});
+	// The operator's off switch removes the tools, as it does `web_fetch`.
+	const videoTools = video.available ? videoToolSet(video) : undefined;
 	const toolSets = [
 		synapseToolSet(synapse, {
 			features: knowledge,
@@ -532,6 +554,7 @@ export function createServer(options: CreateServerOptions = {}) {
 		modelToolSet({ providers, routing, router, telemetry }),
 		// The operator's off switch removes the tool, not just its answers.
 		...(webTools ? [webTools] : []),
+		...(videoTools ? [videoTools] : []),
 	];
 	const botRunner: BotRunner = new BotRunner({
 		bots: botRepository,
@@ -583,7 +606,29 @@ export function createServer(options: CreateServerOptions = {}) {
 		logger:
 			options.logger === false
 				? false
-				: { redact: ["req.headers.authorization"] },
+				: {
+						redact: ["req.headers.authorization"],
+						// Fastify's own request fields, with a video link's token masked:
+						// the token is the only credential for that video.
+						serializers: {
+							req: (raw) => {
+								// Fastify hands its own request, with `ip` and `host`.
+								const request = raw as typeof raw & {
+									ip?: string;
+									host?: string;
+								};
+								const version = request.headers?.["accept-version"];
+								return {
+									method: request.method,
+									url: redactDownloadUrl(request.url ?? ""),
+									version: typeof version === "string" ? version : undefined,
+									host: request.host,
+									remoteAddress: request.ip,
+									remotePort: request.socket?.remotePort,
+								};
+							},
+						},
+					},
 	});
 
 	const maintenance =
@@ -719,6 +764,7 @@ export function createServer(options: CreateServerOptions = {}) {
 				onChanged: (workspaceId, change, by) =>
 					appEvents.onWebChanged(workspaceId, change, by),
 			});
+			scoped.register(videoRoutes, { store: videoStore, video, origin });
 			scoped.register(overviewRoutes, {
 				accounts,
 				agentTokens,
@@ -735,6 +781,8 @@ export function createServer(options: CreateServerOptions = {}) {
 		},
 		{ prefix: "/v1/:workspace" },
 	);
+	// A finished video's link: the token in it is the capability.
+	server.register(videoDownloadRoutes, { video });
 	// How an MCP app signs in to an agent without a token to copy.
 	server.register(oauthRoutes, {
 		oauth,
@@ -764,6 +812,8 @@ export function createServer(options: CreateServerOptions = {}) {
 				tokens.ensureIndexes(),
 				agentTokens.ensureIndexes(),
 				proxies.ensureIndexes(),
+				videoStore.ensureIndexes(),
+				videoJobs.ensureIndexes(),
 			]);
 			await providers.check(defaultWorkspace);
 		} catch (error) {
@@ -814,6 +864,8 @@ export function createServer(options: CreateServerOptions = {}) {
 			agentWebhookRepository.close(),
 			oauthRepository.close(),
 			proxies.close(),
+			videoStore.close(),
+			videoJobs.close(),
 		]);
 		const failed = results.find(
 			(result): result is PromiseRejectedResult => result.status === "rejected",

@@ -18,7 +18,10 @@ import { type ApiTokenStore, secretMatches, tokenHash } from "./tokens.js";
 /** How the current request authenticated. */
 export type RequestAuth =
 	| { kind: "user"; member: TeamMember; expiresAt: string }
-	| { kind: "api-token"; token: { id: string; name: string } }
+	| {
+			kind: "api-token";
+			token: { id: string; name: string; permissions: ApiTokenPermission[] };
+	  }
 	/** SETUP_TOKEN: accepted only on the setup routes. */
 	| { kind: "setup" };
 
@@ -282,6 +285,18 @@ export const ROUTE_RULES = new Map<string, RouteRule>([
 	["PUT /v1/:workspace/web/policy", workspace("proxies:edit")],
 	// Can spend the workspace's proxy budget, so admins only among people.
 	["POST /v1/:workspace/web/fetch", workspace("web:fetch")],
+	// Video providers hold keys and spend money: members look, admins change them.
+	["GET /v1/:workspace/video", workspace("video:read")],
+	["GET /v1/:workspace/video/models", workspace("video:read")],
+	["POST /v1/:workspace/video/connections", workspace("video:edit")],
+	["PATCH /v1/:workspace/video/connections/:name", workspace("video:edit")],
+	["DELETE /v1/:workspace/video/connections/:name", workspace("video:edit")],
+	["PUT /v1/:workspace/video/policy", workspace("video:edit")],
+	// Starting a video spends the workspace's video budget, so admins only among people.
+	["POST /v1/:workspace/video/jobs", workspace("video:generate")],
+	["GET /v1/:workspace/video/jobs", workspace("video:generate")],
+	["GET /v1/:workspace/video/jobs/:id", workspace("video:generate")],
+	["POST /v1/:workspace/video/jobs/:id/cancel", workspace("video:generate")],
 ]);
 
 /** What each workspace role may do, as a signed-in member. */
@@ -300,6 +315,7 @@ const MEMBER_ACTIONS = new Set<WorkspaceAction>([
 	"channels:manage",
 	"agents:read",
 	"proxies:read",
+	"video:read",
 ]);
 const ADMIN_ACTIONS = new Set<WorkspaceAction>([
 	...MEMBER_ACTIONS,
@@ -318,6 +334,9 @@ const ADMIN_ACTIONS = new Set<WorkspaceAction>([
 	// Proxy keys, the web policy, and fetches that spend the proxy budget.
 	"proxies:edit",
 	"web:fetch",
+	// Video provider keys, the video limits, and videos that spend the budget.
+	"video:edit",
+	"video:generate",
 ]);
 /** Org owners and admins only (D3: API tokens outlive the member who made them). */
 const ORG_ACTIONS = new Set<WorkspaceAction>([
@@ -353,6 +372,28 @@ const ACTION_LABELS: Record<WorkspaceAction, string> = {
 	"agents:read": "Agents: Read",
 	"agents:manage": "Agents: Manage",
 };
+
+/**
+ * Whether the caller of a workspace route may also do `action`, by the same
+ * rules the access hook applies: a token's permissions, or a member's role.
+ */
+export function requestMay(
+	request: FastifyRequest,
+	action: WorkspaceAction,
+): boolean {
+	const auth = request.auth;
+	if (auth?.kind === "api-token")
+		return (
+			auth.token.permissions.includes(action as ApiTokenPermission) ||
+			(action.endsWith(":read") &&
+				auth.token.permissions.includes(
+					action.replace(":read", ":edit") as ApiTokenPermission,
+				))
+		);
+	if (auth?.kind === "user")
+		return memberMay(requestWorkspace(request), action);
+	return false;
+}
 
 /** The signed-in member for team and account routes. */
 export function signedInMember(request: FastifyRequest): TeamMember {
@@ -471,7 +512,11 @@ export function registerApiAccess(
 			if (!token) return unauthorized(reply);
 			request.auth = {
 				kind: "api-token",
-				token: { id: token.id, name: token.name },
+				token: {
+					id: token.id,
+					name: token.name,
+					permissions: [...token.permissions],
+				},
 			};
 			request.telemetryCaller = {
 				id: `api-token:${token.id}`,

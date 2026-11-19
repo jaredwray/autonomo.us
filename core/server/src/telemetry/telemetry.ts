@@ -58,6 +58,27 @@ export type WebFetchTelemetry = {
 	}>;
 };
 
+/** One video job, as it starts and as it finishes. Never the prompt, an image, or a link. */
+export type VideoTelemetry = {
+	workspaceId: string;
+	caller: TelemetryCaller;
+	jobId: string;
+	phase: "started" | "finished";
+	/** A connection name. */
+	provider: string;
+	kind: string;
+	model: string;
+	status: string;
+	durationSeconds: number;
+	resolution: string;
+	/** An estimate from list prices. */
+	costUsd: number;
+	/** Since the job was created. */
+	latencyMs: number;
+	attempts: Array<{ provider: string; model: string; outcome: string }>;
+	errorCode?: string;
+};
+
 export type TelemetryServiceOptions = {
 	sink?: MongoTelemetrySink;
 	/** How many events to keep in the in-memory ring buffer. */
@@ -255,6 +276,42 @@ export class TelemetryService {
 				costUsd: fetch.costUsd,
 				latencyMs: fetch.latencyMs,
 				attempts: fetch.attempts,
+			},
+			timestamp: this.now().toISOString(),
+		};
+		this.record(event);
+		return event;
+	}
+
+	/**
+	 * Records a video job starting or finishing. It goes to the recent feed
+	 * and the MongoDB sink, and stays out of model and web analytics.
+	 */
+	recordVideo(video: VideoTelemetry): TelemetryEvent {
+		const event: TelemetryEvent = {
+			id: randomUUID(),
+			type: "gateway.video",
+			workspaceId: video.workspaceId,
+			...(video.caller.kind === "agent"
+				? { agentId: video.caller.id.replace(/^agent:/, "") }
+				: {}),
+			data: {
+				operation: "video",
+				callerId: video.caller.id,
+				callerName: video.caller.name,
+				callerKind: video.caller.kind,
+				jobId: video.jobId,
+				phase: video.phase,
+				provider: video.provider,
+				kind: video.kind,
+				model: video.model,
+				status: video.status,
+				durationSeconds: video.durationSeconds,
+				resolution: video.resolution,
+				costUsd: video.costUsd,
+				latencyMs: video.latencyMs,
+				attempts: video.attempts,
+				...(video.errorCode ? { errorCode: video.errorCode } : {}),
 			},
 			timestamp: this.now().toISOString(),
 		};
