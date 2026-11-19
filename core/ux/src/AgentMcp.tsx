@@ -58,6 +58,12 @@ export const agentTokenConfig: TokenViewConfig<AgentTokenPermission> = {
 			hint: "Lets this agent call the workspace's models with models_chat, on the workspace's keys, routing, and failover. Its usage is recorded under its name.",
 		},
 		{
+			resource: "organization",
+			label: "Organization",
+			choices: ["organization:decide"],
+			hint: "Lets this agent decide cases currently assigned to one of its positions.",
+		},
+		{
 			resource: "web",
 			label: "Web",
 			choices: ["web:fetch"],

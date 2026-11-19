@@ -28,6 +28,8 @@ const decided = (agentId: string): SynapseProposal => ({
 function setUp(options: {
 	repository?: MemoryAgentWebhookRepository;
 	agentStatus?: () => "active" | "expired" | "revoked";
+	permissions?: string[];
+	mayDeliverDecision?: () => Promise<boolean>;
 	transport?: WebhookTransport;
 	resolver?: () => Promise<Array<{ address: string; family: 4 | 6 }>>;
 	log?: (message: string, details: Record<string, unknown>) => void;
@@ -51,7 +53,12 @@ function setUp(options: {
 				// A revoked agent is not found at all.
 				return status === "revoked"
 					? null
-					: { name: "Scout", workspaceId: WORKSPACE, status, permissions: [] };
+					: {
+							name: "Scout",
+							workspaceId: WORKSPACE,
+							status,
+							permissions: options.permissions ?? [],
+						};
 			},
 		},
 		workspaces: {
@@ -59,6 +66,7 @@ function setUp(options: {
 			defaultWorkspaceId: async () => WORKSPACE,
 		},
 		threadAuthor: async () => null,
+		mayDeliverDecision: options.mayDeliverDecision,
 		transport,
 		resolver: options.resolver,
 		timing: { gapMs: 10, retryDelaysMs: [10] },
@@ -69,6 +77,54 @@ function setUp(options: {
 }
 
 describe("agent webhook delivery in process", () => {
+	it("sends metadata-only organization wakeups and rechecks the assignment before delivery", async () => {
+		let authorized = true;
+		const { webhooks, sent } = setUp({
+			permissions: ["mcp:read", "mcp:call", "organization:decide"],
+			mayDeliverDecision: async () => authorized,
+		});
+		try {
+			const agentId = randomUUID();
+			await webhooks.create(
+				WORKSPACE,
+				agentId,
+				{ url: "https://hooks.example.com/x", events: ["organization"] },
+				"Producer",
+			);
+			const at = new Date().toISOString();
+			await webhooks.onOrganizationNotice(WORKSPACE, agentId, {
+				key: "case.first",
+				event: {
+					type: "decision.assigned",
+					at,
+					caseId: "case",
+					outcomeId: null,
+				},
+			});
+			authorized = false;
+			await webhooks.idle();
+			expect(sent).toEqual([]);
+			authorized = true;
+			const notice = {
+				key: "case.final",
+				event: {
+					type: "decision.outcome" as const,
+					caseId: "case",
+					outcomeId: "receipt",
+					at,
+				},
+			};
+			await webhooks.onOrganizationNotice(WORKSPACE, agentId, notice);
+			await webhooks.onOrganizationNotice(WORKSPACE, agentId, notice);
+			await webhooks.idle();
+			expect(sent).toHaveLength(1);
+			const body = JSON.parse(sent[0].body);
+			expect(body.data.events).toEqual([notice.event]);
+			expect(body.text).toContain("organization_read_case");
+		} finally {
+			await webhooks.close();
+		}
+	});
 	it("logs a storage failure during a timed delivery instead of leaving it unhandled", async () => {
 		const repository = new MemoryAgentWebhookRepository();
 		const log = vi.fn();

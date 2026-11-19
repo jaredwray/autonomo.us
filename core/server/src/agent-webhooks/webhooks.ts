@@ -41,6 +41,7 @@ import {
 	DEFAULT_TIMING,
 	enqueued,
 	finished,
+	mayHear,
 	type Outcome,
 	publicWebhook,
 	switched,
@@ -69,6 +70,14 @@ export type AgentNoticeFor = (
 ) => AgentNotice | null | Promise<AgentNotice | null>;
 
 export type AgentWebhooksOptions = {
+	mayDeliverDecision?(
+		workspaceId: string,
+		agentId: string,
+		event: Extract<
+			AgentWakeEvent,
+			{ type: "decision.assigned" | "decision.outcome" }
+		>,
+	): Promise<boolean>;
 	repository: AgentWebhookRepository;
 	/** An agent by id, or null when it is unknown or revoked. */
 	agents: { find(agentId: string): Promise<WebhookAgent | null> };
@@ -418,6 +427,19 @@ export class AgentWebhooks {
 		}
 	}
 
+	/** Let a failed enqueue propagate so the decision's durable outbox can retry. */
+	async onOrganizationNotice(
+		workspaceId: string,
+		agentId: string,
+		notice: AgentNotice,
+	) {
+		const [webhook] = await this.options.repository.active(workspaceId, [
+			agentId,
+		]);
+		if (webhook && wants(webhook, "organization"))
+			await this.enqueue(webhook, notice.event, notice.key);
+	}
+
 	/** Called after a workspace admin decides a proposal: its author follows up. */
 	async onProposalDecided(
 		workspaceId: string,
@@ -615,13 +637,37 @@ export class AgentWebhooks {
 		const workspace = await this.options.workspaces.get(webhook.workspaceId);
 		if (agent.status === "expired" || !workspace || workspace.archivedAt)
 			return { kind: "skipped" };
+		const mayDeliver = (
+			event: AgentWakeEvent,
+			permissions: readonly string[],
+		) => {
+			if (
+				event.type !== "decision.assigned" &&
+				event.type !== "decision.outcome"
+			)
+				return true;
+			return (
+				mayHear(event, permissions) &&
+				(this.options.mayDeliverDecision?.(
+					webhook.workspaceId,
+					webhook.agentId,
+					event,
+				) ??
+					false)
+			);
+		};
+		const allowed = await Promise.all(
+			delivery.events.map((event) => mayDeliver(event, agent.permissions)),
+		);
+		const events = delivery.events.filter((_, i) => allowed[i]);
+		if (!events.length) return { kind: "skipped" };
 		const controller = new AbortController();
 		this.sending.add(controller);
 		try {
 			const result = await this.send(
 				webhook,
 				{ id: webhook.agentId, name: delivery.agentName ?? agent.name },
-				delivery,
+				{ ...delivery, events },
 				controller.signal,
 				// The agent revoked or expired, or the webhook paused, deleted,
 				// or taken over since the checks above: send nothing. The agent
@@ -634,7 +680,12 @@ export class AgentWebhooks {
 					]);
 					return now?.status === "active" &&
 						current?.status === "active" &&
-						current.leaseId === leaseId
+						current.leaseId === leaseId &&
+						(
+							await Promise.all(
+								events.map((event) => mayDeliver(event, now.permissions)),
+							)
+						).every(Boolean)
 						? current
 						: null;
 				},

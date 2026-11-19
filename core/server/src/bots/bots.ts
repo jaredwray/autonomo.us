@@ -135,6 +135,8 @@ export class BotService {
 		}
 		if (input.enabled !== undefined) bot.enabled = input.enabled === true;
 		if (input.tools !== undefined) bot.tools = input.tools === true;
+		if (input.organizationDecisions !== undefined)
+			bot.organizationDecisions = input.organizationDecisions === true;
 		if (input.web !== undefined) bot.web = input.web === true;
 		if (input.webScope !== undefined) {
 			if (!(BOT_WEB_SCOPES as readonly string[]).includes(input.webScope))

@@ -31,9 +31,11 @@ import {
 import { ChannelsView } from "./ChannelsView.js";
 import { channelAttention, useChannelList } from "./channels-list.js";
 import { Dashboard } from "./Dashboard.js";
+import { DecisionInbox } from "./DecisionInbox.js";
 import { Icon } from "./Icons.js";
 import { LoadingBanner } from "./LoadingBanner.js";
 import { ModelsView } from "./ModelsView.js";
+import { OrganizationView } from "./OrganizationView.js";
 import { overviewBadges } from "./overview-items.js";
 import { useOverview } from "./overview-state.js";
 import { ProfileView } from "./ProfileView.js";
@@ -52,6 +54,8 @@ const workspaceViews = {
 	synapse: "Synapse",
 	channels: "Channels",
 	agents: "Agents",
+	organization: "Organization",
+	"decision-inbox": "Decision inbox",
 	"api-tokens": "API Tokens",
 };
 /**
@@ -701,6 +705,10 @@ export function App() {
 						)}
 						{shown === "api-tokens" ? (
 							<ApiTokensView workspace={selected} />
+						) : shown === "organization" ? (
+							<OrganizationView workspace={selected} route={route.rest} />
+						) : shown === "decision-inbox" ? (
+							<DecisionInbox workspace={selected} route={route.rest} />
 						) : shown === "models" ? (
 							<ModelsView workspace={selected} />
 						) : shown === "proxies" ? (

@@ -80,6 +80,8 @@ export type Bot = {
 	agentHops: number;
 	/** Whether a reply may use Synapse memory and read the bot's other channels. */
 	tools: boolean;
+	/** Allows outcomes on assigned cases when tools are enabled. Absent on older bots. */
+	organizationDecisions?: boolean;
 	/** Whether a reply may read web pages with `web_fetch`, through the workspace's proxies when needed. */
 	web: boolean;
 	/** What the bot may fetch; see `BOT_WEB_SCOPES`. */
@@ -148,6 +150,7 @@ export type CreateBotRequest = {
 	enabled?: boolean;
 	agentHops?: number;
 	tools?: boolean;
+	organizationDecisions?: boolean;
 	web?: boolean;
 	webScope?: BotWebScope;
 	webFollowUps?: BotWebFollowUps;

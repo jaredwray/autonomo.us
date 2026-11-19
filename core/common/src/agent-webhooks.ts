@@ -58,6 +58,12 @@ export const AGENT_WEBHOOK_EVENT_GROUPS = {
 		hint: "A channel the agent is in is renamed, gets a new topic or description, or is archived or unarchived.",
 		types: ["channel.updated", "channel.archived", "channel.unarchived"],
 	},
+	organization: {
+		area: "workspace",
+		label: "Decision inbox",
+		hint: "A case needs this agent's review, or its own blocked work received an outcome. Retrieve the case to read it.",
+		types: ["decision.assigned", "decision.outcome"],
+	},
 	proposals: {
 		area: "synapse",
 		label: "Proposal decisions",
@@ -186,6 +192,9 @@ export function agentWakeEventGroup(
 		case "channel.archived":
 		case "channel.unarchived":
 			return "channels";
+		case "decision.assigned":
+		case "decision.outcome":
+			return "organization";
 		case "proposal.decided":
 			return "proposals";
 		case "synapse.note_created":
@@ -481,6 +490,12 @@ export type AgentWakeSpace = "shared" | "global" | "agent";
 
 /** One thing that happened, as a POST lists it. */
 export type AgentWakeEvent =
+	| {
+			type: "decision.assigned" | "decision.outcome";
+			at: string;
+			caseId: string;
+			outcomeId: string | null;
+	  }
 	| (AboutMessage & {
 			/**
 			 * `channel.mention`: the message mentions the agent.

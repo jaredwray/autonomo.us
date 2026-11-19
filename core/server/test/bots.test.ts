@@ -4,6 +4,8 @@ import type {
 	ChannelEntryList,
 	ChannelMessage,
 	CreateBotRequest,
+	DecisionCase,
+	OrgPosition,
 	SynapseNoteList,
 } from "@autonomo.us/common";
 import { afterEach, describe, expect, it } from "vitest";
@@ -37,6 +39,7 @@ async function start() {
 					"echo-model",
 					"mention-model",
 					"tool-model",
+					"decision-review-model",
 					"broken-model",
 					"slow-model",
 				],
@@ -533,6 +536,65 @@ describe("bots the gateway runs", () => {
 		expect(thread.entries).toHaveLength(3);
 	});
 
+	it("lets an explicitly authorized hosted reviewer decide only its own assigned work through the shared tools", async () => {
+		const { ok, workspaceId, bot, createChannel, addAgent, post, next } =
+			await start();
+		const base = `/v1/${workspaceId}/organization`;
+		const reviewer = await bot({
+			name: "Reviewer",
+			tools: true,
+			organizationDecisions: true,
+			model: "stub/decision-review-model",
+		});
+		const pos = await ok<OrgPosition>(
+			"POST",
+			`${base}/positions`,
+			{
+				body: {
+					title: "Reviewer",
+					occupant: { kind: "agent", id: reviewer.id },
+				},
+			},
+			201,
+		);
+		await ok("PUT", `${base}/rules/continuity`, {
+			body: {
+				ownerPositionId: pos.id,
+				fallbackPositionIds: [],
+				deadlineMinutes: 30,
+			},
+		});
+		const c = await ok<DecisionCase>(
+			"POST",
+			`${base}/cases`,
+			{
+				body: {
+					decisionKey: "continuity",
+					sourceWorkId: "sample-shot",
+					sourceRevision: "r2",
+					question: "Accept the revision?",
+				},
+			},
+			201,
+		);
+		expect(c.assignee?.type).toBe("instructions");
+		const channel = await createChannel("review");
+		await addAgent(channel.id, reviewer.id);
+		const ask = await post(
+			channel.id,
+			`<@agent:${reviewer.id}> Review your assigned case.`,
+		);
+		expect((await next(channel.id, ask.seq)).body).toBe(
+			"Reviewed the assigned case.",
+		);
+		const resolved = await ok<DecisionCase>("GET", `${base}/cases/${c.id}`);
+		expect(resolved.outcome).toMatchObject({
+			sourceWorkId: "sample-shot",
+			sourceRevision: "r2",
+			status: "approved",
+			by: { id: reviewer.id, type: "instructions" },
+		});
+	});
 	it("lets a bot with tools use its Synapse memory during a reply", async () => {
 		const { ok, createChannel, post, addAgent, bot, details, next, requests } =
 			await start();
@@ -557,6 +619,8 @@ describe("bots the gateway runs", () => {
 		).map((entry) => entry.function.name);
 		expect(offered).toContain("synapse_log");
 		expect(offered).toContain("channels_read");
+		expect(offered).toContain("organization_list_cases");
+		expect(offered).not.toContain("organization_act");
 		for (const name of [
 			"channels_post",
 			"channels_create",

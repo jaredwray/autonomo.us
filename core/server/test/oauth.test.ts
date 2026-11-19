@@ -4,8 +4,10 @@ import type {
 	AgentList,
 	AgentToken,
 	AgentTokenSettings,
+	DecisionCase,
 	OAuthSignIn,
 	OAuthSignInDecision,
+	OrgPosition,
 } from "@autonomo.us/common";
 import { afterEach, describe, expect, it } from "vitest";
 import { type OAuthAgents, OAuthService } from "../src/oauth/oauth.js";
@@ -150,6 +152,82 @@ async function start(config: Parameters<typeof startChannels>[1] = {}) {
 }
 
 describe("OAuth sign-in to the MCP endpoint", () => {
+	it("routes cases to an OAuth identity while it has a live connection and a decision grant", async () => {
+		const { ok, tool, begin, approve, exchange, workspaceId } = await start();
+		const oauth = await ok<AgentToken>(
+			"POST",
+			"/v1/agents/oauth",
+			{
+				body: {
+					name: "OAuth reviewer",
+					description: "Synthetic reviewer",
+					permissions: ["mcp:read", "mcp:call", "organization:decide"],
+				},
+			},
+			201,
+		);
+		const base = `/v1/${workspaceId}/organization`;
+		const pos = await ok<OrgPosition>(
+			"POST",
+			`${base}/positions`,
+			{
+				body: { title: "Reviewer", occupant: { kind: "agent", id: oauth.id } },
+			},
+			201,
+		);
+		await ok("PUT", `${base}/rules/art`, {
+			body: {
+				ownerPositionId: pos.id,
+				fallbackPositionIds: [],
+				deadlineMinutes: 30,
+			},
+		});
+		const open = (sourceRevision: string) =>
+			ok<DecisionCase>(
+				"POST",
+				`${base}/cases`,
+				{
+					body: {
+						decisionKey: "art",
+						sourceWorkId: "shot",
+						sourceRevision,
+						question: "Accept the cut?",
+					},
+				},
+				201,
+			);
+		expect((await open("r0")).status).toBe("triage");
+		const started = await begin(),
+			back = await approve(started.request, { agentId: oauth.id });
+		const token = (
+			await exchange(started, back.searchParams.get("code") as string)
+		).body.access_token as string;
+		const c = await open("r1");
+		expect(c.assignee?.type).toBe("oauth");
+		expect(
+			(
+				await tool<DecisionCase>(token, "organization_act", {
+					caseId: c.id,
+					action: "approve",
+					expectedRevision: c.revision,
+				})
+			).data.outcome?.by.id,
+		).toBe(oauth.id);
+		const awaiting = await open("r2");
+		const { connections } = await ok<AgentConnectionList>(
+			"GET",
+			`/v1/agents/${oauth.id}/connections`,
+		);
+		await ok(
+			"DELETE",
+			`/v1/agents/${oauth.id}/connections/${connections[0].id}`,
+			{},
+			204,
+		);
+		expect(
+			(await ok<DecisionCase>("GET", `${base}/cases/${awaiting.id}`)).status,
+		).toBe("triage");
+	});
 	it("tells apps where to sign in", async () => {
 		const { origin } = await start();
 		const response = await fetch(`${origin}/mcp`, {
@@ -176,6 +254,7 @@ describe("OAuth sign-in to the MCP endpoint", () => {
 					"web:fetch",
 					"models:chat",
 					"video:generate",
+					"organization:decide",
 				],
 			});
 		for (const path of [

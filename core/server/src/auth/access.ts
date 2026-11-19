@@ -137,6 +137,22 @@ const synapseRoutes = (base: string) =>
 		// Not a token permission: approvals need a person.
 		[`POST ${base}/proposals/:id/decide`, workspace("synapse:decide")],
 	] as const;
+const organizationRoutes = (base: string) =>
+	[
+		[`GET ${base}/branch`, workspace("workspace:read")],
+		[`GET ${base}/identities`, workspace("workspace:update")],
+		[`GET ${base}/positions/:id`, workspace("workspace:read")],
+		[`POST ${base}/positions`, workspace("workspace:update")],
+		[`PATCH ${base}/positions/:id`, workspace("workspace:update")],
+		[`PUT ${base}/settings`, workspace("workspace:update")],
+		[`GET ${base}/rules`, workspace("workspace:read")],
+		[`PUT ${base}/rules/:key`, workspace("workspace:update")],
+		[`POST ${base}/preview`, workspace("workspace:read")],
+		[`GET ${base}/cases`, workspace("workspace:read")],
+		[`GET ${base}/cases/:id`, workspace("workspace:read")],
+		[`POST ${base}/cases`, workspace("workspace:read")],
+		[`POST ${base}/cases/:id/act`, workspace("workspace:read")],
+	] as const;
 const channelRoutes = (base: string) =>
 	[
 		[`GET ${base}`, workspace("channels:read")],
@@ -261,6 +277,7 @@ export const ROUTE_RULES = new Map<string, RouteRule>([
 	// to `global` also need an org owner or admin (routes/synapse.ts).
 	...synapseRoutes("/v1/:workspace/synapse"),
 	...channelRoutes("/v1/:workspace/channels"),
+	...organizationRoutes("/v1/:workspace/organization"),
 	// Agents the gateway runs. Dashboard only: no token holds these actions.
 	["GET /v1/:workspace/bots", workspace("agents:read")],
 	["POST /v1/:workspace/bots", workspace("agents:manage")],

@@ -220,6 +220,22 @@ export class ChannelService {
 			Boolean(this.agentIn(channel, caller))
 		);
 	}
+	/** Sharing a reference never grants access to a channel or a deleted message. */
+	async canReferenceMessage(
+		workspaceId: string,
+		caller: ChannelCaller,
+		channelId: string,
+		messageId: string,
+	): Promise<boolean> {
+		const channel = await this.repository.getChannel(workspaceId, channelId);
+		if (!channel || !this.sees(channel, caller)) return false;
+		const message = await this.repository.getEntry(
+			workspaceId,
+			channel.id,
+			messageId,
+		);
+		return message?.type === "message" && !message.deletedAt;
+	}
 	/** A channel by id or name. One the caller cannot see is not found. */
 	private async resolve(
 		workspaceId: string,

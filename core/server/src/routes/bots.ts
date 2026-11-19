@@ -24,6 +24,7 @@ const fields = {
 	model: string,
 	enabled: { type: "boolean" },
 	tools: { type: "boolean" },
+	organizationDecisions: { type: "boolean" },
 	web: { type: "boolean" },
 	webScope: { enum: ["any", "mentioned", "approved"] },
 	webFollowUps: { enum: ["any", "same-site", "none"] },

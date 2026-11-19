@@ -324,6 +324,39 @@ export async function startOpenAIStub(
 				else answer({ role: "assistant", content: "No web access." });
 				return;
 			}
+			if (parsed.model === "decision-review-model") {
+				const results = messages.filter((message) => message.role === "tool");
+				if (results.length >= 2) {
+					answer({ role: "assistant", content: "Reviewed the assigned case." });
+					return;
+				}
+				const assigned = results.length
+					? JSON.parse(textOf(results[0])).cases[0]
+					: null;
+				const name = assigned ? "organization_act" : "organization_list_cases";
+				const args = assigned
+					? {
+							caseId: assigned.id,
+							expectedRevision: assigned.revision,
+							action: "approve",
+						}
+					: {};
+				answer(
+					{
+						role: "assistant",
+						content: null,
+						tool_calls: [
+							{
+								id: `review_${results.length}`,
+								type: "function",
+								function: { name, arguments: JSON.stringify(args) },
+							},
+						],
+					},
+					"tool_calls",
+				);
+				return;
+			}
 			if (parsed.model === "tool-model") {
 				if (messages.some((message) => message.role === "tool"))
 					answer({ role: "assistant", content: "Logged it." });

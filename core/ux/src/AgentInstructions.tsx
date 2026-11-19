@@ -334,6 +334,9 @@ export function InstructionsForm({
 	const [model, setModel] = useState(bot?.model ?? "");
 	const [enabled, setEnabled] = useState(bot?.enabled ?? true);
 	const [tools, setTools] = useState(bot?.tools ?? false);
+	const [organizationDecisions, setOrganizationDecisions] = useState(
+		bot?.organizationDecisions ?? false,
+	);
 	const [web, setWeb] = useState(bot?.web ?? false);
 	const [webScope, setWebScope] = useState(() => webScopeOf(bot).webScope);
 	const [webFollowUps, setWebFollowUps] = useState(
@@ -378,6 +381,7 @@ export function InstructionsForm({
 		model,
 		enabled,
 		tools,
+		organizationDecisions: tools && organizationDecisions,
 		web,
 		webScope,
 		webFollowUps,
@@ -400,6 +404,8 @@ export function InstructionsForm({
 				model: bot.model,
 				enabled: bot.enabled,
 				tools: bot.tools,
+				organizationDecisions:
+					bot.tools && (bot.organizationDecisions ?? false),
 				web: bot.web ?? false,
 				...webScopeOf(bot),
 				agentHops: bot.agentHops,
@@ -526,6 +532,21 @@ export function InstructionsForm({
 					<label className="failover-enable">
 						<input
 							type="checkbox"
+							disabled={!tools}
+							checked={tools && organizationDecisions}
+							onChange={(event) =>
+								setOrganizationDecisions(event.target.checked)
+							}
+						/>
+						Decide assigned organization cases
+					</label>
+					<span className="field-hint">
+						Allows this agent to approve, request changes, or hand off decisions
+						assigned to its position.
+					</span>
+					<label className="failover-enable">
+						<input
+							type="checkbox"
 							checked={web}
 							onChange={(event) => setWeb(event.target.checked)}
 						/>
@@ -624,6 +645,8 @@ function BotFacts({ bot }: { bot: BotDetails }) {
 			<dd>{bot.enabled ? "Active" : "Paused"}</dd>
 			<dt>Tools</dt>
 			<dd>{bot.tools ? "On" : "Off"}</dd>
+			<dt>Organization decisions</dt>
+			<dd>{bot.tools && bot.organizationDecisions ? "On" : "Off"}</dd>
 			<dt>Web access</dt>
 			<dd>{bot.web ? "On" : "Off"}</dd>
 			{bot.web && (
