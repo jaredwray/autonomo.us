@@ -1037,3 +1037,37 @@ describe("availability", () => {
 			expect(await refusal(promise)).toMatchObject({ status: 503 });
 	});
 });
+
+describe("job text for agents", () => {
+	it("ends a failure's reason with one period", async () => {
+		const { videoJobText } = await import("../src/video/mcp.js");
+		const text = videoJobText({
+			id: "vid_00000000-0000-4000-8000-000000000000",
+			status: "failed",
+			progress: null,
+			provider: "runway",
+			kind: "runway",
+			model: "seedance2_5",
+			prompt: "x",
+			durationSeconds: 5,
+			aspectRatio: "16:9",
+			resolution: "720p",
+			hasImage: false,
+			createdBy: AGENT,
+			createdAt: "2026-11-19T12:00:00.000Z",
+			updatedAt: "2026-11-19T12:00:00.000Z",
+			completedAt: "2026-11-19T12:00:00.000Z",
+			costUsd: 0,
+			video: null,
+			error: {
+				code: "moderated",
+				message: "Runway: Runway refused the prompt: flagged by moderation.",
+			},
+			attempts: [
+				{ provider: "runway", model: "seedance2_5", outcome: "accepted" },
+			],
+		});
+		expect(text).toContain("flagged by moderation. Tried:");
+		expect(text).not.toContain("..");
+	});
+});

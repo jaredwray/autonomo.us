@@ -147,7 +147,11 @@ export function videoJobText(job: VideoJob): string {
 						`${attempt.provider} ${attempt.model}: ${attempt.outcome}${attempt.detail ? ` (${attempt.detail})` : ""}`,
 				)
 				.join("; ");
-			return `Video ${job.id} failed: ${job.error?.message ?? "no reason given"}.${tried ? ` Tried: ${tried}.` : ""}`;
+			const reason = (job.error?.message ?? "no reason given").replace(
+				/[.\s]+$/,
+				"",
+			);
+			return `Video ${job.id} failed: ${reason}.${tried ? ` Tried: ${tried}.` : ""}`;
 		}
 	}
 }
