@@ -219,12 +219,15 @@ connections and accept every token gateway-wide.
 ## Gateway
 
 The dashboard has a collapsible sidebar with a workspace switcher and
-**Dashboard**, **Models**, **Proxies**, **Synapse**, **Channels**,
+**Dashboard**, **Models**, **Proxies**, **Video**, **Synapse**, **Channels**,
 **Agents**, **API Tokens**, **Workspaces**, and **Team** views. All but Workspaces and
 Team show the selected workspace, and their URLs name it
 (`#/w/<workspace id>/models`).
 **Models** has two tabs: **Models** and **Routing** (`#/w/<workspace id>/models/routing`;
-older `#/routing` links open it too).
+older `#/routing` links open it too). **Video** has two too: **Videos**, where
+admins make, follow, play, and stop videos, and **Settings**
+(`#/w/<workspace id>/video/settings`), with the providers and limits; see
+[Video generation](#video-generation).
 In the **Models** tab, search active models or choose **Add model** to connect Google
 Gemini, xAI Grok, Anthropic Claude, OpenAI, Groq, Mistral, DeepSeek, OpenRouter,
 Cloudflare Workers AI, or Jev (TypeSafe). Choose a catalog suggestion or enter a
@@ -1117,9 +1120,17 @@ Connections live in `gateway_video_connections`, the policy in
 `gateway_video_policy`, spend counters in `gateway_video_usage`, and jobs in
 `gateway_video_jobs` (each job deletes itself after 30 days); without MongoDB
 they last until restart. Connections from environment variables belong to
-the default workspace and cannot be changed here. There is no dashboard page
-for video yet: admins use the REST API or environment variables, and the
-dashboard's token pages offer the new permissions.
+the default workspace and cannot be changed here.
+
+Open **Video** in the dashboard to manage it. On **Settings**, workspace
+admins add providers, switch them on and off, choose a default model and
+Luma's credit price, order them, and set the daily limit, monthly budget, and
+longest video; members see the providers and limits only. On **Videos**,
+admins make a video from a form that offers only what the chosen model can
+make, and see every job in the workspace: its status, what it was asked for,
+its estimated cost, and why it failed. Unfinished jobs update on their own,
+and **Stop** cancels one. A finished video plays in the page, or opens from
+its link. Members cannot see jobs, which need `video:generate`.
 
 REST routes under `/v1/<workspace id>`: `GET /video` (connections with this
 month's usage, the policy, the budget, and whether video is available and

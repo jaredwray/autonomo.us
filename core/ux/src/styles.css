@@ -1509,6 +1509,24 @@ a.button { text-decoration: none; }
 	.proxy-rules li { flex-wrap: wrap; }
 	.proxy-actions { justify-content: flex-start; }
 }
+.video-jobs { list-style: none; margin: 0; padding: 0; }
+.video-jobs > li { display: grid; gap: 6px; padding: 14px 0; border-bottom: 1px solid var(--hairline); min-width: 0; }
+.video-jobs > li:last-child { border-bottom: 0; }
+.video-jobs p { margin: 0; }
+.video-job-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; font-size: 13px; }
+.video-status { display: inline-block; padding: 2px 8px; border: 1px solid var(--hairline); border-radius: 999px; background: var(--page); font-size: 11px; font-weight: 600; white-space: nowrap; }
+.video-status.succeeded { color: var(--success-text); border-color: color-mix(in srgb, var(--status-good) 35%, var(--hairline)); }
+.video-status.failed, .video-status.expired { color: var(--status-critical); border-color: color-mix(in srgb, var(--status-critical) 40%, var(--hairline)); }
+.video-status.queued, .video-status.running { color: #c27c00; border-color: color-mix(in srgb, #c27c00 40%, var(--hairline)); }
+.video-status.canceled { color: var(--text-muted); }
+.video-prompt { overflow-wrap: anywhere; white-space: pre-wrap; }
+.video-error { color: var(--status-critical); font-size: 13px; overflow-wrap: anywhere; }
+.video-play { display: grid; gap: 8px; }
+.video-player { display: block; width: 100%; max-width: min(100%, 480px); max-height: 360px; border-radius: 6px; background: #000; }
+.video-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.video-make fieldset { border: 0; padding: 0; margin: 0; min-width: 0; display: grid; gap: 12px; }
+.video-make textarea { width: 100%; min-height: 72px; resize: vertical; border: 1px solid var(--hairline); padding: 10px 12px; border-radius: 6px; background: var(--page); color: var(--text-primary); font: inherit; }
+.video-make textarea:focus-visible { outline: 2px solid var(--series-1); outline-offset: 3px; }
 .bot-web-scope { margin: 18px 0 0; }
 .bot-web-choices { margin: 8px 0 4px; padding: 0; border: 0; }
 .bot-web-choices legend, .bot-web-label { display: block; margin-bottom: 6px; color: var(--text-primary); font-size: 13px; font-weight: 600; }
