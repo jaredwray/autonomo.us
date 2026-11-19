@@ -128,6 +128,9 @@ describe("shared helpers", () => {
 		expect(providerMessage("x".repeat(500)).length).toBe(300);
 		expect(providerMessage(42)).toBe("");
 		expect(providerMessage("echoed abc back", "abc")).toBe("echoed [key] back");
+		expect(
+			providerMessage("see ftp://files.example.com/x?token=secret", "ftp"),
+		).toBe("see [link]");
 	});
 
 	it("accepts only https result links on public hosts", () => {

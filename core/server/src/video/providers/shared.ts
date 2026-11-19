@@ -27,12 +27,10 @@ export function retryAfterMs(response: Response): number {
  */
 export function providerMessage(text: unknown, apiKey?: string): string {
 	if (typeof text !== "string") return "";
-	let message = text;
+	// Links first: a key that happens to look like a scheme must not hide one.
+	let message = text.replace(/\b[a-z][a-z0-9+.-]*:\/\/\S+/gi, "[link]");
 	if (apiKey) message = message.split(apiKey).join("[key]");
-	message = message
-		.replace(/\b[a-z][a-z0-9+.-]*:\/\/\S+/gi, "[link]")
-		.replace(/\s+/g, " ")
-		.trim();
+	message = message.replace(/\s+/g, " ").trim();
 	return message.length > MESSAGE_LENGTH
 		? `${message.slice(0, MESSAGE_LENGTH - 1)}…`
 		: message;
