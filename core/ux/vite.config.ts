@@ -9,6 +9,8 @@ export default defineConfig({
 		proxy: {
 			"/v1": apiTarget,
 			"/health": apiTarget,
+			// A finished video's link is the gateway's own, outside /v1.
+			"/video/downloads": apiTarget,
 		},
 	},
 });
