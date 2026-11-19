@@ -42,6 +42,7 @@ import { ProfileView } from "./ProfileView.js";
 import { ProxiesView } from "./ProxiesView.js";
 import { SynapseView } from "./SynapseView.js";
 import { TeamView } from "./TeamView.js";
+import { VideoView } from "./VideoView.js";
 import { WorkspacesView } from "./WorkspacesView.js";
 
 const logoMark = new URL("./assets/logo-mark.svg", import.meta.url).href;
@@ -51,6 +52,7 @@ const workspaceViews = {
 	dashboard: "Dashboard",
 	models: "Models",
 	proxies: "Proxies",
+	video: "Video",
 	synapse: "Synapse",
 	channels: "Channels",
 	agents: "Agents",
@@ -719,6 +721,8 @@ export function App() {
 							<ModelsView workspace={selected} />
 						) : shown === "proxies" ? (
 							<ProxiesView workspace={selected} />
+						) : shown === "video" ? (
+							<VideoView workspace={selected} />
 						) : shown === "synapse" ? (
 							<SynapseView user={user} workspace={selected} />
 						) : shown === "agents" ? (

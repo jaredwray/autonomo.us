@@ -41,6 +41,7 @@ import type {
 	CreateSynapseCommitmentRequest,
 	CreateSynapseNoteRequest,
 	CreateTeamInviteRequest,
+	CreateVideoConnectionRequest,
 	CreateWorkspaceRequest,
 	CurrentSession,
 	DecideBotWebRequest,
@@ -105,9 +106,18 @@ import type {
 	UpdateProxyRequest,
 	UpdateSynapseNoteRequest,
 	UpdateTeamMemberRequest,
+	UpdateVideoConnectionRequest,
+	UpdateVideoPolicyRequest,
 	UpdateWebPolicyRequest,
 	UpdateWorkspaceRequest,
 	UsageAnalytics,
+	VideoConnection,
+	VideoGenerateRequest,
+	VideoJob,
+	VideoJobList,
+	VideoModelList,
+	VideoPolicy,
+	VideoSettings,
 	WebFetchRequest,
 	WebFetchResult,
 	WebPolicy,
@@ -1230,6 +1240,75 @@ export function updateWebPolicy(
 /** The fetch an agent gets: plain request first, then the ladder. Billable. */
 export function webFetch(input: WebFetchRequest): Promise<WebFetchResult> {
 	return apiRequest(ws("/web/fetch"), { method: "POST", body: input });
+}
+
+const videoPath = (rest = "") => ws(`/video${rest}`);
+
+/** The workspace's video connections, policy, this month's spend, and whether video is on. */
+export function fetchVideoSettings(): Promise<VideoSettings> {
+	return apiRequest(videoPath());
+}
+/** What the workspace can make now, and whether the caller may start a video. */
+export function fetchVideoModels(): Promise<VideoModelList> {
+	return apiRequest(videoPath("/models"));
+}
+export function createVideoConnection(
+	input: CreateVideoConnectionRequest,
+): Promise<VideoConnection> {
+	return apiRequest(videoPath("/connections"), { method: "POST", body: input });
+}
+/** Omitting `apiKey` keeps the saved key; `defaultModel: ""` clears it. */
+export function updateVideoConnection(
+	name: string,
+	input: UpdateVideoConnectionRequest,
+): Promise<VideoConnection> {
+	return apiRequest(videoPath(`/connections/${encodeURIComponent(name)}`), {
+		method: "PATCH",
+		body: input,
+	});
+}
+export function deleteVideoConnection(name: string): Promise<void> {
+	return apiRequest(videoPath(`/connections/${encodeURIComponent(name)}`), {
+		method: "DELETE",
+	});
+}
+/** A stale `revision` is refused with 409. */
+export function updateVideoPolicy(
+	input: UpdateVideoPolicyRequest,
+): Promise<VideoPolicy> {
+	return apiRequest(videoPath("/policy"), { method: "PUT", body: input });
+}
+/** Starts a real, billable video; answers at once with its job. */
+export function generateVideo(input: VideoGenerateRequest): Promise<VideoJob> {
+	return apiRequest(videoPath("/jobs"), { method: "POST", body: input });
+}
+/** Every job in the workspace, newest first; `before` is the last id of the previous page. */
+export function fetchVideoJobs(
+	options: { before?: string; limit?: number } = {},
+): Promise<VideoJobList> {
+	const query = new URLSearchParams();
+	if (options.limit !== undefined) query.set("limit", String(options.limit));
+	if (options.before) query.set("before", options.before);
+	const search = query.toString();
+	return apiRequest(videoPath(`/jobs${search ? `?${search}` : ""}`));
+}
+/** One job, checked with its provider when due; `wait` holds the request up to that many seconds. */
+export function fetchVideoJob(
+	id: string,
+	options: { wait?: number; signal?: AbortSignal } = {},
+): Promise<VideoJob> {
+	const search =
+		options.wait !== undefined
+			? `?wait=${encodeURIComponent(options.wait)}`
+			: "";
+	return apiRequest(videoPath(`/jobs/${encodeURIComponent(id)}${search}`), {
+		...(options.signal ? { signal: options.signal } : {}),
+	});
+}
+export function cancelVideoJob(id: string): Promise<VideoJob> {
+	return apiRequest(videoPath(`/jobs/${encodeURIComponent(id)}/cancel`), {
+		method: "POST",
+	});
 }
 
 /** Use an explicit workspace so asynchronous organization actions stay in their original scope. */

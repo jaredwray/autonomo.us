@@ -754,7 +754,7 @@ Same conventions as the web suites: vitest, fake `FetchLike`s, no real provider 
 
 ## 16. Out of scope and follow-ups
 
-- **A Video page in the dashboard** (connections, policy, a job list with a player). This change adds only the two permission entries. Until then admins manage video through the REST API or environment variables.
+- **A Video page in the dashboard** (connections, policy, a job list with a player). Built in a follow-up change; see [Dashboard page](#dashboard-page).
 - **Bots.** The tools are not in `BOT_TOOLS`. A bot's 90-second run cannot wait for a video, and its web fences would need thought.
 - **Agent webhooks and MCP events** for a finished job (`video.finished`), and a `video.changed` app event like `onWebChanged`. Until then agents poll.
 - **Provider webhooks** instead of polling.
@@ -855,3 +855,45 @@ Sources:
 - [Apiframe: best AI video generation APIs](https://apiframe.ai/blog/best-ai-video-generation-apis)
 - [Apiframe: Luma API guide](https://apiframe.ai/guides/luma-api-guide)
 - [Cloudflare Workers AI: kling-v3](https://developers.cloudflare.com/ai/models/klingai/kling-v3/)
+## Dashboard page
+
+*Planned after PR #74 merged and built in the follow-up change: `core/ux/src/VideoView.tsx` (shell, tabs, settings), `core/ux/src/VideoJobs.tsx` (the form, the job list, following, the player), `core/ux/src/video-route.ts`, the client calls in `core/ux/src/api.ts`, and `core/ux/test/Video.test.tsx`. `core/ux/vite.config.ts` proxies `/video/downloads` in development. Checked in Chromium against a local gateway with simulated providers; playback of a real provider's MP4 is still to be checked by hand, in Chrome and Safari.*
+
+A **Video** page at `#/w/<workspace id>/video`, built like the Proxies page (`core/ux/src/ProxiesView.tsx`). It needs no server changes.
+
+### Findings that shape the design
+
+- **Members cannot see jobs.** Every `/video/jobs*` route is behind `video:generate`, which only admins hold among people. A member can read `GET /video` and `GET /video/models` only, so the job list and the form are admin-only, and the page never calls `/video/jobs` for a member.
+- **Turned off means 503 on everything except `GET /video`.** When `settings.available` is false the page calls nothing else and disables every control.
+- **Listing jobs does not advance them.** Only `GET /video/jobs/:id` polls the provider (at most every 5 s per job), so the page follows each unfinished job itself.
+- **The page learns the role from its prop**, as Proxies and Models do: `canEdit = workspace?.role !== "member"`.
+- **The Vite dev server must proxy `/video/downloads`**, or a link built from `localhost:5173` would return the dashboard's `index.html`. Production already routes it (`run_worker_first`).
+
+### Structure
+
+`PageTabs` with two tabs kept in the hash, as Models does:
+
+| Tab | Hash | Who | Content |
+| --- | --- | --- | --- |
+| **Videos** (default) | `#/w/<id>/video` | admins | Make a video, then the job list |
+| **Settings** | `#/w/<id>/video/settings` | everyone | Overview strip, connections, limits and order |
+
+Members get no tab bar: they see the Settings content, read-only. The header follows Proxies (eyebrow, title, description, an **Add provider** button for admins or a note for members), then the turned-off warning, notices, errors with Retry, and the persistence note.
+
+### Settings
+
+- **Overview:** estimated spend this month against the budget, videos this month, connections.
+- **Connections table:** name, kind and source, problem, key saved or missing, default model, Luma credit price, this month's videos and estimated cost, and for admins an on/off switch, **Edit**, and a two-step **Delete** on saved connections. Environment connections are read-only. There is no Test button: a test would be a paid video.
+- **Connection form:** provider and name (add only, with a suggested name), API key (required on add, optional on edit), default model from `VIDEO_MODELS[kind]`, and Luma's credit price.
+- **Limits and order:** the connection order with move up/down, videos a day, monthly budget (with this month's use), and longest video; saved with the revision read, with the stale-revision message and Reload on 409.
+
+### Videos
+
+- **Make a video:** prompt, provider (or automatic), model, duration, aspect ratio, resolution, and image URL where the model takes one. The choices come from `GET /video/models` and narrow to what the chosen model can make, capped by the workspace's longest video; on automatic they follow the first provider whose default model fits that cap, as the gateway skips the rest. A job started while a list read is in flight stays listed, once. Server refusals (409, 429) show their own message. No cost preview: prices stay on the server.
+- **Job list:** newest first with **Load more**; each job shows a status pill, prompt, provider and model, who made it and when, settings and estimated cost, the error when failed, and **Stop** for unfinished jobs (with a note that stopping does not give back the estimate).
+- **Following:** up to 3 unfinished jobs at once, each with `GET /video/jobs/:id?wait=10` in a loop; back off from 5 s to 30 s on errors; drop a 404; on 503 or 403 stop and read the settings again; give up on a held request after 25 s; pause while the tab is hidden; abort on unmount. A job that finishes refreshes the budget. Both tabs stay mounted, so following and a typed prompt survive a tab switch.
+- **Playback:** a **Play** button mounts `<video controls>` from `video.url` (never one player per row up front), with an **Open video** link beside it always, and a fallback message on a media error. A media element follows Runway's and Luma's redirects, and `content-disposition: attachment` and the sandbox CSP on Google's stream govern documents, not media loads. Safari needs byte ranges, which the download route does not serve yet, so Google videos may need the link there.
+
+### Out of scope
+
+Overview and nav badges, analytics, a cost preview, byte ranges on the Google download, a per-connection test, image upload, filtering jobs, showing `attempts`, live updates without polling, and clearing a Luma credit price (the API cannot).
