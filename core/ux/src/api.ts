@@ -1231,3 +1231,12 @@ export function updateWebPolicy(
 export function webFetch(input: WebFetchRequest): Promise<WebFetchResult> {
 	return apiRequest(ws("/web/fetch"), { method: "POST", body: input });
 }
+
+/** Use an explicit workspace so asynchronous organization actions stay in their original scope. */
+export function organizationRequest<T>(
+	workspaceId: string,
+	path: string,
+	options?: Parameters<typeof apiRequest>[1],
+): Promise<T> {
+	return apiRequest(ws(`/organization${path}`, workspaceId), options);
+}

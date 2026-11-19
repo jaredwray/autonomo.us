@@ -69,6 +69,7 @@ const MCP_GRANTS = ["mcp:read", "mcp:call"] as const;
  */
 const GROUP_GRANTS: Partial<Record<AgentWebhookEventGroup, readonly string[]>> =
 	{
+		organization: MCP_GRANTS,
 		"message-changes": MCP_GRANTS,
 		membership: MCP_GRANTS,
 		channels: MCP_GRANTS,
@@ -83,6 +84,11 @@ export function mayHear(
 	event: AgentWakeEvent,
 	permissions: readonly string[],
 ): boolean {
+	if (
+		event.type === "decision.assigned" &&
+		!permissions.includes("organization:decide")
+	)
+		return false;
 	const group = agentWakeEventGroup(event);
 	return (group ? (GROUP_GRANTS[group] ?? []) : []).every((grant) =>
 		permissions.includes(grant),

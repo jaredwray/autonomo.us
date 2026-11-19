@@ -82,6 +82,8 @@ const MODELS_CHANGE = {
 
 /** What to do about the events of one kind, said once below the list. */
 const NEXT = {
+	organization:
+		"Use organization_read_case with the case ID. Consume a work outcome once using its stable outcome ID.",
 	channels:
 		"Read each channel above with channels_read: it starts at your read mark, so it shows everything you have not handled. Mark what you handled with channels_mark_read.",
 	membership:
@@ -182,6 +184,16 @@ export function wakeText(
 				next.add("membership");
 				lines.push(
 					`- ${who(event.by)} ${event.type === "channel.archived" ? "archived" : "unarchived"} #${event.channel}.`,
+				);
+				break;
+			case "decision.assigned":
+				next.add("organization");
+				lines.push(`- Decision case ${event.caseId} is assigned to you.`);
+				break;
+			case "decision.outcome":
+				next.add("organization");
+				lines.push(
+					`- Decision case ${event.caseId} received outcome ${event.outcomeId}.`,
 				);
 				break;
 			case "proposal.decided":

@@ -51,6 +51,13 @@ import {
 	MemoryOAuthRepository,
 	MongoOAuthRepository,
 } from "./oauth/repository.js";
+import { organizationDirectory } from "./organization/directory.js";
+import { organizationToolSet } from "./organization/mcp.js";
+import { OrganizationService } from "./organization/organization.js";
+import {
+	MemoryOrganizationRepository,
+	MongoOrganizationRepository,
+} from "./organization/repository.js";
 import {
 	type ProviderRegistry,
 	registryFromConfig,
@@ -69,6 +76,7 @@ import { failoverRoutes } from "./routes/failover.js";
 import { healthRoutes } from "./routes/health.js";
 import { catalogRoutes, modelsRoutes } from "./routes/models.js";
 import { oauthRoutes } from "./routes/oauth.js";
+import { organizationRoutes } from "./routes/organization.js";
 import { overviewRoutes } from "./routes/overview.js";
 import { routingRoutes } from "./routes/routing.js";
 import { synapseRoutes } from "./routes/synapse.js";
@@ -131,6 +139,8 @@ const initializers = new WeakMap<
 >();
 
 export type CreateServerOptions = {
+	/** Clock for organization response deadlines. */
+	organizationNow?: () => number;
 	/** Enables dedicated-token internal maintenance routes on this server. */
 	maintenanceToken?: string;
 	/** Containers use durable platform invocations instead of detached interval sweeps. */
@@ -311,7 +321,8 @@ export function createServer(options: CreateServerOptions = {}) {
 			);
 		},
 	};
-	const agentWebhooks = new AgentWebhooks({
+	const agentWebhooks: AgentWebhooks = new AgentWebhooks({
+		mayDeliverDecision: (w, id, event) => organization.mayNotify(w, id, event),
 		repository: agentWebhookRepository,
 		agents: webhookAgents,
 		workspaces,
@@ -535,7 +546,47 @@ export function createServer(options: CreateServerOptions = {}) {
 	});
 	// The operator's off switch removes the tools, as it does `web_fetch`.
 	const videoTools = video.available ? videoToolSet(video) : undefined;
+	const organization: OrganizationService = new OrganizationService(
+		mongo
+			? new MongoOrganizationRepository(mongo)
+			: new MemoryOrganizationRepository(),
+		organizationDirectory(
+			workspaces,
+			accounts,
+			agentTokens,
+			botRepository,
+			channels,
+			oauth,
+		),
+		{
+			now: options.organizationNow,
+			// Use the same durable-storage and pinned-transport capabilities as MCP push.
+			...(eventRepository && webhookTransport.pinsAddress
+				? {
+						notify: (w, caseId, n) =>
+							agentWebhooks.onOrganizationNotice(w, n.recipient.id, {
+								key: n.key,
+								event: {
+									type: n.type,
+									at: n.at,
+									caseId,
+									outcomeId: n.outcomeId,
+								},
+							}),
+					}
+				: {}),
+		},
+	);
+	let orgSweep: Promise<void> | undefined;
+	let nextOrgSweep = 0;
+	const sweepOrganization = () => {
+		orgSweep ??= organization.sweep().finally(() => {
+			orgSweep = undefined;
+		});
+		return orgSweep;
+	};
 	const toolSets = [
+		organizationToolSet(organization),
 		synapseToolSet(synapse, {
 			features: knowledge,
 			// A capture that names a page reads it as `web_fetch` would.
@@ -757,6 +808,7 @@ export function createServer(options: CreateServerOptions = {}) {
 					agentWebhooks.onProposalDecided(workspaceId, proposal),
 			});
 			scoped.register(channelRoutes, { channels });
+			scoped.register(organizationRoutes, { organization });
 			scoped.register(botRoutes, { bots, webRequests: botWebRequests });
 			scoped.register(webRoutes, {
 				store: proxies,
@@ -881,6 +933,7 @@ export function createServer(options: CreateServerOptions = {}) {
 		server.addHook("onReady", async () => {
 			sweeper = setInterval(() => {
 				botRunner.sweep().catch(() => {});
+				sweepOrganization().catch(() => {});
 				agentWebhooks.sweep().catch(() => {});
 				knowledge.maintenance.sweep().catch(() => {});
 				mcpEvents?.catchUp();
@@ -892,6 +945,7 @@ export function createServer(options: CreateServerOptions = {}) {
 			// Bot replies can enqueue fresh webhook/MCP work. Wait for producers
 			// first so a completed early consumer snapshot cannot permit sleep.
 			await botRunner.idle();
+			await orgSweep;
 			await agentWebhooks.idle();
 			await mcpEvents?.idle();
 			await knowledge.maintenance.idle();
@@ -899,12 +953,17 @@ export function createServer(options: CreateServerOptions = {}) {
 		sweep: async (maxMcpEvents = 50) => {
 			await Promise.all([
 				botRunner.sweep(),
+				sweepOrganization(),
 				agentWebhooks.sweep(),
 				mcpEvents?.sweep(maxMcpEvents),
 				knowledge.maintenance.sweep(),
 			]);
 		},
 		catchUp: () => {
+			if (Date.now() >= nextOrgSweep) {
+				nextOrgSweep = Date.now() + BOT_SWEEP_INTERVAL_MS;
+				sweepOrganization().catch(() => {});
+			}
 			agentWebhooks.catchUp();
 			mcpEvents?.catchUp();
 		},
@@ -913,6 +972,7 @@ export function createServer(options: CreateServerOptions = {}) {
 	const stopBackground = () => {
 		backgroundClosing ??= Promise.allSettled([
 			botRunner.close(),
+			orgSweep,
 			agentWebhooks.close(),
 			mcpEvents?.close(),
 			knowledge.maintenance.close(),

@@ -1355,6 +1355,28 @@ export class AccountStore {
 		return { ...session, user: publicMember(record, await this.defaultId()) };
 	}
 
+	/** Current workspace access for a single identity, including inherited org roles. */
+	async workspaceMember(
+		workspaceId: string,
+		id: string,
+	): Promise<WorkspaceMember | null> {
+		const user = await this.storage(() => this.users.get(id));
+		if (!user) return null;
+		const implicit = user.role !== "member";
+		const membership = memberships(user, await this.defaultId()).find(
+			(item) => item.workspaceId === workspaceId,
+		);
+		if (!implicit && !membership) return null;
+		return {
+			id: user._id,
+			email: user.email,
+			name: user.name,
+			orgRole: user.role,
+			role: implicit ? "admin" : (membership as WorkspaceMembership).role,
+			implicit,
+		};
+	}
+
 	/** Everyone who can open `workspaceId`, and its recent membership changes. */
 	async workspaceMembers(workspace: {
 		id: string;

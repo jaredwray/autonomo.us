@@ -29,6 +29,7 @@ export const AGENT_TOKEN_PERMISSIONS = {
 	"web:fetch": "Web: Fetch",
 	"models:chat": "Models: Chat",
 	"video:generate": "Video: Generate",
+	"organization:decide": "Organization: Decide assigned cases",
 } as const;
 export type AgentTokenPermission = keyof typeof AGENT_TOKEN_PERMISSIONS;
 export const DEFAULT_AGENT_TOKEN_PERMISSIONS: readonly AgentTokenPermission[] =
