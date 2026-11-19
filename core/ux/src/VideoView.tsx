@@ -591,6 +591,7 @@ export function VideoView({
 		{ kind: "add" } | { kind: "edit"; name: string } | null
 	>(null);
 	const [confirming, setConfirming] = useState<string | null>(null);
+	const [deleting, setDeleting] = useState(false);
 	const [rowError, setRowError] = useState("");
 	const [saving, setSaving] = useState(false);
 	const [saved, setSaved] = useState(false);
@@ -621,8 +622,13 @@ export function VideoView({
 			setModelsError(errorText(cause, "Could not load the video models."));
 		}
 	}, []);
+	/**
+	 * Reads the settings again. Unsaved edits to the limits survive ("keep"),
+	 * are thrown away ("discard"), or keep their limits but take the gateway's
+	 * new order and revision ("rebase", after a change made here).
+	 */
 	const refresh = useCallback(
-		async (discard = false) => {
+		async (mode: "keep" | "discard" | "rebase" = "keep") => {
 			const request = ++sequence.current;
 			setLoading(true);
 			try {
@@ -630,11 +636,20 @@ export function VideoView({
 				if (request !== sequence.current) return;
 				setSettings(next);
 				setError("");
-				// Unsaved edits to the limits survive a refresh unless they are thrown away.
-				if (discard || !dirtyRef.current) {
+				if (mode === "discard" || !dirtyRef.current) {
 					setDraft(next.policy);
 					setDirty(false);
 					dirtyRef.current = false;
+				} else if (mode === "rebase") {
+					setDraft((current) =>
+						current
+							? {
+									...current,
+									order: next.policy.order,
+									revision: next.policy.revision,
+								}
+							: next.policy,
+					);
 				}
 				// Models and jobs answer 503 when video is off, and 403 to members.
 				if (canEdit && next.available) void loadModels();
@@ -664,7 +679,11 @@ export function VideoView({
 		setSaving(true);
 		setSaveError(null);
 		try {
-			const next = await updateVideoPolicy(policy);
+			// The stored order can name a connection whose variable was removed since.
+			const next = await updateVideoPolicy({
+				...policy,
+				order: displayOrder(policy, settings?.connections ?? []),
+			});
 			setSettings((current) =>
 				current ? { ...current, policy: next } : current,
 			);
@@ -690,10 +709,30 @@ export function VideoView({
 			setSaving(false);
 		}
 	};
+	// The Add button is still disabled until the closed panel renders, so focus it after.
+	const focusAdd = useRef(false);
 	const closePanel = () => {
+		focusAdd.current = true;
 		setPanel(null);
-		addButton.current?.focus();
 	};
+	useEffect(() => {
+		if (panel || !focusAdd.current) return;
+		focusAdd.current = false;
+		addButton.current?.focus();
+	}, [panel]);
+	// Delete and Cancel replace themselves: focus follows to what took their place.
+	const confirmDelete = useRef<HTMLButtonElement>(null);
+	const deleteButtons = useRef(new Map<string, HTMLButtonElement>());
+	const refocusDelete = useRef<string | null>(null);
+	useEffect(() => {
+		if (confirming) {
+			confirmDelete.current?.focus();
+			return;
+		}
+		const name = refocusDelete.current;
+		refocusDelete.current = null;
+		if (name) deleteButtons.current.get(name)?.focus();
+	}, [confirming]);
 	const available = settings?.available ?? true;
 	const canChange = canEdit && available;
 	const connections = settings?.connections ?? [];
@@ -910,10 +949,14 @@ export function VideoView({
 													{confirming === item.name ? (
 														<>
 															<button
+																ref={confirmDelete}
 																className="button danger"
 																type="button"
 																aria-label={`Confirm delete ${item.name}`}
+																disabled={deleting}
 																onClick={async () => {
+																	if (deleting) return;
+																	setDeleting(true);
 																	setRowError("");
 																	try {
 																		await deleteVideoConnection(item.name);
@@ -924,26 +967,36 @@ export function VideoView({
 																			panel.name === item.name
 																		)
 																			setPanel(null);
-																		await refresh(true);
+																		await refresh("rebase");
 																	} catch (cause) {
 																		setRowError(
 																			errorText(cause, "Could not delete it."),
 																		);
+																	} finally {
+																		setDeleting(false);
 																	}
 																}}
 															>
-																Delete
+																{deleting ? "Deleting…" : "Delete"}
 															</button>
 															<button
 																className="button"
 																type="button"
-																onClick={() => setConfirming(null)}
+																onClick={() => {
+																	refocusDelete.current = item.name;
+																	setConfirming(null);
+																}}
 															>
 																Cancel
 															</button>
 														</>
 													) : (
 														<button
+															ref={(element) => {
+																if (element)
+																	deleteButtons.current.set(item.name, element);
+																else deleteButtons.current.delete(item.name);
+															}}
 															className="button"
 															type="button"
 															aria-label={`Delete ${item.name}`}
@@ -983,7 +1036,7 @@ export function VideoView({
 					onSave={() => void savePolicy(draft)}
 					onReload={() => {
 						setSaveError(null);
-						void refresh(true);
+						void refresh("discard");
 					}}
 				/>
 			)}
@@ -1006,7 +1059,11 @@ export function VideoView({
 						ref={addButton}
 						className="button primary"
 						type="button"
-						disabled={!settings || !available || panel?.kind === "add"}
+						disabled={
+							!settings ||
+							!available ||
+							(shownTab === "settings" && panel?.kind === "add")
+						}
 						onClick={() => {
 							showTab("settings");
 							setPanel({ kind: "add" });
@@ -1066,25 +1123,28 @@ export function VideoView({
 						id="video-panel"
 						aria-labelledby={`video-tab-${shownTab}`}
 					>
-						{shownTab === "settings" ? (
-							settingsPanel
-						) : !settings ? null : !settings.available ? (
-							<section className="card">
-								<div className="models-empty">
-									<span className="empty-icon">
-										<Icon name="video" />
-									</span>
-									<p>{TURNED_OFF}</p>
-								</div>
-							</section>
-						) : (
-							<VideoJobsPanel
-								models={models}
-								modelsError={modelsError}
-								onFinished={() => void refresh()}
-								onShowSettings={() => showTab("settings")}
-							/>
-						)}
+						{/* Both stay mounted, so a typed prompt and followed jobs survive a tab switch. */}
+						<div hidden={shownTab !== "settings"}>{settingsPanel}</div>
+						<div hidden={shownTab !== "videos"}>
+							{!settings ? null : !settings.available ? (
+								<section className="card">
+									<div className="models-empty">
+										<span className="empty-icon">
+											<Icon name="video" />
+										</span>
+										<p>{TURNED_OFF}</p>
+									</div>
+								</section>
+							) : (
+								<VideoJobsPanel
+									models={models}
+									modelsError={modelsError}
+									onFinished={() => void refresh()}
+									onRetryModels={() => void loadModels()}
+									onShowSettings={() => showTab("settings")}
+								/>
+							)}
+						</div>
 					</div>
 				</>
 			) : (

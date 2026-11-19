@@ -118,22 +118,48 @@ export function videoRequestProblem(
 	});
 }
 
-/** The model a request would most likely use: the one chosen, the provider's default, or the first provider's. */
-function basisModel(
+type VideoProviderChoice = VideoModelList["providers"][number];
+
+const defaultModelOf = (item: VideoProviderChoice) =>
+	item.models.find((entry) => entry.id === item.defaultModel) ?? item.models[0];
+
+/**
+ * The provider and model a request would most likely use: the ones chosen,
+ * or, left on Automatic, the first provider whose default model fits the
+ * workspace's longest video, as the gateway skips those that cannot.
+ */
+export function basisOf(
 	models: VideoModelList,
 	provider: string,
 	model: string,
-): VideoModel | undefined {
-	const chosen =
-		models.providers.find((item) => item.name === provider) ??
-		models.providers[0];
-	if (!chosen) return undefined;
-	const id = (provider && model) || chosen.defaultModel;
-	return (
-		chosen.models.find((item) => item.id === id) ??
-		chosen.models.find((item) => item.id === chosen.defaultModel) ??
-		chosen.models[0]
-	);
+): { provider: VideoProviderChoice; model: VideoModel } | undefined {
+	const chosen = models.providers.find((item) => item.name === provider);
+	if (chosen) {
+		const found =
+			(model && chosen.models.find((item) => item.id === model)) ||
+			defaultModelOf(chosen);
+		return found ? { provider: chosen, model: found } : undefined;
+	}
+	const fitting =
+		models.providers.find((item) => {
+			const candidate = defaultModelOf(item);
+			return (
+				candidate !== undefined &&
+				formChoices(candidate, models.limits.maxDurationSeconds).fits
+			);
+		}) ?? models.providers[0];
+	const found = fitting && defaultModelOf(fitting);
+	return fitting && found ? { provider: fitting, model: found } : undefined;
+}
+
+/** The newer copy of one job; the incoming one when they tie. */
+const newer = (current: VideoJob, incoming: VideoJob) =>
+	current.updatedAt > incoming.updatedAt ? current : incoming;
+
+/** A short, readable name for a job in button labels. */
+function about(job: VideoJob): string {
+	const prompt = job.prompt.trim().replace(/\s+/g, " ");
+	return prompt.length > 40 ? `${prompt.slice(0, 40).trimEnd()}…` : prompt;
 }
 
 /** A value the model allows: the current one when it fits, otherwise its default or the nearest allowed. */
@@ -167,7 +193,7 @@ function MakeVideo({
 	const [prompt, setPrompt] = useState("");
 	const [provider, setProvider] = useState("");
 	const [model, setModel] = useState("");
-	const first = basisModel(models, "", "");
+	const first = basisOf(models, "", "")?.model;
 	const [duration, setDuration] = useState(() =>
 		first ? fitDuration(first, cap, first.defaults.durationSeconds) : 5,
 	);
@@ -180,14 +206,20 @@ function MakeVideo({
 	const [imageUrl, setImageUrl] = useState("");
 	const [starting, setStarting] = useState(false);
 	const [error, setError] = useState("");
-	const basis = basisModel(models, provider, model);
+	// A provider or model gone from the list since it was picked counts as unpicked.
 	const chosenProvider = models.providers.find(
 		(item) => item.name === provider,
 	);
+	const shownProvider = chosenProvider ? provider : "";
+	const shownModel = chosenProvider?.models.some((item) => item.id === model)
+		? model
+		: "";
+	const picked = basisOf(models, shownProvider, shownModel);
+	const basis = picked?.model;
 
 	// A different model keeps what it allows and resets the rest to its defaults.
 	const refit = (nextProvider: string, nextModel: string) => {
-		const next = basisModel(models, nextProvider, nextModel);
+		const next = basisOf(models, nextProvider, nextModel)?.model;
 		if (!next) return;
 		setDuration((current) => fitDuration(next, cap, current));
 		setAspectRatio((current) =>
@@ -199,7 +231,7 @@ function MakeVideo({
 		if (!next.inputs.includes("image")) setImageUrl("");
 	};
 
-	if (!basis) return null;
+	if (!picked || !basis) return null;
 	const choices = formChoices(basis, cap);
 	// What is sent and shown: never a value the model does not offer.
 	const shownAspect = basis.aspectRatios.includes(aspectRatio)
@@ -216,6 +248,20 @@ function MakeVideo({
 		resolution: shownResolution,
 		imageUrl: shownImage,
 	});
+	// When nothing fits by default, another provider's model may still fit.
+	const otherFits =
+		!choices.fits &&
+		models.providers.some((item) =>
+			item.models.some(
+				(entry) => entry !== basis && formChoices(entry, cap).fits,
+			),
+		);
+	const shownProblem =
+		problem && (prompt.trim() || !choices.fits)
+			? otherFits
+				? `${problem} Choose a provider and a model that fits.`
+				: problem
+			: "";
 	return (
 		<section className="card video-make" aria-labelledby={`${id}-title`}>
 			<div className="section-heading">
@@ -239,8 +285,8 @@ function MakeVideo({
 						durationSeconds: duration,
 						aspectRatio: shownAspect,
 						resolution: shownResolution,
-						...(provider ? { provider } : {}),
-						...(provider && model ? { model } : {}),
+						...(shownProvider ? { provider: shownProvider } : {}),
+						...(shownProvider && shownModel ? { model: shownModel } : {}),
 						...(shownImage.trim() ? { imageUrl: shownImage.trim() } : {}),
 					};
 					try {
@@ -279,7 +325,7 @@ function MakeVideo({
 							<label htmlFor={`${id}-provider`}>Provider</label>
 							<Dropdown
 								id={`${id}-provider`}
-								value={provider}
+								value={shownProvider}
 								onValueChange={(value) => {
 									setProvider(value);
 									setModel("");
@@ -300,10 +346,10 @@ function MakeVideo({
 								<label htmlFor={`${id}-model`}>Model</label>
 								<Dropdown
 									id={`${id}-model`}
-									value={model}
+									value={shownModel}
 									onValueChange={(value) => {
 										setModel(value);
-										refit(provider, value);
+										refit(shownProvider, value);
 										setError("");
 									}}
 								>
@@ -423,18 +469,22 @@ function MakeVideo({
 							{error}
 						</div>
 					)}
-					{problem && (prompt.trim() || !choices.fits) && (
-						<p className="field-hint">{problem}</p>
+					{shownProblem && (
+						<p className="field-hint" id={`${id}-problem`}>
+							{shownProblem}
+						</p>
 					)}
 					<div className="form-actions">
 						<span className="field-hint">
-							Uses {basis.label}
-							{chosenProvider ? ` on ${chosenProvider.name}` : ""}.
+							{chosenProvider
+								? `Uses ${basis.label} on ${chosenProvider.name}.`
+								: `Tries each provider in order and uses the first that can make it. These choices follow ${basis.label} on ${picked.provider.name}; choose a provider for others.`}
 						</span>
 						<button
 							className="button primary"
 							type="submit"
 							disabled={Boolean(problem)}
+							aria-describedby={shownProblem ? `${id}-problem` : undefined}
 						>
 							{starting ? "Starting…" : "Make video"}
 						</button>
@@ -449,12 +499,19 @@ function MakeVideo({
 function Player({ job }: { job: VideoJob }) {
 	const [playing, setPlaying] = useState(false);
 	const [broken, setBroken] = useState(false);
+	const player = useRef<HTMLVideoElement>(null);
+	const link = useRef<HTMLAnchorElement>(null);
+	// Play replaces itself: keyboard focus moves to the player, or the link if it cannot play.
+	useEffect(() => {
+		if (playing) (broken ? link : player).current?.focus();
+	}, [playing, broken]);
 	if (!job.video) return null;
 	return (
 		<div className="video-play">
 			{playing && !broken ? (
 				// biome-ignore lint/a11y/useMediaCaption: generated videos come with no captions.
 				<video
+					ref={player}
 					className="video-player"
 					controls
 					autoPlay
@@ -473,13 +530,14 @@ function Player({ job }: { job: VideoJob }) {
 					<button
 						className="button"
 						type="button"
-						aria-label={`Play ${job.id}`}
+						aria-label={`Play ${about(job)}`}
 						onClick={() => setPlaying(true)}
 					>
 						Play
 					</button>
 				)}
 				<a
+					ref={link}
 					className="button"
 					href={job.video.url}
 					target="_blank"
@@ -506,6 +564,15 @@ function JobItem({
 }) {
 	const [confirming, setConfirming] = useState(false);
 	const [stopping, setStopping] = useState(false);
+	const confirmButton = useRef<HTMLButtonElement>(null);
+	const stopButton = useRef<HTMLButtonElement>(null);
+	const moveFocus = useRef(false);
+	// Stop and Keep going replace themselves: focus follows to what took their place.
+	useEffect(() => {
+		if (!moveFocus.current) return;
+		moveFocus.current = false;
+		(confirming ? confirmButton : stopButton).current?.focus();
+	}, [confirming]);
 	const finished = videoJobFinished(job.status);
 	return (
 		<li>
@@ -548,9 +615,10 @@ function JobItem({
 					{confirming ? (
 						<>
 							<button
+								ref={confirmButton}
 								className="button danger"
 								type="button"
-								aria-label={`Confirm stop ${job.id}`}
+								aria-label={`Confirm stop ${about(job)}`}
 								disabled={stopping}
 								onClick={async () => {
 									setStopping(true);
@@ -569,7 +637,10 @@ function JobItem({
 							<button
 								className="button"
 								type="button"
-								onClick={() => setConfirming(false)}
+								onClick={() => {
+									moveFocus.current = true;
+									setConfirming(false);
+								}}
 							>
 								Keep going
 							</button>
@@ -579,10 +650,14 @@ function JobItem({
 						</>
 					) : (
 						<button
+							ref={stopButton}
 							className="button"
 							type="button"
-							aria-label={`Stop ${job.id}`}
-							onClick={() => setConfirming(true)}
+							aria-label={`Stop ${about(job)}`}
+							onClick={() => {
+								moveFocus.current = true;
+								setConfirming(true);
+							}}
 						>
 							Stop
 						</button>
@@ -624,12 +699,14 @@ export function VideoJobsPanel({
 	models,
 	modelsError,
 	onFinished,
+	onRetryModels,
 	onShowSettings,
 }: {
 	models: VideoModelList | null;
 	modelsError: string;
-	/** A job finished or started: the budget and usage changed. */
+	/** A job finished or started, or video stopped answering: read the settings again. */
 	onFinished(): void;
+	onRetryModels(): void;
 	onShowSettings(): void;
 }) {
 	const [jobs, setJobs] = useState<VideoJob[] | null>(null);
@@ -639,6 +716,8 @@ export function VideoJobsPanel({
 	const [rowError, setRowError] = useState("");
 	const [notice, setNotice] = useState("");
 	const sequence = useRef(0);
+	/** Jobs started here: a list read before one was saved must not drop it. */
+	const startedHere = useRef(new Set<string>());
 	const finished = useRef(onFinished);
 	finished.current = onFinished;
 
@@ -648,9 +727,26 @@ export function VideoJobsPanel({
 		try {
 			const page = await fetchVideoJobs(before ? { before } : {});
 			if (request !== sequence.current) return;
-			setJobs((current) =>
-				before && current ? [...current, ...page.jobs] : page.jobs,
-			);
+			setJobs((current) => {
+				const known = new Map((current ?? []).map((job) => [job.id, job]));
+				if (before)
+					return [
+						...(current ?? []),
+						...page.jobs.filter((job) => !known.has(job.id)),
+					];
+				const listed = new Set(page.jobs.map((job) => job.id));
+				const missing = (current ?? []).filter(
+					(job) => startedHere.current.has(job.id) && !listed.has(job.id),
+				);
+				// A copy the page already holds may be newer than the list's.
+				return [
+					...missing,
+					...page.jobs.map((job) => {
+						const held = known.get(job.id);
+						return held ? newer(held, job) : job;
+					}),
+				];
+			});
 			setNextBefore(page.nextBefore);
 			setError("");
 		} catch (cause) {
@@ -670,7 +766,7 @@ export function VideoJobsPanel({
 	const replace = useCallback((job: VideoJob) => {
 		setJobs((current) =>
 			current
-				? current.map((item) => (item.id === job.id ? job : item))
+				? current.map((item) => (item.id === job.id ? newer(item, job) : item))
 				: current,
 		);
 	}, []);
@@ -686,6 +782,7 @@ export function VideoJobsPanel({
 		if (!followed) return;
 		const controller = new AbortController();
 		const { signal } = controller;
+		let stopped = false;
 		const follow = async (id: string) => {
 			let retry = FIRST_RETRY_MS;
 			while (!signal.aborted) {
@@ -693,7 +790,14 @@ export function VideoJobsPanel({
 				if (signal.aborted) return;
 				const started = Date.now();
 				try {
-					const job = await fetchVideoJob(id, { wait: WAIT_SECONDS, signal });
+					// A held request that never answers gives up, so the slot moves on.
+					const job = await fetchVideoJob(id, {
+						wait: WAIT_SECONDS,
+						signal: AbortSignal.any([
+							signal,
+							AbortSignal.timeout((WAIT_SECONDS + 15) * 1000),
+						]),
+					});
 					if (signal.aborted) return;
 					replace(job);
 					retry = FIRST_RETRY_MS;
@@ -706,9 +810,19 @@ export function VideoJobsPanel({
 				} catch (cause) {
 					if (signal.aborted) return;
 					if (cause instanceof ApiError && cause.status === 404) {
+						startedHere.current.delete(id);
 						setJobs((current) =>
 							current ? current.filter((item) => item.id !== id) : current,
 						);
+						return;
+					}
+					// Video was turned off or access changed: stop, and read the settings again once.
+					if (
+						cause instanceof ApiError &&
+						(cause.status === 403 || cause.status === 503)
+					) {
+						if (!stopped) finished.current();
+						stopped = true;
 						return;
 					}
 					await sleep(retry, signal);
@@ -739,7 +853,15 @@ export function VideoJobsPanel({
 				<MakeVideo
 					models={models}
 					onStarted={(job) => {
-						setJobs((current) => [job, ...(current ?? [])]);
+						startedHere.current.add(job.id);
+						// A Refresh during the start may have listed it already.
+						setJobs((current) =>
+							current?.some((item) => item.id === job.id)
+								? current.map((item) =>
+										item.id === job.id ? newer(item, job) : item,
+									)
+								: [job, ...(current ?? [])],
+						);
 						setNotice(
 							job.status === "failed"
 								? "The video could not be started. The list says why."
@@ -750,9 +872,14 @@ export function VideoJobsPanel({
 				/>
 			) : modelsError ? (
 				<div className="banner-error" role="alert">
-					{modelsError}
+					{modelsError}{" "}
+					<button className="button" type="button" onClick={onRetryModels}>
+						Retry
+					</button>
 				</div>
-			) : null}
+			) : (
+				<LoadingBanner>Loading what this workspace can make…</LoadingBanner>
+			)}
 			{notice && (
 				<p className="success-notice" role="status">
 					{notice}
@@ -775,7 +902,11 @@ export function VideoJobsPanel({
 						className="button"
 						type="button"
 						disabled={loading}
-						onClick={() => void load()}
+						onClick={() => {
+							setRowError("");
+							setNotice("");
+							void load();
+						}}
 					>
 						{loading ? "Refreshing…" : "Refresh"}
 					</button>

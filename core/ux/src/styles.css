@@ -1517,7 +1517,7 @@ a.button { text-decoration: none; }
 .video-status { display: inline-block; padding: 2px 8px; border: 1px solid var(--hairline); border-radius: 999px; background: var(--page); font-size: 11px; font-weight: 600; white-space: nowrap; }
 .video-status.succeeded { color: var(--success-text); border-color: color-mix(in srgb, var(--status-good) 35%, var(--hairline)); }
 .video-status.failed, .video-status.expired { color: var(--status-critical); border-color: color-mix(in srgb, var(--status-critical) 40%, var(--hairline)); }
-.video-status.queued, .video-status.running { color: #c27c00; border-color: color-mix(in srgb, #c27c00 40%, var(--hairline)); }
+.video-status.queued, .video-status.running { color: var(--status-warning); border-color: color-mix(in srgb, var(--status-warning) 40%, var(--hairline)); }
 .video-status.canceled { color: var(--text-muted); }
 .video-prompt { overflow-wrap: anywhere; white-space: pre-wrap; }
 .video-error { color: var(--status-critical); font-size: 13px; overflow-wrap: anywhere; }

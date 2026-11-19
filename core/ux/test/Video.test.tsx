@@ -267,6 +267,7 @@ describe("Video view: settings", () => {
 		).toBe(true);
 		fireEvent.click(screen.getByRole("tab", { name: "Settings" }));
 		expect(screen.queryByRole("checkbox", { name: "Use runway" })).toBeNull();
+		await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
 		expect(calls.some((call) => call.path.includes("/video/models"))).toBe(
 			false,
 		);
@@ -313,6 +314,27 @@ describe("Video view: settings", () => {
 			apiKey: "luma-secret",
 			creditPriceUsd: 0.005,
 		});
+	});
+
+	it("keeps Add provider working after its form is left, and focuses it on close", async () => {
+		fakeGateway({ settings: settings() });
+		show("admin");
+		await screen.findByText("No videos yet");
+		// The page's own button; the form's submit button shares its name.
+		const add = screen.getByRole("button", {
+			name: "Add provider",
+		}) as HTMLButtonElement;
+		fireEvent.click(add);
+		expect(add.disabled).toBe(true);
+		fireEvent.click(screen.getByRole("tab", { name: "Videos" }));
+		expect(add.disabled).toBe(false);
+		fireEvent.click(add);
+		const form = screen.getByRole("region", { name: "Add a video provider" });
+		fireEvent.click(within(form).getByRole("button", { name: "Cancel" }));
+		expect(
+			screen.queryByRole("region", { name: "Add a video provider" }),
+		).toBeNull();
+		expect(document.activeElement).toBe(add);
 	});
 
 	it("shows the gateway's reason when a provider cannot be added", async () => {
@@ -377,8 +399,11 @@ describe("Video view: settings", () => {
 				);
 			if (call.method === "DELETE") {
 				state.settings.connections = [];
+				state.settings.policy = policy({ revision: 3 });
 				return new Response(null, { status: 204 });
 			}
+			if (call.method === "PUT")
+				return json({ ...(call.body as VideoPolicy), revision: 4 });
 		});
 		show("admin", `#/w/${WORKSPACE}/video/settings`);
 		fireEvent.click(
@@ -386,14 +411,63 @@ describe("Video view: settings", () => {
 		);
 		await waitFor(() => expect(sent(calls, "PATCH")).toHaveLength(1));
 		expect(sent(calls, "PATCH")[0].body).toEqual({ enabled: false });
+		type("Videos a day", "4");
+		fireEvent.click(screen.getByRole("button", { name: "Delete runway" }));
+		expect(document.activeElement).toBe(
+			screen.getByRole("button", { name: "Confirm delete runway" }),
+		);
+		fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+		expect(document.activeElement).toBe(
+			screen.getByRole("button", { name: "Delete runway" }),
+		);
 		fireEvent.click(screen.getByRole("button", { name: "Delete runway" }));
 		fireEvent.click(
 			screen.getByRole("button", { name: "Confirm delete runway" }),
 		);
 		expect(await screen.findByText("Deleted runway.")).toBeDefined();
+		expect(sent(calls, "DELETE")).toHaveLength(1);
 		expect(sent(calls, "DELETE")[0].path).toBe(
 			`${base}/video/connections/runway`,
 		);
+		// The unsaved limit survives the delete and saves on the new revision.
+		expect(
+			(screen.getByLabelText("Videos a day") as HTMLInputElement).value,
+		).toBe("4");
+		fireEvent.click(
+			screen.getByRole("button", { name: "Save limits and order" }),
+		);
+		await waitFor(() => expect(sent(calls, "PUT")).toHaveLength(1));
+		expect(sent(calls, "PUT")[0].body).toMatchObject({
+			callerVideosPerDay: 4,
+			revision: 3,
+			order: [],
+		});
+	});
+
+	it("saves the limits without a connection the stored order still names", async () => {
+		const calls = fakeGateway(
+			{
+				settings: settings({
+					connections: [connection({ name: "runway", kind: "runway" })],
+					policy: policy({ order: ["google-video", "runway"] }),
+				}),
+			},
+			(call) =>
+				call.method === "PUT"
+					? json({ ...(call.body as VideoPolicy), revision: 3 })
+					: undefined,
+		);
+		show("admin", `#/w/${WORKSPACE}/video/settings`);
+		await screen.findByRole("table");
+		type("Videos a day", "4");
+		fireEvent.click(
+			screen.getByRole("button", { name: "Save limits and order" }),
+		);
+		await waitFor(() => expect(sent(calls, "PUT")).toHaveLength(1));
+		expect(sent(calls, "PUT")[0].body).toMatchObject({
+			order: ["runway"],
+			callerVideosPerDay: 4,
+		});
 	});
 
 	it("saves the order and limits with the revision it read, and handles a stale one", async () => {
@@ -519,6 +593,98 @@ describe("Video view: making and following videos", () => {
 		).toBe(true);
 	});
 
+	it("on Automatic, follows the first provider whose default fits the longest video", async () => {
+		const calls = fakeGateway(
+			{
+				settings: settings(),
+				models: models({
+					providers: [provider("luma", "luma"), provider("runway", "runway")],
+					limits: { maxDurationSeconds: 4, promptLength: 4000 },
+				}),
+			},
+			(call) =>
+				call.method === "POST" && call.path === `${base}/video/jobs`
+					? json(job({ status: "queued", durationSeconds: 4 }), 202)
+					: undefined,
+		);
+		show("admin");
+		await screen.findByRole("heading", { name: "Make a video" });
+		expect(screen.queryByText(/makes videos of at least/)).toBeNull();
+		expect(screen.getByText(/These choices follow Seedance 2.5 on runway/));
+		type("Prompt", "A paper boat");
+		const make = screen.getByRole("button", {
+			name: "Make video",
+		}) as HTMLButtonElement;
+		expect(make.disabled).toBe(false);
+		fireEvent.click(make);
+		await waitFor(() => expect(sent(calls, "POST")).toHaveLength(1));
+		expect(sent(calls, "POST")[0].body).toEqual({
+			prompt: "A paper boat",
+			durationSeconds: 4,
+			aspectRatio: "16:9",
+			resolution: "720p",
+		});
+	});
+
+	it("keeps a video started during a list read, and lists it only once", async () => {
+		const old = job({ prompt: "An old video" });
+		const failed = (prompt: string) =>
+			job({
+				status: "failed",
+				prompt,
+				error: { code: "provider_error", message: "Runway: outage" },
+			});
+		const state: State = { settings: settings(), jobs: [old] };
+		const held: { list?: () => void; post?: () => void } = {};
+		let next = failed("First");
+		let reads = 0;
+		fakeGateway(state, (call) => {
+			if (call.method === "GET" && call.path === `${base}/video/jobs`) {
+				reads += 1;
+				if (reads === 1) return undefined;
+				const snapshot = structuredClone(state.jobs ?? []);
+				return new Promise<Response>((resolve) => {
+					held.list = () => resolve(json({ jobs: snapshot, nextBefore: null }));
+				});
+			}
+			if (call.method === "POST" && call.path === `${base}/video/jobs`) {
+				const answer = next;
+				return new Promise<Response>((resolve) => {
+					held.post = () => resolve(json(answer, 202));
+				});
+			}
+		});
+		show("admin");
+		await screen.findByRole("list", { name: "Videos" });
+		const prompts = () =>
+			within(screen.getByRole("list", { name: "Videos" }))
+				.getAllByRole("listitem")
+				.map((item) => item.querySelector(".video-prompt")?.textContent ?? "");
+
+		// A list read sent before the video was saved answers after it started.
+		fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+		type("Prompt", "First");
+		fireEvent.click(screen.getByRole("button", { name: "Make video" }));
+		await waitFor(() => expect(held.post).toBeDefined());
+		state.jobs = [next, old];
+		await act(async () => held.post?.());
+		await act(async () => held.list?.());
+		expect(prompts()).toEqual(["First", "An old video"]);
+
+		// A list read that already has the video answers before the start does.
+		const first = next;
+		next = failed("Second");
+		held.post = undefined;
+		type("Prompt", "Second");
+		fireEvent.click(screen.getByRole("button", { name: "Make video" }));
+		await waitFor(() => expect(held.post).toBeDefined());
+		state.jobs = [next, first, old];
+		fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+		await act(async () => held.list?.());
+		await act(async () => held.post?.());
+		expect(prompts()).toEqual(["Second", "First", "An old video"]);
+	});
+
 	it("starts a video with exactly what was chosen and lists it first", async () => {
 		const state: State = { settings: settings(), jobs: [job()] };
 		const started = job({
@@ -628,7 +794,7 @@ describe("Video view: making and following videos", () => {
 				.getAttribute("href"),
 		).toBe(done.video?.url);
 		fireEvent.click(
-			within(list).getByRole("button", { name: `Play ${done.id}` }),
+			within(list).getByRole("button", { name: "Play A lighthouse at dusk" }),
 		);
 		const video = list.querySelector("video") as HTMLVideoElement;
 		expect(video.getAttribute("src")).toBe(done.video?.url);
@@ -691,6 +857,60 @@ describe("Video view: making and following videos", () => {
 		expect(held?.aborted).toBe(true);
 	});
 
+	it("follows at most three jobs at once, the newest", async () => {
+		const queued = [1, 2, 3, 4].map(() => job({ status: "queued" }));
+		const asked = new Set<string>();
+		fakeGateway({ settings: settings(), jobs: queued }, (call) => {
+			const one = /\/video\/jobs\/([^/?]+)\?wait=10$/.exec(call.path);
+			if (!one) return undefined;
+			asked.add(one[1]);
+			return new Promise<Response>((resolve) =>
+				call.signal?.addEventListener("abort", () =>
+					resolve(failure(499, "aborted")),
+				),
+			);
+		});
+		show("admin");
+		await waitFor(() => expect(asked.size).toBe(3));
+		await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
+		expect([...asked].sort()).toEqual(
+			queued
+				.slice(0, 3)
+				.map((item) => item.id)
+				.sort(),
+		);
+	});
+
+	it("drops a job the gateway no longer has, and re-reads the settings when video is turned off", async () => {
+		const gone = job({ status: "queued", prompt: "Gone" });
+		fakeGateway({ settings: settings(), jobs: [gone] }, (call) =>
+			call.path.endsWith(`${gone.id}?wait=10`)
+				? failure(404, "Video job not found.")
+				: undefined,
+		);
+		show("admin");
+		expect(await screen.findByText("No videos yet")).toBeDefined();
+		cleanup();
+		vi.restoreAllMocks();
+
+		const running = job({ status: "running" });
+		const state: State = { settings: settings(), jobs: [running] };
+		const calls = fakeGateway(state, (call) => {
+			if (!call.path.endsWith(`${running.id}?wait=10`)) return undefined;
+			state.settings = settings({ available: false });
+			return failure(503, "Video generation is turned off on this gateway.");
+		});
+		show("admin");
+		expect(
+			await screen.findAllByText(
+				/Video generation is turned off on this gateway/,
+			),
+		).toHaveLength(2);
+		expect(calls.filter((call) => call.path.endsWith("?wait=10"))).toHaveLength(
+			1,
+		);
+	});
+
 	it("stops a video after confirming", async () => {
 		const running = job({ status: "running", progress: null });
 		const state: State = { settings: settings(), jobs: [running] };
@@ -699,15 +919,29 @@ describe("Video view: making and following videos", () => {
 				return json({ ...running, status: "canceled" });
 		});
 		show("admin");
-		fireEvent.click(
-			await screen.findByRole("button", { name: `Stop ${running.id}` }),
-		);
+		const stop = await screen.findByRole("button", {
+			name: "Stop A lighthouse at dusk",
+		});
+		fireEvent.click(stop);
 		expect(
 			screen.getByText("Stopping does not give back the estimated cost."),
 		).toBeDefined();
+		const confirm = screen.getByRole("button", {
+			name: "Confirm stop A lighthouse at dusk",
+		});
+		expect(document.activeElement).toBe(confirm);
+		fireEvent.click(screen.getByRole("button", { name: "Keep going" }));
+		expect(document.activeElement).toBe(
+			screen.getByRole("button", { name: "Stop A lighthouse at dusk" }),
+		);
+		fireEvent.click(
+			screen.getByRole("button", { name: "Stop A lighthouse at dusk" }),
+		);
 		await act(async () => {
 			fireEvent.click(
-				screen.getByRole("button", { name: `Confirm stop ${running.id}` }),
+				screen.getByRole("button", {
+					name: "Confirm stop A lighthouse at dusk",
+				}),
 			);
 		});
 		await waitFor(() =>

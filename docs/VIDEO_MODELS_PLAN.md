@@ -878,7 +878,7 @@ A **Video** page at `#/w/<workspace id>/video`, built like the Proxies page (`co
 | **Videos** (default) | `#/w/<id>/video` | admins | Make a video, then the job list |
 | **Settings** | `#/w/<id>/video/settings` | everyone | Overview strip, connections, limits and order |
 
-Members get no tab bar: they see the Settings content, read-only. The header follows Proxies (eyebrow, title, description, an **Add connection** button for admins or a note for members), then the turned-off warning, notices, errors with Retry, and the persistence note.
+Members get no tab bar: they see the Settings content, read-only. The header follows Proxies (eyebrow, title, description, an **Add provider** button for admins or a note for members), then the turned-off warning, notices, errors with Retry, and the persistence note.
 
 ### Settings
 
@@ -889,9 +889,9 @@ Members get no tab bar: they see the Settings content, read-only. The header fol
 
 ### Videos
 
-- **Make a video:** prompt, provider (or automatic), model, duration, aspect ratio, resolution, and image URL where the model takes one. The choices come from `GET /video/models` and narrow to what the chosen (or default) model can make, capped by the workspace's longest video. Server refusals (409, 429) show their own message. No cost preview: prices stay on the server.
+- **Make a video:** prompt, provider (or automatic), model, duration, aspect ratio, resolution, and image URL where the model takes one. The choices come from `GET /video/models` and narrow to what the chosen model can make, capped by the workspace's longest video; on automatic they follow the first provider whose default model fits that cap, as the gateway skips the rest. A job started while a list read is in flight stays listed, once. Server refusals (409, 429) show their own message. No cost preview: prices stay on the server.
 - **Job list:** newest first with **Load more**; each job shows a status pill, prompt, provider and model, who made it and when, settings and estimated cost, the error when failed, and **Stop** for unfinished jobs (with a note that stopping does not give back the estimate).
-- **Following:** up to 3 unfinished jobs at once, each with `GET /video/jobs/:id?wait=10` in a loop; back off from 5 s to 30 s on errors; drop a 404; pause while the tab is hidden; abort on unmount. A job that finishes refreshes the budget.
+- **Following:** up to 3 unfinished jobs at once, each with `GET /video/jobs/:id?wait=10` in a loop; back off from 5 s to 30 s on errors; drop a 404; on 503 or 403 stop and read the settings again; give up on a held request after 25 s; pause while the tab is hidden; abort on unmount. A job that finishes refreshes the budget. Both tabs stay mounted, so following and a typed prompt survive a tab switch.
 - **Playback:** a **Play** button mounts `<video controls>` from `video.url` (never one player per row up front), with an **Open video** link beside it always, and a fallback message on a media error. A media element follows Runway's and Luma's redirects, and `content-disposition: attachment` and the sandbox CSP on Google's stream govern documents, not media loads. Safari needs byte ranges, which the download route does not serve yet, so Google videos may need the link there.
 
 ### Out of scope
