@@ -481,19 +481,28 @@ export class VideoService {
 				break;
 			}
 			held = hold;
+			let current = true;
 			try {
 				if (!inserted) {
 					await jobs.insert({ ...record(candidate, costUsd), hold });
 					inserted = true;
 				} else
-					await jobs.update(workspace.id, id, {
-						...fields(candidate, costUsd),
-						hold,
-						attempts,
-					});
+					current = await jobs.update(
+						workspace.id,
+						id,
+						{ ...fields(candidate, costUsd), hold, attempts },
+						{ unfinished: true },
+					);
 			} catch (error) {
 				await store.release(hold);
 				throw error;
+			}
+			// Canceled between attempts: start nothing more.
+			if (!current) {
+				await store.release(hold);
+				const saved = await jobs.get(workspace.id, id);
+				if (!saved) throw new ServiceError("Video job not found.", 404);
+				return this.view(saved, context.origin);
 			}
 
 			let result: VideoCreateResult;
@@ -575,6 +584,8 @@ export class VideoService {
 			attempts,
 			completedAt: new Date(this.now()).toISOString(),
 			hold: held,
+			// A hold given back cost nothing; one kept shows what it holds.
+			...(held ? {} : { costUsd: 0 }),
 		};
 		if (!inserted) {
 			const first = candidates[0];
@@ -643,7 +654,11 @@ export class VideoService {
 	): Promise<VideoJob> {
 		this.refuseWhenDisabled();
 		const { jobs, store } = this.options;
-		const record = await this.find(workspace, viewer, id);
+		// The stored status may be old: a job that already finished must not
+		// be canceled, and Runway deletes a finished task's video on cancel.
+		const record = await this.refresh(await this.find(workspace, viewer, id), {
+			force: true,
+		});
 		if (videoJobFinished(record.status))
 			return this.view(record, context.origin);
 		const ref = { id: record.workspaceId, isDefault: record.workspaceDefault };
@@ -701,12 +716,21 @@ export class VideoService {
 	 * so of two readers exactly one applies it, releases the hold when
 	 * nothing was billed, and records telemetry.
 	 */
-	private async refresh(record: VideoJobRecord): Promise<VideoJobRecord> {
+	private async refresh(
+		record: VideoJobRecord,
+		options: { force?: boolean } = {},
+	): Promise<VideoJobRecord> {
 		const { jobs, store } = this.options;
 		const now = this.now();
 		if (videoJobFinished(record.status)) return this.expireIfPast(record);
 		if (!record.providerJobId) {
-			if (now - Date.parse(record.createdAt) < NOT_STARTED_MS) return record;
+			// Each failover attempt touches the record, so a slow failover is not
+			// taken for a gateway that stopped.
+			const touched = Math.max(
+				Date.parse(record.createdAt),
+				Date.parse(record.updatedAt),
+			);
+			if (now - touched < NOT_STARTED_MS) return record;
 			// The gateway stopped mid-start. The provider may have taken the job,
 			// so its estimated cost stays counted: high, never low.
 			return this.finish(record, {
@@ -719,23 +743,27 @@ export class VideoService {
 			});
 		}
 		if (
+			!options.force &&
 			record.lastPolledAt !== null &&
 			now - record.lastPolledAt < VIDEO_LIMITS.pollIntervalMs
 		)
 			return record;
-		const ref = { id: record.workspaceId, isDefault: record.workspaceDefault };
-		const adapter = this.adapters[record.kind];
-		const config = await store.connection(ref, record.provider);
-		// The connection was removed: the job stays as it was until its record expires.
-		if (!adapter || !config || config.kind !== record.kind) return record;
-		await jobs.update(
+		const reread = async () =>
+			(await jobs.get(record.workspaceId, record._id)) ?? record;
+		// Claim this check: of readers who all found it due, one polls.
+		const claimed = await jobs.update(
 			record.workspaceId,
 			record._id,
 			{ lastPolledAt: now },
-			{
-				unfinished: true,
-			},
+			{ unfinished: true, lastPolledAt: record.lastPolledAt },
 		);
+		if (!claimed) return reread();
+		const ref = { id: record.workspaceId, isDefault: record.workspaceDefault };
+		const adapter = this.adapters[record.kind];
+		const config = await store.connection(ref, record.provider);
+		// The connection was removed: the job stays as it was until its record
+		// expires. The claim above still spaces out a waiting reader's checks.
+		if (!adapter || !config || config.kind !== record.kind) return reread();
 		let result: VideoPollResult;
 		try {
 			result = await adapter.poll(
@@ -850,7 +878,7 @@ export class VideoService {
 			{
 				...patch,
 				completedAt: new Date(this.now()).toISOString(),
-				...(options.release ? { hold: null } : {}),
+				...(options.release ? { hold: null, costUsd: 0 } : {}),
 			},
 			{ unfinished: true },
 		);
@@ -923,6 +951,27 @@ export class VideoService {
 					: {
 							kind: "error",
 							detail: "The provider's link has expired and cannot be renewed.",
+						};
+			// One download renews the link at a time; the others use the saved
+			// one while it lasts.
+			const due =
+				record.lastPolledAt === null ||
+				now - record.lastPolledAt >= VIDEO_LIMITS.pollIntervalMs;
+			const claimed =
+				due &&
+				(await jobs.update(
+					record.workspaceId,
+					record._id,
+					{ lastPolledAt: now },
+					{ status: "succeeded", lastPolledAt: record.lastPolledAt },
+				));
+			if (!claimed)
+				return delivery.expiresAt > now
+					? { kind: "redirect", url: delivery.url }
+					: {
+							kind: "error",
+							detail:
+								"The provider's link is being renewed. Try again shortly.",
 						};
 			let result: VideoPollResult;
 			try {

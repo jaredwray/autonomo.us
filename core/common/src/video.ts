@@ -83,7 +83,9 @@ export const VIDEO_MODELS: Record<VideoKind, readonly VideoModel[]> = {
 			label: "Gemini Omni 1.2 Flash",
 			// Images reach Gemini as uploaded bytes, which the gateway does not fetch.
 			inputs: ["text"],
-			durations: { min: 3, max: 15 },
+			// Google returns up to 15 s, but advises URI delivery above 4 MB;
+			// until that is built, videos stay short enough to return inline.
+			durations: { min: 3, max: 10 },
 			aspectRatios: ["16:9", "9:16"],
 			// 1080p and 4K are upscaled and too large to return inline.
 			resolutions: ["360p", "720p"],

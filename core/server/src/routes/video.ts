@@ -1,5 +1,4 @@
 import {
-	type AgentWakeActor,
 	type CreateVideoConnectionRequest,
 	type UpdateVideoConnectionRequest,
 	type UpdateVideoPolicyRequest,
@@ -11,7 +10,7 @@ import {
 	type VideoSettings,
 } from "@autonomo.us/common";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { requestActor, requestMay, requestWorkspace } from "../auth/access.js";
+import { requestMay, requestWorkspace } from "../auth/access.js";
 import { mongoErrorDetails } from "../mongo.js";
 import { ServiceError } from "../service-error.js";
 import {
@@ -133,34 +132,17 @@ export async function videoRoutes(
 		store,
 		video,
 		origin,
-		onChanged,
 	}: {
 		store: VideoStore;
 		video: VideoService;
 		/** The gateway's public address, for download links. */
 		origin: (request: FastifyRequest) => string;
-		/** Called once a connection or the policy is saved or removed; the change stands whatever this does. */
-		onChanged?: (
-			workspaceId: string,
-			change: "policy" | "connections",
-			by: AgentWakeActor,
-		) => Promise<unknown>;
 	},
 ) {
 	server.addHook("onRequest", async (_request, reply) => {
 		reply.header("cache-control", "no-store");
 	});
 	errorHandler(server);
-	const changed = async (
-		request: FastifyRequest,
-		change: "policy" | "connections",
-	) => {
-		await onChanged?.(
-			requestWorkspace(request).id,
-			change,
-			requestActor(request),
-		).catch(() => {});
-	};
 	const caller = (request: FastifyRequest): VideoCaller =>
 		request.telemetryCaller ?? {
 			id: "unattributed",
@@ -209,7 +191,6 @@ export async function videoRoutes(
 				requestWorkspace(request),
 				request.body,
 			);
-			await changed(request, "connections");
 			return reply.code(201).send(created);
 		},
 	);
@@ -235,7 +216,6 @@ export async function videoRoutes(
 				request.params.name,
 				request.body ?? {},
 			);
-			await changed(request, "connections");
 			return updated;
 		},
 	);
@@ -245,7 +225,6 @@ export async function videoRoutes(
 		async (request, reply) => {
 			refuseWhenDisabled();
 			await store.remove(requestWorkspace(request), request.params.name);
-			await changed(request, "connections");
 			return reply.code(204).send();
 		},
 	);
@@ -258,7 +237,6 @@ export async function videoRoutes(
 				requestWorkspace(request),
 				request.body,
 			);
-			await changed(request, "policy");
 			return policy;
 		},
 	);

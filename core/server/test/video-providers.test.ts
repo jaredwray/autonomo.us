@@ -45,9 +45,31 @@ const json = (
 		headers: { "content-type": "application/json", ...headers },
 	});
 
+/** The request may have reached the provider before the connection failed. */
 const failing: FetchLike = async () => {
 	throw new TypeError(`fetch failed for https://api.example.com/?key=${KEY}`);
 };
+
+/** The connection was refused: the request never left. */
+const refusedConnection: FetchLike = async () => {
+	throw new TypeError("fetch failed", {
+		cause: Object.assign(new Error("connect ECONNREFUSED"), {
+			code: "ECONNREFUSED",
+		}),
+	});
+};
+
+/** An answer whose body breaks off while it is read. */
+const brokenBody = (status: number) => () =>
+	new Response(
+		new ReadableStream({
+			start(controller) {
+				controller.enqueue(new TextEncoder().encode('{"id":'));
+				controller.error(new Error("socket hang up"));
+			},
+		}),
+		{ status, headers: { "content-type": "application/json" } },
+	);
 
 function call(overrides: Partial<VideoCall> = {}): VideoCall {
 	return {
@@ -105,6 +127,7 @@ describe("shared helpers", () => {
 		).toBe("bad key [key] see [link]");
 		expect(providerMessage("x".repeat(500)).length).toBe(300);
 		expect(providerMessage(42)).toBe("");
+		expect(providerMessage("echoed abc back", "abc")).toBe("echoed [key] back");
 	});
 
 	it("accepts only https result links on public hosts", () => {
@@ -205,7 +228,9 @@ describe("Runway", () => {
 				{ problem: "credits" },
 			],
 			[
-				json({ error: "Daily limit" }, 429, { "retry-after": "7" }),
+				json({ error: "Daily generation quota reached" }, 429, {
+					"retry-after": "7",
+				}),
 				"provider-error",
 				{ retryAfterMs: 7000 },
 			],
@@ -213,6 +238,16 @@ describe("Runway", () => {
 				json({ error: "slow" }, 429),
 				"provider-error",
 				{ retryAfterMs: 10_000 },
+			],
+			[
+				json({ error: "slow" }, 429, { "retry-after": "86400" }),
+				"provider-error",
+				{ retryAfterMs: 600_000 },
+			],
+			[
+				json({ error: "Billing is not enabled for this project" }, 403),
+				"provider-error",
+				{ problem: "credits" },
 			],
 			[
 				json(
@@ -236,6 +271,17 @@ describe("Runway", () => {
 			);
 			expect(failure).toMatchObject({ billed: false, ...extra });
 		}
+		// A rate limit that mentions a quota is a rate limit, not a problem to fix.
+		const limited = expectFailure(
+			await runwayAdapter.create(
+				runway,
+				call(),
+				fake(json({ error: "Quota exceeded for this minute" }, 429)).fetchImpl,
+			),
+			"provider-error",
+		);
+		expect(limited.problem).toBeUndefined();
+		expect(limited.retryAfterMs).toBe(10_000);
 		const invalid = expectFailure(
 			await runwayAdapter.create(
 				runway,
@@ -257,9 +303,51 @@ describe("Runway", () => {
 	});
 
 	it("treats a lost connection, a timeout, and an unnamed task safely", async () => {
+		// The request may have been taken: no failover, and the hold stays.
+		expect(
+			expectFailure(
+				await runwayAdapter.create(runway, call(), failing),
+				"timeout",
+			).detail,
+		).toContain("may have started");
+		// Refused before anything was sent: another provider may be tried.
 		expectFailure(
-			await runwayAdapter.create(runway, call(), failing),
+			await runwayAdapter.create(runway, call(), refusedConnection),
 			"provider-error",
+		);
+		// Accepted, but the answer broke off: the video may exist.
+		expectFailure(
+			await runwayAdapter.create(
+				runway,
+				call(),
+				fake(brokenBody(200)).fetchImpl,
+			),
+			"timeout",
+		);
+		// An error status whose body broke off is still that error.
+		expect(
+			expectFailure(
+				await runwayAdapter.create(
+					runway,
+					call(),
+					fake(brokenBody(401)).fetchImpl,
+				),
+				"provider-error",
+			),
+		).toMatchObject({ problem: "key" });
+		// A successful answer too large to read may also be a started video.
+		expectFailure(
+			await runwayAdapter.create(
+				runway,
+				call(),
+				fake(
+					() =>
+						new Response("{}", {
+							headers: { "content-length": String(8 * 1024 * 1024) },
+						}),
+				).fetchImpl,
+			),
+			"timeout",
 		);
 		const controller = new AbortController();
 		controller.abort();
@@ -508,8 +596,9 @@ describe("Luma", () => {
 			),
 		).toMatchObject({ problem: "credits" });
 		expectFailure(await create(json({}, 201)), "timeout");
+		expectFailure(await lumaAdapter.create(luma, call(), failing), "timeout");
 		expectFailure(
-			await lumaAdapter.create(luma, call(), failing),
+			await lumaAdapter.create(luma, call(), refusedConnection),
 			"provider-error",
 		);
 		expectFailure(
@@ -577,6 +666,28 @@ describe("Luma", () => {
 				).fetchImpl,
 			);
 		expect(await failed("content_moderated")).toMatchObject({
+			code: "moderated",
+			billed: true,
+		});
+		// Once Luma reports what it charged, that decides.
+		const charged = (credits: number) =>
+			lumaAdapter.poll(
+				luma,
+				"g",
+				signal(),
+				fake(
+					json({
+						state: "failed",
+						failure_code: "content_moderated",
+						usage: { credits_charged: credits },
+					}),
+				).fetchImpl,
+			);
+		expect(await charged(0)).toMatchObject({
+			code: "moderated",
+			billed: false,
+		});
+		expect(await charged(100)).toMatchObject({
 			code: "moderated",
 			billed: true,
 		});
@@ -735,6 +846,10 @@ describe("Google", () => {
 		expectFailure(await create(json({ status: "in_progress" })), "timeout");
 		expectFailure(
 			await googleAdapter.create(google, call(), failing),
+			"timeout",
+		);
+		expectFailure(
+			await googleAdapter.create(google, call(), refusedConnection),
 			"provider-error",
 		);
 	});

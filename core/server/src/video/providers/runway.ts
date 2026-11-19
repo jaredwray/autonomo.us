@@ -8,12 +8,12 @@ import type {
 	VideoPollResult,
 } from "../types.js";
 import {
+	createFailure,
 	failure,
 	field,
 	httpFailure,
 	jsonHeaders,
 	MAX_ANSWER_BYTES,
-	networkFailure,
 	parseJson,
 	providerMessage,
 	readLimited,
@@ -132,7 +132,7 @@ export const runwayAdapter: VideoAdapter = {
 			...(call.imageUrl ? { promptImage: call.imageUrl } : {}),
 		};
 		const path = call.imageUrl ? "/v1/image_to_video" : "/v1/text_to_video";
-		let response: Response;
+		let response: Response | undefined;
 		let text: string;
 		try {
 			response = await fetchImpl(`${base(config)}${path}`, {
@@ -142,8 +142,8 @@ export const runwayAdapter: VideoAdapter = {
 				signal: call.signal,
 			});
 			text = await readLimited(response, MAX_ANSWER_BYTES);
-		} catch {
-			return networkFailure(LABEL, call.signal);
+		} catch (error) {
+			return createFailure(LABEL, call.signal, error, response);
 		}
 		const parsed = parseJson(text);
 		if (!response.ok)

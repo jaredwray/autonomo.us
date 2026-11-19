@@ -1053,7 +1053,7 @@ all of them work on Node and on the Worker:
 
 | Provider | Models | Rough list price |
 | --- | --- | --- |
-| [Google Gemini Omni](https://aistudio.google.com/docs/omni) (`google`) | `gemini-omni-1.2-flash`: text to video with sound, 3 to 15 s, 16:9 or 9:16, 360p or 720p | $0.023 a second at 360p, $0.07 at 720p |
+| [Google Gemini Omni](https://aistudio.google.com/docs/omni) (`google`) | `gemini-omni-1.2-flash`: text to video with sound, 3 to 10 s, 16:9 or 9:16, 360p or 720p | $0.023 a second at 360p, $0.07 at 720p |
 | [Runway](https://docs.dev.runwayml.com) (`runway`) | `seedance2_5` (default): text or image to video with sound, 4 to 30 s, 16:9, 9:16, or 1:1, 480p to 1080p. `gen4.5`: text or image, 2 to 10 s, 720p | Seedance 2.5 at 720p: $0.30 a second, $0.80 at least. Gen-4.5: $0.12 a second |
 | [Luma](https://docs.agents.lumalabs.ai) (`luma`) | `ray-3.2`: text or image to video, 5 or 10 s, 16:9, 9:16, or 1:1, 360p to 1080p | Credits per video (100 for 5 s at 720p), at your plan's credit price |
 
@@ -1065,9 +1065,10 @@ be added to its catalogue later without a new adapter.
   holds its estimated cost, writes the job, and starts it on the first
   connection that can make it: the policy's order, then the rest as added.
   A caller may name a `provider` (a connection) and a `model`. A provider
-  error that cost nothing (a refused key, no credits, a rate limit, an
-  outage) moves on to the next connection; a refused prompt, a rejected
-  request, or a call that timed out (the provider may have taken it) stops.
+  error that cost nothing (a refused key, no credits, a rate limit, a
+  connection that was refused) moves on to the next connection. A refused
+  prompt, a rejected request, or a call that timed out or broke off after
+  the request may have arrived stops, since the provider may have taken it.
   The job is followed with `video_status` (or `GET /video/jobs/:id`), which
   asks the provider at most every 5 seconds and can wait up to 60 seconds
   for it to finish. Nothing polls in the background, so it works the same on
@@ -1080,8 +1081,10 @@ be added to its catalogue later without a new adapter.
   Google returns the video only to its key, so the link streams it, always
   as `video/mp4`, sandboxed and as an attachment. The gateway never stores
   video bytes. A video expires when the provider stops keeping it (Runway
-  about a day, Luma about a week, Google 30 days here); the link then
-  answers 410.
+  about a day, Luma about a week, Google 7 days here); the link then
+  answers 410. The gateway masks the token in its own request logs, but
+  Cloudflare's invocation logs record request URLs on a Worker deployment,
+  so whoever can read those logs can open the videos.
 - **Spend.** Each workspace has a **monthly budget** (default $25), a
   **daily limit** of videos per person, token, or agent (default 10), and a
   **longest video** (default 10 seconds). The estimated cost is held before

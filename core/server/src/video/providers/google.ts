@@ -9,12 +9,12 @@ import type {
 	VideoPollResult,
 } from "../types.js";
 import {
+	createFailure,
 	failure,
 	field,
 	httpFailure,
 	jsonHeaders,
 	MAX_INLINE_VIDEO_BYTES,
-	networkFailure,
 	parseJson,
 	providerMessage,
 	ResponseTooLarge,
@@ -26,8 +26,11 @@ const ENDPOINT = "https://generativelanguage.googleapis.com/v1beta";
 /** The revision Google's Interactions API examples send. */
 const API_REVISION = "2026-05-20";
 const LABEL = "Google";
-/** Paid-tier interactions are kept 55 days; a job record lives 30. */
-const RESULT_TTL_MS = 30 * 24 * 3_600_000;
+/**
+ * Paid-tier interactions are kept 55 days by default, but a project can
+ * shorten that to 7. The link promises no more than the shortest.
+ */
+const RESULT_TTL_MS = 7 * 24 * 3_600_000;
 const UNKNOWN_USD_PER_SECOND = 0.5;
 const USD_PER_SECOND: Partial<Record<VideoResolution, number>> = {
 	"360p": 0.023,
@@ -156,7 +159,7 @@ export const googleAdapter: VideoAdapter = {
 				duration: `${call.durationSeconds}s`,
 			},
 		};
-		let response: Response;
+		let response: Response | undefined;
 		let text: string;
 		try {
 			response = await fetchImpl(`${base(config)}/interactions`, {
@@ -168,9 +171,7 @@ export const googleAdapter: VideoAdapter = {
 			// A create that finished at once carries the video: read enough for it.
 			text = await readLimited(response, MAX_INLINE_VIDEO_BYTES);
 		} catch (error) {
-			if (error instanceof ResponseTooLarge)
-				return failure(LABEL, "timeout", "the answer was larger than expected");
-			return networkFailure(LABEL, call.signal);
+			return createFailure(LABEL, call.signal, error, response);
 		}
 		const interaction = parseJson(text);
 		if (!response.ok)

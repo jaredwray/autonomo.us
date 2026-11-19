@@ -395,6 +395,7 @@ describe("starting a video", () => {
 		expect((await store.budget(WS, await store.policy(WS))).spentUsd).toBe(
 			keepsHold ? 1 : 0,
 		);
+		expect(job.costUsd).toBe(keepsHold ? 1 : 0);
 		expect(events.at(-1)).toMatchObject({ phase: "finished", errorCode: code });
 	});
 
@@ -527,12 +528,15 @@ describe("following a video", () => {
 		const { service, store, advance } = await setup({ runway: runway.adapter });
 		const job = await service.generate(WS, AGENT, { prompt: "x" }, CONTEXT);
 		advance(5000);
-		const [first, second] = await Promise.all([
+		const results = await Promise.all([
 			service.status(WS, {}, job.id, {}, CONTEXT),
 			service.status(WS, {}, job.id, {}, CONTEXT),
 		]);
-		expect(first.status).toBe("failed");
-		expect(second.status).toBe("failed");
+		// Both found the check due; only one of them asked the provider.
+		expect(runway.seen.polls).toBe(1);
+		expect(results.map((result) => result.status)).toContain("failed");
+		const done = await service.status(WS, {}, job.id, {}, CONTEXT);
+		expect(done).toMatchObject({ status: "failed", costUsd: 0 });
 		expect((await store.budget(WS, await store.policy(WS))).spentUsd).toBe(0);
 	});
 
@@ -762,6 +766,102 @@ describe("following a video", () => {
 	});
 });
 
+describe("review fixes", () => {
+	it("does not cancel a job that already finished at the provider", async () => {
+		const runway = scripted("runway", {
+			poll: () => ({
+				state: "succeeded",
+				delivery: { kind: "url", url: SIGNED, ttlMs: 3_600_000 },
+			}),
+		});
+		const { service } = await setup({ runway: runway.adapter });
+		const job = await service.generate(WS, AGENT, { prompt: "x" }, CONTEXT);
+		// Within the poll interval: cancel checks with the provider anyway.
+		const result = await service.cancel(WS, {}, job.id, CONTEXT);
+		expect(result.status).toBe("succeeded");
+		expect(runway.seen.polls).toBe(1);
+		expect(runway.seen.cancels).toBe(0);
+	});
+
+	it("waits calmly on a job whose connection was removed", async () => {
+		const runway = scripted("runway");
+		const { service, store } = await setup({ runway: runway.adapter });
+		const job = await service.generate(WS, AGENT, { prompt: "x" }, CONTEXT);
+		await store.remove(WS, "runway");
+		let lookups = 0;
+		const connection = store.connection.bind(store);
+		store.connection = async (...args) => {
+			lookups += 1;
+			return connection(...args);
+		};
+		const waited = await service.status(
+			WS,
+			{},
+			job.id,
+			{ waitSeconds: 60 },
+			CONTEXT,
+		);
+		expect(waited.status).toBe("queued");
+		expect(lookups).toBeLessThanOrEqual(13);
+	});
+
+	it("starts nothing more when the job is canceled between attempts", async () => {
+		let jobs: VideoJobStore | undefined;
+		const runway = scripted("runway", {
+			create: () => ({
+				outcome: "provider-error",
+				detail: "runway: outage",
+				billed: false,
+			}),
+		});
+		const luma = scripted("luma");
+		const context = await setup(
+			{ runway: runway.adapter, luma: luma.adapter },
+			[
+				{ name: "runway", kind: "runway" },
+				{ name: "luma", kind: "luma" },
+			],
+		);
+		jobs = context.jobs;
+		const create = runway.adapter.create.bind(runway.adapter);
+		runway.adapter.create = async (...args) => {
+			const [listed] = (await jobs?.list(WS.id, { limit: 1 }))?.records ?? [];
+			if (listed) await jobs?.update(WS.id, listed._id, { status: "canceled" });
+			return create(...args);
+		};
+		const job = await context.service.generate(
+			WS,
+			AGENT,
+			{ prompt: "x" },
+			CONTEXT,
+		);
+		expect(job.status).toBe("canceled");
+		expect(luma.seen.creates).toHaveLength(0);
+		expect(
+			(await context.store.budget(WS, await context.store.policy(WS))).spentUsd,
+		).toBe(0);
+	});
+
+	it("measures a job that never started from its last attempt", async () => {
+		const { service, jobs, advance } = await setup({
+			runway: scripted("runway").adapter,
+		});
+		const job = await service.generate(WS, AGENT, { prompt: "x" }, CONTEXT);
+		await jobs.update(WS.id, job.id, { providerJobId: null });
+		advance(100_000);
+		// Another failover attempt touches the record.
+		await jobs.update(WS.id, job.id, { attempts: [] });
+		advance(30_000);
+		expect((await service.status(WS, {}, job.id, {}, CONTEXT)).status).toBe(
+			"queued",
+		);
+		advance(91_000);
+		expect((await service.status(WS, {}, job.id, {}, CONTEXT)).status).toBe(
+			"failed",
+		);
+	});
+});
+
 describe("download links", () => {
 	async function finished(script: Script, kind: VideoKind = "runway") {
 		const adapter = scripted(kind, script);
@@ -809,11 +909,14 @@ describe("download links", () => {
 		);
 		advance(51 * 60_000);
 		link = "https://cdn.example.com/video.mp4?sig=2";
-		expect(await service.download(token)).toEqual({
-			kind: "redirect",
-			url: link,
-		});
+		// Several downloads at once: one renews the link, the rest use the saved one.
+		const results = await Promise.all([
+			service.download(token),
+			service.download(token),
+			service.download(token),
+		]);
 		expect(seen.polls).toBe(2);
+		expect(results).toContainEqual({ kind: "redirect", url: link });
 		expect(await service.download(token)).toEqual({
 			kind: "redirect",
 			url: link,

@@ -231,7 +231,14 @@ export class VideoJobStore {
 		workspaceId: string,
 		id: string,
 		patch: VideoJobPatch,
-		guard: { unfinished?: boolean; status?: VideoJobStatus } = {},
+		guard: {
+			/** Only while the job is queued or running. */
+			unfinished?: boolean;
+			/** Only while the job has exactly this status. */
+			status?: VideoJobStatus;
+			/** Only while the last status check is still this one: a claim on the next. */
+			lastPolledAt?: number | null;
+		} = {},
 	): Promise<boolean> {
 		const set = { ...patch, updatedAt: this.now().toISOString() };
 		if (!this.mongo) {
@@ -239,17 +246,27 @@ export class VideoJobStore {
 			if (!record || record.workspaceId !== workspaceId) return false;
 			if (guard.unfinished && !UNFINISHED.includes(record.status)) return false;
 			if (guard.status && record.status !== guard.status) return false;
+			if (
+				guard.lastPolledAt !== undefined &&
+				record.lastPolledAt !== guard.lastPolledAt
+			)
+				return false;
 			this.memory.set(id, { ...record, ...structuredClone(set) });
 			return true;
 		}
-		const filter: Record<string, unknown> = {
-			_id: { $eq: id },
-			workspaceId: { $eq: workspaceId },
-		};
-		if (guard.unfinished) filter.status = { $in: UNFINISHED };
-		else if (guard.status) filter.status = { $eq: guard.status };
+		const conditions: Record<string, unknown>[] = [
+			{ _id: { $eq: id } },
+			{ workspaceId: { $eq: workspaceId } },
+		];
+		if (guard.unfinished) conditions.push({ status: { $in: UNFINISHED } });
+		if (guard.status) conditions.push({ status: { $eq: guard.status } });
+		if (guard.lastPolledAt !== undefined)
+			conditions.push({ lastPolledAt: { $eq: guard.lastPolledAt } });
 		try {
-			const result = await this.collection().updateOne(filter, { $set: set });
+			const result = await this.collection().updateOne(
+				{ $and: conditions },
+				{ $set: set },
+			);
 			return result.matchedCount > 0;
 		} catch (error) {
 			this.unavailable(error);

@@ -571,19 +571,25 @@ export class VideoStore {
 			filter.videos = { $lte: caps.videos - amount.videos };
 		if (caps.costMicros !== undefined)
 			filter.costMicros = { $lte: caps.costMicros - amount.costMicros };
+		const update = {
+			$inc: { videos: amount.videos, costMicros: amount.costMicros },
+			$setOnInsert: { workspaceId, expiresAt },
+		};
 		try {
-			await this.usage().updateOne(
-				filter,
-				{
-					$inc: { videos: amount.videos, costMicros: amount.costMicros },
-					$setOnInsert: { workspaceId, expiresAt },
-				},
-				{ upsert: true },
-			);
+			await this.usage().updateOne(filter, update, { upsert: true });
 			return true;
 		} catch (error) {
-			// The filter missed an existing counter: the upsert's insert collides.
-			if (isDuplicateKey(error)) return false;
+			if (!isDuplicateKey(error)) this.unavailable(error);
+		}
+		// The upsert's insert collided: either the counter is over the cap, or
+		// another call created it at the same moment. Without the upsert, the
+		// filter alone decides.
+		try {
+			const result = await this.usage().updateOne(filter, {
+				$inc: update.$inc,
+			});
+			return result.matchedCount > 0;
+		} catch (error) {
 			this.unavailable(error);
 		}
 	}
@@ -592,10 +598,16 @@ export class VideoStore {
 	private async adjust(key: string, amount: Counter) {
 		if (!amount.videos && !amount.costMicros) return;
 		if (!this.mongo) {
+			// As with MongoDB: a decrement that would go below zero changes nothing.
 			const current = this.counters.get(key);
-			if (!current) return;
-			current.videos = Math.max(0, current.videos + amount.videos);
-			current.costMicros = Math.max(0, current.costMicros + amount.costMicros);
+			if (
+				!current ||
+				current.videos + amount.videos < 0 ||
+				current.costMicros + amount.costMicros < 0
+			)
+				return;
+			current.videos += amount.videos;
+			current.costMicros += amount.costMicros;
 			return;
 		}
 		const filter: Record<string, unknown> = { _id: { $eq: key } };
@@ -645,19 +657,25 @@ export class VideoStore {
 			))
 		)
 			return { refused: "budget" };
-		if (
-			!(await this.increment(
+		const giveBackBudget = () =>
+			this.adjust(keys.budget, { videos: -1, costMicros: -costMicros }).catch(
+				() => {},
+			);
+		let callerHeld: boolean;
+		try {
+			callerHeld = await this.increment(
 				workspace.id,
 				keys.caller,
 				{ videos: 1, costMicros: 0 },
 				{ videos: input.callerCap },
 				dayExpiry,
-			))
-		) {
-			await this.adjust(keys.budget, {
-				videos: -1,
-				costMicros: -costMicros,
-			}).catch(() => {});
+			);
+		} catch (error) {
+			await giveBackBudget();
+			throw error;
+		}
+		if (!callerHeld) {
+			await giveBackBudget();
 			return { refused: "caller" };
 		}
 		try {

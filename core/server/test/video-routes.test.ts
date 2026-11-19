@@ -36,7 +36,7 @@ const json = (body: unknown, status = 200) =>
  * error that quotes the key it was sent.
  */
 function providers() {
-	const state = { leak: false, calls: [] as string[] };
+	const state = { leak: false, running: false, calls: [] as string[] };
 	let tasks = 0;
 	const fetchImpl: FetchLike = async (input, init = {}) => {
 		const url = new URL(String(input));
@@ -58,6 +58,8 @@ function providers() {
 		if (url.host === "api.dev.runwayml.com") {
 			if (method === "POST") return json({ id: `task-${++tasks}` });
 			if (method === "DELETE") return new Response(null, { status: 204 });
+			if (state.running)
+				return json({ id: "task", status: "RUNNING", progress: 0.5 });
 			return json({
 				id: "task",
 				status: "SUCCEEDED",
@@ -67,6 +69,8 @@ function providers() {
 		}
 		if (url.host === "generativelanguage.googleapis.com") {
 			if (method === "POST")
+				return json({ id: "v1_interaction", status: "in_progress" });
+			if (state.running)
 				return json({ id: "v1_interaction", status: "in_progress" });
 			return json({
 				id: "v1_interaction",
@@ -263,6 +267,7 @@ describe("video over the REST API", () => {
 			202,
 		);
 		expect(job.provider).toBe("google");
+		api.provider.state.running = true;
 		const canceled = await api.ok<VideoJob>(
 			"POST",
 			`/v1/video/jobs/${job.id}/cancel`,

@@ -8,6 +8,8 @@ export const MAX_ANSWER_BYTES = 1024 * 1024;
 export const MAX_INLINE_VIDEO_BYTES = 16 * 1024 * 1024;
 /** How long to leave a provider alone after a rate limit without `Retry-After`. */
 const DEFAULT_RETRY_MS = 10_000;
+/** The longest a provider's `Retry-After` parks a connection or a job's polling. */
+const MAX_RETRY_MS = 10 * 60_000;
 const MESSAGE_LENGTH = 300;
 
 export { ResponseTooLarge, readLimited };
@@ -15,7 +17,7 @@ export { ResponseTooLarge, readLimited };
 export function retryAfterMs(response: Response): number {
 	const seconds = Number.parseFloat(response.headers.get("retry-after") ?? "");
 	return Number.isFinite(seconds) && seconds >= 0
-		? Math.ceil(seconds * 1000)
+		? Math.min(Math.ceil(seconds * 1000), MAX_RETRY_MS)
 		: DEFAULT_RETRY_MS;
 }
 
@@ -26,8 +28,7 @@ export function retryAfterMs(response: Response): number {
 export function providerMessage(text: unknown, apiKey?: string): string {
 	if (typeof text !== "string") return "";
 	let message = text;
-	if (apiKey && apiKey.length >= 4)
-		message = message.split(apiKey).join("[key]");
+	if (apiKey) message = message.split(apiKey).join("[key]");
 	message = message
 		.replace(/\b[a-z][a-z0-9+.-]*:\/\/\S+/gi, "[link]")
 		.replace(/\s+/g, " ")
@@ -46,14 +47,62 @@ export function failure(
 	return { outcome, detail: `${label}: ${detail}`, billed: false, ...extra };
 }
 
-/** A network error or an aborted call. The error itself may quote the URL, so it is never shown. */
-export function networkFailure(
+/** Connection errors that prove the request never reached the provider. */
+const NOT_SENT = new Set([
+	"ENOTFOUND",
+	"EAI_AGAIN",
+	"ECONNREFUSED",
+	"EHOSTUNREACH",
+	"ENETUNREACH",
+	"UND_ERR_CONNECT_TIMEOUT",
+	"CERT_HAS_EXPIRED",
+	"UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+	"DEPTH_ZERO_SELF_SIGNED_CERT",
+	"SELF_SIGNED_CERT_IN_CHAIN",
+	"ERR_TLS_CERT_ALTNAME_INVALID",
+]);
+
+/** The first `code` on an error or its causes. */
+function errorCode(error: unknown): string | undefined {
+	let current = error;
+	for (let depth = 0; depth < 4 && current; depth++) {
+		const code = (current as { code?: unknown }).code;
+		if (typeof code === "string") return code;
+		current = (current as { cause?: unknown }).cause;
+	}
+	return undefined;
+}
+
+/**
+ * A create call that threw. Once the request may have left, the provider
+ * may have accepted it, so the failure is a `timeout`: the hold stays and
+ * no other provider is tried, which could pay twice. Only an error that
+ * proves the request was never sent moves on. The error itself may quote
+ * the URL, so it is never shown.
+ */
+export function createFailure(
 	label: string,
 	signal: AbortSignal,
+	error: unknown,
+	response?: Response,
 ): VideoFailure {
-	return signal.aborted
-		? failure(label, "timeout", "the request ran out of time")
-		: failure(label, "provider-error", `${label} could not be reached`);
+	if (response && !response.ok) return httpFailure(label, response, "");
+	if (response)
+		return failure(
+			label,
+			"timeout",
+			"the answer could not be read, so the provider may have started the video",
+		);
+	if (signal.aborted)
+		return failure(label, "timeout", "the request ran out of time");
+	const code = errorCode(error);
+	if (code && NOT_SENT.has(code))
+		return failure(label, "provider-error", `${label} could not be reached`);
+	return failure(
+		label,
+		"timeout",
+		"the connection failed while starting the video, so the provider may have started it",
+	);
 }
 
 /**
@@ -67,24 +116,16 @@ export function httpFailure(
 ): VideoFailure {
 	const tag = `HTTP ${response.status}`;
 	const said = message ? `: ${message}` : "";
-	if (response.status === 401 || response.status === 403)
+	const status = response.status;
+	if (status === 401)
 		return failure(
 			label,
 			"provider-error",
 			`the API key was refused (${tag})${said}`,
 			{ problem: "key" },
 		);
-	if (
-		response.status === 402 ||
-		/\b(credits?|balance|quota|billing)\b/i.test(message)
-	)
-		return failure(
-			label,
-			"provider-error",
-			`the account is out of credits or its plan does not allow this (${tag})${said}`,
-			{ problem: "credits" },
-		);
-	if (response.status === 429)
+	// A rate limit first: its message may well mention a quota.
+	if (status === 429)
 		return failure(
 			label,
 			"provider-error",
@@ -93,7 +134,25 @@ export function httpFailure(
 				retryAfterMs: retryAfterMs(response),
 			},
 		);
-	if (response.status === 400 || response.status === 422)
+	if (
+		status === 402 ||
+		([400, 403, 422].includes(status) &&
+			/\b(credits?|balance|billing|insufficient funds)\b/i.test(message))
+	)
+		return failure(
+			label,
+			"provider-error",
+			`the account is out of credits or its plan does not allow this (${tag})${said}`,
+			{ problem: "credits" },
+		);
+	if (status === 403)
+		return failure(
+			label,
+			"provider-error",
+			`the API key was refused (${tag})${said}`,
+			{ problem: "key" },
+		);
+	if (status === 400 || status === 422)
 		return failure(label, "invalid", `the request was refused (${tag})${said}`);
 	return failure(label, "provider-error", `the request failed (${tag})${said}`);
 }

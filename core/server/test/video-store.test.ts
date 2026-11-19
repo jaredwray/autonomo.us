@@ -328,6 +328,91 @@ describe.each(stores())("VideoStore (%s)", (_name, make) => {
 		const budget = await store.budget(OTHER, await store.policy(OTHER));
 		expect(budget.spentUsd).toBe(1);
 	});
+
+	it("treats a lost race to create a period's counter as a retry, not a refusal", async () => {
+		const store = await make();
+		if (store.persistence === "mongodb") {
+			// Another hold creates the counter just before this one's upsert
+			// inserts it: MongoDB answers the upsert with a duplicate key.
+			const internal = store as unknown as {
+				usage: () => {
+					updateOne: (...args: unknown[]) => Promise<unknown>;
+					insertOne: (doc: unknown) => Promise<unknown>;
+				};
+			};
+			const usage = internal.usage.bind(store);
+			let raced = false;
+			internal.usage = () => {
+				const collection = usage();
+				return Object.assign(Object.create(collection), {
+					updateOne: async (...args: unknown[]) => {
+						const [filter, , options] = args as [
+							{ _id: { $eq: string } },
+							unknown,
+							{ upsert?: boolean } | undefined,
+						];
+						if (options?.upsert && !raced) {
+							raced = true;
+							await collection.insertOne({
+								_id: filter._id.$eq,
+								videos: 1,
+								costMicros: 100_000,
+								workspaceId: OTHER.id,
+								expiresAt: new Date(Date.now() + 86_400_000),
+							});
+							throw Object.assign(new Error("E11000 duplicate key"), {
+								code: 11000,
+							});
+						}
+						return (
+							collection.updateOne as (...a: unknown[]) => Promise<unknown>
+						)(...args);
+					},
+				});
+			};
+		}
+		const held = await store.hold(OTHER, {
+			connection: "a",
+			callerId: "agent:1",
+			callerCap: 5,
+			budgetUsd: 25,
+			costUsd: 0.35,
+		});
+		expect(held).toMatchObject({ costMicros: 350_000 });
+		const budget = await store.budget(OTHER, await store.policy(OTHER));
+		expect(budget.spentUsd).toBeCloseTo(
+			store.persistence === "mongodb" ? 0.45 : 0.35,
+		);
+	});
+
+	it("gives the budget back when the caller's counter cannot be written", async () => {
+		const store = await make();
+		const internal = store as unknown as {
+			increment: (...args: unknown[]) => Promise<boolean>;
+		};
+		const increment = internal.increment.bind(store);
+		let calls = 0;
+		internal.increment = async (...args: unknown[]) => {
+			calls += 1;
+			if (calls === 2)
+				throw new ServiceError("Video settings are unavailable.", 503);
+			return increment(...args);
+		};
+		expect(
+			await refusal(
+				store.hold(OTHER, {
+					connection: "a",
+					callerId: "agent:1",
+					callerCap: 5,
+					budgetUsd: 10,
+					costUsd: 2,
+				}),
+			),
+		).toMatchObject({ status: 503 });
+		expect(
+			(await store.budget(OTHER, await store.policy(OTHER))).spentUsd,
+		).toBe(0);
+	});
 });
 
 describe("validateVideoPolicy", () => {

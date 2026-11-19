@@ -8,12 +8,12 @@ import type {
 	VideoPollResult,
 } from "../types.js";
 import {
+	createFailure,
 	failure,
 	field,
 	httpFailure,
 	jsonHeaders,
 	MAX_ANSWER_BYTES,
-	networkFailure,
 	parseJson,
 	providerMessage,
 	readLimited,
@@ -63,6 +63,14 @@ function errorMessage(body: unknown, apiKey?: string): string {
 	return "";
 }
 
+/** Credits Luma reports it charged, once billing settles, or null when it has not said. */
+function chargedCredits(generation: unknown): number | null {
+	const credits = field(field(generation, "usage"), "credits_charged");
+	return typeof credits === "number" && Number.isFinite(credits)
+		? credits
+		: null;
+}
+
 /**
  * Luma Ray through the Luma Agents API: one create endpoint and one poll
  * endpoint. Luma has no cancel. Luma downloads a start image itself, from
@@ -99,7 +107,7 @@ export const lumaAdapter: VideoAdapter = {
 				...(call.imageUrl ? { start_frame: { url: call.imageUrl } } : {}),
 			},
 		};
-		let response: Response;
+		let response: Response | undefined;
 		let text: string;
 		try {
 			response = await fetchImpl(`${base(config)}/v1/generations`, {
@@ -109,8 +117,8 @@ export const lumaAdapter: VideoAdapter = {
 				signal: call.signal,
 			});
 			text = await readLimited(response, MAX_ANSWER_BYTES);
-		} catch {
-			return networkFailure(LABEL, call.signal);
+		} catch (error) {
+			return createFailure(LABEL, call.signal, error, response);
 		}
 		const parsed = parseJson(text);
 		if (!response.ok)
@@ -195,14 +203,16 @@ export const lumaAdapter: VideoAdapter = {
 					config.apiKey,
 				);
 				const tag = `${codeText ? ` (${providerMessage(codeText)})` : ""}${reason ? `: ${reason}` : ""}`;
+				const credits = chargedCredits(generation);
 				switch (codeText) {
 					case "content_moderated":
-						// Not documented either way; counted as spent so the budget reads high, never low.
+						// What Luma reports it charged decides; until it says, the
+						// refusal counts as spent, so the budget reads high, never low.
 						return {
 							state: "failed",
 							code: "moderated",
 							detail: `Luma: Luma refused the prompt${tag}`,
-							billed: true,
+							billed: credits === null || credits > 0,
 						};
 					case "image_too_large":
 					case "unsupported_format":

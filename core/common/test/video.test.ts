@@ -68,7 +68,7 @@ describe("video models", () => {
 		expect(videoModelProblem(gen, { ...want, promptLength: 1001 })).toBe(
 			"gen4.5 takes prompts of up to 1000 characters.",
 		);
-		expect(videoDurationsText(omni)).toBe("3 to 15");
+		expect(videoDurationsText(omni)).toBe("3 to 10");
 		expect(videoDurationsText({ ...ray, durations: [5] })).toBe("5");
 		expect(videoDurationAllowed(omni, 3.5)).toBe(false);
 	});

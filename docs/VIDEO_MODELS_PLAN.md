@@ -803,6 +803,19 @@ Everything in sections 6 to 12, in one change, with these findings and differenc
 - `GET /video/jobs` accepts `limit` up to 100. `video_list` caps it at 20.
 - `test/auth-helpers.ts` rewrites `/v1/video` paths to the default workspace, as it does for the other resources.
 
+**After review.** Fable's review and Codex's automated review of the first commit found these, all fixed:
+
+- A create call that threw after the request may have left (a connection that broke off, or a successful answer too large to read) was treated as "nothing accepted": the hold was released and the next provider tried, which could pay twice. Now only an error that proves the request never left (DNS failure, refused connection, certificate errors) moves on; anything else is a `timeout` that keeps the hold and stops.
+- Concurrent readers who all found a poll due all polled. Each poll is now claimed with a compare-and-set on `lastPolledAt`.
+- A first hold of a month or day that lost the race to create its counter (a duplicate key on the upsert) was refused as if over the cap. It is now retried without the upsert. `ProxyStore.increment` in `web/store.ts` has the same pattern and is left for its own change.
+- The budget was not given back when the caller's counter write threw.
+- `cancel` acted on the stored status: on Runway, a cancel of a task that had finished unseen deletes its video. It now checks with the provider first.
+- A wait on a job whose connection was removed re-read the store every 250 ms.
+- A 429 whose message mentioned a quota was recorded as an out-of-credits problem. Rate limits are now read first, and `Retry-After` is capped at 10 minutes.
+- Download tokens were logged in full by the legacy Worker's own request log; it now masks them, as the Node server does.
+- Gemini Omni is capped at 10 seconds until URI delivery is built (Google advises it above 4 MB), and its results are promised for 7 days, the shortest retention a project can set.
+- Smaller items: a job canceled between failover attempts starts nothing more; "never started" is measured from the last attempt; a job whose hold was given back shows a cost of 0; Luma's `usage.credits_charged` decides whether a refusal was billed; the memory store's counters behave as MongoDB's do; an unused `onChanged` option was removed from the routes.
+
 Tests: `core/common/test/video.test.ts`, and `video-providers`, `video-store` (memory and MongoDB), `video-service`, and `video-routes` (REST, MCP, permissions, download headers, and a key-leak check) under `core/server/test`.
 
 ### Critical Files for Implementation

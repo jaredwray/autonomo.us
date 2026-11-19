@@ -3,6 +3,7 @@ import { env } from "cloudflare:workers";
 import { configFromEnv } from "./config.js";
 import { ModelCatalogService } from "./model-catalog-service.js";
 import { mongoErrorDetails, withMongoRequestScope } from "./mongo.js";
+import { redactDownloadUrl } from "./routes/video.js";
 import {
 	catchUpBackgroundWork,
 	createServer,
@@ -108,7 +109,8 @@ export default {
 			}
 			console.info("gateway.request", {
 				method: request.method,
-				path: new URL(request.url).pathname,
+				// A video link's token is its only credential.
+				path: redactDownloadUrl(new URL(request.url).pathname),
 				status: response.status,
 				durationMs: Date.now() - started,
 			});
