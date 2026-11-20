@@ -16,7 +16,11 @@ type PoliciesDocument = {
 	_id: string;
 	policies: BudgetPolicy[];
 	revision: number;
+	/** Where the first budget's carried video spend went, for holds taken before budgets. */
+	carried?: Carried;
 };
+/** The counter the old video spend was carried into, and its month. */
+type Carried = { key: string; month: string };
 type UsageDocument = {
 	_id: string;
 	workspaceId: string;
@@ -50,7 +54,7 @@ export class BudgetStore {
 	private readonly mongo?: MongoConnection;
 	private readonly memory = new Map<
 		string,
-		{ policies: BudgetPolicy[]; revision: number }
+		{ policies: BudgetPolicy[]; revision: number; carried?: Carried }
 	>();
 	private readonly counters = new Map<string, number>();
 	private indexed = false;
@@ -106,6 +110,9 @@ export class BudgetStore {
 	 * The workspace's budgets. The first read gives a workspace one budget:
 	 * the monthly video budget it had before budgets existed, with this
 	 * month's video spend carried over, so nothing it limited goes unlimited.
+	 * The spend is counted before the budget is saved: until both are written
+	 * the next read seeds again, and a seed that loses the race leaves only a
+	 * counter nobody reads.
 	 */
 	async policies(
 		workspaceId: string,
@@ -113,20 +120,31 @@ export class BudgetStore {
 		const stored = await this.read(workspaceId);
 		if (stored) return stored;
 		const seed = await this.seedPolicy(workspaceId);
+		const now = this.now();
+		const carried: Carried = {
+			key: this.key(workspaceId, seed.policy, now),
+			month: budgetPeriodKey("month", now),
+		};
+		await this.charge(workspaceId, [seed.policy], seed.spentMicros);
 		if (!this.mongo) {
-			if (!this.memory.has(workspaceId)) {
-				this.memory.set(workspaceId, { policies: [seed.policy], revision: 1 });
-				await this.charge(workspaceId, [seed.policy], seed.spentMicros);
-			}
-			return structuredClone(
-				this.memory.get(workspaceId) ?? { policies: [], revision: 0 },
-			);
+			if (!this.memory.has(workspaceId))
+				this.memory.set(workspaceId, {
+					policies: [seed.policy],
+					revision: 1,
+					carried,
+				});
+			const saved = this.memory.get(workspaceId);
+			return structuredClone({
+				policies: saved?.policies ?? [],
+				revision: saved?.revision ?? 0,
+			});
 		}
 		try {
 			await this.documents().insertOne({
 				_id: workspaceId,
 				policies: [seed.policy],
 				revision: 1,
+				carried,
 			});
 		} catch (error) {
 			// Another request seeded it first; its document stands.
@@ -135,9 +153,36 @@ export class BudgetStore {
 			if (winner) return winner;
 			this.unavailable(error);
 		}
-		// Only the request that inserted the document counts the carried spend.
-		await this.charge(workspaceId, [seed.policy], seed.spentMicros);
 		return { policies: [seed.policy], revision: 1 };
+	}
+
+	/**
+	 * Gives back, from the first budget, a video hold taken before budgets
+	 * existed: its estimate was in the spend carried over, and the provider
+	 * billed nothing. Only for a hold from the month that was carried.
+	 */
+	async releaseCarried(
+		workspaceId: string,
+		month: string,
+		costMicros: number,
+	): Promise<void> {
+		if (costMicros <= 0) return;
+		let carried: Carried | undefined;
+		if (!this.mongo) carried = this.memory.get(workspaceId)?.carried;
+		else
+			try {
+				carried =
+					(
+						await this.documents().findOne(
+							{ _id: { $eq: workspaceId } },
+							{ projection: { carried: 1 } },
+						)
+					)?.carried ?? undefined;
+			} catch (error) {
+				this.unavailable(error);
+			}
+		if (!carried || carried.month !== month) return;
+		await this.release({ keys: [carried.key], costMicros });
 	}
 
 	private async read(
@@ -172,8 +217,10 @@ export class BudgetStore {
 			limitUsd: seed.videoMonthlyBudgetUsd,
 			period: "month",
 			enabled: true,
+			origin: "video-budget",
 			createdAt: at,
 			updatedAt: at,
+			countsFrom: at,
 		};
 		return { policy, spentMicros: toMicros(seed.videoSpentUsd) };
 	}
@@ -193,15 +240,16 @@ export class BudgetStore {
 			if ((this.memory.get(workspaceId)?.revision ?? 0) !== revision)
 				throw changed();
 			this.memory.set(workspaceId, {
+				...this.memory.get(workspaceId),
 				policies: structuredClone(policies),
 				revision: revision + 1,
 			});
 			return revision + 1;
 		}
 		try {
-			const result = await this.documents().replaceOne(
+			const result = await this.documents().updateOne(
 				{ _id: { $eq: workspaceId }, revision: { $eq: revision } },
-				{ policies, revision: revision + 1 },
+				{ $set: { policies, revision: revision + 1 } },
 			);
 			if (!result.matchedCount) throw changed();
 		} catch (error) {
@@ -210,8 +258,10 @@ export class BudgetStore {
 		return revision + 1;
 	}
 
+	/** A budget counts afresh from `countsFrom`: changing what it limits starts a new counter. */
 	private key(workspaceId: string, policy: BudgetPolicy, now: Date) {
-		return `${workspaceId}:${policy.id}:${budgetPeriodKey(policy.period, now)}`;
+		const since = Date.parse(policy.countsFrom ?? policy.createdAt);
+		return `${workspaceId}:${policy.id}:${since}:${budgetPeriodKey(policy.period, now)}`;
 	}
 
 	private expiry(policy: BudgetPolicy, now: Date) {
@@ -320,14 +370,18 @@ export class BudgetStore {
 		cap: number,
 		expiresAt: Date,
 	): Promise<boolean> {
-		if (amount > cap) return false;
+		// A used-up budget refuses even an estimate of nothing, as a call is refused.
+		if (amount > cap || cap <= 0) return false;
 		if (!this.mongo) {
 			const current = this.counters.get(key) ?? 0;
-			if (current + amount > cap) return false;
+			if (current + amount > cap || current >= cap) return false;
 			this.counters.set(key, current + amount);
 			return true;
 		}
-		const filter = { _id: { $eq: key }, costMicros: { $lte: cap - amount } };
+		const filter = {
+			_id: { $eq: key },
+			costMicros: { $lte: cap - amount, $lt: cap },
+		};
 		const update = {
 			$inc: { costMicros: amount },
 			$setOnInsert: { workspaceId, expiresAt },

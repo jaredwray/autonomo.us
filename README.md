@@ -1249,23 +1249,33 @@ prices, over a UTC day or a UTC month. Each one says:
   language model (its routable id, such as `anthropic/claude-opus-4-8`), or
   one video model.
 - **The limit** in US dollars, and whether it resets every day or every month.
-  A limit of $0 refuses everything it covers.
+  A limit of $0 refuses everything it covers; a limit between $0 and $0.01 is
+  refused.
 
 A request is refused while any budget that covers it is used up, with a
 message that names the budget and when it resets: `429` with
 `{ error: { type: "budget_exceeded", message } }` from `POST /chat` (before a
 stream opens, too) and `POST /decisions`, a tool error from `models_chat`, and
 a notice in the channel from a bot. A model a used-up budget covers is passed
-over like one that failed, so failover moves on to the next target. Language
-model calls are checked before they start and counted after, from the
-estimate telemetry records, so spend can pass a limit by the calls already
-running; models without a public list price are not counted. A video's
-estimate is held against every budget that covers it before the provider is
-called, all or none, and given back when the provider bills nothing.
+over like one that failed, so failover moves on to the next target; each
+target is checked again just before it is tried, and a stream announces the
+skip with a `failover` event. When a provider fails and the rest are refused,
+the answer is that provider's error, saying how many models a budget kept from
+being tried. Language model calls are checked before they start and counted
+after, from the estimate telemetry records (a write that fails is tried three
+times), so spend can pass a limit by the calls already running; models without
+a public list price are not counted. A video's estimate is held against every
+budget that covers it before the provider is called, all or none, and given
+back when the provider bills nothing; a model a used-up budget covers is passed
+over for the next provider in the order, and the video is refused only when
+budgets cover every one. A used-up budget refuses even a video estimated at $0.
 
-Spend counts from when a budget is added. Every workspace starts with one
-budget, for all video models at $25 a month, carrying over the monthly video
-budget and this month's video spend it had before budgets existed.
+Spend counts from when a budget is added, or last changed who it applies to,
+what it covers, or when it resets; a new limit keeps what was spent. Every
+workspace starts with one budget, for all video models at $25 a month, carrying
+over the monthly video budget and this month's video spend it had before
+budgets existed. A video started before budgets that later fails unbilled gives
+its estimate back to that budget.
 
 Open the **Budget** tab of **Models** to see each budget, what it has spent in
 the period now running, and when it resets. Workspace admins add, change,

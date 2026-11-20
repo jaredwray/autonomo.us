@@ -1,6 +1,14 @@
 import type { BudgetPolicy, BudgetPolicyInput } from "@autonomo.us/common";
 import { MongoClient } from "mongodb";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import {
+	afterAll,
+	afterEach,
+	beforeAll,
+	describe,
+	expect,
+	it,
+	vi,
+} from "vitest";
 import { BudgetService } from "../src/budgets/service.js";
 import { type BudgetSeed, BudgetStore } from "../src/budgets/store.js";
 import { configFromEnv } from "../src/config.js";
@@ -153,6 +161,41 @@ describe.each(stores())("BudgetStore (%s)", (_name, make) => {
 		expect(await store.spent(WS.id, [roomy, tight])).toEqual([0, 0]);
 	});
 
+	it("refuses even a free hold once a budget is used up, or is $0", async () => {
+		const store = make();
+		expect(await store.hold(WS.id, [policy({ limitUsd: 0 })], 0)).toMatchObject(
+			{
+				refused: { limitUsd: 0 },
+			},
+		);
+		const one = policy({ id: "one", limitUsd: 1 });
+		expect(await store.hold(WS.id, [one], 1_000_000)).toMatchObject({
+			costMicros: 1_000_000,
+		});
+		expect(await store.hold(WS.id, [one], 0)).toMatchObject({ refused: one });
+	});
+
+	it("seeds again when the carried spend could not be written, and gives back a hold from before budgets once", async () => {
+		const store = make({
+			seed: async () => ({ videoMonthlyBudgetUsd: 10, videoSpentUsd: 3 }),
+		});
+		const charge = vi
+			.spyOn(store, "charge")
+			.mockRejectedValueOnce(new ServiceError("Budgets are unavailable.", 503));
+		expect(await refusal(store.policies(WS.id))).toMatchObject({ status: 503 });
+		// Nothing was saved, so the next read seeds, and counts the spend once.
+		const { policies } = await store.policies(WS.id);
+		expect(charge).toHaveBeenCalledTimes(2);
+		expect(policies).toHaveLength(1);
+		expect(policies[0].origin).toBe("video-budget");
+		expect(await store.spent(WS.id, policies)).toEqual([3_000_000]);
+		const month = new Date().toISOString().slice(0, 7);
+		await store.releaseCarried(WS.id, month, 1_000_000);
+		// A hold from another month was never carried here.
+		await store.releaseCarried(WS.id, "2001-01", 1_000_000);
+		expect(await store.spent(WS.id, policies)).toEqual([2_000_000]);
+	});
+
 	it("lets only one of many concurrent holds take the last of a budget", async () => {
 		const store = make();
 		const one = policy({ limitUsd: 1 });
@@ -245,6 +288,36 @@ describe("BudgetService", () => {
 				status: 400,
 				message: expect.stringContaining(message),
 			});
+	});
+
+	it("merges concurrent edits, and starts spend afresh when what a budget limits changes", async () => {
+		const { budgets, advance } = setup();
+		const created = await budgets.create(WS, input({ limitUsd: 10 }));
+		// Two people change different fields at once: neither undoes the other.
+		await Promise.all([
+			budgets.update(WS, created.id, { limitUsd: 3 }),
+			budgets.update(WS, created.id, { enabled: false }),
+		]);
+		const both = (await budgets.list(WS)).policies.find(
+			(item) => item.id === created.id,
+		);
+		expect(both).toMatchObject({ limitUsd: 3, enabled: false });
+		await budgets.update(WS, created.id, { enabled: true });
+		budgets.chargeLlm(WS.id, PERSON, OPUS, 2);
+		await budgets.idle();
+		const spent = async () =>
+			(await budgets.list(WS)).policies.find((item) => item.id === created.id)
+				?.usage.spentUsd;
+		expect(await spent()).toBe(2);
+		// A new limit keeps what was spent; new coverage counts from now.
+		await budgets.update(WS, created.id, { limitUsd: 4 });
+		expect(await spent()).toBe(2);
+		advance(1000);
+		await budgets.update(WS, created.id, { covers: { kind: "llm" } });
+		expect(await spent()).toBe(0);
+		expect(
+			await refusal(budgets.update(WS, created.id, { limitUsd: 0.004 })),
+		).toMatchObject({ message: expect.stringContaining("at least $0.01") });
 	});
 
 	it("keeps a budget editable after an agent it names is removed", async () => {
@@ -417,12 +490,28 @@ describe("budget routes and language model calls", () => {
 			},
 		});
 		expect(added.statusCode).toBe(201);
+		// A charge lands after its call; wait for it before the next call.
+		const spentReaches = (usd: number) =>
+			vi.waitFor(async () => {
+				const listed = await server.inject({
+					method: "GET",
+					url: "/v1/budgets",
+				});
+				expect(
+					listed
+						.json()
+						.policies.find(
+							(item: BudgetPolicy) => item.covers.kind === "llm-model",
+						).usage.spentUsd,
+				).toBe(usd);
+			});
 		const first = await server.inject({
 			method: "POST",
 			url: "/v1/chat",
 			payload: chat,
 		});
 		expect(first.statusCode).toBe(200);
+		await spentReaches(15);
 		// $15 of $20: still under, so the next call starts and takes it to $30.
 		const second = await server.inject({
 			method: "POST",
@@ -430,6 +519,7 @@ describe("budget routes and language model calls", () => {
 			payload: chat,
 		});
 		expect(second.statusCode).toBe(200);
+		await spentReaches(30);
 		const refused = await server.inject({
 			method: "POST",
 			url: "/v1/chat",
@@ -456,5 +546,67 @@ describe("budget routes and language model calls", () => {
 				.policies.find((item: BudgetPolicy) => item.covers.kind === "llm-model")
 				.usage.spentUsd,
 		).toBe(30);
+	});
+
+	it("fails over past a model a budget refuses, and reports the provider's own error", async () => {
+		const server = await start();
+		await server.inject({
+			method: "PUT",
+			url: "/v1/failover",
+			payload: { enabled: true, targets: ["stub/chat-model"] },
+		});
+		await server.inject({
+			method: "POST",
+			url: "/v1/budgets",
+			payload: {
+				appliesTo: { kind: "everyone" },
+				covers: { kind: "llm-model", model: "stub/chat-model" },
+				limitUsd: 0,
+				period: "day",
+			},
+		});
+		// The requested model fails; the only failover target is refused.
+		const failed = await server.inject({
+			method: "POST",
+			url: "/v1/chat",
+			payload: { ...chat, model: "stub/broken-model" },
+		});
+		expect(failed.statusCode).toBe(502);
+		expect(failed.json().error.message).toMatch(
+			/provider exploded.*\(another model was skipped: a budget that covers it is used up\)/,
+		);
+		expect(failed.json().error.attempts).toMatchObject([
+			{ model: "stub/broken-model" },
+			{
+				model: "stub/chat-model",
+				error: expect.stringContaining("is used up"),
+			},
+		]);
+		// Asked for the refused model, the stream says it fails over, then why it ended.
+		await server.inject({
+			method: "PUT",
+			url: "/v1/failover",
+			payload: { enabled: true, targets: ["stub/broken-model"] },
+		});
+		const stream = await server.inject({
+			method: "POST",
+			url: "/v1/chat",
+			payload: { ...chat, stream: true },
+		});
+		expect(stream.statusCode).toBe(200);
+		const events = stream.body
+			.split("\n\n")
+			.filter((line) => line.startsWith("data: {"))
+			.map((line) => JSON.parse(line.slice(6)));
+		expect(events[0]).toMatchObject({
+			type: "failover",
+			from: "stub/chat-model",
+			to: "stub/broken-model",
+			error: expect.stringContaining("is used up"),
+		});
+		expect(events.at(-1)).toMatchObject({
+			type: "error",
+			error: { message: expect.stringContaining("provider exploded") },
+		});
 	});
 });

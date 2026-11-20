@@ -103,6 +103,7 @@ function BudgetForm({
 	existing,
 	agents,
 	llmModels,
+	modelsFailed,
 	names,
 	onSaved,
 	onClose,
@@ -110,6 +111,8 @@ function BudgetForm({
 	existing?: BudgetPolicyView;
 	agents: AgentSummary[];
 	llmModels: ModelInfo[];
+	/** The language models could not be read, so none can be offered. */
+	modelsFailed: boolean;
 	names: Names;
 	onSaved(budget: BudgetPolicyView, added: boolean): void;
 	onClose(): void;
@@ -177,7 +180,22 @@ function BudgetForm({
 		);
 
 	return (
-		<section className="card add-model-card" aria-labelledby={`${id}-title`}>
+		<section
+			className="card add-model-card"
+			aria-labelledby={`${id}-title`}
+			onKeyDown={(event) => {
+				// Escape closes the form, unless it is closing a list inside it.
+				if (
+					event.key !== "Escape" ||
+					saving ||
+					event.defaultPrevented ||
+					(event.target as HTMLElement).closest('[role="listbox"]')
+				)
+					return;
+				event.preventDefault();
+				onClose();
+			}}
+		>
 			<div className="section-heading">
 				<div>
 					<h2 id={`${id}-title`}>
@@ -247,7 +265,7 @@ function BudgetForm({
 								<span className="field-hint">
 									{agents.length === 0 && removed.length === 0
 										? "This workspace has no agents yet."
-										: "The agents you pick share this budget."}
+										: "The agents you pick share one budget. For a separate limit each, add a budget per agent."}
 								</span>
 							</span>
 						</label>
@@ -337,7 +355,9 @@ function BudgetForm({
 								<label htmlFor={`${id}-llm`}>Language model</label>
 								{llmModels.length === 0 && !llmModel ? (
 									<span className="field-hint" id={`${id}-llm`}>
-										No language models are active. Add one on the LLM tab first.
+										{modelsFailed
+											? "The language models could not be loaded. Close this form and choose Refresh."
+											: "No language models are active. Add one on the LLM tab first."}
 									</span>
 								) : (
 									<Dropdown
@@ -358,6 +378,10 @@ function BudgetForm({
 										))}
 									</Dropdown>
 								)}
+								<span className="field-hint">
+									Through this connection only. The same model on another
+									connection needs a budget of its own.
+								</span>
 							</div>
 						)}
 						{covers === "video-model" && (
@@ -410,6 +434,12 @@ function BudgetForm({
 					<p className="budget-preview" id={`${id}-preview`}>
 						{problem ?? budgetSentence(input, names)}
 					</p>
+					{existing && (
+						<p className="field-hint">
+							A new limit keeps what was spent. Changing who it applies to, what
+							it covers, or when it resets starts its spend again from $0.
+						</p>
+					)}
 					{error && (
 						<div className="banner-error" role="alert">
 							{error}
@@ -465,6 +495,11 @@ function CoversCell({ covers }: { covers: BudgetCovers }) {
 function Used({ budget }: { budget: BudgetPolicyView }) {
 	const { spentUsd, resetsAt } = budget.usage;
 	const limit = budget.limitUsd;
+	// A $0 budget is a block, not a meter: nothing is spent and nothing resets.
+	if (limit === 0)
+		return (
+			<span className="budget-blocked">Blocks every request it covers</span>
+		);
 	const full = spentUsd >= limit;
 	const share = limit > 0 ? Math.min(spentUsd / limit, 1) : 1;
 	const tone = full ? "critical" : share >= 0.8 ? "warning" : "normal";
@@ -487,7 +522,7 @@ function Used({ budget }: { budget: BudgetPolicyView }) {
 			</span>
 			<span aria-hidden="true">{text}</span>
 			<span className={full ? "budget-full" : "field-hint"}>
-				{full ? "Used up · " : ""}resets {resetDay(resetsAt)}
+				{full ? "Used up · " : ""}resets {resetDay(resetsAt)}, 00:00 UTC
 			</span>
 		</div>
 	);
@@ -521,7 +556,15 @@ export function BudgetPanel({
 		{ kind: "add" } | { kind: "edit"; id: string } | null
 	>(null);
 	const [confirming, setConfirming] = useState<string | null>(null);
-	const [busy, setBusy] = useState<string | null>(null);
+	const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
+	const working = (budgetId: string, on: boolean) =>
+		setBusy((current) => {
+			const next = new Set(current);
+			if (on) next.add(budgetId);
+			else next.delete(budgetId);
+			return next;
+		});
+	const [modelsFailed, setModelsFailed] = useState(false);
 	const addButton = useRef<HTMLButtonElement>(null);
 	const focusAdd = useRef(false);
 	const sequence = useRef(0);
@@ -561,6 +604,7 @@ export function BudgetPanel({
 			);
 		if (agentList.status === "fulfilled") setAgents(agentList.value.agents);
 		if (models.status === "fulfilled") setLlmModels(models.value.models);
+		setModelsFailed(models.status !== "fulfilled");
 		setLoading(false);
 	}, []);
 	useEffect(() => {
@@ -574,8 +618,19 @@ export function BudgetPanel({
 		if (active && !shownBefore.current) void refresh();
 		shownBefore.current = active;
 	}, [active, refresh]);
+	// Closing a form returns focus to what opened it: Add budget, or the row's Edit.
+	const editButtons = useRef(new Map<string, HTMLButtonElement>());
+	const focusEdit = useRef<string | null>(null);
 	useEffect(() => {
-		if (panel || !focusAdd.current) return;
+		if (panel) return;
+		const budgetId = focusEdit.current;
+		focusEdit.current = null;
+		if (budgetId && editButtons.current.get(budgetId)) {
+			focusAdd.current = false;
+			editButtons.current.get(budgetId)?.focus();
+			return;
+		}
+		if (!focusAdd.current) return;
 		focusAdd.current = false;
 		addButton.current?.focus();
 	}, [panel]);
@@ -585,14 +640,16 @@ export function BudgetPanel({
 		llm: (model) => model,
 	};
 	const closePanel = () => {
-		focusAdd.current = true;
+		if (panel?.kind === "edit") focusEdit.current = panel.id;
+		else focusAdd.current = true;
 		setPanel(null);
 	};
 	const editing =
 		panel?.kind === "edit"
 			? budgets?.find((budget) => budget.id === panel.id)
 			: undefined;
-	const usedUp = (budgets ?? []).filter(
+	// Used up, or $0: either way it refuses what it covers now.
+	const refusing = (budgets ?? []).filter(
 		(budget) => budget.enabled && budget.usage.spentUsd >= budget.limitUsd,
 	);
 	const form = (existing?: BudgetPolicyView) => (
@@ -601,6 +658,7 @@ export function BudgetPanel({
 			existing={existing}
 			agents={agents}
 			llmModels={llmModels.filter((model) => model.capability !== "decisions")}
+			modelsFailed={modelsFailed}
 			names={names}
 			onClose={closePanel}
 			onSaved={(saved, added) => {
@@ -622,7 +680,7 @@ export function BudgetPanel({
 		<div className="budget-page">
 			<div className="tab-intro">
 				<p className="card-note">
-					Caps on what models may spend, for everyone or for agents you pick. A
+					Caps on what models may spend, for everyone or for specific agents. A
 					request is refused while any budget that covers it is used up.
 				</p>
 				{canEdit ? (
@@ -671,9 +729,9 @@ export function BudgetPanel({
 				</div>
 				<div>
 					<span className="overview-value">
-						{budgets ? usedUp.length : "—"}
+						{budgets ? refusing.length : "—"}
 					</span>
-					<span>Used up now</span>
+					<span>Refusing requests now</span>
 				</div>
 				<p>Estimated from list prices.</p>
 			</section>
@@ -686,7 +744,8 @@ export function BudgetPanel({
 					<div>
 						<h2 id="budgets-heading">Budgets</h2>
 						<p className="card-note">
-							Spend counts from when a budget is added, in UTC days or months.
+							Spend counts in UTC days or months, from when a budget is added or
+							last changed what it limits.
 						</p>
 					</div>
 					<button
@@ -742,6 +801,11 @@ export function BudgetPanel({
 									<th>Limit</th>
 									<th>Spent</th>
 									<th>Status</th>
+									{canEdit && (
+										<th>
+											<span className="visually-hidden">Actions</span>
+										</th>
+									)}
 								</tr>
 							</thead>
 							<tbody>
@@ -749,7 +813,7 @@ export function BudgetPanel({
 									const label = `${whoText(budget, names)} on ${coversText(budget.covers, names)}`;
 									return (
 										<tr key={budget.id}>
-											<td>
+											<td className="budget-who">
 												<strong>{whoText(budget, names)}</strong>
 												{budget.appliesTo.kind === "agents" &&
 													budget.appliesTo.agentIds.length > 1 && (
@@ -759,54 +823,74 @@ export function BudgetPanel({
 														</span>
 													)}
 											</td>
-											<td>
+											<td data-label="Covers">
 												<CoversCell covers={budget.covers} />
+												{budget.origin === "video-budget" && (
+													<span className="field-hint">
+														Was the monthly video budget
+													</span>
+												)}
 											</td>
-											<td>
+											<td data-label="Limit">
 												{money(budget.limitUsd)}{" "}
 												<span className="field-hint">
 													{budget.period === "day" ? "a day" : "a month"}
 												</span>
 											</td>
-											<td>
+											<td data-label="Spent">
 												<Used budget={budget} />
 											</td>
-											<td>
+											<td data-label="Status">
 												{canEdit ? (
+													<label className="failover-enable">
+														<input
+															type="checkbox"
+															aria-label={`Use the budget for ${label}`}
+															checked={budget.enabled}
+															disabled={busy.has(budget.id)}
+															onChange={async (event) => {
+																setRowError("");
+																working(budget.id, true);
+																try {
+																	const saved = await updateBudget(budget.id, {
+																		enabled: event.target.checked,
+																	});
+																	setBudgets((current) =>
+																		(current ?? []).map((item) =>
+																			item.id === saved.id ? saved : item,
+																		),
+																	);
+																	// A list read before this change would undo it on screen.
+																	void refresh();
+																} catch (cause) {
+																	setRowError(
+																		errorText(cause, "Could not change it."),
+																	);
+																} finally {
+																	working(budget.id, false);
+																}
+															}}
+														/>
+														{budget.enabled ? "On" : "Off"}
+													</label>
+												) : (
+													<span className="chip">
+														<span
+															className={`dot ${budget.enabled ? "dot-good" : "dot-muted"}`}
+														/>
+														{budget.enabled ? "On" : "Off"}
+													</span>
+												)}
+											</td>
+											{canEdit && (
+												<td className="budget-actions">
 													<div className="proxy-actions">
-														<label className="failover-enable">
-															<input
-																type="checkbox"
-																aria-label={`Use the budget for ${label}`}
-																checked={budget.enabled}
-																disabled={busy === budget.id}
-																onChange={async (event) => {
-																	setRowError("");
-																	setBusy(budget.id);
-																	try {
-																		const saved = await updateBudget(
-																			budget.id,
-																			{
-																				enabled: event.target.checked,
-																			},
-																		);
-																		setBudgets((current) =>
-																			(current ?? []).map((item) =>
-																				item.id === saved.id ? saved : item,
-																			),
-																		);
-																	} catch (cause) {
-																		setRowError(
-																			errorText(cause, "Could not change it."),
-																		);
-																	} finally {
-																		setBusy(null);
-																	}
-																}}
-															/>
-															{budget.enabled ? "On" : "Off"}
-														</label>
 														<button
+															ref={(element) => {
+																if (element)
+																	editButtons.current.set(budget.id, element);
+																else editButtons.current.delete(budget.id);
+															}}
 															className="button"
 															type="button"
 															aria-label={`Edit the budget for ${label}`}
@@ -823,11 +907,11 @@ export function BudgetPanel({
 																	className="button danger"
 																	type="button"
 																	aria-label={`Confirm delete the budget for ${label}`}
-																	disabled={busy === budget.id}
+																	disabled={busy.has(budget.id)}
 																	ref={confirmDelete}
 																	onClick={async () => {
 																		setRowError("");
-																		setBusy(budget.id);
+																		working(budget.id, true);
 																		try {
 																			await deleteBudget(budget.id);
 																			setConfirming(null);
@@ -842,6 +926,7 @@ export function BudgetPanel({
 																				),
 																			);
 																			setNotice("Budget deleted.");
+																			void refresh();
 																		} catch (cause) {
 																			setRowError(
 																				errorText(
@@ -850,11 +935,11 @@ export function BudgetPanel({
 																				),
 																			);
 																		} finally {
-																			setBusy(null);
+																			working(budget.id, false);
 																		}
 																	}}
 																>
-																	{busy === budget.id ? "Deleting…" : "Delete"}
+																	{busy.has(budget.id) ? "Deleting…" : "Delete"}
 																</button>
 																<button
 																	className="button"
@@ -886,15 +971,8 @@ export function BudgetPanel({
 															</button>
 														)}
 													</div>
-												) : (
-													<span className="chip">
-														<span
-															className={`dot ${budget.enabled ? "dot-good" : "dot-muted"}`}
-														/>
-														{budget.enabled ? "On" : "Off"}
-													</span>
-												)}
-											</td>
+												</td>
+											)}
 										</tr>
 									);
 								})}

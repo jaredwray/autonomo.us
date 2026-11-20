@@ -130,7 +130,11 @@ describe("Budget tab", () => {
 		fakeGateway({
 			agents: [agent("a1", "Researcher"), agent("a2", "Writer")],
 			budgets: [
-				budget({ covers: { kind: "video" }, limitUsd: 25 }),
+				budget({
+					covers: { kind: "video" },
+					limitUsd: 25,
+					origin: "video-budget",
+				}),
 				budget({
 					appliesTo: { kind: "agents", agentIds: ["a1", "a2"] },
 					covers: { kind: "llm-model", model: OPUS },
@@ -141,6 +145,10 @@ describe("Budget tab", () => {
 						spentUsd: 5.5,
 						resetsAt: "2026-11-21T00:00:00.000Z",
 					},
+				}),
+				budget({
+					covers: { kind: "video-model", model: "gen4.5" },
+					limitUsd: 0,
 				}),
 			],
 		});
@@ -156,12 +164,17 @@ describe("Budget tab", () => {
 		expect(rows[2].textContent).toContain(OPUS);
 		expect(rows[2].textContent).toContain("$5.00 a day");
 		expect(rows[2].textContent).toContain("$5.50 of $5.00");
-		expect(rows[2].textContent).toContain("Used up · resets 21 Nov");
+		expect(rows[1].textContent).toContain("Was the monthly video budget");
+		expect(rows[2].textContent).toContain("Used up · resets 21 Nov, 00:00 UTC");
+		// A $0 budget is a block, not a used-up meter.
+		expect(rows[3].textContent).toContain("Runway Gen-4.5");
+		expect(rows[3].textContent).toContain("Blocks every request it covers");
+		expect(rows[3].textContent).not.toContain("Used up");
 		expect(
 			within(screen.getByRole("region", { name: "Budget overview" })).getByText(
-				"Used up now",
+				"Refusing requests now",
 			).parentElement?.textContent,
-		).toContain("1");
+		).toContain("2");
 	});
 
 	it("adds a budget that agents share on one language model, reading back what it does", async () => {
@@ -258,8 +271,17 @@ describe("Budget tab", () => {
 				"Everyone in this workspace cannot use all language models: a budget of $0 refuses every request it covers.",
 			),
 		).toBeDefined();
+		expect(
+			within(form).getByText(/Changing who it applies to, what it covers/),
+		).toBeDefined();
 		fireEvent.click(within(form).getByRole("button", { name: "Save changes" }));
 		expect(await screen.findByText("Budget saved.")).toBeDefined();
+		// Focus goes back to the row's Edit button, which opened the form.
+		await waitFor(() =>
+			expect(document.activeElement).toBe(
+				screen.getByRole("button", { name: `Edit the budget for ${label}` }),
+			),
+		);
 		expect(sent(calls, "PATCH")[0]).toMatchObject({
 			path: `${base}/budgets/${existing.id}`,
 			body: { limitUsd: 0, covers: { kind: "llm" } },
@@ -393,11 +415,15 @@ describe("Models page tabs", () => {
 			screen.getByRole("tab", { name: "Video", selected: true }),
 		).toBeDefined();
 		fireEvent.click(
-			await screen.findByRole("button", { name: "Open the Budget tab" }),
+			await screen.findByRole("button", { name: "See video budgets" }),
 		);
 		expect(
 			screen.getByRole("tab", { name: "Budget", selected: true }),
 		).toBeDefined();
+		// Focus lands on the tab it opened, not lost on the page.
+		expect(document.activeElement).toBe(
+			screen.getByRole("tab", { name: "Budget" }),
+		);
 		expect(window.location.hash).toBe(`#/w/${WORKSPACE}/models/budget`);
 		expect(await screen.findByText("No budgets")).toBeDefined();
 	});

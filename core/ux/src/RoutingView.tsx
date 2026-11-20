@@ -226,10 +226,6 @@ export function RoutingView({ onShowModels }: { onShowModels(): void }) {
 	};
 	return (
 		<div className="routing-view">
-			<p className="page-description routing-intro">
-				Choose the right model, keep requests moving, and share traffic across
-				accounts.
-			</p>
 			{error ? (
 				<div className="banner-error" role="alert">
 					{error}
@@ -255,16 +251,17 @@ export function RoutingView({ onShowModels }: { onShowModels(): void }) {
 					</p>
 					{chatModels.length === 0 ? (
 						<p className="banner-error">
+							Routing needs at least one chat model.{" "}
 							<a
+								className="link-button"
 								href={modelsHash("llm")}
 								onClick={(event) => {
 									event.preventDefault();
 									onShowModels();
 								}}
 							>
-								Add chat models and account connections
-							</a>{" "}
-							to start routing.
+								Add a language model on the LLM tab
+							</a>
 						</p>
 					) : null}
 					<form

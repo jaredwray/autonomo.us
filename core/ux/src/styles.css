@@ -1690,3 +1690,19 @@ a.button { text-decoration: none; }
 @media (max-width: 640px) {
 	.budget-agents { margin-left: 0; }
 }
+.budget-table .proxy-actions { flex-wrap: nowrap; white-space: nowrap; }
+.budget-table code { display: inline-block; max-width: 260px; overflow-wrap: anywhere; }
+.budget-blocked { color: var(--text-secondary); font-size: 12px; font-weight: 600; }
+@media (max-width: 640px) {
+	/* Each budget becomes a card: who, then what it covers, its limit, spend, and actions. */
+	.budget-table { min-width: 0; }
+	.budget-table thead { display: none; }
+	.budget-table, .budget-table tbody, .budget-table tr, .budget-table td { display: block; width: 100%; }
+	.budget-table tr { padding: 14px 0; border-bottom: 1px solid var(--hairline); }
+	.budget-table tr:last-child { border-bottom: 0; }
+	.budget-table td, .budget-table td:last-child { padding: 3px 0; border-bottom: 0; text-align: left; }
+	.budget-table td[data-label]::before { content: attr(data-label); display: block; color: var(--text-muted); font-size: 11px; }
+	.budget-table .budget-actions { padding-top: 8px; }
+	.budget-table .proxy-actions { flex-wrap: wrap; justify-content: flex-start; }
+	.budget-used { grid-template-columns: minmax(80px, 1fr) auto; }
+}

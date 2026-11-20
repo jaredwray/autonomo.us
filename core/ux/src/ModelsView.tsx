@@ -379,6 +379,7 @@ export function ModelsView({
 	const [adding, setAdding] = useState(false);
 	const [search, setSearch] = useState("");
 	const [notice, setNotice] = useState("");
+	const [modelsAdded, setModelsAdded] = useState(0);
 	const addButton = useRef<HTMLButtonElement>(null);
 	const refresh = useCallback(async () => {
 		setLoading(true);
@@ -487,6 +488,7 @@ export function ModelsView({
 								: { models: [model], providers: [] },
 						);
 						setNotice(`${model.id} is now active.`);
+						setModelsAdded((count) => count + 1);
 						setSearch("");
 						closeForm();
 						void refresh();
@@ -651,12 +653,25 @@ export function ModelsView({
 		</>
 	);
 
+	// A link from one tab to another lands at the top, on the tab it opened.
+	const goTo = (next: ModelsTab) => {
+		showTab(next);
+		const tabButton = document.getElementById(`models-tab-${next}`);
+		tabButton?.focus();
+		tabButton?.scrollIntoView?.({ block: "nearest" });
+		if (
+			typeof window.scrollTo === "function" &&
+			!/jsdom/.test(navigator.userAgent)
+		)
+			window.scrollTo({ top: 0 });
+	};
 	const panels: Record<ModelsTab, () => ReactNode> = {
 		llm: () => modelsPanel,
 		video: () => (
 			<VideoPanel
 				workspace={workspace}
-				onShowBudget={() => showTab("budget")}
+				active={tab === "video"}
+				onShowBudget={() => goTo("budget")}
 			/>
 		),
 		budget: () => (
@@ -666,11 +681,12 @@ export function ModelsView({
 			<>
 				<div className="tab-intro">
 					<p className="card-note">
-						Let the gateway choose a model for each request, and fall back to
-						another when one fails.
+						Let the gateway choose a model for each request, share traffic
+						across accounts, and fall back to another model when one fails.
 					</p>
 				</div>
-				<RoutingView onShowModels={() => showTab("llm")} />
+				{/* Remounted when a model is added, so its choices include the new one. */}
+				<RoutingView key={modelsAdded} onShowModels={() => goTo("llm")} />
 			</>
 		),
 	};

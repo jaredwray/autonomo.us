@@ -93,8 +93,9 @@ export class BudgetService {
 			enabled: input.enabled ?? true,
 			createdAt: at,
 			updatedAt: at,
+			countsFrom: at,
 		};
-		await this.change(workspace.id, (policies) => {
+		await this.change(workspace.id, async (policies) => {
 			if (policies.length >= BUDGET_LIMITS.policies)
 				throw new ServiceError(
 					`A workspace holds at most ${BUDGET_LIMITS.policies} budgets.`,
@@ -106,37 +107,59 @@ export class BudgetService {
 		return view;
 	}
 
+	/**
+	 * Changes the fields sent, merged into the budget as it is on each try,
+	 * so two people changing different fields do not undo each other. Only
+	 * fields sent are checked. Changing who it applies to, what it covers, or
+	 * how often it resets starts its spend again from zero.
+	 */
 	async update(
 		workspace: WorkspaceRef,
 		id: string,
 		input: UpdateBudgetPolicyRequest,
 	): Promise<BudgetPolicyView> {
 		let updated: BudgetPolicy | undefined;
-		const { policies } = await this.store.policies(workspace.id);
-		const current = policies.find((policy) => policy.id === id);
-		if (!current) throw new ServiceError("Budget not found.", 404);
-		const checked = await this.check(
-			workspace,
-			{
-				appliesTo: input.appliesTo ?? current.appliesTo,
-				covers: input.covers ?? current.covers,
-				limitUsd: input.limitUsd ?? current.limitUsd,
-				period: input.period ?? current.period,
-			},
-			current,
-		);
-		await this.change(workspace.id, (saved) =>
-			saved.map((policy) => {
-				if (policy.id !== id) return policy;
-				updated = {
-					...policy,
-					...checked,
-					enabled: input.enabled ?? policy.enabled,
-					updatedAt: this.now().toISOString(),
-				};
-				return updated;
-			}),
-		);
+		await this.change(workspace.id, async (saved) => {
+			const current = saved.find((policy) => policy.id === id);
+			if (!current) throw new ServiceError("Budget not found.", 404);
+			const appliesTo =
+				input.appliesTo !== undefined
+					? await this.checkAppliesTo(workspace, input.appliesTo, current)
+					: current.appliesTo;
+			const covers =
+				input.covers !== undefined
+					? normalizeCovers(input.covers)
+					: current.covers;
+			const period =
+				input.period !== undefined ? checkPeriod(input.period) : current.period;
+			const limitUsd =
+				input.limitUsd !== undefined
+					? roundLimit(input.limitUsd)
+					: current.limitUsd;
+			const problem = budgetPolicyProblem({
+				appliesTo,
+				covers,
+				limitUsd,
+				period,
+			});
+			if (problem) throw new ServiceError(problem);
+			const at = this.now().toISOString();
+			const rescoped =
+				JSON.stringify([appliesTo, covers, period]) !==
+				JSON.stringify([current.appliesTo, current.covers, current.period]);
+			updated = {
+				...current,
+				appliesTo,
+				covers,
+				limitUsd,
+				period,
+				enabled: input.enabled ?? current.enabled,
+				updatedAt: at,
+				...(rescoped ? { countsFrom: at } : {}),
+			};
+			const next = updated;
+			return saved.map((policy) => (policy.id === id ? next : policy));
+		});
 		if (!updated) throw new ServiceError("Budget not found.", 404);
 		const [view] = await this.views(workspace.id, [updated]);
 		return view;
@@ -144,22 +167,22 @@ export class BudgetService {
 
 	async remove(workspace: WorkspaceRef, id: string): Promise<void> {
 		let found = false;
-		await this.change(workspace.id, (policies) => {
+		await this.change(workspace.id, async (policies) => {
 			found = policies.some((policy) => policy.id === id);
 			return policies.filter((policy) => policy.id !== id);
 		});
 		if (!found) throw new ServiceError("Budget not found.", 404);
 	}
 
-	/** Applies `edit` to a fresh read; a lost race is retried. */
+	/** Applies `edit` to a fresh read; a lost race is retried with another fresh read. */
 	private async change(
 		workspaceId: string,
-		edit: (policies: BudgetPolicy[]) => BudgetPolicy[],
+		edit: (policies: BudgetPolicy[]) => Promise<BudgetPolicy[]>,
 	): Promise<void> {
 		for (let attempt = 0; ; attempt++) {
 			const { policies, revision } = await this.store.policies(workspaceId);
 			try {
-				await this.store.write(workspaceId, edit(policies), revision);
+				await this.store.write(workspaceId, await edit(policies), revision);
 				return;
 			} catch (error) {
 				const raced = error instanceof ServiceError && error.statusCode === 409;
@@ -168,21 +191,15 @@ export class BudgetService {
 		}
 	}
 
-	/** Checks what a person sent; agents a budget already names may have been removed since. */
+	/** Checks a whole new budget. */
 	private async check(
 		workspace: WorkspaceRef,
 		input: BudgetPolicyInput,
-		current?: BudgetPolicy,
 	): Promise<Omit<BudgetPolicyInput, "enabled">> {
-		const appliesTo = normalizeAppliesTo(input.appliesTo);
+		const appliesTo = await this.checkAppliesTo(workspace, input.appliesTo);
 		const covers = normalizeCovers(input.covers);
-		const period = input.period;
-		if (!BUDGET_PERIODS.includes(period))
-			throw new ServiceError("A budget runs for a day or a month.");
-		const limitUsd =
-			typeof input.limitUsd === "number"
-				? Math.round(input.limitUsd * 100) / 100
-				: input.limitUsd;
+		const period = checkPeriod(input.period);
+		const limitUsd = roundLimit(input.limitUsd);
 		const problem = budgetPolicyProblem({
 			appliesTo,
 			covers,
@@ -190,21 +207,28 @@ export class BudgetService {
 			period,
 		});
 		if (problem) throw new ServiceError(problem);
-		if (appliesTo.kind === "agents" && this.options.knownAgents) {
-			const before = new Set(
-				current?.appliesTo.kind === "agents" ? current.appliesTo.agentIds : [],
-			);
-			const added = appliesTo.agentIds.filter((id) => !before.has(id));
-			if (added.length) {
-				const known = await this.options.knownAgents(workspace);
-				const unknown = added.find((id) => !known.has(id));
-				if (unknown)
-					throw new ServiceError(
-						`${unknown} is not an agent in this workspace.`,
-					);
-			}
-		}
 		return { appliesTo, covers, limitUsd, period };
+	}
+
+	/** Agents a budget already names may have been removed since; new ones must exist. */
+	private async checkAppliesTo(
+		workspace: WorkspaceRef,
+		input: BudgetAppliesTo,
+		current?: BudgetPolicy,
+	): Promise<BudgetAppliesTo> {
+		const appliesTo = normalizeAppliesTo(input);
+		if (appliesTo.kind !== "agents" || !this.options.knownAgents)
+			return appliesTo;
+		const before = new Set(
+			current?.appliesTo.kind === "agents" ? current.appliesTo.agentIds : [],
+		);
+		const added = appliesTo.agentIds.filter((id) => !before.has(id));
+		if (!added.length) return appliesTo;
+		const known = await this.options.knownAgents(workspace);
+		const unknown = added.find((id) => !known.has(id));
+		if (unknown)
+			throw new ServiceError(`${unknown} is not an agent in this workspace.`);
+		return appliesTo;
 	}
 
 	private async covering(
@@ -229,29 +253,54 @@ export class BudgetService {
 	}
 
 	/**
-	 * Why this caller may not start a language model call on `model` now,
-	 * or null. A budget refuses once its spend reaches its limit.
+	 * Why this caller may not start a language model call on each model now,
+	 * by model id; a model with no refusal is left out. A budget refuses once
+	 * its spend reaches its limit. One read of the budgets and one of their
+	 * counters, however many models.
 	 */
+	async llmRefusals(
+		workspaceId: string,
+		caller: TelemetryCaller | undefined,
+		models: string[],
+	): Promise<Map<string, string>> {
+		const refused = new Map<string, string>();
+		if (!models.length) return refused;
+		const { policies } = await this.store.policies(workspaceId);
+		const covering = models.map((model) =>
+			policies.filter((policy) =>
+				budgetCovers(policy, caller, { type: "llm", model }),
+			),
+		);
+		const union = [...new Set(covering.flat())];
+		if (!union.length) return refused;
+		const counts = await this.store.spent(workspaceId, union);
+		const spentOf = new Map(
+			union.map((policy, at) => [policy, counts[at] ?? 0]),
+		);
+		models.forEach((model, at) => {
+			const full = covering[at].find(
+				(policy) => (spentOf.get(policy) ?? 0) >= toMicros(policy.limitUsd),
+			);
+			if (full) refused.set(model, this.refusal(full, spentOf.get(full) ?? 0));
+		});
+		return refused;
+	}
+
+	/** Why this caller may not start a language model call on `model` now, or null. */
 	async llmRefusal(
 		workspaceId: string,
 		caller: TelemetryCaller | undefined,
 		model: string,
 	): Promise<string | null> {
-		const policies = await this.covering(workspaceId, caller, {
-			type: "llm",
-			model,
-		});
-		if (!policies.length) return null;
-		const spent = await this.store.spent(workspaceId, policies);
-		const index = policies.findIndex(
-			(policy, at) => (spent[at] ?? 0) >= toMicros(policy.limitUsd),
+		return (
+			(await this.llmRefusals(workspaceId, caller, [model])).get(model) ?? null
 		);
-		return index < 0 ? null : this.refusal(policies[index], spent[index] ?? 0);
 	}
 
 	/**
 	 * Counts a language model call's estimated cost on every budget that
-	 * covers it. Written in the background; `idle()` waits for the writes.
+	 * covers it. Written in the background, tried three times; `idle()` waits
+	 * for the writes.
 	 */
 	chargeLlm(
 		workspaceId: string,
@@ -265,7 +314,15 @@ export class BudgetService {
 				type: "llm",
 				model,
 			});
-			await this.store.charge(workspaceId, policies, toMicros(costUsd));
+			for (let attempt = 1; ; attempt++) {
+				try {
+					await this.store.charge(workspaceId, policies, toMicros(costUsd));
+					return;
+				} catch (error) {
+					if (attempt >= 3) throw error;
+					await new Promise((resolve) => setTimeout(resolve, 200 * attempt));
+				}
+			}
 		})()
 			.catch((error) => this.options.onChargeError?.(error))
 			.finally(() => this.pending.delete(write));
@@ -306,6 +363,18 @@ export class BudgetService {
 		return this.store.release(hold);
 	}
 
+	/**
+	 * Gives back a video hold taken before budgets existed, from the budget
+	 * its estimate was carried into. `month` is the hold's `YYYY-MM`.
+	 */
+	releaseCarried(
+		workspaceId: string,
+		month: string,
+		costMicros: number,
+	): Promise<void> {
+		return this.store.releaseCarried(workspaceId, month, costMicros);
+	}
+
 	/** Waits for charges still being written. */
 	async idle(): Promise<void> {
 		while (this.pending.size) await Promise.allSettled([...this.pending]);
@@ -314,6 +383,19 @@ export class BudgetService {
 	close(): Promise<void> {
 		return this.store.close();
 	}
+}
+
+function checkPeriod(period: BudgetPolicyInput["period"]) {
+	if (!BUDGET_PERIODS.includes(period))
+		throw new ServiceError("A budget runs for a day or a month.");
+	return period;
+}
+
+/** To the cent. A limit above $0 and under a cent is refused rather than rounded to $0. */
+function roundLimit(limit: number): number {
+	if (typeof limit !== "number" || !Number.isFinite(limit)) return limit;
+	if (limit > 0 && limit < 0.01) return limit;
+	return Math.round(limit * 100) / 100;
 }
 
 function normalizeAppliesTo(input: BudgetAppliesTo): BudgetAppliesTo {

@@ -389,18 +389,19 @@ function VideoPolicyEditor({
 		>
 			<div className="section-heading">
 				<div>
-					<h2 id={`${id}-title`}>Limits and order</h2>
+					<h2 id={`${id}-title`}>Order and limits</h2>
 					<p className="card-note">
-						A video starts on the first connection in this order that can make
-						it. If that provider fails without charging, the next one is tried.
+						A video starts on the first provider in this order that can make it.
+						If that provider fails without charging, the next one is tried.
 					</p>
 				</div>
 			</div>
 			<fieldset className="routing-fields" disabled={!canEdit || saving}>
+				<h3>Order</h3>
 				{order.length === 0 ? (
 					<p className="card-note">Add a provider to set the order.</p>
 				) : (
-					<ol className="routing-list" aria-label="Connection order">
+					<ol className="routing-list" aria-label="Provider order">
 						{order.map((name, index) => {
 							const item = connections.find((other) => other.name === name);
 							const hint = !item?.keyConfigured
@@ -485,9 +486,9 @@ function VideoPolicyEditor({
 					</div>
 				</div>
 				<p className="card-note">
-					What videos may cost is set with budgets.{" "}
+					What videos may cost is set on the Budget tab.{" "}
 					<button className="link-button" type="button" onClick={onShowBudget}>
-						Open the Budget tab
+						See video budgets
 					</button>
 				</p>
 				{error && (
@@ -532,9 +533,12 @@ function VideoPolicyEditor({
  */
 export function VideoPanel({
 	workspace,
+	active = true,
 	onShowBudget,
 }: {
 	workspace?: { isDefault: boolean; role?: "admin" | "member" };
+	/** Whether the tab is showing: coming back to it reads spend afresh. */
+	active?: boolean;
 	onShowBudget(): void;
 }) {
 	const canEdit = workspace?.role !== "member";
@@ -634,6 +638,11 @@ export function VideoPanel({
 			modelSequence.current++;
 		};
 	}, [refresh]);
+	const shownBefore = useRef(active);
+	useEffect(() => {
+		if (active && !shownBefore.current) void refresh();
+		shownBefore.current = active;
+	}, [active, refresh]);
 
 	const savePolicy = async (policy: VideoPolicy) => {
 		setSaving(true);
@@ -765,7 +774,7 @@ export function VideoPanel({
 					<div>
 						<h2 id="video-connections-heading">Video providers</h2>
 						<p className="card-note">
-							Keys stay on the server. A video uses the first connection in the
+							Keys stay on the server. A video uses the first provider in the
 							order that can make it.
 						</p>
 					</div>
@@ -813,7 +822,7 @@ export function VideoPanel({
 						<table className="models-table proxy-table video-table">
 							<thead>
 								<tr>
-									<th>Connection</th>
+									<th>Provider</th>
 									<th>Key</th>
 									<th>Default model</th>
 									<th>Credit price</th>

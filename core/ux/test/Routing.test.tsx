@@ -279,7 +279,7 @@ it("sends a workspace with no chat models to the LLM tab to add them", async () 
 	await start({ chat: false });
 	fireEvent.click(
 		screen.getByRole("link", {
-			name: "Add chat models and account connections",
+			name: "Add a language model on the LLM tab",
 		}),
 	);
 	expect(

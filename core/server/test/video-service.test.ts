@@ -513,6 +513,50 @@ describe("starting a video", () => {
 		expect(policies.map((policy) => policy.usage.spentUsd)).toEqual([0, 0]);
 	});
 
+	it("passes over a model a used-up budget covers, and refuses when budgets cover every one", async () => {
+		const runway = scripted("runway");
+		const luma = scripted("luma");
+		const { service, budgets } = await setup(
+			{ runway: runway.adapter, luma: luma.adapter },
+			[
+				{ name: "runway", kind: "runway" },
+				{ name: "luma", kind: "luma" },
+			],
+		);
+		await budgets.create(WS, {
+			appliesTo: { kind: "everyone" },
+			covers: { kind: "video-model", model: "seedance2_5" },
+			limitUsd: 0,
+			period: "month",
+		});
+		// Runway's default model is covered by a $0 budget; Luma is not.
+		const job = await service.generate(WS, AGENT, { prompt: "x" }, CONTEXT);
+		expect(job).toMatchObject({
+			provider: "luma",
+			attempts: [
+				{
+					provider: "runway",
+					outcome: "skipped",
+					detail: expect.stringContaining("is used up"),
+				},
+				{ provider: "luma", outcome: "accepted" },
+			],
+		});
+		expect(runway.seen.creates).toHaveLength(0);
+		await budgets.create(WS, {
+			appliesTo: { kind: "everyone" },
+			covers: { kind: "video-model", model: "ray-3.2" },
+			limitUsd: 0,
+			period: "month",
+		});
+		expect(
+			await refusal(service.generate(WS, AGENT, { prompt: "x" }, CONTEXT)),
+		).toMatchObject({
+			status: 429,
+			message: expect.stringContaining("Seedance 2.5"),
+		});
+	});
+
 	it("starts nothing when a budget the agent shares has no room", async () => {
 		const runway = scripted("runway", { cost: 3 });
 		const { service, budgets } = await setup({ runway: runway.adapter });

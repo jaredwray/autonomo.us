@@ -40,6 +40,14 @@ export type BudgetPolicy = Required<BudgetPolicyInput> & {
 	id: string;
 	createdAt: string;
 	updatedAt: string;
+	/**
+	 * Spend counts from here: when it was added, or last changed who it
+	 * applies to, what it covers, or how often it resets. Defaults to
+	 * `createdAt`.
+	 */
+	countsFrom?: string;
+	/** `video-budget`: the monthly video budget a workspace had before budgets. */
+	origin?: "video-budget";
 };
 
 /** Spend in the period now running. */
@@ -206,5 +214,7 @@ export function budgetPolicyProblem(input: BudgetPolicyInput): string | null {
 		limit > BUDGET_LIMITS.maxLimitUsd
 	)
 		return `The limit is from $0 to $${BUDGET_LIMITS.maxLimitUsd.toLocaleString("en-US")}.`;
+	if (limit > 0 && limit < 0.01)
+		return "The limit is at least $0.01, or $0 to refuse everything it covers.";
 	return null;
 }

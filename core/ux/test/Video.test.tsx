@@ -496,7 +496,7 @@ describe("Video view: settings", () => {
 		);
 		expect(
 			await within(
-				screen.getByRole("form", { name: "Limits and order" }),
+				screen.getByRole("form", { name: "Order and limits" }),
 			).findByText("Saved"),
 		).toBeDefined();
 		expect(sent(calls, "PUT")[0].body).toEqual({
@@ -1095,7 +1095,7 @@ describe("Video against the gateway", () => {
 		);
 		expect(
 			await within(
-				screen.getByRole("form", { name: "Limits and order" }),
+				screen.getByRole("form", { name: "Order and limits" }),
 			).findByText("Saved"),
 		).toBeDefined();
 		expect((await read()).policy.callerVideosPerDay).toBe(3);

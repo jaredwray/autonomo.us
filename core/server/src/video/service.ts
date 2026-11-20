@@ -59,7 +59,7 @@ export type VideoServiceOptions = {
 	adapters?: Partial<Record<VideoKind, VideoAdapter>>;
 	telemetry?: Pick<TelemetryService, "recordVideo">;
 	/** Holds each video's estimate against the budgets that cover it. Omitted: none. */
-	budgets?: Pick<BudgetService, "holdVideo" | "release">;
+	budgets?: Pick<BudgetService, "holdVideo" | "release" | "releaseCarried">;
 	/** `VIDEO_DISABLED`: every video call is refused. */
 	disabled?: boolean;
 	now?: () => number;
@@ -203,7 +203,7 @@ export class VideoService {
 			callerCap: number;
 			costUsd: number;
 		},
-	): Promise<VideoHold | { refused: string }> {
+	): Promise<VideoHold | { refused: string; by: "budget" | "caller" }> {
 		const { store, budgets } = this.options;
 		const budget = budgets
 			? await budgets.holdVideo(
@@ -213,7 +213,8 @@ export class VideoService {
 					input.costUsd,
 				)
 			: undefined;
-		if (budget && "refused" in budget) return { refused: budget.refused };
+		if (budget && "refused" in budget)
+			return { refused: budget.refused, by: "budget" };
 		let held: Awaited<ReturnType<VideoStore["hold"]>>;
 		try {
 			held = await store.hold(workspace, {
@@ -228,17 +229,28 @@ export class VideoService {
 		}
 		if ("refused" in held) {
 			if (budget) await budgets?.release(budget).catch(() => {});
-			return { refused: REFUSALS[held.refused] };
+			return { refused: REFUSALS[held.refused], by: "caller" };
 		}
 		return budget ? { ...held, budget } : held;
 	}
 
-	/** Gives a hold back, here and on the budgets: the provider charged nothing. */
+	/**
+	 * Gives a hold back, here and on the budgets: the provider charged
+	 * nothing. A hold taken before budgets existed has no part of its own;
+	 * its estimate was carried into the first budget, so it comes back from
+	 * there.
+	 */
 	private async release(hold: VideoHold): Promise<void> {
+		const { budgets } = this.options;
+		const [workspaceId, month] = hold.keys.budget.split(":budget:");
 		await Promise.allSettled([
 			this.options.store.release(hold),
-			...(hold.budget && this.options.budgets
-				? [this.options.budgets.release(hold.budget)]
+			...(budgets
+				? [
+						hold.budget
+							? budgets.release(hold.budget)
+							: budgets.releaseCarried(workspaceId, month, hold.costMicros),
+					]
 				: []),
 		]);
 	}
@@ -505,6 +517,7 @@ export class VideoService {
 			),
 		});
 
+		let budgetRefusal: string | undefined;
 		for (const candidate of candidates) {
 			const { config } = candidate.entry;
 			const attempt = { provider: config.name, model: candidate.model.id };
@@ -525,6 +538,18 @@ export class VideoService {
 				costUsd,
 			});
 			if ("refused" in hold) {
+				// A used-up budget passes this model over, as a failure would; the
+				// next provider in the order may be covered by none.
+				if (hold.by === "budget") {
+					budgetRefusal ??= hold.refused;
+					attempts.push({
+						...attempt,
+						outcome: "skipped",
+						detail: hold.refused,
+					});
+					last = { outcome: "skipped", detail: hold.refused };
+					continue;
+				}
 				if (!inserted) throw new ServiceError(hold.refused, 429);
 				attempts.push({
 					...attempt,
@@ -641,6 +666,8 @@ export class VideoService {
 			// A hold given back cost nothing; one kept shows what it holds.
 			...(held ? {} : { costUsd: 0 }),
 		};
+		// Nothing started because budgets covered every model: refused, as one call would be.
+		if (!inserted && budgetRefusal) throw new ServiceError(budgetRefusal, 429);
 		if (!inserted) {
 			const first = candidates[0];
 			await jobs.insert({

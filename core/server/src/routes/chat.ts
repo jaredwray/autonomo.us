@@ -146,7 +146,8 @@ export type ChatOutcome =
 
 /**
  * Why each candidate may not be called now, by model id: a used-up budget
- * that covers it. Checked once, before the first attempt.
+ * that covers it. Checked before the first attempt, and again for each
+ * failover target before it is tried.
  */
 export async function budgetRefusals(
 	budgets: BudgetService | undefined,
@@ -154,18 +155,18 @@ export async function budgetRefusals(
 	caller: TelemetryCaller | undefined,
 	candidates: ResolvedModel[],
 ): Promise<Map<string, string>> {
-	const refused = new Map<string, string>();
-	if (!budgets) return refused;
-	const answers = await Promise.all(
-		candidates.map((candidate) =>
-			budgets.llmRefusal(workspaceId, caller, candidate.id),
-		),
+	if (!budgets) return new Map();
+	return budgets.llmRefusals(
+		workspaceId,
+		caller,
+		candidates.map((candidate) => candidate.id),
 	);
-	candidates.forEach((candidate, index) => {
-		const answer = answers[index];
-		if (answer) refused.set(candidate.id, answer);
-	});
-	return refused;
+}
+
+/** A provider's error, with how many models a budget kept from being tried. */
+function withSkipped(error: string, skipped: number): string {
+	if (!skipped) return error;
+	return `${error} (${skipped === 1 ? "another model was" : `${skipped} other models were`} skipped: a budget that covers ${skipped === 1 ? "it" : "them"} is used up)`;
 }
 
 type AttemptInput = {
@@ -212,11 +213,22 @@ export async function runAttempts(
 			status: "budget_exceeded",
 			message: refused.get(requested.id) ?? [...refused.values()][0],
 		};
+	let providerError: string | undefined;
+	let skipped = 0;
 	for (const candidate of plan.candidates) {
 		if (signal.aborted) return { status: "aborted" };
+		// A failover target is checked again: another call may have used up its budget meanwhile.
+		if (providerError !== undefined && !refused.has(candidate.id)) {
+			const fresh = await budgetRefusals(options.budgets, workspaceId, caller, [
+				candidate,
+			]);
+			const answer = fresh.get(candidate.id);
+			if (answer) refused.set(candidate.id, answer);
+		}
 		const refusal = refused.get(candidate.id);
 		if (refusal) {
 			attempts.push({ model: candidate.id, error: refusal });
+			skipped += 1;
 			continue;
 		}
 		const release =
@@ -294,14 +306,21 @@ export async function runAttempts(
 			onAttemptError?.(error, candidate.id);
 			if (signal.aborted) return { status: "aborted" };
 			attempts.push({ model: candidate.id, error: message });
+			providerError = message;
 		} finally {
 			timeout.clear();
 			release?.();
 		}
 	}
+	if (providerError === undefined)
+		return {
+			status: "budget_exceeded",
+			message: refused.get(requested.id) ?? attempts[0].error,
+		};
 	return {
 		status: "provider_error",
-		message: attempts[attempts.length - 1].error,
+		// The last provider's own error, not a budget's: that is what failed.
+		message: withSkipped(providerError, skipped),
 		attempts,
 	};
 }
@@ -516,14 +535,53 @@ async function streamChat(
 	let servedBy: string | undefined;
 	let finalError: string | undefined;
 
+	let skipped = 0;
 	for (let index = 0; index < candidates.length; index++) {
 		if (clientSignal.aborted || raw.destroyed) break;
 		const candidate = candidates[index];
-		// A model a used-up budget covers is passed over, like one that failed.
+		// A failover target is checked again: another call may have used up its budget meanwhile.
+		if (finalError !== undefined && !refused.has(candidate.id)) {
+			const fresh = await budgetRefusals(
+				options.budgets,
+				workspaceId,
+				reply.request.telemetryCaller,
+				[candidate],
+			);
+			const answer = fresh.get(candidate.id);
+			if (answer) refused.set(candidate.id, answer);
+		}
+		// A model a used-up budget covers is passed over, like one that failed,
+		// and the client hears so as it would of a failure.
 		const refusal = refused.get(candidate.id);
 		if (refusal) {
 			attempts.push({ model: candidate.id, error: refusal });
-			continue;
+			skipped += 1;
+			const next = candidates
+				.slice(index + 1)
+				.find((item) => !refused.has(item.id));
+			if (next) {
+				send({
+					type: "failover",
+					from: candidate.id,
+					to: next.id,
+					error: refusal,
+				});
+				continue;
+			}
+			if (!raw.writableEnded && !raw.destroyed) {
+				send({
+					type: "error",
+					error: {
+						message:
+							finalError !== undefined
+								? withSkipped(finalError, skipped)
+								: refusal,
+					},
+				});
+				raw.write("data: [DONE]\n\n");
+				raw.end();
+			}
+			break;
 		}
 		const release =
 			candidate === requested
