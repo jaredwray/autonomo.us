@@ -288,8 +288,8 @@ function MakeVideo({
 					<h2 id={`${id}-title`}>Make a video</h2>
 					<p className="card-note">
 						Starts a real video on the provider, billed to its account and
-						counted against the budgets that cover it and your daily limit. It
-						takes from half a minute to several minutes.
+						counted against the budgets and video limits that cover it. It takes
+						from half a minute to several minutes.
 					</p>
 				</div>
 			</div>

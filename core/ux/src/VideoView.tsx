@@ -464,7 +464,9 @@ function ProviderOrder({
 					</p>
 				</div>
 			</div>
-			<ol className="routing-list" aria-label="Provider order">
+			{/* role="list": Safari drops list semantics from a list without bullets. */}
+			{/* biome-ignore lint/a11y/noRedundantRoles: see above */}
+			<ol className="video-order" role="list" aria-label="Provider order">
 				{order.map((name, index) => {
 					const item = connections.find((other) => other.name === name);
 					const hint = !item?.keyConfigured
@@ -474,7 +476,9 @@ function ProviderOrder({
 							: VIDEO_KIND_LABELS[item.kind];
 					return (
 						<li key={name}>
-							<code>{name}</code> <span className="field-hint">{hint}</span>
+							<span className="video-order-name">
+								<code>{name}</code> <span className="field-hint">{hint}</span>
+							</span>
 							{canEdit && (
 								<div className="routing-row-actions">
 									{[-1, 1].map((by) => (
@@ -508,7 +512,7 @@ function ProviderOrder({
 					{error}
 				</div>
 			)}
-			<p className="field-hint" role="status">
+			<p className="field-hint video-order-status" role="status">
 				{status}
 			</p>
 		</section>

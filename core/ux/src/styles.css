@@ -755,6 +755,14 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .routing-list code { overflow-wrap: anywhere; }
 .routing-row-actions { display: inline-flex; margin-left: 12px; }
 .routing-save { display: flex; gap: 16px; align-items: center; margin: 0 0 24px; }
+.video-order { counter-reset: video-order; margin: 0; padding: 0; list-style: none; }
+.video-order li { counter-increment: video-order; display: flex; align-items: center; gap: 12px; min-height: 40px; padding: 6px 0; border-top: 1px solid var(--hairline); }
+.video-order li:first-child { border-top: 0; }
+.video-order li::before { content: counter(video-order) "."; min-width: 1.5em; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.video-order-name { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.video-order .routing-row-actions { display: inline-flex; gap: 8px; margin: 0; }
+.video-order-status { margin: 8px 0 0; }
+.video-order-status:empty { margin: 0; }
 .routing-result { margin-top: 16px; border-top: 1px solid var(--hairline); white-space: pre-wrap; overflow-wrap: anywhere; }
 @media (max-width: 600px) {
 	.routing-add, .routing-target, .routing-subheader { flex-wrap: wrap; }
