@@ -1,5 +1,4 @@
 import {
-	AGENT_KINDS,
 	type AgentSummary,
 	agentNamesText,
 	BUDGET_LIMITS,
@@ -15,6 +14,7 @@ import {
 	videoModelLabel,
 } from "@autonomo.us/common";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { AppliesToFields } from "./AppliesToFields.js";
 import {
 	createBudget,
 	deleteBudget,
@@ -124,7 +124,6 @@ function BudgetForm({
 	const [agentIds, setAgentIds] = useState<string[]>(
 		existing?.appliesTo.kind === "agents" ? existing.appliesTo.agentIds : [],
 	);
-	const [search, setSearch] = useState("");
 	const [covers, setCovers] = useState<CoversChoice>(
 		existing?.covers.kind ?? "all",
 	);
@@ -165,19 +164,6 @@ function BudgetForm({
 		limit.trim() === ""
 			? "Enter a limit in US dollars."
 			: budgetPolicyProblem(input);
-	// Agents a budget names that have since been removed stay listed, so they can be taken out.
-	const removed = agentIds.filter(
-		(agentId) => !agents.some((agent) => agent.id === agentId),
-	);
-	const shown = agents.filter((agent) =>
-		`${agent.name} ${AGENT_KINDS[agent.kind]}`
-			.toLowerCase()
-			.includes(search.trim().toLowerCase()),
-	);
-	const toggle = (agentId: string, on: boolean) =>
-		setAgentIds((current) =>
-			on ? [...current, agentId] : current.filter((item) => item !== agentId),
-		);
 
 	return (
 		<section
@@ -235,106 +221,18 @@ function BudgetForm({
 				}}
 			>
 				<fieldset className="budget-form" disabled={saving}>
-					<fieldset className="budget-choices">
-						<legend>Applies to</legend>
-						<label className="budget-choice">
-							<input
-								ref={first}
-								type="radio"
-								name={`${id}-who`}
-								checked={who === "everyone"}
-								onChange={() => setWho("everyone")}
-							/>
-							<span>
-								Everyone in this workspace
-								<span className="field-hint">
-									People, API tokens, and agents, all counted together.
-								</span>
-							</span>
-						</label>
-						<label className="budget-choice">
-							<input
-								type="radio"
-								name={`${id}-who`}
-								checked={who === "agents"}
-								disabled={agents.length === 0 && removed.length === 0}
-								onChange={() => setWho("agents")}
-							/>
-							<span>
-								Specific agents
-								<span className="field-hint">
-									{agents.length === 0 && removed.length === 0
-										? "This workspace has no agents yet."
-										: "The agents you pick share one budget. For a separate limit each, add a budget per agent."}
-								</span>
-							</span>
-						</label>
-					</fieldset>
-					{who === "agents" && (
-						<div className="budget-agents">
-							{agents.length > 6 && (
-								<label className="model-search">
-									<Icon name="search" />
-									<input
-										type="search"
-										aria-label="Search agents"
-										placeholder="Search agents…"
-										value={search}
-										onChange={(event) => setSearch(event.target.value)}
-									/>
-								</label>
-							)}
-							<ul aria-label="Agents" className="budget-agent-list">
-								{shown.map((agent) => (
-									<li key={agent.id}>
-										<label>
-											<input
-												type="checkbox"
-												checked={agentIds.includes(agent.id)}
-												onChange={(event) =>
-													toggle(agent.id, event.target.checked)
-												}
-											/>
-											<span>
-												{agent.name}
-												<span className="field-hint">
-													{AGENT_KINDS[agent.kind]}
-													{agent.status !== "active"
-														? ` · ${agent.status}`
-														: ""}
-												</span>
-											</span>
-										</label>
-									</li>
-								))}
-								{removed.map((agentId) => (
-									<li key={agentId}>
-										<label>
-											<input
-												type="checkbox"
-												checked
-												onChange={() => toggle(agentId, false)}
-											/>
-											<span>
-												Removed agent
-												<span className="field-hint">
-													No longer in this workspace. Uncheck to take it out.
-												</span>
-											</span>
-										</label>
-									</li>
-								))}
-								{shown.length === 0 && removed.length === 0 && (
-									<li className="field-hint">No agents match.</li>
-								)}
-							</ul>
-							<span className="field-hint">
-								{agentIds.length === 0
-									? "None picked."
-									: `${agentIds.length} picked, at most ${BUDGET_LIMITS.agentsPerPolicy}.`}
-							</span>
-						</div>
-					)}
+					<AppliesToFields
+						id={id}
+						who={who}
+						onWho={setWho}
+						agentIds={agentIds}
+						onAgentIds={setAgentIds}
+						agents={agents}
+						maxAgents={BUDGET_LIMITS.agentsPerPolicy}
+						everyoneHint="People, API tokens, and agents, all counted together."
+						agentsHint="The agents you pick share one budget. For a separate limit each, add a budget per agent."
+						firstRef={first}
+					/>
 					<div className="model-form-grid">
 						<div className="form-field">
 							<label htmlFor={`${id}-covers`}>Covers</label>
@@ -679,10 +577,6 @@ export function BudgetPanel({
 	return (
 		<div className="budget-page">
 			<div className="tab-intro">
-				<p className="card-note">
-					Caps on what models may spend, for everyone or for specific agents. A
-					request is refused while any budget that covers it is used up.
-				</p>
 				{canEdit ? (
 					<button
 						ref={addButton}
@@ -697,7 +591,13 @@ export function BudgetPanel({
 						<Icon name="plus" /> Add budget
 					</button>
 				) : (
-					<p className="card-note">Ask a workspace admin to change budgets.</p>
+					<p className="page-note">Ask a workspace admin to change budgets.</p>
+				)}
+				{persistence === "memory" && (
+					<p className="page-note">
+						Budgets are temporary and last until the API restarts. Connect
+						MongoDB to keep them.
+					</p>
 				)}
 			</div>
 			{notice && (
@@ -744,6 +644,7 @@ export function BudgetPanel({
 					<div>
 						<h2 id="budgets-heading">Budgets</h2>
 						<p className="card-note">
+							A request is refused while any budget that covers it is used up.
 							Spend counts in UTC days or months, from when a budget is added or
 							last changed what it limits.
 						</p>
@@ -987,13 +888,6 @@ export function BudgetPanel({
 					before it starts.
 				</p>
 			</section>
-			{persistence && (
-				<p className="card-note">
-					{persistence === "mongodb"
-						? "Budgets are saved in MongoDB."
-						: "Budgets are temporary and last until the API restarts. Connect MongoDB to keep them."}
-				</p>
-			)}
 		</div>
 	);
 }

@@ -244,11 +244,12 @@ export function RoutingView({ onShowModels }: { onShowModels(): void }) {
 				!error && <LoadingBanner>Loading routing settings…</LoadingBanner>
 			) : (
 				<>
-					<p className="card-note">
-						{persistence === "mongodb"
-							? "Routing settings are saved in MongoDB."
-							: "Settings are temporary and last until the API restarts."}
-					</p>
+					{persistence !== "mongodb" && (
+						<p className="page-note">
+							Routing settings are temporary and last until the API restarts.
+							Connect MongoDB to keep them.
+						</p>
+					)}
 					{chatModels.length === 0 ? (
 						<p className="banner-error">
 							Routing needs at least one chat model.{" "}

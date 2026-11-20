@@ -3,6 +3,7 @@ import type {
 	VideoConnection,
 	VideoJob,
 	VideoJobList,
+	VideoLimit,
 	VideoModelList,
 	VideoPolicy,
 	VideoSettings,
@@ -252,15 +253,44 @@ describe("video over the REST API", () => {
 			status: 400,
 			message: expect.stringContaining("is a budget now"),
 		});
+		// So did videos a day and the longest video, to video limits.
+		expect(
+			await api.refused("PUT", "/v1/video/policy", {
+				body: { order: ["google"], callerVideosPerDay: 5, revision: 0 },
+			}),
+		).toMatchObject({
+			status: 400,
+			message: expect.stringContaining("are video limits now"),
+		});
 		const policy = await api.ok<VideoPolicy>("PUT", "/v1/video/policy", {
-			body: {
-				order: ["google"],
-				callerVideosPerDay: 5,
-				maxDurationSeconds: 8,
-				revision: 0,
-			},
+			body: { order: ["google"], revision: 0 },
 		});
 		expect(policy.revision).toBe(1);
+		const limit = await api.ok<VideoLimit>(
+			"POST",
+			"/v1/video/limits",
+			{
+				body: {
+					appliesTo: { kind: "everyone" },
+					covers: { kind: "video" },
+					maxDurationSeconds: 8,
+				},
+			},
+			201,
+		);
+		expect(limit).toMatchObject({ videosPerDay: null, maxDurationSeconds: 8 });
+		expect(
+			await api.refused("POST", "/v1/video/limits", {
+				body: { appliesTo: { kind: "everyone" }, covers: { kind: "video" } },
+			}),
+		).toMatchObject({
+			status: 400,
+			message: expect.stringContaining("Set videos a day"),
+		});
+		const settings = await api.ok<{ limits: VideoLimit[] }>("GET", "/v1/video");
+		expect(settings.limits.map((item) => item.maxDurationSeconds)).toEqual([
+			10, 8,
+		]);
 		expect(
 			await api.refused("PUT", "/v1/video/policy", {
 				body: { ...policy, revision: 0 },
@@ -381,7 +411,7 @@ describe("video over the REST API", () => {
 		const routes = [...ROUTE_RULES.keys()].filter((key) =>
 			key.includes("/video"),
 		);
-		expect(routes).toHaveLength(10);
+		expect(routes).toHaveLength(13);
 		for (const key of routes)
 			expect(ROUTE_RULES.get(key)).toMatchObject({ scope: "workspace" });
 	});

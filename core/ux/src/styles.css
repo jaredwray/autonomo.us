@@ -755,6 +755,14 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .routing-list code { overflow-wrap: anywhere; }
 .routing-row-actions { display: inline-flex; margin-left: 12px; }
 .routing-save { display: flex; gap: 16px; align-items: center; margin: 0 0 24px; }
+.video-order { counter-reset: video-order; margin: 0; padding: 0; list-style: none; }
+.video-order li { counter-increment: video-order; display: flex; align-items: center; gap: 12px; min-height: 40px; padding: 6px 0; border-top: 1px solid var(--hairline); }
+.video-order li:first-child { border-top: 0; }
+.video-order li::before { content: counter(video-order) "."; min-width: 1.5em; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.video-order-name { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.video-order .routing-row-actions { display: inline-flex; gap: 8px; margin: 0; }
+.video-order-status { margin: 8px 0 0; }
+.video-order-status:empty { margin: 0; }
 .routing-result { margin-top: 16px; border-top: 1px solid var(--hairline); white-space: pre-wrap; overflow-wrap: anywhere; }
 @media (max-width: 600px) {
 	.routing-add, .routing-target, .routing-subheader { flex-wrap: wrap; }
@@ -1658,10 +1666,10 @@ a.button { text-decoration: none; }
 .proposal-empty p { margin: 0; max-width: 58ch; line-height: 1.6; color: var(--text-secondary); }
 @media (max-width: 480px) { .proposal-empty { gap: 12px; padding: 20px 16px; } }
 
-/* Models page tabs: each opens with what it is for and its main action. */
-.tab-intro { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin: 4px 0 16px; }
-.tab-intro > .card-note:first-child { flex: 1 1 320px; margin: 0; }
-.tab-intro > .card-note:last-child:not(:first-child) { margin: 0; }
+/* Models page tabs: each opens with its main action, and says when its settings are temporary. */
+.tab-intro { display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap; margin: 4px 0 16px; }
+.page-note { margin: 0 0 16px; color: var(--text-muted); font-size: 12px; line-height: 1.5; }
+.tab-intro > .page-note { flex: 1 1 260px; margin: 0; }
 .video-page .card, .budget-page .card { margin-bottom: 20px; }
 .video-page h3 { margin: 22px 0 6px; font-size: 14px; }
 .video-page > .banner-warning, .video-page > .success-notice, .video-page > .banner-error,

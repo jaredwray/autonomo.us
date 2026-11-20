@@ -158,12 +158,7 @@ describe("starting a video", () => {
 				{ name: "off", kind: "google", enabled: false },
 			],
 		);
-		await store.updatePolicy(WS, {
-			order: ["luma"],
-			callerVideosPerDay: 10,
-			maxDurationSeconds: 10,
-			revision: 0,
-		});
+		await store.updatePolicy(WS, { order: ["luma"], revision: 0 });
 		const job = await service.generate(
 			WS,
 			AGENT,
@@ -449,14 +444,13 @@ describe("starting a video", () => {
 	});
 
 	it("refuses once a budget or the caller's day is used up", async () => {
-		const { service, store, budgets } = await setup({
+		const { service, budgets } = await setup({
 			runway: scripted("runway", { cost: 2 }).adapter,
 		});
-		await store.updatePolicy(WS, {
-			order: [],
-			callerVideosPerDay: 2,
-			maxDurationSeconds: 10,
-			revision: 0,
+		await service.limits.create(WS, {
+			appliesTo: { kind: "everyone" },
+			covers: { kind: "video" },
+			videosPerDay: 2,
 		});
 		await budgets.create(WS, {
 			appliesTo: { kind: "everyone" },
@@ -557,6 +551,69 @@ describe("starting a video", () => {
 		});
 	});
 
+	it("passes over a model a used-up limit covers, and refuses when limits cover every one", async () => {
+		const runway = scripted("runway");
+		const luma = scripted("luma");
+		const { service } = await setup(
+			{ runway: runway.adapter, luma: luma.adapter },
+			[
+				{ name: "runway", kind: "runway" },
+				{ name: "luma", kind: "luma" },
+			],
+		);
+		await service.limits.create(WS, {
+			appliesTo: { kind: "everyone" },
+			covers: { kind: "video-model", model: "seedance2_5" },
+			videosPerDay: 0,
+		});
+		await service.limits.create(WS, {
+			appliesTo: { kind: "everyone" },
+			covers: { kind: "video-model", model: "ray-3.2" },
+			videosPerDay: 1,
+		});
+		// Runway's default model is blocked by a limit; Luma's has room.
+		const job = await service.generate(WS, AGENT, { prompt: "x" }, CONTEXT);
+		expect(job).toMatchObject({
+			provider: "luma",
+			attempts: [
+				{
+					provider: "runway",
+					outcome: "skipped",
+					detail: "A video limit blocks your Seedance 2.5 videos.",
+				},
+				{ provider: "luma", outcome: "accepted" },
+			],
+		});
+		expect(runway.seen.creates).toHaveLength(0);
+		// Luma Ray's one video today is the one above, so limits refuse both.
+		expect(
+			await refusal(service.generate(WS, AGENT, { prompt: "x" }, CONTEXT)),
+		).toMatchObject({
+			status: 429,
+			message: "A video limit blocks your Seedance 2.5 videos.",
+		});
+		const job2 = await service.generate(
+			WS,
+			OTHER_AGENT,
+			{ prompt: "x" },
+			CONTEXT,
+		);
+		expect(job2.provider).toBe("luma");
+		expect(
+			await refusal(
+				service.generate(
+					WS,
+					OTHER_AGENT,
+					{ prompt: "x", provider: "luma" },
+					CONTEXT,
+				),
+			),
+		).toMatchObject({
+			status: 429,
+			message: "Your Luma Ray 3.2 videos for today are used up.",
+		});
+	});
+
 	it("records a failed job, not a budget refusal, when another provider was skipped for its own reason", async () => {
 		const { service, store, budgets } = await setup(
 			{ runway: scripted("runway").adapter, luma: scripted("luma").adapter },
@@ -582,6 +639,51 @@ describe("starting a video", () => {
 			{ provider: "runway", detail: expect.stringContaining("is used up") },
 			{ provider: "luma", detail: expect.stringContaining("problem to fix") },
 		]);
+	});
+
+	it("applies every limit that covers a video: the strictest count and length win", async () => {
+		const runway = scripted("runway");
+		const { service } = await setup({ runway: runway.adapter });
+		await service.limits.create(WS, {
+			appliesTo: { kind: "agents", agentIds: ["a1"] },
+			covers: { kind: "video-model", model: "seedance2_5" },
+			videosPerDay: 1,
+			maxDurationSeconds: 6,
+		});
+		// The seeded limit allows 10 seconds; this agent's on Seedance allows 6.
+		expect(
+			await refusal(
+				service.generate(
+					WS,
+					AGENT,
+					{ prompt: "x", durationSeconds: 8 },
+					CONTEXT,
+				),
+			),
+		).toMatchObject({
+			status: 400,
+			message: expect.stringContaining(
+				"Seedance 2.5 videos of up to 6 seconds",
+			),
+		});
+		const models = await service.models(WS, true, AGENT);
+		expect(models.limits).toMatchObject({
+			maxDurationSeconds: 10,
+			modelMaxDurationSeconds: { seedance2_5: 6 },
+		});
+		expect((await service.models(WS, true, OTHER_AGENT)).limits).toMatchObject({
+			maxDurationSeconds: 10,
+		});
+		const first = await service.generate(WS, AGENT, { prompt: "x" }, CONTEXT);
+		expect(first.durationSeconds).toBe(5);
+		// One a day for this agent on Seedance; others are not limited by it.
+		expect(
+			await refusal(service.generate(WS, AGENT, { prompt: "x" }, CONTEXT)),
+		).toMatchObject({ status: 429, message: expect.stringContaining("today") });
+		expect(
+			(await service.generate(WS, OTHER_AGENT, { prompt: "x" }, CONTEXT))
+				.status,
+		).toBe("queued");
 	});
 
 	it("starts nothing when a budget the agent shares has no room", async () => {

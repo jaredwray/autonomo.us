@@ -1,12 +1,14 @@
 import {
 	type CreateVideoConnectionRequest,
 	type UpdateVideoConnectionRequest,
+	type UpdateVideoLimitRequest,
 	type UpdateVideoPolicyRequest,
 	VIDEO_ASPECT_RATIOS,
 	VIDEO_KINDS,
 	VIDEO_LIMITS,
 	VIDEO_RESOLUTIONS,
 	type VideoGenerateRequest,
+	type VideoLimitInput,
 	type VideoSettings,
 } from "@autonomo.us/common";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
@@ -43,15 +45,49 @@ const connectionFields = {
 const policySchema = {
 	type: "object",
 	additionalProperties: false,
-	required: ["order", "callerVideosPerDay", "maxDurationSeconds", "revision"],
+	required: ["order", "revision"],
 	properties: {
 		order: { type: "array", maxItems: VIDEO_LIMITS.connections, items: name },
-		callerVideosPerDay: { type: "integer" },
-		/** Moved to budgets; listed so it is refused, not silently dropped. */
-		monthlyBudgetUsd: {},
-		maxDurationSeconds: { type: "integer" },
 		revision: { type: "integer", minimum: 0 },
+		// Moved out of the policy; listed so they are refused, not silently dropped.
+		monthlyBudgetUsd: {},
+		callerVideosPerDay: {},
+		maxDurationSeconds: {},
 	},
+};
+// Flat objects, not oneOf: Fastify removes properties a oneOf branch does
+// not list before trying the next one. The service checks the combinations.
+const limitFields = {
+	appliesTo: {
+		type: "object",
+		additionalProperties: false,
+		required: ["kind"],
+		properties: {
+			kind: { enum: ["everyone", "agents"] },
+			agentIds: {
+				type: "array",
+				maxItems: VIDEO_LIMITS.agentsPerLimit,
+				items: { type: "string", minLength: 1, maxLength: 200 },
+			},
+		},
+	},
+	covers: {
+		type: "object",
+		additionalProperties: false,
+		required: ["kind"],
+		properties: {
+			kind: { enum: ["video", "video-model"] },
+			model: { type: "string", maxLength: 100 },
+		},
+	},
+	videosPerDay: { type: ["integer", "null"], minimum: 0 },
+	maxDurationSeconds: { type: ["integer", "null"], minimum: 0 },
+	enabled: { type: "boolean" },
+};
+const limitParams = {
+	type: "object",
+	required: ["id"],
+	properties: { id: { type: "string", minLength: 1, maxLength: 64 } },
 };
 const generateSchema = {
 	type: "object",
@@ -162,6 +198,7 @@ export async function videoRoutes(
 		video.models(
 			requestWorkspace(request),
 			requestMay(request, "video:generate"),
+			request.telemetryCaller,
 		),
 	);
 	server.post<{ Body: CreateVideoConnectionRequest }>(
@@ -228,15 +265,72 @@ export async function videoRoutes(
 		{ schema: { body: policySchema } },
 		async (request) => {
 			refuseWhenDisabled();
-			if ("monthlyBudgetUsd" in (request.body as object))
+			const body = request.body as object;
+			if ("monthlyBudgetUsd" in body)
 				throw new ServiceError(
 					"The monthly video budget is a budget now. Change it with PATCH /v1/<workspace>/budgets/<id>, or on the Models page under Budget.",
+				);
+			if ("callerVideosPerDay" in body || "maxDurationSeconds" in body)
+				throw new ServiceError(
+					"Videos a day and the longest video are video limits now. Change them with /v1/<workspace>/video/limits, or on the Models page under Video.",
 				);
 			const policy = await store.updatePolicy(
 				requestWorkspace(request),
 				request.body,
 			);
 			return policy;
+		},
+	);
+	server.post<{ Body: VideoLimitInput }>(
+		"/video/limits",
+		{
+			schema: {
+				body: {
+					type: "object",
+					additionalProperties: false,
+					required: ["appliesTo", "covers"],
+					properties: limitFields,
+				},
+			},
+		},
+		async (request, reply) => {
+			refuseWhenDisabled();
+			const limit = await video.limits.create(
+				requestWorkspace(request),
+				request.body,
+			);
+			return reply.code(201).send(limit);
+		},
+	);
+	server.patch<{ Params: { id: string }; Body: UpdateVideoLimitRequest }>(
+		"/video/limits/:id",
+		{
+			schema: {
+				params: limitParams,
+				body: {
+					type: "object",
+					additionalProperties: false,
+					minProperties: 1,
+					properties: limitFields,
+				},
+			},
+		},
+		async (request) => {
+			refuseWhenDisabled();
+			return video.limits.update(
+				requestWorkspace(request),
+				request.params.id,
+				request.body,
+			);
+		},
+	);
+	server.delete<{ Params: { id: string } }>(
+		"/video/limits/:id",
+		{ schema: { params: limitParams } },
+		async (request, reply) => {
+			refuseWhenDisabled();
+			await video.limits.remove(requestWorkspace(request), request.params.id);
+			return reply.code(204).send();
 		},
 	);
 	server.post<{ Body: VideoGenerateRequest }>(

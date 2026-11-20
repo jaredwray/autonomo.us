@@ -1097,16 +1097,23 @@ be added to its catalogue later without a new adapter.
   so whoever can read those logs can open the videos.
 - **Spend.** What videos may cost is set with [budgets](#budgets): every
   workspace starts with one for all video models of $25 a month (its old
-  monthly video budget, if it had set another). Each workspace also has a
-  **daily limit** of videos per person, token, or agent (default 10), and a
-  **longest video** (default 10 seconds). The estimated cost is held against
-  every budget that covers the video before the provider is called; it is
-  given back when the provider bills nothing.
+  monthly video budget, if it had set another). The estimated cost is held
+  against every budget that covers the video before the provider is called;
+  it is given back when the provider bills nothing.
+- **Limits.** How many videos and how long is set with **video limits**.
+  Each applies to everyone or to chosen agents, covers every video model or
+  one, and sets **videos a day** (counted from 00:00 UTC for each person, API
+  token, or agent on their own), the **longest video** in seconds, or both.
+  Every limit that covers a video applies, so the strictest wins. Every
+  workspace starts with one for everyone on every model: 10 videos a day,
+  each up to 10 seconds (its old daily limit and longest video, if it had set
+  others). A workspace holds up to 50.
   A canceled job, or one that was started but never reported back, stays
   counted, so counters read high, never low. Costs are estimates from list
   prices; the provider's bill is the actual charge.
 - **Who may do what.** Members see the settings. Workspace admins add
-  connections, change keys, save the policy, and start videos. API tokens
+  connections, change keys, order them, change the limits, and start
+  videos. API tokens
   use `video:read`, `video:edit`, and `video:generate`; agents need the
   `video:generate` grant as well as `mcp:call`, and see only their own jobs.
   `video_models` needs only `mcp:call`. Bots the gateway runs do not get the
@@ -1126,16 +1133,18 @@ Agents get five MCP tools: `video_models` (what the workspace can make),
 usable connection the tools are still listed, and `video_models` says why
 nothing can be made.
 
-Connections live in `gateway_video_connections`, the policy in
-`gateway_video_policy`, spend counters in `gateway_video_usage`, and jobs in
+Connections live in `gateway_video_connections`, their order in
+`gateway_video_policy`, limits in `gateway_video_limits`, spend and limit
+counters in `gateway_video_usage`, and jobs in
 `gateway_video_jobs` (each job deletes itself after 30 days); without MongoDB
 they last until restart. Connections from environment variables belong to
 the default workspace and cannot be changed here.
 
 Open the **Video** tab of **Models** in the dashboard to manage it. Workspace
 admins add providers, switch them on and off, choose a default model and
-Luma's credit price, order them, and set the daily limit and longest video;
-members see the providers and limits only. Below them,
+Luma's credit price, and order them; under **Video limits** they add, change,
+switch off, and delete limits, each with a sentence that says what it does
+before it is saved. Members see the providers and limits only. Below them,
 admins make a video from a form that offers only what the chosen model can
 make, and see every job in the workspace: its status, what it was asked for,
 its estimated cost, and why it failed. Unfinished jobs update on their own,
@@ -1143,13 +1152,20 @@ and **Stop** cancels one. A finished video plays in the page, or opens from
 its link. Members cannot see jobs, which need `video:generate`.
 
 REST routes under `/v1/<workspace id>`: `GET /video` (connections with this
-month's usage, the policy, this month's estimated video spend, and whether video is available and
-set up); `GET /video/models`; `POST /video/connections`
+month's usage, their order, the limits, this month's estimated video spend,
+and whether video is available and set up); `GET /video/models` (with the
+longest video the caller's limits allow, and shorter caps for single
+models); `POST /video/connections`
 (`{ name, kind, apiKey, enabled?, defaultModel?, creditPriceUsd? }`, `kind` is
 `google`, `runway`, or `luma`); `PATCH|DELETE /video/connections/:name`;
-`PUT /video/policy` (`{ order, callerVideosPerDay, maxDurationSeconds, revision }`,
-409 if the revision is stale; a body that still sends `monthlyBudgetUsd` is
-refused with a pointer to budgets); `POST /video/jobs` (the `video_generate`
+`PUT /video/policy` (`{ order, revision }`, 409 if the revision is stale; a
+body that still sends `monthlyBudgetUsd`, `callerVideosPerDay`, or
+`maxDurationSeconds` is refused with a pointer to where it went);
+`POST /video/limits`
+(`{ appliesTo, covers, videosPerDay?, maxDurationSeconds?, enabled? }`, where
+`appliesTo` is `{ kind: "everyone" }` or `{ kind: "agents", agentIds }`,
+`covers` is `{ kind: "video" }` or `{ kind: "video-model", model }`, and
+`null` leaves one unset); `PATCH|DELETE /video/limits/:id`; `POST /video/jobs` (the `video_generate`
 arguments; 202 with the job, also when no provider accepted it, 409 when
 video is not set up, 429 when a limit is reached); `GET /video/jobs`
 (`?limit=&before=<job id>`); `GET /video/jobs/:id` (`?wait=<seconds>`); and
@@ -1263,14 +1279,15 @@ skip with a `failover` event. When a provider fails and the rest are refused,
 the answer is that provider's error, saying how many models a budget kept from
 being tried. Language model calls are checked before they start and counted
 after, from the estimate telemetry records (a write that fails is tried three
-times, and each call counts once however often it is tried), so spend can pass
+times, and a retried call counts once unless more than 200 other calls are
+charged to the same budget while it is retried), so spend can pass
 a limit by the calls already running; models without a public list price are
 not counted. A video's estimate is held against every budget that covers it
 before the provider is called, all or none, and given back when the provider
 bills nothing; a model a used-up budget covers is passed over for the next
 provider in the order, and the video is refused with 429 only when budgets
-cover every one (otherwise the failed job says why each provider was not
-used). A used-up budget refuses even a video estimated at $0.
+or video limits refuse every one (otherwise the failed job says why each
+provider was not used). A used-up budget refuses even a video estimated at $0.
 
 Spend counts from when a budget is added, or last changed who it applies to,
 what it covers, or when it resets; a new limit keeps what was spent. Every
@@ -1278,6 +1295,9 @@ workspace starts with one budget, for all video models at $25 a month, carrying
 over the monthly video budget and this month's video spend it had before
 budgets existed. A video started before budgets that later fails unbilled gives
 its estimate back to that budget.
+
+Budgets cap what videos cost; how many videos a day and how long they may be
+are [video limits](#video-generation), set on the **Video** tab.
 
 Open the **Budget** tab of **Models** to see each budget, what it has spent in
 the period now running, and when it resets. Workspace admins add, change,

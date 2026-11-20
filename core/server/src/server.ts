@@ -576,6 +576,7 @@ export function createServer(options: CreateServerOptions = {}) {
 		...(options.videoFetch ? { fetchImpl: options.videoFetch } : {}),
 		telemetry,
 		budgets,
+		knownAgents: (workspace) => agentIds.ids(workspace),
 		disabled: config.video?.disabled ?? false,
 	});
 	// The operator's off switch removes the tools, as it does `web_fetch`.

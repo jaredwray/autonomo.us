@@ -97,7 +97,7 @@ it("saves a weighted account pool, uses it for a real request, and restores it w
 		screen.getByRole("tab", { name: "Routing", selected: true }),
 	).toBeDefined();
 	expect(window.location.hash).toBe(`${workspaceHash}/models/routing`);
-	expect(screen.getByText(/Settings are temporary/)).toBeDefined();
+	expect(screen.getByText(/Routing settings are temporary/)).toBeDefined();
 	change("New pool name", "coding");
 	fireEvent.click(screen.getByRole("button", { name: "Add pool" }));
 	change("Pool member", "work/chat");

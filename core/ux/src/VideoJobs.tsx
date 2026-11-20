@@ -45,6 +45,14 @@ const STATUS_LABELS: Record<VideoJob["status"], string> = {
 const errorText = (cause: unknown, fallback: string) =>
 	cause instanceof Error ? cause.message : fallback;
 
+/** The longest video the caller's limits allow on one model. */
+export function durationCap(models: VideoModelList, model: string): number {
+	return Math.min(
+		models.limits.maxDurationSeconds,
+		models.limits.modelMaxDurationSeconds?.[model] ?? Number.POSITIVE_INFINITY,
+	);
+}
+
 /** What a model can make in this workspace: its own choices, capped by the longest video allowed. */
 export function formChoices(model: VideoModel, maxDurationSeconds: number) {
 	const { durations } = model;
@@ -92,11 +100,11 @@ export function videoRequestProblem(
 			"min" in model.durations
 				? model.durations.min
 				: Math.min(...model.durations);
-		return `${model.label} makes videos of at least ${shortest} seconds, longer than this workspace allows (${maxDurationSeconds} s).`;
+		return `${model.label} makes videos of at least ${shortest} seconds, longer than your video limits allow (${maxDurationSeconds} s).`;
 	}
 	if (!want.prompt.trim()) return "Describe the video.";
 	if (want.durationSeconds > maxDurationSeconds)
-		return `This workspace allows videos of up to ${maxDurationSeconds} seconds.`;
+		return `Your video limits allow videos of up to ${maxDurationSeconds} seconds.`;
 	const image = want.imageUrl.trim();
 	if (image) {
 		if (!choices.image) return `${model.label} does not start from an image.`;
@@ -145,7 +153,7 @@ export function basisOf(
 			const candidate = defaultModelOf(item);
 			return (
 				candidate !== undefined &&
-				formChoices(candidate, models.limits.maxDurationSeconds).fits
+				formChoices(candidate, durationCap(models, candidate.id)).fits
 			);
 		}) ?? models.providers[0];
 	const found = fitting && defaultModelOf(fitting);
@@ -189,13 +197,18 @@ function MakeVideo({
 	onStarted(job: VideoJob): void;
 }) {
 	const id = useId();
-	const cap = models.limits.maxDurationSeconds;
 	const [prompt, setPrompt] = useState("");
 	const [provider, setProvider] = useState("");
 	const [model, setModel] = useState("");
 	const first = basisOf(models, "", "")?.model;
 	const [duration, setDuration] = useState(() =>
-		first ? fitDuration(first, cap, first.defaults.durationSeconds) : 5,
+		first
+			? fitDuration(
+					first,
+					durationCap(models, first.id),
+					first.defaults.durationSeconds,
+				)
+			: 5,
 	);
 	const [aspectRatio, setAspectRatio] = useState<VideoAspectRatio>(
 		first?.defaults.aspectRatio ?? "16:9",
@@ -221,7 +234,9 @@ function MakeVideo({
 	const refit = (nextProvider: string, nextModel: string) => {
 		const next = basisOf(models, nextProvider, nextModel)?.model;
 		if (!next) return;
-		setDuration((current) => fitDuration(next, cap, current));
+		setDuration((current) =>
+			fitDuration(next, durationCap(models, next.id), current),
+		);
 		setAspectRatio((current) =>
 			next.aspectRatios.includes(current) ? current : next.defaults.aspectRatio,
 		);
@@ -232,6 +247,8 @@ function MakeVideo({
 	};
 
 	if (!picked || !basis) return null;
+	// The longest video the caller's limits allow on this model.
+	const cap = durationCap(models, basis.id);
 	const choices = formChoices(basis, cap);
 	// What is sent and shown: never a value the model does not offer.
 	const shownAspect = basis.aspectRatios.includes(aspectRatio)
@@ -253,7 +270,9 @@ function MakeVideo({
 		!choices.fits &&
 		models.providers.some((item) =>
 			item.models.some(
-				(entry) => entry !== basis && formChoices(entry, cap).fits,
+				(entry) =>
+					entry !== basis &&
+					formChoices(entry, durationCap(models, entry.id)).fits,
 			),
 		);
 	const shownProblem =
@@ -269,8 +288,8 @@ function MakeVideo({
 					<h2 id={`${id}-title`}>Make a video</h2>
 					<p className="card-note">
 						Starts a real video on the provider, billed to its account and
-						counted against the budgets that cover it and your daily limit. It
-						takes from half a minute to several minutes.
+						counted against the budgets and video limits that cover it. It takes
+						from half a minute to several minutes.
 					</p>
 				</div>
 			</div>
