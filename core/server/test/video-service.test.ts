@@ -1,5 +1,7 @@
 import type { VideoKind } from "@autonomo.us/common";
 import { describe, expect, it } from "vitest";
+import { BudgetService } from "../src/budgets/service.js";
+import { BudgetStore } from "../src/budgets/store.js";
 import { ServiceError } from "../src/service-error.js";
 import type { VideoTelemetry } from "../src/telemetry/telemetry.js";
 import { VideoJobStore } from "../src/video/jobs.js";
@@ -96,10 +98,18 @@ async function setup(
 	for (const connection of connections)
 		await store.create(WS, { apiKey: "key-123", ...connection } as never);
 	const events: VideoTelemetry[] = [];
+	const budgets = new BudgetService(
+		new BudgetStore(undefined, {
+			now: () => new Date(now),
+			seed: (workspaceId) => store.budgetSeed(workspaceId),
+		}),
+		{ now: () => new Date(now) },
+	);
 	const service = new VideoService({
 		store,
 		jobs,
 		adapters,
+		budgets,
 		now: clock,
 		sleep: async (ms) => {
 			now += ms;
@@ -116,6 +126,7 @@ async function setup(
 		service,
 		store,
 		jobs,
+		budgets,
 		events,
 		advance: (ms: number) => {
 			now += ms;
@@ -150,7 +161,6 @@ describe("starting a video", () => {
 		await store.updatePolicy(WS, {
 			order: ["luma"],
 			callerVideosPerDay: 10,
-			monthlyBudgetUsd: 25,
 			maxDurationSeconds: 10,
 			revision: 0,
 		});
@@ -185,8 +195,7 @@ describe("starting a video", () => {
 			}),
 		]);
 		expect(JSON.stringify(events)).not.toContain("a fox");
-		const budget = await store.budget(WS, await store.policy(WS));
-		expect(budget.spentUsd).toBe(1);
+		expect((await store.spend(WS)).spentUsd).toBe(1);
 	});
 
 	it("writes the job before calling the provider", async () => {
@@ -362,7 +371,7 @@ describe("starting a video", () => {
 			},
 			{ provider: "luma", model: "ray-3.2", outcome: "accepted" },
 		]);
-		expect((await store.budget(WS, await store.policy(WS))).spentUsd).toBe(1);
+		expect((await store.spend(WS)).spentUsd).toBe(1);
 		const [runwayConnection] = await store.list(WS);
 		expect(runwayConnection.problem).toMatchObject({ kind: "key" });
 		// The connection with a problem is passed over for a while.
@@ -392,9 +401,7 @@ describe("starting a video", () => {
 			error: { code, message: `runway: ${outcome}` },
 		});
 		expect(luma.seen.creates).toHaveLength(0);
-		expect((await store.budget(WS, await store.policy(WS))).spentUsd).toBe(
-			keepsHold ? 1 : 0,
-		);
+		expect((await store.spend(WS)).spentUsd).toBe(keepsHold ? 1 : 0);
 		expect(job.costUsd).toBe(keepsHold ? 1 : 0);
 		expect(events.at(-1)).toMatchObject({ phase: "finished", errorCode: code });
 	});
@@ -407,7 +414,7 @@ describe("starting a video", () => {
 		const { service, store } = await setup({ runway: runway.adapter });
 		const job = await service.generate(WS, AGENT, { prompt: "x" }, CONTEXT);
 		expect(job.error?.code).toBe("timeout");
-		expect((await store.budget(WS, await store.policy(WS))).spentUsd).toBe(1);
+		expect((await store.spend(WS)).spentUsd).toBe(1);
 	});
 
 	it("waits out a provider's rate limit before trying it again", async () => {
@@ -441,16 +448,21 @@ describe("starting a video", () => {
 		).toBe("queued");
 	});
 
-	it("refuses once the budget or the caller's day is used up", async () => {
-		const { service, store } = await setup({
+	it("refuses once a budget or the caller's day is used up", async () => {
+		const { service, store, budgets } = await setup({
 			runway: scripted("runway", { cost: 2 }).adapter,
 		});
 		await store.updatePolicy(WS, {
 			order: [],
 			callerVideosPerDay: 2,
-			monthlyBudgetUsd: 7,
 			maxDurationSeconds: 10,
 			revision: 0,
+		});
+		await budgets.create(WS, {
+			appliesTo: { kind: "everyone" },
+			covers: { kind: "video" },
+			limitUsd: 7,
+			period: "month",
 		});
 		await service.generate(WS, AGENT, { prompt: "x" }, CONTEXT);
 		await service.generate(WS, AGENT, { prompt: "x" }, CONTEXT);
@@ -468,8 +480,63 @@ describe("starting a video", () => {
 			),
 		).toMatchObject({
 			status: 429,
-			message: expect.stringContaining("budget"),
+			message: expect.stringContaining(
+				'The budget "Everyone · All video models · $7.00 a month" has $1.00 left',
+			),
 		});
+		// Every covering budget counted the three videos made.
+		const { policies } = await budgets.list(WS);
+		expect(policies.map((policy) => policy.usage.spentUsd)).toEqual([6, 6]);
+	});
+
+	it("holds against an agent's budget and a model's, and gives both back on a refusal", async () => {
+		const { service, budgets } = await setup({
+			runway: scripted("runway", {
+				cost: 3,
+				create: () => ({
+					outcome: "refused",
+					detail: "Runway refused the prompt",
+					billed: false,
+				}),
+			}).adapter,
+		});
+		await budgets.create(WS, {
+			appliesTo: { kind: "agents", agentIds: ["a1"] },
+			covers: { kind: "video-model", model: "seedance2_5" },
+			limitUsd: 5,
+			period: "day",
+		});
+		const failed = await service.generate(WS, AGENT, { prompt: "x" }, CONTEXT);
+		expect(failed.status).toBe("failed");
+		const { policies } = await budgets.list(WS);
+		// The provider charged nothing, so nothing stays counted.
+		expect(policies.map((policy) => policy.usage.spentUsd)).toEqual([0, 0]);
+	});
+
+	it("starts nothing when a budget the agent shares has no room", async () => {
+		const runway = scripted("runway", { cost: 3 });
+		const { service, budgets } = await setup({ runway: runway.adapter });
+		await budgets.create(WS, {
+			appliesTo: { kind: "agents", agentIds: ["a1", "a2"] },
+			covers: { kind: "all" },
+			limitUsd: 5,
+			period: "day",
+		});
+		await service.generate(WS, AGENT, { prompt: "x" }, CONTEXT);
+		expect(
+			await refusal(
+				service.generate(WS, OTHER_AGENT, { prompt: "x" }, CONTEXT),
+			),
+		).toMatchObject({
+			status: 429,
+			message: expect.stringContaining("2 agents"),
+		});
+		expect(runway.seen.creates).toHaveLength(1);
+		// Someone the budget does not name is not limited by it.
+		const person = { id: "user:u1", name: "Founder", kind: "user" as const };
+		expect(
+			(await service.generate(WS, person, { prompt: "x" }, CONTEXT)).status,
+		).toBe("queued");
 	});
 });
 
@@ -525,7 +592,9 @@ describe("following a video", () => {
 				billed: false,
 			}),
 		});
-		const { service, store, advance } = await setup({ runway: runway.adapter });
+		const { service, store, budgets, advance } = await setup({
+			runway: runway.adapter,
+		});
 		const job = await service.generate(WS, AGENT, { prompt: "x" }, CONTEXT);
 		advance(5000);
 		const results = await Promise.all([
@@ -537,7 +606,9 @@ describe("following a video", () => {
 		expect(results.map((result) => result.status)).toContain("failed");
 		const done = await service.status(WS, {}, job.id, {}, CONTEXT);
 		expect(done).toMatchObject({ status: "failed", costUsd: 0 });
-		expect((await store.budget(WS, await store.policy(WS))).spentUsd).toBe(0);
+		expect((await store.spend(WS)).spentUsd).toBe(0);
+		// The budget it was held against got it back too, once.
+		expect((await budgets.list(WS)).policies[0].usage.spentUsd).toBe(0);
 	});
 
 	it("keeps the hold when a failure was billed, and notes a connection problem", async () => {
@@ -550,13 +621,16 @@ describe("following a video", () => {
 				problem: "credits",
 			}),
 		});
-		const { service, store, advance } = await setup({ runway: runway.adapter });
+		const { service, store, budgets, advance } = await setup({
+			runway: runway.adapter,
+		});
 		const job = await service.generate(WS, AGENT, { prompt: "x" }, CONTEXT);
 		advance(5000);
 		expect(
 			(await service.status(WS, {}, job.id, {}, CONTEXT)).error?.message,
 		).toBe("out of credits");
-		expect((await store.budget(WS, await store.policy(WS))).spentUsd).toBe(1);
+		expect((await store.spend(WS)).spentUsd).toBe(1);
+		expect((await budgets.list(WS)).policies[0].usage.spentUsd).toBe(1);
 		expect((await store.list(WS))[0].problem).toMatchObject({
 			kind: "credits",
 		});
@@ -665,7 +739,7 @@ describe("following a video", () => {
 			status: "failed",
 			error: { code: "not_started" },
 		});
-		expect((await store.budget(WS, await store.policy(WS))).spentUsd).toBe(1);
+		expect((await store.spend(WS)).spentUsd).toBe(1);
 	});
 
 	it("leaves a job alone when its connection was removed", async () => {
@@ -753,7 +827,7 @@ describe("following a video", () => {
 			"canceled",
 		);
 		expect(runway.seen.cancels).toBe(1);
-		expect((await store.budget(WS, await store.policy(WS))).spentUsd).toBe(1);
+		expect((await store.spend(WS)).spentUsd).toBe(1);
 		const onLuma = await service.generate(
 			WS,
 			AGENT,
@@ -837,9 +911,7 @@ describe("review fixes", () => {
 		);
 		expect(job.status).toBe("canceled");
 		expect(luma.seen.creates).toHaveLength(0);
-		expect(
-			(await context.store.budget(WS, await context.store.policy(WS))).spentUsd,
-		).toBe(0);
+		expect((await context.store.spend(WS)).spentUsd).toBe(0);
 	});
 
 	it("measures a job that never started from its last attempt", async () => {

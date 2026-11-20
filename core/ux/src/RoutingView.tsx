@@ -256,7 +256,7 @@ export function RoutingView({ onShowModels }: { onShowModels(): void }) {
 					{chatModels.length === 0 ? (
 						<p className="banner-error">
 							<a
-								href={modelsHash("models")}
+								href={modelsHash("llm")}
 								onClick={(event) => {
 									event.preventDefault();
 									onShowModels();

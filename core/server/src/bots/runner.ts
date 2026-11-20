@@ -475,13 +475,17 @@ export class BotRunner {
 				run,
 				caller,
 				trigger,
-				"I could not reply: the model call failed. A workspace admin can see why under Bots.",
+				outcome.status === "budget_exceeded"
+					? "I could not reply: a budget that covers me is used up. A workspace admin can change it on the Models page, under Budget."
+					: "I could not reply: the model call failed. A workspace admin can see why under Bots.",
 				"notice",
 			).catch(() => {});
 			throw new Failure(
 				outcome.status === "unknown_model"
 					? `${outcome.message}. Choose another model for this bot.`
-					: `The model call failed: ${outcome.message}`,
+					: outcome.status === "budget_exceeded"
+						? outcome.message
+						: `The model call failed: ${outcome.message}`,
 			);
 		}
 		const usage: TokenUsage = outcome.response.usage;

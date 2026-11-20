@@ -700,14 +700,12 @@ export function VideoJobsPanel({
 	modelsError,
 	onFinished,
 	onRetryModels,
-	onShowSettings,
 }: {
 	models: VideoModelList | null;
 	modelsError: string;
 	/** A job finished or started, or video stopped answering: read the settings again. */
 	onFinished(): void;
 	onRetryModels(): void;
-	onShowSettings(): void;
 }) {
 	const [jobs, setJobs] = useState<VideoJob[] | null>(null);
 	const [nextBefore, setNextBefore] = useState<string | null>(null);
@@ -844,9 +842,10 @@ export function VideoJobsPanel({
 						</span>
 						<h3>Video is not set up</h3>
 						<p>{models.reason}</p>
-						<button className="button" type="button" onClick={onShowSettings}>
-							Open settings
-						</button>
+						<p className="field-hint">
+							Add a video provider, or switch one on, under Video providers
+							above.
+						</p>
 					</div>
 				</section>
 			) : models ? (

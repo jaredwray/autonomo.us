@@ -1,6 +1,7 @@
 import type { DecisionRequest } from "@autonomo.us/common";
 import type { FastifyInstance } from "fastify";
 import { requestWorkspace } from "../auth/access.js";
+import type { BudgetService } from "../budgets/service.js";
 import {
 	type ProviderRegistry,
 	UnknownProviderError,
@@ -23,7 +24,12 @@ const question = (type: string, criteria: object, required: string[] = []) => ({
 /** Registered under `/v1/:workspace`. */
 export async function decisionsRoutes(
 	server: FastifyInstance,
-	options: { providers: ProviderSettingsStore; telemetry: TelemetryService },
+	options: {
+		providers: ProviderSettingsStore;
+		telemetry: TelemetryService;
+		/** Refuses decisions a used-up budget covers. */
+		budgets?: BudgetService;
+	},
 ) {
 	server.post<{ Body: DecisionRequest }>(
 		"/decisions",
@@ -99,6 +105,15 @@ export async function decisionsRoutes(
 							"This model does not support decisions. Use POST /v1/chat.",
 					},
 				});
+			const refusal = await options.budgets?.llmRefusal(
+				workspace.id,
+				request.telemetryCaller,
+				resolved.id,
+			);
+			if (refusal)
+				return reply
+					.code(429)
+					.send({ error: { type: "budget_exceeded", message: refusal } });
 			const started = Date.now();
 			try {
 				const result = await resolved.provider.decide({

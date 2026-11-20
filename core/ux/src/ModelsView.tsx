@@ -4,7 +4,13 @@ import {
 	PROVIDER_NAMES,
 	type ProviderSettings,
 } from "@autonomo.us/common";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+	type ReactNode,
+	useCallback,
+	useEffect,
+	useRef,
+	useState,
+} from "react";
 import {
 	addModel,
 	currentWorkspaceId,
@@ -14,6 +20,7 @@ import {
 	type ModelCatalog,
 	type ModelsData,
 } from "./api.js";
+import { BudgetPanel } from "./BudgetView.js";
 import { Dropdown } from "./Dropdown.js";
 import { Icon } from "./Icons.js";
 import { LoadingBanner } from "./LoadingBanner.js";
@@ -21,12 +28,15 @@ import { ModelCombobox } from "./ModelCombobox.js";
 import { type ModelsTab, modelsHash, parseModelsTab } from "./models-route.js";
 import { PageTabs } from "./PageTabs.js";
 import { RoutingView } from "./RoutingView.js";
+import { VideoPanel } from "./VideoView.js";
 
 const providerNames: Record<string, string> = PROVIDER_NAMES;
-const MODELS_TABS = [
-	{ id: "models", label: "Models" },
+const TAB_LABELS: readonly { id: ModelsTab; label: string }[] = [
+	{ id: "llm", label: "LLM" },
+	{ id: "video", label: "Video" },
+	{ id: "budget", label: "Budget" },
 	{ id: "routing", label: "Routing" },
-] as const;
+];
 
 function AddModelForm(props: {
 	settings: ProviderSettings;
@@ -355,6 +365,10 @@ export function ModelsView({
 		if (window.location.hash !== hash) window.history.pushState(null, "", hash);
 		setTab(next);
 	}, []);
+	// A tab stays mounted once shown, so a typed prompt or a half-filled form
+	// survives a look at another tab.
+	const [visited, setVisited] = useState<Set<ModelsTab>>(() => new Set([tab]));
+	if (!visited.has(tab)) setVisited(new Set([...visited, tab]));
 	const [data, setData] = useState<ModelsData | null>(null);
 	const [settings, setSettings] = useState<ProviderSettings | null>(null);
 	const [catalog, setCatalog] = useState<ModelCatalog | null>(null);
@@ -411,6 +425,30 @@ export function ModelsView({
 
 	const modelsPanel = (
 		<>
+			<div className="tab-intro">
+				<p className="card-note">
+					Language models your agents and apps can call through the gateway,
+					from the providers you connect.
+				</p>
+				{canEdit ? (
+					<button
+						ref={addButton}
+						className="button primary"
+						type="button"
+						disabled={!settings || adding}
+						onClick={() => {
+							setAdding(true);
+							setNotice("");
+						}}
+					>
+						<Icon name="plus" /> Add model
+					</button>
+				) : (
+					<p className="card-note">
+						Ask a workspace admin to add models or change keys.
+					</p>
+				)}
+			</div>
 			{notice ? (
 				<p className="success-notice" role="status">
 					{notice}
@@ -613,6 +651,30 @@ export function ModelsView({
 		</>
 	);
 
+	const panels: Record<ModelsTab, () => ReactNode> = {
+		llm: () => modelsPanel,
+		video: () => (
+			<VideoPanel
+				workspace={workspace}
+				onShowBudget={() => showTab("budget")}
+			/>
+		),
+		budget: () => (
+			<BudgetPanel workspace={workspace} active={tab === "budget"} />
+		),
+		routing: () => (
+			<>
+				<div className="tab-intro">
+					<p className="card-note">
+						Let the gateway choose a model for each request, and fall back to
+						another when one fails.
+					</p>
+				</div>
+				<RoutingView onShowModels={() => showTab("llm")} />
+			</>
+		),
+	};
+
 	return (
 		<div className="dashboard models-page">
 			<header className="dashboard-header">
@@ -620,33 +682,15 @@ export function ModelsView({
 					<p className="eyebrow">Gateway</p>
 					<h1>Models</h1>
 					<p className="page-description">
-						Manage the models available to your agents, and route requests
-						between them.
+						The language and video models your agents use, what they may spend,
+						and how requests are routed between them.
 					</p>
 				</div>
-				{tab !== "models" ? null : canEdit ? (
-					<button
-						ref={addButton}
-						className="button primary"
-						type="button"
-						disabled={!settings || adding}
-						onClick={() => {
-							setAdding(true);
-							setNotice("");
-						}}
-					>
-						<Icon name="plus" /> Add model
-					</button>
-				) : (
-					<p className="card-note">
-						Ask a workspace admin to add models or change keys.
-					</p>
-				)}
 			</header>
 			<PageTabs
 				label="Models sections"
 				idPrefix="models"
-				tabs={MODELS_TABS}
+				tabs={TAB_LABELS}
 				selected={tab}
 				onSelect={showTab}
 			/>
@@ -655,11 +699,11 @@ export function ModelsView({
 				id="models-panel"
 				aria-labelledby={`models-tab-${tab}`}
 			>
-				{tab === "routing" ? (
-					<RoutingView onShowModels={() => showTab("models")} />
-				) : (
-					modelsPanel
-				)}
+				{TAB_LABELS.filter((item) => visited.has(item.id)).map((item) => (
+					<div key={item.id} hidden={item.id !== tab}>
+						{panels[item.id]()}
+					</div>
+				))}
 			</div>
 		</div>
 	);

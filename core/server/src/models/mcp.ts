@@ -223,6 +223,8 @@ export function modelToolSet(chat: ChatDependencies): McpToolSet {
 							`${outcome.message}. Call models_list for the models you can use.`,
 							404,
 						);
+					case "budget_exceeded":
+						throw new ServiceError(outcome.message, 429);
 					case "aborted":
 						throw new ServiceError(
 							timeout.aborted

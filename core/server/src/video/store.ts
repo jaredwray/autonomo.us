@@ -11,6 +11,7 @@ import {
 	type VideoProblem,
 	videoModel,
 } from "@autonomo.us/common";
+import type { BudgetHold } from "../budgets/store.js";
 import {
 	controlPlaneConnection,
 	isDuplicateKey,
@@ -29,7 +30,8 @@ type ConnectionDocument = {
 };
 type PolicyDocument = {
 	_id: string;
-	policy: Omit<VideoPolicy, "revision">;
+	/** `monthlyBudgetUsd` is from before budgets; it seeds the first one. */
+	policy: Omit<VideoPolicy, "revision"> & { monthlyBudgetUsd?: number };
 	revision: number;
 };
 type UsageDocument = {
@@ -50,13 +52,22 @@ type Entry = {
 const DAY_MS = 86_400_000;
 const fromMicros = (micros: number) => micros / 1_000_000;
 
-/** What a hold was refused for. */
-export type VideoHoldRefusal = "budget" | "caller";
+/** What a hold was refused for. Budgets refuse on their own, before this. */
+export type VideoHoldRefusal = "caller";
 
-/** The estimated cost of one video, held against the caps before the provider call. */
+/** The video budget every workspace had before budgets existed. */
+export const LEGACY_VIDEO_BUDGET_USD = 25;
+
+/**
+ * The estimated cost of one video, held before the provider call: on the
+ * caller's daily cap and the month's and connection's spend here, and on the
+ * budgets that cover it (`budget`).
+ */
 export type VideoHold = {
+	/** `budget` is the month's video spend, kept under its old name. */
 	keys: { budget: string; caller: string; connection: string };
 	costMicros: number;
+	budget?: BudgetHold;
 };
 
 export const VIDEO_CONNECTIONS_COLLECTION = "gateway_video_connections";
@@ -422,9 +433,9 @@ export class VideoStore {
 			const saved = await this.policies().findOne({
 				_id: { $eq: workspace.id },
 			});
-			return saved
-				? { ...DEFAULT_VIDEO_POLICY, ...saved.policy, revision: saved.revision }
-				: seed;
+			if (!saved) return seed;
+			const { monthlyBudgetUsd: _legacy, ...policy } = saved.policy;
+			return { ...DEFAULT_VIDEO_POLICY, ...policy, revision: saved.revision };
 		} catch (error) {
 			this.unavailable(error);
 		}
@@ -458,7 +469,6 @@ export class VideoStore {
 		const stored = {
 			order: policy.order,
 			callerVideosPerDay: policy.callerVideosPerDay,
-			monthlyBudgetUsd: policy.monthlyBudgetUsd,
 			maxDurationSeconds: policy.maxDurationSeconds,
 		};
 		if (!this.mongo) {
@@ -476,9 +486,17 @@ export class VideoStore {
 					revision: 1,
 				});
 			else {
-				const result = await this.policies().replaceOne(
+				// Field by field, so a budget from before budgets survives until it seeds one.
+				const result = await this.policies().updateOne(
 					{ _id: { $eq: workspace.id }, revision: { $eq: revision } },
-					{ policy: stored, revision: revision + 1 },
+					{
+						$set: {
+							"policy.order": stored.order,
+							"policy.callerVideosPerDay": stored.callerVideosPerDay,
+							"policy.maxDurationSeconds": stored.maxDurationSeconds,
+							revision: revision + 1,
+						},
+					},
 				);
 				if (!result.matchedCount) throw changed();
 			}
@@ -521,16 +539,40 @@ export class VideoStore {
 		}
 	}
 
-	/** This month's estimated spend across every connection, against the policy's budget. */
-	async budget(workspace: WorkspaceRef, policy: VideoPolicy) {
+	/** This month's estimated spend across every connection. */
+	async spend(workspace: WorkspaceRef) {
 		const { month } = usagePeriods(this.now());
 		const [counter] = await this.readCounters([
 			this.budgetKey(workspace, month),
 		]);
+		return { month, spentUsd: fromMicros(counter.costMicros) };
+	}
+
+	/**
+	 * What the workspace's first budget starts from: the monthly video budget
+	 * it had before budgets existed, and this month's video spend so far.
+	 */
+	async budgetSeed(
+		workspaceId: string,
+	): Promise<{ videoMonthlyBudgetUsd: number; videoSpentUsd: number }> {
+		const workspace = { id: workspaceId, isDefault: false };
+		let legacy: number | undefined;
+		if (this.mongo)
+			try {
+				const saved = await this.policies().findOne({
+					_id: { $eq: workspaceId },
+				});
+				legacy = saved?.policy.monthlyBudgetUsd;
+			} catch (error) {
+				this.unavailable(error);
+			}
+		const { spentUsd } = await this.spend(workspace);
 		return {
-			month,
-			spentUsd: fromMicros(counter.costMicros),
-			limitUsd: policy.monthlyBudgetUsd,
+			videoMonthlyBudgetUsd:
+				typeof legacy === "number" && Number.isFinite(legacy) && legacy >= 0
+					? legacy
+					: LEGACY_VIDEO_BUDGET_USD,
+			videoSpentUsd: spentUsd,
 		};
 	}
 
@@ -619,10 +661,9 @@ export class VideoStore {
 	}
 
 	/**
-	 * Holds one video and its estimated cost against the workspace's monthly
-	 * budget and the caller's daily cap, in that order, and counts it on the
-	 * connection's month for the usage shown. What it took is given back if
-	 * a later cap refuses.
+	 * Holds one video against the caller's daily cap, and counts its
+	 * estimated cost on the month's and the connection's spend for the usage
+	 * shown. Budgets hold their part before this, in BudgetService.
 	 */
 	async hold(
 		workspace: WorkspaceRef,
@@ -630,7 +671,6 @@ export class VideoStore {
 			connection: string;
 			callerId: string;
 			callerCap: number;
-			budgetUsd: number;
 			costUsd: number;
 		},
 	): Promise<VideoHold | { refused: VideoHoldRefusal }> {
@@ -647,16 +687,13 @@ export class VideoStore {
 		);
 		const monthExpiry = new Date(monthEnd.getTime() + 400 * DAY_MS);
 		const dayExpiry = new Date(Date.parse(`${day}T00:00:00Z`) + 2 * DAY_MS);
-		if (
-			!(await this.increment(
-				workspace.id,
-				keys.budget,
-				{ videos: 1, costMicros },
-				{ costMicros: toMicros(input.budgetUsd) },
-				monthExpiry,
-			))
-		)
-			return { refused: "budget" };
+		await this.increment(
+			workspace.id,
+			keys.budget,
+			{ videos: 1, costMicros },
+			{},
+			monthExpiry,
+		);
 		const giveBackBudget = () =>
 			this.adjust(keys.budget, { videos: -1, costMicros: -costMicros }).catch(
 				() => {},
@@ -777,16 +814,6 @@ export function validateVideoPolicy(
 		throw new ServiceError(
 			`Videos a day is a whole number from 0 to ${VIDEO_LIMITS.maxCallerVideosPerDay.toLocaleString("en-US")}.`,
 		);
-	const budget = input.monthlyBudgetUsd;
-	if (
-		typeof budget !== "number" ||
-		!Number.isFinite(budget) ||
-		budget < 0 ||
-		budget > VIDEO_LIMITS.maxMonthlyBudgetUsd
-	)
-		throw new ServiceError(
-			`The monthly budget is from 0 to ${VIDEO_LIMITS.maxMonthlyBudgetUsd.toLocaleString("en-US")} dollars.`,
-		);
 	const longest = input.maxDurationSeconds;
 	if (
 		!Number.isInteger(longest) ||
@@ -799,7 +826,6 @@ export function validateVideoPolicy(
 	return {
 		order: [...input.order],
 		callerVideosPerDay: perDay,
-		monthlyBudgetUsd: Math.round(budget * 100) / 100,
 		maxDurationSeconds: longest,
 	};
 }

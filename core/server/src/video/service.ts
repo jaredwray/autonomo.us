@@ -22,6 +22,7 @@ import {
 	videoModel,
 	videoModelProblem,
 } from "@autonomo.us/common";
+import type { BudgetService } from "../budgets/service.js";
 import { ServiceError } from "../service-error.js";
 import type { TelemetryService } from "../telemetry/telemetry.js";
 import { checkTargetUrl } from "../web/url-guard.js";
@@ -57,6 +58,8 @@ export type VideoServiceOptions = {
 	fetchImpl?: FetchLike;
 	adapters?: Partial<Record<VideoKind, VideoAdapter>>;
 	telemetry?: Pick<TelemetryService, "recordVideo">;
+	/** Holds each video's estimate against the budgets that cover it. Omitted: none. */
+	budgets?: Pick<BudgetService, "holdVideo" | "release">;
 	/** `VIDEO_DISABLED`: every video call is refused. */
 	disabled?: boolean;
 	now?: () => number;
@@ -97,7 +100,6 @@ const NO_PROVIDER =
 	"This workspace has no video provider. A workspace admin can add one.";
 const TURNED_OFF = "Video generation is turned off on this gateway.";
 const REFUSALS: Record<VideoHoldRefusal, string> = {
-	budget: "The workspace's monthly video budget is used up.",
 	caller: "Your videos for today are used up.",
 };
 
@@ -188,13 +190,66 @@ export class VideoService {
 			.map(({ entry }) => entry);
 	}
 
+	/**
+	 * Holds one video: its estimate against every budget that covers it,
+	 * then the caller's daily cap. Either refusal gives back what was taken.
+	 */
+	private async hold(
+		workspace: WorkspaceRef,
+		caller: VideoCaller,
+		input: {
+			connection: string;
+			model: string;
+			callerCap: number;
+			costUsd: number;
+		},
+	): Promise<VideoHold | { refused: string }> {
+		const { store, budgets } = this.options;
+		const budget = budgets
+			? await budgets.holdVideo(
+					workspace.id,
+					caller,
+					input.model,
+					input.costUsd,
+				)
+			: undefined;
+		if (budget && "refused" in budget) return { refused: budget.refused };
+		let held: Awaited<ReturnType<VideoStore["hold"]>>;
+		try {
+			held = await store.hold(workspace, {
+				connection: input.connection,
+				callerId: caller.id,
+				callerCap: input.callerCap,
+				costUsd: input.costUsd,
+			});
+		} catch (error) {
+			if (budget) await budgets?.release(budget).catch(() => {});
+			throw error;
+		}
+		if ("refused" in held) {
+			if (budget) await budgets?.release(budget).catch(() => {});
+			return { refused: REFUSALS[held.refused] };
+		}
+		return budget ? { ...held, budget } : held;
+	}
+
+	/** Gives a hold back, here and on the budgets: the provider charged nothing. */
+	private async release(hold: VideoHold): Promise<void> {
+		await Promise.allSettled([
+			this.options.store.release(hold),
+			...(hold.budget && this.options.budgets
+				? [this.options.budgets.release(hold.budget)]
+				: []),
+		]);
+	}
+
 	/** What the settings route shows. */
 	async settings(workspace: WorkspaceRef): Promise<VideoSettings> {
 		const { store } = this.options;
 		const policy = await store.policy(workspace);
-		const [connections, budget, entries] = await Promise.all([
+		const [connections, spend, entries] = await Promise.all([
 			store.list(workspace),
-			store.budget(workspace, policy),
+			store.spend(workspace),
 			store.entries(workspace),
 		]);
 		return {
@@ -202,7 +257,7 @@ export class VideoService {
 			configured: this.available && this.usable(entries, policy).length > 0,
 			connections,
 			policy,
-			budget,
+			spend,
 			persistence: store.persistence,
 		};
 	}
@@ -463,21 +518,20 @@ export class VideoService {
 				continue;
 			}
 			const costUsd = adapter.estimateCostUsd(config, candidate.call);
-			const hold = await store.hold(workspace, {
+			const hold = await this.hold(workspace, caller, {
 				connection: config.name,
-				callerId: caller.id,
+				model: candidate.model.id,
 				callerCap: policy.callerVideosPerDay,
-				budgetUsd: policy.monthlyBudgetUsd,
 				costUsd,
 			});
 			if ("refused" in hold) {
-				if (!inserted) throw new ServiceError(REFUSALS[hold.refused], 429);
+				if (!inserted) throw new ServiceError(hold.refused, 429);
 				attempts.push({
 					...attempt,
 					outcome: "skipped",
-					detail: REFUSALS[hold.refused],
+					detail: hold.refused,
 				});
-				last = { outcome: "skipped", detail: REFUSALS[hold.refused] };
+				last = { outcome: "skipped", detail: hold.refused };
 				break;
 			}
 			held = hold;
@@ -494,12 +548,12 @@ export class VideoService {
 						{ unfinished: true },
 					);
 			} catch (error) {
-				await store.release(hold);
+				await this.release(hold);
 				throw error;
 			}
 			// Canceled between attempts: start nothing more.
 			if (!current) {
-				await store.release(hold);
+				await this.release(hold);
 				const saved = await jobs.get(workspace.id, id);
 				if (!saved) throw new ServiceError("Video job not found.", 404);
 				return this.view(saved, context.origin);
@@ -568,7 +622,7 @@ export class VideoService {
 					this.now() + result.retryAfterMs,
 				);
 			if (result.outcome !== "timeout" && !result.billed) {
-				await store.release(hold);
+				await this.release(hold);
 				held = null;
 			}
 			if (result.outcome !== "provider-error") break;
@@ -871,7 +925,7 @@ export class VideoService {
 		patch: VideoJobPatch,
 		options: { release?: boolean } = {},
 	): Promise<VideoJobRecord> {
-		const { jobs, store } = this.options;
+		const { jobs } = this.options;
 		const won = await jobs.update(
 			record.workspaceId,
 			record._id,
@@ -884,7 +938,7 @@ export class VideoService {
 		);
 		const saved = (await jobs.get(record.workspaceId, record._id)) ?? record;
 		if (won) {
-			if (options.release && record.hold) await store.release(record.hold);
+			if (options.release && record.hold) await this.release(record.hold);
 			this.recordTelemetry(saved, "finished");
 		}
 		return saved;

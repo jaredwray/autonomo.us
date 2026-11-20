@@ -2,6 +2,8 @@
 
 *Status: v0.2, 2026-11-19. Built; see [What was built](#what-was-built) for step V0's findings and where the build differs from this plan. In the style of [WEB_PROXIES_PLAN.md](WEB_PROXIES_PLAN.md).*
 
+*Since 2026-11-20 the monthly video budget is a budget, and the Video page is the Video tab of Models: see [BUDGETS_PLAN.md](BUDGETS_PLAN.md). What this plan says about `monthlyBudgetUsd` and the Video page's two tabs describes what was built first.*
+
 **Read this first.** Three things I found change the brief:
 
 1. **OpenAI Sora is gone.** OpenAI's docs say the Sora 2 models and the Videos API (`/v1/videos`) were shut down on 2026-09-24 with "no one-to-one replacement". It cannot be one of the three.

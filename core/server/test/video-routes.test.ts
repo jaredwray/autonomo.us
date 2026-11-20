@@ -237,11 +237,25 @@ describe("video over the REST API", () => {
 		const api = await start();
 		await api.addRunway();
 		await api.addGoogle();
+		// The monthly budget moved to budgets; a script that still sends it hears so.
+		expect(
+			await api.refused("PUT", "/v1/video/policy", {
+				body: {
+					order: ["google"],
+					callerVideosPerDay: 5,
+					monthlyBudgetUsd: 10,
+					maxDurationSeconds: 8,
+					revision: 0,
+				},
+			}),
+		).toMatchObject({
+			status: 400,
+			message: expect.stringContaining("is a budget now"),
+		});
 		const policy = await api.ok<VideoPolicy>("PUT", "/v1/video/policy", {
 			body: {
 				order: ["google"],
 				callerVideosPerDay: 5,
-				monthlyBudgetUsd: 10,
 				maxDurationSeconds: 8,
 				revision: 0,
 			},

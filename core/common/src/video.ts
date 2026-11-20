@@ -41,7 +41,6 @@ export const VIDEO_LIMITS = {
 	/** What an agent may ask `video_list` for. */
 	maxAgentListLimit: 20,
 	maxCallerVideosPerDay: 10_000,
-	maxMonthlyBudgetUsd: 100_000,
 	keyLength: 4096,
 	/** How long the gateway keeps a job record. */
 	jobRetentionDays: 30,
@@ -198,8 +197,6 @@ export type VideoPolicy = {
 	order: string[];
 	/** Videos one person, token, or agent may start in a UTC day. */
 	callerVideosPerDay: number;
-	/** What every video together may cost in a calendar month (UTC), estimated, in US dollars. */
-	monthlyBudgetUsd: number;
 	/** The longest video anyone may ask for, in seconds. */
 	maxDurationSeconds: number;
 	revision: number;
@@ -208,7 +205,6 @@ export type VideoPolicy = {
 export const DEFAULT_VIDEO_POLICY: Omit<VideoPolicy, "revision"> = {
 	order: [],
 	callerVideosPerDay: 10,
-	monthlyBudgetUsd: 25,
 	maxDurationSeconds: 10,
 };
 
@@ -259,7 +255,8 @@ export type VideoSettings = {
 	configured: boolean;
 	connections: VideoConnection[];
 	policy: VideoPolicy;
-	budget: { month: string; spentUsd: number; limitUsd: number };
+	/** Estimated video spend this month (UTC). Limits on it are budgets. */
+	spend: { month: string; spentUsd: number };
 	persistence: "mongodb" | "memory";
 };
 
@@ -330,7 +327,7 @@ export type VideoJob = {
 	createdAt: string;
 	updatedAt: string;
 	completedAt: string | null;
-	/** An estimate from list prices, held against the budget. */
+	/** An estimate from list prices, held against the budgets that cover it. */
 	costUsd: number;
 	/** Set when succeeded: a gateway link that redirects to or streams the MP4. */
 	video: { url: string; contentType: "video/mp4"; expiresAt: string } | null;

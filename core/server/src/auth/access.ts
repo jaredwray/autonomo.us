@@ -328,6 +328,11 @@ export const ROUTE_RULES = new Map<string, RouteRule>([
 	["GET /v1/:workspace/video/jobs", workspace("video:generate")],
 	["GET /v1/:workspace/video/jobs/:id", workspace("video:generate")],
 	["POST /v1/:workspace/video/jobs/:id/cancel", workspace("video:generate")],
+	// Budgets cap what models spend: members look, admins change them.
+	["GET /v1/:workspace/budgets", workspace("budgets:read")],
+	["POST /v1/:workspace/budgets", workspace("budgets:edit")],
+	["PATCH /v1/:workspace/budgets/:id", workspace("budgets:edit")],
+	["DELETE /v1/:workspace/budgets/:id", workspace("budgets:edit")],
 ]);
 
 /** What each workspace role may do, as a signed-in member. */
@@ -348,6 +353,7 @@ const MEMBER_ACTIONS = new Set<WorkspaceAction>([
 	"agents:read",
 	"proxies:read",
 	"video:read",
+	"budgets:read",
 ]);
 const ADMIN_ACTIONS = new Set<WorkspaceAction>([
 	...MEMBER_ACTIONS,
@@ -369,6 +375,8 @@ const ADMIN_ACTIONS = new Set<WorkspaceAction>([
 	// Video provider keys, the video limits, and videos that spend the budget.
 	"video:edit",
 	"video:generate",
+	// Budgets: raising one lets agents spend more.
+	"budgets:edit",
 ]);
 /** Org owners and admins only (D3: API tokens outlive the member who made them). */
 const ORG_ACTIONS = new Set<WorkspaceAction>([

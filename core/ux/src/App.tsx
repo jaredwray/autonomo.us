@@ -42,7 +42,6 @@ import { ProfileView } from "./ProfileView.js";
 import { ProxiesView } from "./ProxiesView.js";
 import { SynapseView } from "./SynapseView.js";
 import { TeamView } from "./TeamView.js";
-import { VideoView } from "./VideoView.js";
 import { WorkspacesView } from "./WorkspacesView.js";
 
 const logoMark = new URL("./assets/logo-mark.svg", import.meta.url).href;
@@ -52,7 +51,6 @@ const workspaceViews = {
 	dashboard: "Dashboard",
 	models: "Models",
 	proxies: "Proxies",
-	video: "Video",
 	synapse: "Synapse",
 	channels: "Channels",
 	agents: "Agents",
@@ -63,13 +61,14 @@ const workspaceViews = {
 /**
  * Where links to views that were renamed or folded into another lead now.
  * `rest`, when given, replaces what followed the former name: a bot's link
- * keeps naming its agent, the token list had nothing after it, and Routing is
- * now a tab of Models.
+ * keeps naming its agent, the token list had nothing after it, and Routing and
+ * Video are now tabs of Models.
  */
 const formerViews: Record<string, { view: WorkspaceView; rest?: string }> = {
 	bots: { view: "agents" },
 	"agent-tokens": { view: "agents", rest: "" },
 	routing: { view: "models", rest: "/routing" },
+	video: { view: "models", rest: "/video" },
 };
 /** Views of the whole gateway, at `#/<view>`. */
 const instanceViews = { workspaces: "Workspaces", team: "Team" };
@@ -721,8 +720,6 @@ export function App() {
 							<ModelsView workspace={selected} />
 						) : shown === "proxies" ? (
 							<ProxiesView workspace={selected} />
-						) : shown === "video" ? (
-							<VideoView workspace={selected} />
 						) : shown === "synapse" ? (
 							<SynapseView user={user} workspace={selected} />
 						) : shown === "agents" ? (

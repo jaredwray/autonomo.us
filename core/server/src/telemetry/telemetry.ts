@@ -40,6 +40,15 @@ export type ChatTelemetry = {
 	requestedModel?: string;
 };
 
+/** A priced language model call, for budgets. */
+export type LlmSpend = {
+	workspaceId: string;
+	caller?: TelemetryCaller;
+	/** Canonical routable id, e.g. `anthropic/claude-opus-4-8`. */
+	model: string;
+	costUsd: number;
+};
+
 export type WebFetchTelemetry = {
 	workspaceId: string;
 	caller: TelemetryCaller;
@@ -154,6 +163,7 @@ export class TelemetryService {
 		provider: string,
 		providerKind?: string,
 	) => ModelPricing | undefined;
+	private spend?: (spend: LlmSpend) => void;
 
 	/** Whole-process aggregates, for diagnostics and tests. */
 	private readonly all = newPartition();
@@ -237,6 +247,18 @@ export class TelemetryService {
 		this.aggregate(this.all, chat);
 		this.aggregate(this.partition(chat.workspaceId ?? NO_WORKSPACE), chat);
 		this.record(event);
+		if (
+			chat.workspaceId &&
+			estimatedCostUsd !== undefined &&
+			Number.isFinite(estimatedCostUsd) &&
+			estimatedCostUsd > 0
+		)
+			this.spend?.({
+				workspaceId: chat.workspaceId,
+				caller: chat.caller,
+				model: chat.model,
+				costUsd: estimatedCostUsd,
+			});
 		return event;
 	}
 
@@ -417,6 +439,11 @@ export class TelemetryService {
 	 * `resolve(model, provider, providerKind)` prices a call; `providerKind` is
 	 * the connection's implementation (`openai`, `anthropic`, …) when known.
 	 */
+	/** Hears every priced language model call, so budgets can count it. */
+	setSpendListener(listener: (spend: LlmSpend) => void): void {
+		this.spend = listener;
+	}
+
 	setPricingResolver(
 		resolve: (
 			model: string,
