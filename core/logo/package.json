@@ -45,6 +45,6 @@
 	},
 	"devDependencies": {
 		"jsdom": "^29.0.2",
-		"vite": "^8.3.4"
+		"vite": "^8.3.8"
 	}
 }
