@@ -1,13 +1,8 @@
-import {
-	type AgentSummary,
-	VIDEO_MODELS,
-	type VideoConnection,
-	type VideoJob,
-	type VideoKind,
-	type VideoLimit,
-	type VideoModelList,
-	type VideoPolicy,
-	type VideoSettings,
+import type {
+	VideoConnection,
+	VideoLimit,
+	VideoPolicy,
+	VideoSettings,
 } from "@autonomo.us/common";
 import { createServer } from "@autonomo.us/server";
 import {
@@ -23,12 +18,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "../src/App.js";
 import { clearCredential, setCurrentWorkspace } from "../src/api.js";
 import { modelsHash, parseModelsTab } from "../src/models-route.js";
-import {
-	formChoices,
-	VideoPanel,
-	videoLimitSentence,
-	videoRequestProblem,
-} from "../src/VideoView.js";
+import { VideoPanel } from "../src/VideoView.js";
 import { changeControl, dropdownOptions } from "./controls.js";
 import { defaultWorkspaceId, setUpOwner, stopServer } from "./session.js";
 
@@ -67,19 +57,6 @@ function limit(overrides: Partial<VideoLimit> = {}): VideoLimit {
 		...overrides,
 	};
 }
-function agent(id: string, name: string): AgentSummary {
-	return {
-		id,
-		kind: "token",
-		name,
-		description: "",
-		status: "active",
-		permissions: [],
-		model: null,
-		connections: 0,
-		createdAt: "2026-11-01T00:00:00.000Z",
-	};
-}
 function settings(overrides: Partial<VideoSettings> = {}): VideoSettings {
 	return {
 		available: true,
@@ -92,54 +69,6 @@ function settings(overrides: Partial<VideoSettings> = {}): VideoSettings {
 		...overrides,
 	};
 }
-function provider(name: string, kind: VideoKind, defaultModel?: string) {
-	return {
-		name,
-		kind,
-		defaultModel: defaultModel ?? VIDEO_MODELS[kind][0].id,
-		models: [...VIDEO_MODELS[kind]],
-	};
-}
-function models(overrides: Partial<VideoModelList> = {}): VideoModelList {
-	return {
-		available: true,
-		canGenerate: true,
-		providers: [
-			provider("runway", "runway"),
-			provider("google-video", "google"),
-			provider("luma", "luma"),
-		],
-		limits: { maxDurationSeconds: 10, promptLength: 4000 },
-		...overrides,
-	};
-}
-let counter = 0;
-function job(overrides: Partial<VideoJob> = {}): VideoJob {
-	counter += 1;
-	return {
-		id: `vid_00000000-0000-4000-8000-${String(counter).padStart(12, "0")}`,
-		status: "succeeded",
-		progress: null,
-		provider: "runway",
-		kind: "runway",
-		model: "seedance2_5",
-		prompt: "A lighthouse at dusk",
-		durationSeconds: 5,
-		aspectRatio: "16:9",
-		resolution: "720p",
-		hasImage: false,
-		createdBy: { id: "user:1", name: "Founder", kind: "user" },
-		createdAt: new Date(Date.now() - 60_000).toISOString(),
-		updatedAt: new Date().toISOString(),
-		completedAt: null,
-		costUsd: 1.5,
-		video: null,
-		error: null,
-		attempts: [],
-		...overrides,
-	};
-}
-
 type Call = {
 	method: string;
 	path: string;
@@ -147,13 +76,7 @@ type Call = {
 	signal?: AbortSignal;
 };
 type Handler = (call: Call) => Response | Promise<Response> | undefined;
-type State = {
-	settings: VideoSettings;
-	agents?: AgentSummary[];
-	models?: VideoModelList;
-	jobs?: VideoJob[];
-	nextBefore?: string | null;
-};
+type State = { settings: VideoSettings };
 
 const json = (body: unknown, status = 200) =>
 	new Response(JSON.stringify(body), {
@@ -183,22 +106,6 @@ function fakeGateway(state: State, handler: Handler = () => undefined) {
 		if (answer) return answer;
 		if (method === "GET" && path === `${base}/video`)
 			return json(structuredClone(state.settings));
-		if (method === "GET" && path === `${base}/agents`)
-			return json({ agents: state.agents ?? [], persistence: "memory" });
-		if (method === "GET" && path === `${base}/video/models`)
-			return json(structuredClone(state.models ?? models()));
-		if (method === "GET" && path.startsWith(`${base}/video/jobs?`))
-			return json({ jobs: state.jobs ?? [], nextBefore: null });
-		if (method === "GET" && path === `${base}/video/jobs`)
-			return json({
-				jobs: state.jobs ?? [],
-				nextBefore: state.nextBefore ?? null,
-			});
-		const one = /\/video\/jobs\/([^/?]+)\?wait=10$/.exec(path);
-		if (method === "GET" && one) {
-			const found = (state.jobs ?? []).find((item) => item.id === one[1]);
-			return found ? json(found) : failure(404, "Video job not found.");
-		}
 		return failure(404, `Unexpected ${method} ${path}`);
 	});
 	return calls;
@@ -209,12 +116,7 @@ const sent = (calls: Call[], method: string) =>
 function show(role: "admin" | "member" = "admin", hash = "") {
 	setCurrentWorkspace(WORKSPACE);
 	window.history.replaceState(null, "", hash || "/");
-	return render(
-		<VideoPanel
-			workspace={{ isDefault: true, role }}
-			onShowBudget={() => {}}
-		/>,
-	);
+	return render(<VideoPanel workspace={{ isDefault: true, role }} />);
 }
 function type(
 	label: string,
@@ -275,7 +177,7 @@ describe("Video view: settings", () => {
 		).toBeDefined();
 	});
 
-	it("turned off: warns, disables changes, and asks for no models or jobs", async () => {
+	it("turned off: warns, disables changes, and asks for nothing more", async () => {
 		const calls = fakeGateway({
 			settings: settings({
 				available: false,
@@ -296,9 +198,6 @@ describe("Video view: settings", () => {
 			).disabled,
 		).toBe(true);
 		expect(screen.queryByRole("checkbox", { name: "Use runway" })).toBeNull();
-		expect(screen.queryByRole("button", { name: "Add limit" })).toBeNull();
-		// No form to make a video while it is off.
-		expect(screen.queryByRole("heading", { name: "Make a video" })).toBeNull();
 		await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
 		expect(calls.some((call) => call.path.includes("/video/models"))).toBe(
 			false,
@@ -320,7 +219,7 @@ describe("Video view: settings", () => {
 			}
 		});
 		show("admin");
-		await screen.findByText("No videos yet");
+		await screen.findByText("No video providers yet");
 		fireEvent.click(screen.getByRole("button", { name: "Add video provider" }));
 		const form = screen.getByRole("region", { name: "Add a video provider" });
 		expect(within(form).queryByLabelText(/Credit price/)).toBeNull();
@@ -350,7 +249,7 @@ describe("Video view: settings", () => {
 	it("disables Add video provider while its form is open, and focuses it on close", async () => {
 		fakeGateway({ settings: settings() });
 		show("admin");
-		await screen.findByText("No videos yet");
+		await screen.findByText("No video providers yet");
 		const add = screen.getByRole("button", {
 			name: "Add video provider",
 		}) as HTMLButtonElement;
@@ -521,6 +420,35 @@ describe("Video view: settings", () => {
 		).toEqual(["luma", "runway"]);
 	});
 
+	it("has no sections for making or listing videos, and points to Policies", async () => {
+		const calls = fakeGateway({
+			settings: settings({
+				connections: [connection({ name: "runway", kind: "runway" })],
+				limits: [limit()],
+			}),
+		});
+		const open = vi.fn();
+		setCurrentWorkspace(WORKSPACE);
+		render(
+			<VideoPanel
+				workspace={{ isDefault: true, role: "admin" }}
+				onShowPolicies={open}
+			/>,
+		);
+		await screen.findByRole("button", { name: "Edit runway" });
+		expect(screen.queryByRole("heading", { name: "Make a video" })).toBeNull();
+		expect(screen.queryByRole("heading", { name: "Videos" })).toBeNull();
+		expect(screen.queryByRole("heading", { name: "Video limits" })).toBeNull();
+		fireEvent.click(screen.getByRole("button", { name: "Open Policies" }));
+		expect(open).toHaveBeenCalledOnce();
+		await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
+		expect(
+			calls
+				.filter((call) => call.path !== `${base}/video`)
+				.map((call) => call.path),
+		).toEqual([]);
+	});
+
 	it("shows no order with one provider", async () => {
 		fakeGateway({
 			settings: settings({
@@ -532,7 +460,7 @@ describe("Video view: settings", () => {
 		expect(screen.queryByRole("list", { name: "Provider order" })).toBeNull();
 	});
 
-	it("shows a member the providers and limits only, without asking for jobs", async () => {
+	it("shows a member the providers only, without asking for models or jobs", async () => {
 		const calls = fakeGateway({
 			settings: settings({
 				connections: [
@@ -543,7 +471,7 @@ describe("Video view: settings", () => {
 			}),
 		});
 		show("member", `#/w/${WORKSPACE}/video`);
-		expect(await screen.findAllByRole("table")).toHaveLength(2);
+		expect(await screen.findAllByRole("table")).toHaveLength(1);
 		expect(screen.queryByRole("tab")).toBeNull();
 		expect(
 			screen.queryByRole("button", { name: "Add video provider" }),
@@ -554,11 +482,9 @@ describe("Video view: settings", () => {
 			screen.getAllByText(/Only workspace admins change video settings/),
 		).toHaveLength(1);
 		expect(screen.queryByText(/Ask a workspace admin/)).toBeNull();
-		// Limits and the order are shown, not changed.
-		expect(screen.queryByRole("button", { name: "Add limit" })).toBeNull();
-		expect(
-			screen.queryByRole("button", { name: /^Edit the limit/ }),
-		).toBeNull();
+		// Limits are policies now: the Video tab only points to them.
+		expect(screen.queryByRole("heading", { name: "Video limits" })).toBeNull();
+		// The order is shown, not changed.
 		expect(screen.queryByRole("button", { name: /^Move / })).toBeNull();
 		expect(
 			screen.getByRole("list", { name: "Provider order" }).textContent,
@@ -570,695 +496,21 @@ describe("Video view: settings", () => {
 	});
 });
 
-describe("Video view: limits", () => {
-	it("adds a limit for chosen agents on one model, reading back what it does", async () => {
-		const state: State = {
-			settings: settings(),
-			agents: [agent("a1", "Researcher"), agent("a2", "Writer")],
-		};
-		const calls = fakeGateway(state, (call) => {
-			if (call.method !== "POST" || call.path !== `${base}/video/limits`)
-				return undefined;
-			const added = limit({
-				id: "lim-2",
-				...(call.body as Partial<VideoLimit>),
-			});
-			state.settings.limits.push(added);
-			return json(added, 201);
-		});
-		show("admin", `#/w/${WORKSPACE}/video/settings`);
-		await screen.findByText("No video limits");
-		fireEvent.click(screen.getByRole("button", { name: "Add limit" }));
-		const form = screen.getByRole("region", { name: "Add a video limit" });
-		const add = within(form).getByRole("button", {
-			name: "Add limit",
-		}) as HTMLButtonElement;
-		// Nothing is connected, so every model says so.
-		type("Covers", "video-model", form);
-		expect(
-			dropdownOptions(within(form).getByLabelText("Video model"))[0]
-				.textContent,
-		).toBe("Gemini Omni 1.2 Flash (Google Gemini Omni, not connected)");
-		type("Covers", "video", form);
-		expect(
-			within(form).getByText("Set videos a day, the longest video, or both."),
-		).toBeDefined();
-		expect(add.disabled).toBe(true);
-		fireEvent.click(within(form).getByLabelText(/Specific agents/));
-		type("Videos a day (optional)", "2", form);
-		expect(within(form).getByText("Pick at least one agent.")).toBeDefined();
-		fireEvent.click(within(form).getByLabelText(/Researcher/));
-		fireEvent.click(within(form).getByLabelText(/Writer/));
-		type("Covers", "video-model", form);
-		type("Video model", "gen4.5", form);
-		expect(
-			within(form).getByText(
-				"Researcher and Writer can each start up to 2 videos a day (UTC) on Runway Gen-4.5.",
-			),
-		).toBeDefined();
-		type("Longest video (seconds) (optional)", "45", form);
-		expect(
-			within(form).getByText(
-				/The longest video is a whole number of seconds from 2 to 30/,
-			),
-		).toBeDefined();
-		type("Longest video (seconds) (optional)", "6", form);
-		expect(
-			within(form).getByText(
-				"Researcher and Writer can each start up to 2 videos a day (UTC) on Runway Gen-4.5, each up to 6 seconds long.",
-			),
-		).toBeDefined();
-		fireEvent.click(add);
-		expect(await screen.findByText("Limit added.")).toBeDefined();
-		expect(sent(calls, "POST")[0].body).toEqual({
-			appliesTo: { kind: "agents", agentIds: ["a1", "a2"] },
-			covers: { kind: "video-model", model: "gen4.5" },
-			videosPerDay: 2,
-			maxDurationSeconds: 6,
-		});
-		const row = within(await screen.findByRole("table"))
-			.getAllByRole("row")
-			.find((item) => item.textContent?.includes("Researcher and Writer"));
-		expect(row?.textContent).toContain("Runway Gen-4.5");
-		expect(row?.textContent).toContain("2per agent");
-		expect(row?.textContent).toContain("6 seconds");
-		await waitFor(() =>
-			expect(document.activeElement).toBe(
-				screen.getByRole("button", { name: "Add limit" }),
-			),
-		);
-	});
-
-	it("edits a limit, switches it off, and deletes it after confirming", async () => {
-		const state: State = { settings: settings({ limits: [limit()] }) };
-		const calls = fakeGateway(state, (call) => {
-			if (call.path !== `${base}/video/limits/lim-1`) return undefined;
-			if (call.method === "PATCH") {
-				const saved = { ...state.settings.limits[0], ...call.body };
-				state.settings.limits = [saved as VideoLimit];
-				return json(saved);
-			}
-			if (call.method === "DELETE") {
-				state.settings.limits = [];
-				return new Response(null, { status: 204 });
-			}
-		});
-		show("admin", `#/w/${WORKSPACE}/video/settings`);
-		const label =
-			"the limit for Everyone in this workspace on all video models";
-		const edit = await screen.findByRole("button", { name: `Edit ${label}` });
-		fireEvent.click(edit);
-		const form = screen.getByRole("region", { name: "Edit video limit" });
-		expect(
-			within(form).getByText(
-				"Each person, API token, and agent can start up to 10 videos a day (UTC) on any video model, each up to 10 seconds long.",
-			),
-		).toBeDefined();
-		type("Videos a day (optional)", "", form);
-		expect(
-			within(form).getByText(
-				"Videos anyone in this workspace starts on any video model can be up to 10 seconds long.",
-			),
-		).toBeDefined();
-		fireEvent.click(within(form).getByRole("button", { name: "Save changes" }));
-		expect(await screen.findByText("Limit saved.")).toBeDefined();
-		// Only what changed is sent.
-		expect(sent(calls, "PATCH")[0].body).toEqual({ videosPerDay: null });
-		await waitFor(() =>
-			expect(document.activeElement).toBe(
-				screen.getByRole("button", { name: `Edit ${label}` }),
-			),
-		);
-		fireEvent.click(screen.getByRole("checkbox", { name: `Use ${label}` }));
-		await waitFor(() => expect(sent(calls, "PATCH")).toHaveLength(2));
-		expect(sent(calls, "PATCH")[1].body).toEqual({ enabled: false });
-		fireEvent.click(screen.getByRole("button", { name: `Delete ${label}` }));
-		expect(document.activeElement).toBe(
-			screen.getByRole("button", { name: `Confirm delete ${label}` }),
-		);
-		fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-		expect(document.activeElement).toBe(
-			screen.getByRole("button", { name: `Delete ${label}` }),
-		);
-		fireEvent.click(screen.getByRole("button", { name: `Delete ${label}` }));
-		fireEvent.click(
-			screen.getByRole("button", { name: `Confirm delete ${label}` }),
-		);
-		expect(await screen.findByText("Limit deleted.")).toBeDefined();
-		expect(sent(calls, "DELETE")).toHaveLength(1);
-		expect(await screen.findByText("No video limits")).toBeDefined();
-		expect(document.activeElement).toBe(
-			screen.getByRole("button", { name: "Add limit" }),
-		);
-	});
-
-	it("offers the connected providers' models first, and starts on one", async () => {
-		fakeGateway({
-			settings: settings({
-				connections: [connection({ name: "runway", kind: "runway" })],
-			}),
-		});
-		show("admin", `#/w/${WORKSPACE}/video/settings`);
-		fireEvent.click(await screen.findByRole("button", { name: "Add limit" }));
-		const form = screen.getByRole("region", { name: "Add a video limit" });
-		type("Covers", "video-model", form);
-		const options = dropdownOptions(within(form).getByLabelText("Video model"));
-		expect(options[0].textContent).toBe("Seedance 2.5 (Runway)");
-		expect(options.at(-1)?.textContent).toContain(", not connected)");
-		type("Videos a day (optional)", "1", form);
-		expect(
-			within(form).getByText(
-				"Each person, API token, and agent can start up to 1 video a day (UTC) on Seedance 2.5.",
-			),
-		).toBeDefined();
-	});
-
-	it("shows the gateway's reason when a limit cannot be saved", async () => {
-		fakeGateway({ settings: settings() }, (call) =>
-			call.method === "POST"
-				? failure(409, "A workspace holds at most 50 video limits.")
-				: undefined,
-		);
-		show("admin", `#/w/${WORKSPACE}/video/settings`);
-		fireEvent.click(await screen.findByRole("button", { name: "Add limit" }));
-		const form = screen.getByRole("region", { name: "Add a video limit" });
-		type("Videos a day (optional)", "5", form);
-		fireEvent.click(within(form).getByRole("button", { name: "Add limit" }));
-		expect(
-			await within(form).findByText(
-				"A workspace holds at most 50 video limits.",
-			),
-		).toBeDefined();
-	});
-});
-
-describe("Video view: making and following videos", () => {
-	it("narrows the form to what the chosen model makes", async () => {
-		fakeGateway({ settings: settings(), models: models() });
-		show("admin");
-		await screen.findByRole("heading", { name: "Make a video" });
-		type("Provider", "runway");
-		type("Model", "gen4.5");
-		expect(
-			dropdownOptions(screen.getByLabelText("Resolution")).map(
-				(option) => option.textContent,
-			),
-		).toEqual(["720p"]);
-		const duration = screen.getByLabelText(
-			"Duration (seconds)",
-		) as HTMLInputElement;
-		expect([duration.min, duration.max]).toEqual(["2", "10"]);
-		expect(screen.getByLabelText(/Start from an image/)).toBeDefined();
-		type("Provider", "google-video");
-		expect(screen.queryByLabelText(/Start from an image/)).toBeNull();
-		expect(
-			dropdownOptions(screen.getByLabelText("Aspect ratio")).map((option) =>
-				option.getAttribute("data-value"),
-			),
-		).toEqual(["16:9", "9:16"]);
-	});
-
-	it("refuses a model that cannot fit the workspace's longest video", async () => {
-		fakeGateway({
-			settings: settings(),
-			models: models({
-				providers: [provider("luma", "luma")],
-				limits: { maxDurationSeconds: 4, promptLength: 4000 },
-			}),
-		});
-		show("admin");
-		expect(
-			await screen.findAllByText(
-				"Luma Ray 3.2 makes videos of at least 5 seconds, longer than your video limits allow (4 s).",
-			),
-		).not.toHaveLength(0);
-		expect(
-			(screen.getByRole("button", { name: "Make video" }) as HTMLButtonElement)
-				.disabled,
-		).toBe(true);
-	});
-
-	it("on Automatic, follows the first provider whose default fits the longest video", async () => {
-		const calls = fakeGateway(
-			{
-				settings: settings(),
-				models: models({
-					providers: [provider("luma", "luma"), provider("runway", "runway")],
-					limits: { maxDurationSeconds: 4, promptLength: 4000 },
-				}),
-			},
-			(call) =>
-				call.method === "POST" && call.path === `${base}/video/jobs`
-					? json(job({ status: "queued", durationSeconds: 4 }), 202)
-					: undefined,
-		);
-		show("admin");
-		await screen.findByRole("heading", { name: "Make a video" });
-		expect(screen.queryByText(/makes videos of at least/)).toBeNull();
-		expect(screen.getByText(/These choices follow Seedance 2.5 on runway/));
-		type("Prompt", "A paper boat");
-		const make = screen.getByRole("button", {
-			name: "Make video",
-		}) as HTMLButtonElement;
-		expect(make.disabled).toBe(false);
-		fireEvent.click(make);
-		await waitFor(() => expect(sent(calls, "POST")).toHaveLength(1));
-		expect(sent(calls, "POST")[0].body).toEqual({
-			prompt: "A paper boat",
-			durationSeconds: 4,
-			aspectRatio: "16:9",
-			resolution: "720p",
-		});
-	});
-
-	it("keeps a video started during a list read, and lists it only once", async () => {
-		const old = job({ prompt: "An old video" });
-		const failed = (prompt: string) =>
-			job({
-				status: "failed",
-				prompt,
-				error: { code: "provider_error", message: "Runway: outage" },
-			});
-		const state: State = { settings: settings(), jobs: [old] };
-		const held: { list?: () => void; post?: () => void } = {};
-		let next = failed("First");
-		let reads = 0;
-		fakeGateway(state, (call) => {
-			if (call.method === "GET" && call.path === `${base}/video/jobs`) {
-				reads += 1;
-				if (reads === 1) return undefined;
-				const snapshot = structuredClone(state.jobs ?? []);
-				return new Promise<Response>((resolve) => {
-					held.list = () => resolve(json({ jobs: snapshot, nextBefore: null }));
-				});
-			}
-			if (call.method === "POST" && call.path === `${base}/video/jobs`) {
-				const answer = next;
-				return new Promise<Response>((resolve) => {
-					held.post = () => resolve(json(answer, 202));
-				});
-			}
-		});
-		show("admin");
-		await screen.findByRole("list", { name: "Videos" });
-		const prompts = () =>
-			within(screen.getByRole("list", { name: "Videos" }))
-				.getAllByRole("listitem")
-				.map((item) => item.querySelector(".video-prompt")?.textContent ?? "");
-
-		// A list read sent before the video was saved answers after it started.
-		fireEvent.click(
-			within(screen.getByRole("region", { name: "Videos" })).getByRole(
-				"button",
-				{
-					name: "Refresh",
-				},
-			),
-		);
-		type("Prompt", "First");
-		fireEvent.click(screen.getByRole("button", { name: "Make video" }));
-		await waitFor(() => expect(held.post).toBeDefined());
-		state.jobs = [next, old];
-		await act(async () => held.post?.());
-		await act(async () => held.list?.());
-		expect(prompts()).toEqual(["First", "An old video"]);
-
-		// A list read that already has the video answers before the start does.
-		const first = next;
-		next = failed("Second");
-		held.post = undefined;
-		type("Prompt", "Second");
-		fireEvent.click(screen.getByRole("button", { name: "Make video" }));
-		await waitFor(() => expect(held.post).toBeDefined());
-		state.jobs = [next, first, old];
-		fireEvent.click(
-			within(screen.getByRole("region", { name: "Videos" })).getByRole(
-				"button",
-				{
-					name: "Refresh",
-				},
-			),
-		);
-		await act(async () => held.list?.());
-		await act(async () => held.post?.());
-		expect(prompts()).toEqual(["Second", "First", "An old video"]);
-	});
-
-	it("starts a video with exactly what was chosen and lists it first", async () => {
-		const state: State = { settings: settings(), jobs: [job()] };
-		const started = job({
-			status: "failed",
-			error: { code: "provider_error", message: "Runway: outage" },
-		});
-		const calls = fakeGateway(state, (call) =>
-			call.method === "POST" && call.path === `${base}/video/jobs`
-				? json(started, 202)
-				: undefined,
-		);
-		show("admin");
-		await screen.findByRole("heading", { name: "Make a video" });
-		type("Prompt", "  A paper boat on a stream  ");
-		fireEvent.click(screen.getByRole("button", { name: "Make video" }));
-		expect(
-			await screen.findByText(
-				"The video could not be started. The list says why.",
-			),
-		).toBeDefined();
-		expect(sent(calls, "POST")[0].body).toEqual({
-			prompt: "A paper boat on a stream",
-			durationSeconds: 5,
-			aspectRatio: "16:9",
-			resolution: "720p",
-		});
-		const items = within(
-			screen.getByRole("list", { name: "Videos" }),
-		).getAllByRole("listitem");
-		expect(items[0].textContent).toContain("Runway: outage");
-		expect((screen.getByLabelText("Prompt") as HTMLTextAreaElement).value).toBe(
-			"",
-		);
-	});
-
-	it("shows the gateway's refusal when a limit is reached", async () => {
-		fakeGateway({ settings: settings() }, (call) =>
-			call.method === "POST"
-				? failure(429, "Your videos for today are used up.")
-				: undefined,
-		);
-		show("admin");
-		await screen.findByRole("heading", { name: "Make a video" });
-		type("Prompt", "x");
-		fireEvent.click(screen.getByRole("button", { name: "Make video" }));
-		expect(
-			await screen.findByText("Your videos for today are used up."),
-		).toBeDefined();
-	});
-
-	it("says video is not set up and offers the settings", async () => {
-		fakeGateway({
-			settings: settings({ configured: false }),
-			models: models({
-				available: false,
-				reason:
-					"This workspace has no video provider. A workspace admin can add one.",
-				providers: [],
-			}),
-		});
-		show("admin");
-		expect(await screen.findByText("Video is not set up")).toBeDefined();
-		expect(
-			screen.getByText(/This workspace has no video provider/),
-		).toBeDefined();
-		expect(
-			screen.getByText(/Add a video provider, or switch one on/),
-		).toBeDefined();
-	});
-
-	it("shows each job's status, error, link and player, and loads more", async () => {
-		const done = job({
-			status: "succeeded",
-			video: {
-				url: "https://gateway.example.com/video/downloads/token",
-				contentType: "video/mp4",
-				expiresAt: "2026-11-20T12:00:00.000Z",
-			},
-		});
-		const failed = job({
-			status: "failed",
-			error: {
-				code: "moderated",
-				message: "Runway: Runway refused the prompt",
-			},
-		});
-		const state: State = {
-			settings: settings(),
-			jobs: [
-				done,
-				failed,
-				job({ status: "canceled" }),
-				job({ status: "expired" }),
-			],
-			nextBefore: "vid_last",
-		};
-		const calls = fakeGateway(state);
-		show("admin");
-		const list = await screen.findByRole("list", { name: "Videos" });
-		const text = list.textContent ?? "";
-		for (const label of ["Done", "Failed", "Canceled", "Expired"])
-			expect(text).toContain(label);
-		expect(text).toContain("Runway: Runway refused the prompt");
-		expect(text).toContain("The provider no longer keeps this video.");
-		expect(
-			within(list)
-				.getByRole("link", { name: "Open video" })
-				.getAttribute("href"),
-		).toBe(done.video?.url);
-		fireEvent.click(
-			within(list).getByRole("button", { name: "Play A lighthouse at dusk" }),
-		);
-		const video = list.querySelector("video") as HTMLVideoElement;
-		expect(video.getAttribute("src")).toBe(done.video?.url);
-		fireEvent.error(video);
-		expect(
-			within(list).getByText("This video cannot play here. Open it instead."),
-		).toBeDefined();
-		fireEvent.click(screen.getByRole("button", { name: "Load more" }));
-		await waitFor(() =>
-			expect(
-				calls.some(
-					(call) => call.path === `${base}/video/jobs?before=vid_last`,
-				),
-			).toBe(true),
-		);
-	});
-
-	it("follows a running job until it is done, and stops when the page goes", async () => {
-		const running = job({ status: "running", progress: 40 });
-		const state: State = { settings: settings(), jobs: [running] };
-		const calls = fakeGateway(state, (call) => {
-			if (call.path === `${base}/video/jobs/${running.id}?wait=10`)
-				return json({
-					...running,
-					status: "succeeded",
-					progress: 100,
-					video: {
-						url: "https://gateway.example.com/video/downloads/x",
-						contentType: "video/mp4",
-						expiresAt: "2026-11-20T12:00:00.000Z",
-					},
-				});
-		});
-		show("admin");
-		const list = await screen.findByRole("list", { name: "Videos" });
-		await waitFor(() => expect(list.textContent).toContain("Done"));
-		expect(
-			calls.some(
-				(call) => call.path === `${base}/video/jobs/${running.id}?wait=10`,
-			),
-		).toBe(true);
-		cleanup();
-		vi.restoreAllMocks();
-
-		// A wait the gateway is still holding is cut off when the page goes.
-		const pending = job({ status: "queued" });
-		let held: AbortSignal | undefined;
-		fakeGateway({ settings: settings(), jobs: [pending] }, (call) => {
-			if (!call.path.endsWith("?wait=10")) return undefined;
-			held = call.signal;
-			return new Promise<Response>((resolve) =>
-				call.signal?.addEventListener("abort", () =>
-					resolve(failure(499, "aborted")),
-				),
-			);
-		});
-		const view = show("admin");
-		await waitFor(() => expect(held).toBeDefined());
-		view.unmount();
-		expect(held?.aborted).toBe(true);
-	});
-
-	it("follows at most three jobs at once, the newest", async () => {
-		const queued = [1, 2, 3, 4].map(() => job({ status: "queued" }));
-		const asked = new Set<string>();
-		fakeGateway({ settings: settings(), jobs: queued }, (call) => {
-			const one = /\/video\/jobs\/([^/?]+)\?wait=10$/.exec(call.path);
-			if (!one) return undefined;
-			asked.add(one[1]);
-			return new Promise<Response>((resolve) =>
-				call.signal?.addEventListener("abort", () =>
-					resolve(failure(499, "aborted")),
-				),
-			);
-		});
-		show("admin");
-		await waitFor(() => expect(asked.size).toBe(3));
-		await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
-		expect([...asked].sort()).toEqual(
-			queued
-				.slice(0, 3)
-				.map((item) => item.id)
-				.sort(),
-		);
-	});
-
-	it("drops a job the gateway no longer has, and re-reads the settings when video is turned off", async () => {
-		const gone = job({ status: "queued", prompt: "Gone" });
-		fakeGateway({ settings: settings(), jobs: [gone] }, (call) =>
-			call.path.endsWith(`${gone.id}?wait=10`)
-				? failure(404, "Video job not found.")
-				: undefined,
-		);
-		show("admin");
-		expect(await screen.findByText("No videos yet")).toBeDefined();
-		cleanup();
-		vi.restoreAllMocks();
-
-		const running = job({ status: "running" });
-		const state: State = { settings: settings(), jobs: [running] };
-		const calls = fakeGateway(state, (call) => {
-			if (!call.path.endsWith(`${running.id}?wait=10`)) return undefined;
-			state.settings = settings({ available: false });
-			return failure(503, "Video generation is turned off on this gateway.");
-		});
-		show("admin");
-		expect(
-			await screen.findAllByText(
-				/Video generation is turned off on this gateway/,
-			),
-		).toHaveLength(1);
-		expect(calls.filter((call) => call.path.endsWith("?wait=10"))).toHaveLength(
-			1,
-		);
-	});
-
-	it("stops a video after confirming", async () => {
-		const running = job({ status: "running", progress: null });
-		const state: State = { settings: settings(), jobs: [running] };
-		const calls = fakeGateway(state, (call) => {
-			if (call.method === "POST" && call.path.endsWith("/cancel"))
-				return json({ ...running, status: "canceled" });
-		});
-		show("admin");
-		const stop = await screen.findByRole("button", {
-			name: "Stop A lighthouse at dusk",
-		});
-		fireEvent.click(stop);
-		expect(
-			screen.getByText("Stopping does not give back the estimated cost."),
-		).toBeDefined();
-		const confirm = screen.getByRole("button", {
-			name: "Confirm stop A lighthouse at dusk",
-		});
-		expect(document.activeElement).toBe(confirm);
-		fireEvent.click(screen.getByRole("button", { name: "Keep going" }));
-		expect(document.activeElement).toBe(
-			screen.getByRole("button", { name: "Stop A lighthouse at dusk" }),
-		);
-		fireEvent.click(
-			screen.getByRole("button", { name: "Stop A lighthouse at dusk" }),
-		);
-		await act(async () => {
-			fireEvent.click(
-				screen.getByRole("button", {
-					name: "Confirm stop A lighthouse at dusk",
-				}),
-			);
-		});
-		await waitFor(() =>
-			expect(
-				screen.getByRole("list", { name: "Videos" }).textContent,
-			).toContain("Canceled"),
-		);
-		expect(sent(calls, "POST")[0].path).toBe(
-			`${base}/video/jobs/${running.id}/cancel`,
-		);
-	});
-});
-
 describe("Video helpers", () => {
-	it("says what a limit does", () => {
-		const names = { agent: (id: string) => ({ a1: "Researcher" })[id] };
-		const sentence = (overrides: Partial<VideoLimit>) =>
-			videoLimitSentence({ ...limit(), ...overrides }, names);
-		expect(sentence({ maxDurationSeconds: null, videosPerDay: 1 })).toBe(
-			"Each person, API token, and agent can start up to 1 video a day (UTC) on any video model.",
-		);
-		expect(
-			sentence({
-				appliesTo: { kind: "agents", agentIds: ["a1"] },
-				covers: { kind: "video-model", model: "seedance2_5" },
-				videosPerDay: 0,
-			}),
-		).toBe(
-			"Researcher cannot start videos on Seedance 2.5: a limit of 0 a day refuses every one.",
-		);
-		expect(sentence({ videosPerDay: 0 })).toContain(
-			"No one in this workspace can start videos",
-		);
-		expect(
-			sentence({
-				appliesTo: { kind: "agents", agentIds: ["a1", "gone"] },
-				videosPerDay: null,
-				maxDurationSeconds: 6,
-			}),
-		).toBe(
-			"Videos Researcher and a removed agent start on any video model can be up to 6 seconds long.",
-		);
-	});
-
-	it("caps a model's choices by the workspace's longest video", () => {
-		const seedance = VIDEO_MODELS.runway[0];
-		const ray = VIDEO_MODELS.luma[0];
-		expect(formChoices(seedance, 10).durations).toEqual({
-			kind: "range",
-			min: 4,
-			max: 10,
-		});
-		expect(formChoices(ray, 7).durations).toEqual({
-			kind: "list",
-			values: [5],
-		});
-		expect(formChoices(ray, 4).fits).toBe(false);
-		expect(formChoices(VIDEO_MODELS.google[0], 10).image).toBe(false);
-		const want = {
-			prompt: "x",
-			durationSeconds: 5,
-			aspectRatio: "16:9" as const,
-			resolution: "720p" as const,
-			imageUrl: "",
-		};
-		expect(videoRequestProblem(seedance, 10, want)).toBeNull();
-		expect(videoRequestProblem(seedance, 10, { ...want, prompt: " " })).toBe(
-			"Describe the video.",
-		);
-		expect(
-			videoRequestProblem(seedance, 10, {
-				...want,
-				imageUrl: "http://example.com/a.png",
-			}),
-		).toBe("The image URL must start with https://.");
-		expect(
-			videoRequestProblem(VIDEO_MODELS.google[0], 10, {
-				...want,
-				imageUrl: "https://example.com/a.png",
-			}),
-		).toContain("does not start from an image");
-		expect(
-			videoRequestProblem(seedance, 10, { ...want, resolution: "540p" }),
-		).toContain("makes 480p, 720p, 1080p videos");
-	});
-
 	it("keeps the tab in the address", () => {
 		setCurrentWorkspace(WORKSPACE);
 		expect(parseModelsTab(`#/w/${WORKSPACE}/models`)).toBe("llm");
 		expect(parseModelsTab(`#/w/${WORKSPACE}/models/video`)).toBe("video");
-		expect(parseModelsTab(`#/w/${WORKSPACE}/models/budget`)).toBe("budget");
+		expect(parseModelsTab(`#/w/${WORKSPACE}/models/policies`)).toBe("policies");
+		// Policies was the Budget tab.
+		expect(parseModelsTab(`#/w/${WORKSPACE}/models/budget`)).toBe("policies");
 		expect(parseModelsTab(`#/w/${WORKSPACE}/models/routing`)).toBe("routing");
 		// Links to the Video page before it became a tab of Models.
 		expect(parseModelsTab(`#/w/${WORKSPACE}/video/settings`)).toBe("video");
 		expect(parseModelsTab("#/video")).toBe("video");
 		expect(modelsHash("video")).toBe(`#/w/${WORKSPACE}/models/video`);
 		expect(modelsHash("llm")).toBe(`#/w/${WORKSPACE}/models`);
+		expect(modelsHash("policies")).toBe(`#/w/${WORKSPACE}/models/policies`);
 	});
 });
 
@@ -1273,7 +525,7 @@ describe("Video against the gateway", () => {
 		window.localStorage.clear();
 	});
 
-	it("opens from the sidebar, adds a provider, and changes the starting limit", async () => {
+	it("opens from the sidebar and adds a provider", async () => {
 		const server = createServer({
 			config: { providers: [], corsOrigins: ["*"] },
 			logger: false,
@@ -1312,24 +564,5 @@ describe("Video against the gateway", () => {
 			{ name: "runway", kind: "runway", keyConfigured: true, enabled: true },
 		]);
 		expect(JSON.stringify(saved)).not.toContain("rw-secret");
-
-		// Every workspace starts with one limit for everyone on every model.
-		fireEvent.click(
-			screen.getByRole("button", {
-				name: "Edit the limit for Everyone in this workspace on all video models",
-			}),
-		);
-		const edit = screen.getByRole("region", { name: "Edit video limit" });
-		type("Videos a day (optional)", "3", edit);
-		fireEvent.click(within(edit).getByRole("button", { name: "Save changes" }));
-		expect(await screen.findByText("Limit saved.")).toBeDefined();
-		expect((await read()).limits).toMatchObject([
-			{
-				appliesTo: { kind: "everyone" },
-				covers: { kind: "video" },
-				videosPerDay: 3,
-				maxDurationSeconds: 10,
-			},
-		]);
 	});
 });

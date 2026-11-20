@@ -1,11 +1,7 @@
 import {
-	type AgentSummary,
-	agentNamesText,
-	type BudgetAppliesTo,
 	type CreateVideoConnectionRequest,
 	DEFAULT_VIDEO_MODEL,
 	type UpdateVideoConnectionRequest,
-	type UpdateVideoLimitRequest,
 	VIDEO_KIND_LABELS,
 	VIDEO_KINDS,
 	VIDEO_LIMITS,
@@ -13,38 +9,24 @@ import {
 	VIDEO_NAME_PATTERN,
 	type VideoConnection,
 	type VideoKind,
-	type VideoLimit,
-	type VideoLimitCovers,
-	type VideoLimitInput,
-	type VideoModelList,
 	type VideoPolicy,
 	type VideoSettings,
-	videoLimitProblem,
 	videoModel,
-	videoModelLabel,
 } from "@autonomo.us/common";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
-import { AppliesToFields } from "./AppliesToFields.js";
 import {
 	ApiError,
 	createVideoConnection,
-	createVideoLimit,
 	deleteVideoConnection,
-	deleteVideoLimit,
-	fetchAgents,
-	fetchVideoModels,
 	fetchVideoSettings,
 	updateVideoConnection,
-	updateVideoLimit,
 	updateVideoPolicy,
 } from "./api.js";
 import { Dropdown } from "./Dropdown.js";
 import { Icon } from "./Icons.js";
 import { LoadingBanner } from "./LoadingBanner.js";
 import { usd } from "./ProxiesView.js";
-import { VideoJobsPanel } from "./VideoJobs.js";
-
-export { formChoices, videoRequestProblem } from "./VideoJobs.js";
+import { TabAction } from "./TabAction.js";
 
 const SUGGESTED_NAMES: Record<VideoKind, string> = {
 	google: "google-video",
@@ -66,63 +48,6 @@ const errorText = (cause: unknown, fallback: string) =>
 	cause instanceof Error ? cause.message : fallback;
 const modelLabel = (kind: VideoKind, id: string) =>
 	videoModel(kind, id)?.label ?? id;
-
-type Names = { agent(id: string): string | undefined };
-
-const seconds = (value: number) =>
-	`${value} ${value === 1 ? "second" : "seconds"}`;
-
-/** Who a limit applies to, in words. */
-function limitWho(appliesTo: BudgetAppliesTo, names: Names): string {
-	if (appliesTo.kind === "everyone") return "Everyone in this workspace";
-	return agentNamesText(
-		appliesTo.agentIds.map((id) => names.agent(id) ?? "a removed agent"),
-	);
-}
-
-/** What a limit covers, in words. */
-function limitCovers(covers: VideoLimitCovers): string {
-	return covers.kind === "video"
-		? "all video models"
-		: videoModelLabel(covers.model);
-}
-
-/** What a video limit does, as a sentence a person can check before saving. */
-export function videoLimitSentence(
-	input: VideoLimitInput,
-	names: Names,
-): string {
-	const listed =
-		input.appliesTo.kind === "agents"
-			? input.appliesTo.agentIds.map(
-					(id) => names.agent(id) ?? "a removed agent",
-				)
-			: [];
-	const agents = agentNamesText(listed);
-	const what =
-		input.covers.kind === "video"
-			? "any video model"
-			: videoModelLabel(input.covers.model);
-	const perDay = input.videosPerDay ?? null;
-	const longest = input.maxDurationSeconds ?? null;
-	if (perDay === 0)
-		return `${listed.length ? `${agents} cannot` : "No one in this workspace can"} start videos on ${what}: a limit of 0 a day refuses every one.`;
-	if (perDay !== null) {
-		const who = !listed.length
-			? "Each person, API token, and agent can"
-			: listed.length === 1
-				? `${agents} can`
-				: `${agents} can each`;
-		const videos = `${count(perDay)} ${perDay === 1 ? "video" : "videos"}`;
-		const length =
-			longest !== null ? `, each up to ${seconds(longest)} long` : "";
-		return `${who} start up to ${videos} a day (UTC) on ${what}${length}.`;
-	}
-	const whose = listed.length
-		? `${agents} ${listed.length === 1 ? "starts" : "start"}`
-		: "anyone in this workspace starts";
-	return `Videos ${whose} on ${what} can be up to ${seconds(longest ?? 0)} long.`;
-}
 
 /** The order videos try connections in: the policy's, then the rest as added. */
 function displayOrder(policy: VideoPolicy, connections: VideoConnection[]) {
@@ -520,657 +445,24 @@ function ProviderOrder({
 	);
 }
 
-/** Adds a video limit, or changes one. */
-function VideoLimitForm({
-	existing,
-	agents,
-	names,
-	connected,
-	onSaved,
-	onClose,
-}: {
-	existing?: VideoLimit;
-	agents: AgentSummary[];
-	names: Names;
-	/** Provider kinds this workspace has a connection for: their models come first. */
-	connected: VideoKind[];
-	onSaved(limit: VideoLimit, added: boolean): void;
-	onClose(): void;
-}) {
-	const id = useId();
-	const kinds = [
-		...VIDEO_KINDS.filter((kind) => connected.includes(kind)),
-		...VIDEO_KINDS.filter((kind) => !connected.includes(kind)),
-	];
-	const [who, setWho] = useState<"everyone" | "agents">(
-		existing?.appliesTo.kind ?? "everyone",
-	);
-	const [agentIds, setAgentIds] = useState<string[]>(
-		existing?.appliesTo.kind === "agents" ? existing.appliesTo.agentIds : [],
-	);
-	const [covers, setCovers] = useState<VideoLimitCovers["kind"]>(
-		existing?.covers.kind ?? "video",
-	);
-	const [model, setModel] = useState(
-		existing?.covers.kind === "video-model"
-			? existing.covers.model
-			: VIDEO_MODELS[kinds[0]][0].id,
-	);
-	const [perDay, setPerDay] = useState(
-		existing?.videosPerDay != null ? String(existing.videosPerDay) : "",
-	);
-	const [longest, setLongest] = useState(
-		existing?.maxDurationSeconds != null
-			? String(existing.maxDurationSeconds)
-			: "",
-	);
-	const [saving, setSaving] = useState(false);
-	const [error, setError] = useState("");
-	const first = useRef<HTMLInputElement>(null);
-	useEffect(() => {
-		first.current?.focus();
-	}, []);
-	const optional = (text: string) => (text.trim() === "" ? null : Number(text));
-	const input: VideoLimitInput = {
-		appliesTo:
-			who === "everyone" ? { kind: "everyone" } : { kind: "agents", agentIds },
-		covers:
-			covers === "video" ? { kind: "video" } : { kind: "video-model", model },
-		videosPerDay: optional(perDay),
-		maxDurationSeconds: optional(longest),
-	};
-	const problem = videoLimitProblem(input);
-	// An edit sends only what changed, so a limit on a model the gateway has
-	// since dropped can still have its numbers changed.
-	const changes = (limit: VideoLimit): UpdateVideoLimitRequest => {
-		const same = (a: unknown, b: unknown) =>
-			JSON.stringify(a) === JSON.stringify(b);
-		return {
-			...(same(input.appliesTo, limit.appliesTo)
-				? {}
-				: { appliesTo: input.appliesTo }),
-			...(same(input.covers, limit.covers) ? {} : { covers: input.covers }),
-			...(input.videosPerDay === limit.videosPerDay
-				? {}
-				: { videosPerDay: input.videosPerDay }),
-			...(input.maxDurationSeconds === limit.maxDurationSeconds
-				? {}
-				: { maxDurationSeconds: input.maxDurationSeconds }),
-		};
-	};
-
-	return (
-		<section
-			className="card add-model-card"
-			aria-labelledby={`${id}-title`}
-			onKeyDown={(event) => {
-				// Escape closes the form, unless it is closing a list inside it.
-				if (
-					event.key !== "Escape" ||
-					saving ||
-					event.defaultPrevented ||
-					(event.target as HTMLElement).closest('[role="listbox"]')
-				)
-					return;
-				event.preventDefault();
-				onClose();
-			}}
-		>
-			<div className="section-heading">
-				<div>
-					<h2 id={`${id}-title`}>
-						{existing ? "Edit video limit" : "Add a video limit"}
-					</h2>
-					<p className="card-note">
-						Every limit that covers a video applies, so the strictest wins.
-					</p>
-				</div>
-				<button
-					className="icon-button"
-					type="button"
-					aria-label={
-						existing ? "Close edit video limit" : "Close add video limit"
-					}
-					onClick={onClose}
-					disabled={saving}
-				>
-					<Icon name="close" />
-				</button>
-			</div>
-			<form
-				onSubmit={async (event) => {
-					event.preventDefault();
-					if (saving || problem) return;
-					setSaving(true);
-					setError("");
-					try {
-						if (!existing) {
-							onSaved(await createVideoLimit(input), true);
-							return;
-						}
-						const patch = changes(existing);
-						onSaved(
-							Object.keys(patch).length
-								? await updateVideoLimit(existing.id, patch)
-								: existing,
-							false,
-						);
-					} catch (cause) {
-						setError(errorText(cause, "Could not save the limit."));
-					} finally {
-						setSaving(false);
-					}
-				}}
-			>
-				<fieldset className="budget-form" disabled={saving}>
-					<AppliesToFields
-						id={id}
-						who={who}
-						onWho={setWho}
-						agentIds={agentIds}
-						onAgentIds={setAgentIds}
-						agents={agents}
-						maxAgents={VIDEO_LIMITS.agentsPerLimit}
-						everyoneHint="Each person, API token, and agent is counted on their own."
-						agentsHint="Each agent you pick is counted on its own."
-						firstRef={first}
-					/>
-					<div className="model-form-grid">
-						<div className="form-field">
-							<label htmlFor={`${id}-covers`}>Covers</label>
-							<Dropdown
-								id={`${id}-covers`}
-								value={covers}
-								onValueChange={(value) =>
-									setCovers(value as VideoLimitCovers["kind"])
-								}
-							>
-								<option value="video">All video models</option>
-								<option value="video-model">One video model</option>
-							</Dropdown>
-						</div>
-						{covers === "video-model" && (
-							<div className="form-field">
-								<label htmlFor={`${id}-model`}>Video model</label>
-								<Dropdown
-									id={`${id}-model`}
-									value={model}
-									onValueChange={setModel}
-								>
-									{kinds.flatMap((kind) =>
-										VIDEO_MODELS[kind].map((item) => (
-											<option key={item.id} value={item.id}>
-												{`${item.label} (${VIDEO_KIND_LABELS[kind]}${connected.includes(kind) ? "" : ", not connected"})`}
-											</option>
-										)),
-									)}
-								</Dropdown>
-							</div>
-						)}
-					</div>
-					<div className="model-form-grid">
-						<div className="form-field">
-							<label htmlFor={`${id}-per-day`}>
-								Videos a day <span className="field-hint">(optional)</span>
-							</label>
-							<input
-								id={`${id}-per-day`}
-								type="number"
-								inputMode="numeric"
-								min={0}
-								max={VIDEO_LIMITS.maxCallerVideosPerDay}
-								step={1}
-								placeholder="10"
-								value={perDay}
-								onChange={(event) => setPerDay(event.target.value)}
-								aria-describedby={`${id}-per-day-help`}
-							/>
-							<span className="field-hint" id={`${id}-per-day-help`}>
-								Counted from 00:00 UTC. Leave blank for no daily limit.
-							</span>
-						</div>
-						<div className="form-field">
-							<label htmlFor={`${id}-longest`}>
-								Longest video (seconds){" "}
-								<span className="field-hint">(optional)</span>
-							</label>
-							<input
-								id={`${id}-longest`}
-								type="number"
-								inputMode="numeric"
-								min={VIDEO_LIMITS.minDurationSeconds}
-								max={VIDEO_LIMITS.maxDurationSeconds}
-								step={1}
-								placeholder="10"
-								value={longest}
-								onChange={(event) => setLongest(event.target.value)}
-								aria-describedby={`${id}-longest-help`}
-							/>
-							<span className="field-hint" id={`${id}-longest-help`}>
-								From {VIDEO_LIMITS.minDurationSeconds} to{" "}
-								{VIDEO_LIMITS.maxDurationSeconds}. Leave blank for no length
-								limit.
-							</span>
-						</div>
-					</div>
-					<p className="budget-preview" id={`${id}-preview`}>
-						{problem ?? videoLimitSentence(input, names)}
-					</p>
-					{error && (
-						<div className="banner-error" role="alert">
-							{error}
-						</div>
-					)}
-					<div className="form-actions">
-						<button
-							className="button"
-							type="button"
-							onClick={onClose}
-							disabled={saving}
-						>
-							Cancel
-						</button>
-						<button
-							className="button primary"
-							type="submit"
-							disabled={Boolean(problem)}
-							aria-describedby={`${id}-preview`}
-						>
-							{saving ? "Saving…" : existing ? "Save changes" : "Add limit"}
-						</button>
-					</div>
-				</fieldset>
-			</form>
-		</section>
-	);
-}
-
 /**
- * The workspace's video limits: how many videos a day and how long, for
- * everyone or chosen agents, on every video model or one. Admins add,
- * change, switch off, and delete them; members see them.
- */
-function VideoLimitsCard({
-	limits,
-	agents,
-	connected,
-	canEdit,
-	onChange,
-	onShowBudget,
-}: {
-	limits: VideoLimit[];
-	agents: AgentSummary[];
-	connected: VideoKind[];
-	canEdit: boolean;
-	/** Shows a change made here at once; a fresh read follows. */
-	onChange(update: (limits: VideoLimit[]) => VideoLimit[]): void;
-	onShowBudget(): void;
-}) {
-	const [panel, setPanel] = useState<
-		{ kind: "add" } | { kind: "edit"; id: string } | null
-	>(null);
-	const [notice, setNotice] = useState("");
-	const [rowError, setRowError] = useState("");
-	const [confirming, setConfirming] = useState<string | null>(null);
-	const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
-	const working = (limitId: string, on: boolean) =>
-		setBusy((current) => {
-			const next = new Set(current);
-			if (on) next.add(limitId);
-			else next.delete(limitId);
-			return next;
-		});
-	const names: Names = {
-		agent: (agentId) => agents.find((agent) => agent.id === agentId)?.name,
-	};
-	// Closing a form returns focus to what opened it: Add limit, or the row's Edit.
-	const addButton = useRef<HTMLButtonElement>(null);
-	const heading = useRef<HTMLHeadingElement>(null);
-	const editButtons = useRef(new Map<string, HTMLButtonElement>());
-	const focusAfterClose = useRef<string | null>(null);
-	useEffect(() => {
-		if (panel || !focusAfterClose.current) return;
-		const target = focusAfterClose.current;
-		focusAfterClose.current = null;
-		(editButtons.current.get(target) ?? addButton.current)?.focus();
-	}, [panel]);
-	const closePanel = () => {
-		focusAfterClose.current = panel?.kind === "edit" ? panel.id : "add";
-		setPanel(null);
-	};
-	// Delete and Cancel replace themselves: focus follows to what took their place.
-	const confirmDelete = useRef<HTMLButtonElement>(null);
-	const deleteButtons = useRef(new Map<string, HTMLButtonElement>());
-	const refocusDelete = useRef<string | null>(null);
-	useEffect(() => {
-		if (confirming) {
-			confirmDelete.current?.focus();
-			return;
-		}
-		const limitId = refocusDelete.current;
-		refocusDelete.current = null;
-		if (limitId) deleteButtons.current.get(limitId)?.focus();
-	}, [confirming]);
-	const editing =
-		panel?.kind === "edit"
-			? limits.find((limit) => limit.id === panel.id)
-			: undefined;
-	const form = (existing?: VideoLimit) => (
-		<VideoLimitForm
-			key={existing?.id ?? "add"}
-			existing={existing}
-			agents={agents}
-			names={names}
-			connected={connected}
-			onClose={closePanel}
-			onSaved={(saved, added) => {
-				onChange((current) =>
-					added
-						? [...current, saved]
-						: current.map((item) => (item.id === saved.id ? saved : item)),
-				);
-				setNotice(added ? "Limit added." : "Limit saved.");
-				closePanel();
-			}}
-		/>
-	);
-
-	return (
-		<>
-			{panel?.kind === "add" && form()}
-			{editing && form(editing)}
-			<section
-				className="card active-models"
-				aria-labelledby="video-limits-heading"
-			>
-				<div className="section-heading">
-					<div>
-						<h2 id="video-limits-heading" ref={heading} tabIndex={-1}>
-							Video limits
-						</h2>
-						<p className="card-note">
-							How many videos each person, API token, or agent may start in a
-							day, and how long a video may be. When several limits cover a
-							video, the strictest applies.
-						</p>
-					</div>
-					{canEdit && (
-						<button
-							ref={addButton}
-							type="button"
-							className="button"
-							disabled={panel?.kind === "add"}
-							onClick={() => {
-								setPanel({ kind: "add" });
-								setNotice("");
-								setRowError("");
-							}}
-						>
-							<Icon name="plus" /> Add limit
-						</button>
-					)}
-				</div>
-				{notice && (
-					<p className="success-notice" role="status">
-						{notice}
-					</p>
-				)}
-				{rowError && (
-					<div className="banner-error" role="alert">
-						{rowError}
-					</div>
-				)}
-				{limits.length === 0 ? (
-					<div className="models-empty">
-						<h3>No video limits</h3>
-						<p>
-							Videos are limited only by budgets and the longest each model can
-							make.
-						</p>
-					</div>
-				) : (
-					<div className="table-scroll">
-						<table className="models-table budget-table">
-							<thead>
-								<tr>
-									<th>Applies to</th>
-									<th>Covers</th>
-									<th>Videos a day</th>
-									<th>Longest video</th>
-									<th>Status</th>
-									{canEdit && (
-										<th>
-											<span className="visually-hidden">Actions</span>
-										</th>
-									)}
-								</tr>
-							</thead>
-							<tbody>
-								{limits.map((limit) => {
-									const who = limitWho(limit.appliesTo, names);
-									const label = `${who} on ${limitCovers(limit.covers)}`;
-									return (
-										<tr key={limit.id}>
-											<td className="budget-who">
-												<strong>{who}</strong>
-											</td>
-											<td data-label="Covers">
-												{limit.covers.kind === "video" ? (
-													"All video models"
-												) : (
-													<>
-														{videoModelLabel(limit.covers.model)}
-														<span className="field-hint">Video model</span>
-													</>
-												)}
-											</td>
-											<td data-label="Videos a day">
-												{limit.videosPerDay === null ? (
-													<span className="field-hint">No limit</span>
-												) : limit.videosPerDay === 0 ? (
-													<span className="budget-blocked">
-														None: blocks every video it covers
-													</span>
-												) : (
-													<>
-														{count(limit.videosPerDay)}
-														{limit.appliesTo.kind === "everyone" ? (
-															<span className="field-hint">
-																per person, token, or agent
-															</span>
-														) : limit.appliesTo.agentIds.length > 1 ? (
-															<span className="field-hint">per agent</span>
-														) : null}
-													</>
-												)}
-											</td>
-											<td data-label="Longest video">
-												{limit.maxDurationSeconds === null ? (
-													<span className="field-hint">No limit</span>
-												) : (
-													seconds(limit.maxDurationSeconds)
-												)}
-											</td>
-											<td data-label="Status">
-												{canEdit ? (
-													<label className="failover-enable">
-														<input
-															type="checkbox"
-															aria-label={`Use the limit for ${label}`}
-															checked={limit.enabled}
-															disabled={busy.has(limit.id)}
-															onChange={async (event) => {
-																setRowError("");
-																working(limit.id, true);
-																try {
-																	const saved = await updateVideoLimit(
-																		limit.id,
-																		{
-																			enabled: event.target.checked,
-																		},
-																	);
-																	onChange((current) =>
-																		current.map((item) =>
-																			item.id === saved.id ? saved : item,
-																		),
-																	);
-																} catch (cause) {
-																	setRowError(
-																		errorText(cause, "Could not change it."),
-																	);
-																} finally {
-																	working(limit.id, false);
-																}
-															}}
-														/>
-														{limit.enabled ? "On" : "Off"}
-													</label>
-												) : (
-													<span className="chip">
-														<span
-															className={`dot ${limit.enabled ? "dot-good" : "dot-muted"}`}
-														/>
-														{limit.enabled ? "On" : "Off"}
-													</span>
-												)}
-											</td>
-											{canEdit && (
-												<td className="budget-actions">
-													<div className="proxy-actions">
-														<button
-															ref={(element) => {
-																if (element)
-																	editButtons.current.set(limit.id, element);
-																else editButtons.current.delete(limit.id);
-															}}
-															className="button"
-															type="button"
-															aria-label={`Edit the limit for ${label}`}
-															onClick={() => {
-																setPanel({ kind: "edit", id: limit.id });
-																setNotice("");
-																setRowError("");
-															}}
-														>
-															Edit
-														</button>
-														{confirming === limit.id ? (
-															<>
-																<button
-																	ref={confirmDelete}
-																	className="button danger"
-																	type="button"
-																	aria-label={`Confirm delete the limit for ${label}`}
-																	disabled={busy.has(limit.id)}
-																	onClick={async () => {
-																		setRowError("");
-																		working(limit.id, true);
-																		try {
-																			await deleteVideoLimit(limit.id);
-																			setConfirming(null);
-																			if (
-																				panel?.kind === "edit" &&
-																				panel.id === limit.id
-																			)
-																				setPanel(null);
-																			onChange((current) =>
-																				current.filter(
-																					(item) => item.id !== limit.id,
-																				),
-																			);
-																			setNotice("Limit deleted.");
-																			// Its row is gone: focus goes to Add limit,
-																			// or the heading while the add form has it off.
-																			const add = addButton.current;
-																			(add && !add.disabled
-																				? add
-																				: heading.current
-																			)?.focus();
-																		} catch (cause) {
-																			setRowError(
-																				errorText(
-																					cause,
-																					"Could not delete it.",
-																				),
-																			);
-																		} finally {
-																			working(limit.id, false);
-																		}
-																	}}
-																>
-																	{busy.has(limit.id) ? "Deleting…" : "Delete"}
-																</button>
-																<button
-																	className="button"
-																	type="button"
-																	onClick={() => {
-																		refocusDelete.current = limit.id;
-																		setConfirming(null);
-																	}}
-																>
-																	Cancel
-																</button>
-															</>
-														) : (
-															<button
-																ref={(element) => {
-																	if (element)
-																		deleteButtons.current.set(
-																			limit.id,
-																			element,
-																		);
-																	else deleteButtons.current.delete(limit.id);
-																}}
-																className="button"
-																type="button"
-																aria-label={`Delete the limit for ${label}`}
-																onClick={() => setConfirming(limit.id)}
-															>
-																Delete
-															</button>
-														)}
-													</div>
-												</td>
-											)}
-										</tr>
-									);
-								})}
-							</tbody>
-						</table>
-					</div>
-				)}
-				<p className="card-note budget-footnote">
-					What videos may cost is set on the Budget tab.{" "}
-					<button className="link-button" type="button" onClick={onShowBudget}>
-						See video budgets
-					</button>
-				</p>
-			</section>
-		</>
-	);
-}
-
-/**
- * The Models page's Video tab: providers, the order they are tried in, the
- * video limits, and, for admins, making videos and every video made.
- * Members see providers and limits; admins change them, make videos, and
- * see every job.
+ * The Models page's Video tab: the providers agents make videos with, and
+ * the order they are tried in. Members see them; admins change them. How
+ * many videos and how long is set with video limits on the Policies tab.
  */
 export function VideoPanel({
 	workspace,
 	active = true,
-	onShowBudget,
+	onShowPolicies,
 }: {
 	workspace?: { isDefault: boolean; role?: "admin" | "member" };
 	/** Whether the tab is showing: coming back to it reads spend afresh. */
 	active?: boolean;
-	onShowBudget(): void;
+	/** Opens the Policies tab, where video limits and budgets are set. */
+	onShowPolicies?(): void;
 }) {
 	const canEdit = workspace?.role !== "member";
 	const [settings, setSettings] = useState<VideoSettings | null>(null);
-	const [models, setModels] = useState<VideoModelList | null>(null);
-	const [modelsError, setModelsError] = useState("");
-	const [agents, setAgents] = useState<AgentSummary[]>([]);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState("");
 	const [notice, setNotice] = useState("");
@@ -1182,38 +474,16 @@ export function VideoPanel({
 	const [rowError, setRowError] = useState("");
 	const addButton = useRef<HTMLButtonElement>(null);
 	const sequence = useRef(0);
-	const modelSequence = useRef(0);
 
-	const loadModels = useCallback(async () => {
-		const request = ++modelSequence.current;
-		try {
-			const next = await fetchVideoModels();
-			if (request !== modelSequence.current) return;
-			setModels(next);
-			setModelsError("");
-		} catch (cause) {
-			if (request !== modelSequence.current) return;
-			setModelsError(errorText(cause, "Could not load the video models."));
-		}
-	}, []);
-	/** Reads the settings again, and the agents limits can name. */
+	/** Reads the settings again. */
 	const refresh = useCallback(async () => {
 		const request = ++sequence.current;
 		setLoading(true);
-		// Without the agents, limits still show; agents show as removed.
-		fetchAgents().then(
-			(list) => {
-				if (request === sequence.current) setAgents(list.agents);
-			},
-			() => undefined,
-		);
 		try {
 			const next = await fetchVideoSettings();
 			if (request !== sequence.current) return;
 			setSettings(next);
 			setError("");
-			// Models and jobs answer 503 when video is off, and 403 to members.
-			if (canEdit && next.available) void loadModels();
 		} catch (cause) {
 			if (request !== sequence.current) return;
 			setError(
@@ -1225,12 +495,11 @@ export function VideoPanel({
 		} finally {
 			if (request === sequence.current) setLoading(false);
 		}
-	}, [canEdit, loadModels]);
+	}, []);
 	useEffect(() => {
 		void refresh();
 		return () => {
 			sequence.current++;
-			modelSequence.current++;
 		};
 	}, [refresh]);
 	const shownBefore = useRef(active);
@@ -1561,22 +830,22 @@ export function VideoPanel({
 				/>
 			)}
 			{settings && (
-				<VideoLimitsCard
-					limits={settings.limits}
-					agents={agents}
-					connected={[...new Set(connections.map((item) => item.kind))]}
-					canEdit={canChange}
-					onChange={(update) => {
-						setSettings((current) =>
-							current
-								? { ...current, limits: update(current.limits) }
-								: current,
-						);
-						// A read started before this change would undo it on screen.
-						void refresh();
-					}}
-					onShowBudget={onShowBudget}
-				/>
+				<p className="card-note video-policies-note">
+					How many videos each person, API token, or agent may make, how long
+					they may be, and what they may cost are set with policies.
+					{onShowPolicies && (
+						<>
+							{" "}
+							<button
+								className="link-button"
+								type="button"
+								onClick={onShowPolicies}
+							>
+								Open Policies
+							</button>
+						</>
+					)}
+				</p>
 			)}
 		</>
 	);
@@ -1584,23 +853,9 @@ export function VideoPanel({
 	return (
 		<div className="video-page">
 			<div className="tab-intro">
-				{canEdit ? (
-					<button
-						ref={addButton}
-						className="button primary"
-						type="button"
-						disabled={!settings || !available || panel?.kind === "add"}
-						onClick={() => {
-							setPanel({ kind: "add" });
-							setNotice("");
-						}}
-					>
-						<Icon name="plus" /> Add video provider
-					</button>
-				) : (
+				{!canEdit && (
 					<p className="page-note">
-						Only workspace admins change video settings, make videos, and see
-						the videos made.
+						Only workspace admins change video settings.
 					</p>
 				)}
 				{settings?.persistence === "memory" && (
@@ -1608,6 +863,22 @@ export function VideoPanel({
 						Video settings are temporary and last until the API restarts.
 						Connect MongoDB to keep them.
 					</p>
+				)}
+				{canEdit && (
+					<TabAction active={active}>
+						<button
+							ref={addButton}
+							className="button primary"
+							type="button"
+							disabled={!settings || !available || panel?.kind === "add"}
+							onClick={() => {
+								setPanel({ kind: "add" });
+								setNotice("");
+							}}
+						>
+							<Icon name="plus" /> Add video provider
+						</button>
+					</TabAction>
 				)}
 			</div>
 			{settings && !settings.available && (
@@ -1634,14 +905,6 @@ export function VideoPanel({
 				</div>
 			)}
 			{settingsPanel}
-			{canEdit && settings?.available && (
-				<VideoJobsPanel
-					models={models}
-					modelsError={modelsError}
-					onFinished={() => void refresh()}
-					onRetryModels={() => void loadModels()}
-				/>
-			)}
 		</div>
 	);
 }

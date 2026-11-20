@@ -4,7 +4,6 @@ import {
 	VIDEO_RESOLUTIONS,
 	type VideoGenerateRequest,
 	type VideoJob,
-	type VideoJobList,
 	type VideoModelList,
 	videoDurationsText,
 } from "@autonomo.us/common";
@@ -109,19 +108,6 @@ export const VIDEO_MCP_TOOLS: McpToolDefinition[] = [
 			"Stops one of your video jobs. Its estimated cost stays counted. Needs the video:generate grant.",
 		inputSchema: schema({ id: JOB_ID }, ["id"]),
 	},
-	{
-		name: "video_list",
-		description:
-			"Lists your own video jobs, newest first. Needs the video:generate grant.",
-		inputSchema: schema({
-			limit: {
-				type: "integer",
-				description: `How many jobs to list. Default ${VIDEO_LIMITS.defaultListLimit}.`,
-				minimum: 1,
-				maximum: VIDEO_LIMITS.maxAgentListLimit,
-			},
-		}),
-	},
 ];
 
 const money = (usd: number) => `$${usd.toFixed(2)}`;
@@ -178,11 +164,6 @@ export function videoModelsText(list: VideoModelList): string {
 		}.${list.canGenerate ? "" : " This agent lacks the video:generate grant, so it cannot start one."}`,
 		...lines,
 	].join("\n");
-}
-
-function videoListText(list: VideoJobList): string {
-	if (!list.jobs.length) return "You have no video jobs.";
-	return list.jobs.map(videoJobText).join("\n");
 }
 
 const callerOf = (agent: McpAgent) => ({
@@ -267,28 +248,11 @@ export function videoToolSet(video: VideoService): McpToolSet {
 					{ origin: originOf(context) },
 				);
 			},
-			video_list: async (agent, args, context) => {
-				requireGrant(agent, "video:generate");
-				return video.list(
-					agent.workspace,
-					{ ownOnly: callerOf(agent).id },
-					{
-						limit: Math.min(
-							(args.limit as number | undefined) ??
-								VIDEO_LIMITS.defaultListLimit,
-							VIDEO_LIMITS.maxAgentListLimit,
-						),
-					},
-					{ origin: originOf(context) },
-				);
-			},
 		},
 		text: (name, result) => {
 			switch (name) {
 				case "video_models":
 					return videoModelsText(result as VideoModelList);
-				case "video_list":
-					return videoListText(result as VideoJobList);
 				case "video_generate":
 				case "video_status":
 				case "video_cancel":

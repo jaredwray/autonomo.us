@@ -20,21 +20,23 @@ import {
 	type ModelCatalog,
 	type ModelsData,
 } from "./api.js";
-import { BudgetPanel } from "./BudgetView.js";
 import { Dropdown } from "./Dropdown.js";
 import { Icon } from "./Icons.js";
 import { LoadingBanner } from "./LoadingBanner.js";
 import { ModelCombobox } from "./ModelCombobox.js";
+import { ModelUsageChart } from "./ModelUsageChart.js";
 import { type ModelsTab, modelsHash, parseModelsTab } from "./models-route.js";
 import { PageTabs } from "./PageTabs.js";
+import { PoliciesPanel } from "./PoliciesView.js";
 import { RoutingView } from "./RoutingView.js";
+import { TabAction, TabActionSlot } from "./TabAction.js";
 import { VideoPanel } from "./VideoView.js";
 
 const providerNames: Record<string, string> = PROVIDER_NAMES;
 const TAB_LABELS: readonly { id: ModelsTab; label: string }[] = [
 	{ id: "llm", label: "LLM" },
 	{ id: "video", label: "Video" },
-	{ id: "budget", label: "Budget" },
+	{ id: "policies", label: "Policies" },
 	{ id: "routing", label: "Routing" },
 ];
 
@@ -356,7 +358,14 @@ export function ModelsView({
 		parseModelsTab(window.location.hash),
 	);
 	useEffect(() => {
-		const sync = () => setTab(parseModelsTab(window.location.hash));
+		const sync = () => {
+			const next = parseModelsTab(window.location.hash);
+			// Policies was the Budget tab: an old link shows the address it has now.
+			if (/\/models\/budget\/?$/.test(window.location.hash))
+				window.history.replaceState(null, "", modelsHash(next));
+			setTab(next);
+		};
+		sync();
 		window.addEventListener("hashchange", sync);
 		return () => window.removeEventListener("hashchange", sync);
 	}, []);
@@ -380,9 +389,12 @@ export function ModelsView({
 	const [search, setSearch] = useState("");
 	const [notice, setNotice] = useState("");
 	const [modelsAdded, setModelsAdded] = useState(0);
+	const [usageKey, setUsageKey] = useState(0);
+	const [actionSlot, setActionSlot] = useState<HTMLElement | null>(null);
 	const addButton = useRef<HTMLButtonElement>(null);
 	const refresh = useCallback(async () => {
 		setLoading(true);
+		setUsageKey((key) => key + 1);
 		const [models, providers, choices] = await Promise.allSettled([
 			fetchModels(),
 			fetchProviderSettings(),
@@ -411,9 +423,17 @@ export function ModelsView({
 	useEffect(() => {
 		void refresh();
 	}, [refresh]);
-	const closeForm = () => {
-		setAdding(false);
+	// Add model is disabled while its form is open, so it takes the focus
+	// back once the closed form has rendered.
+	const focusAdd = useRef(false);
+	useEffect(() => {
+		if (adding || !focusAdd.current) return;
+		focusAdd.current = false;
 		addButton.current?.focus();
+	}, [adding]);
+	const closeForm = () => {
+		focusAdd.current = true;
+		setAdding(false);
 	};
 	const providerKind = (connection: string) =>
 		data?.providers.find((item) => item.name === connection)?.kind ??
@@ -426,8 +446,8 @@ export function ModelsView({
 
 	const modelsPanel = (
 		<>
-			<div className="tab-intro">
-				{canEdit ? (
+			{canEdit ? (
+				<TabAction active={tab === "llm"}>
 					<button
 						ref={addButton}
 						className="button primary"
@@ -440,12 +460,14 @@ export function ModelsView({
 					>
 						<Icon name="plus" /> Add model
 					</button>
-				) : (
+				</TabAction>
+			) : (
+				<div className="tab-intro">
 					<p className="page-note">
 						Ask a workspace admin to add models or change keys.
 					</p>
-				)}
-			</div>
+				</div>
+			)}
 			{notice ? (
 				<p className="success-notice" role="status">
 					{notice}
@@ -512,6 +534,7 @@ export function ModelsView({
 				</div>
 				<p>One gateway. Your choice of models.</p>
 			</section>
+			<ModelUsageChart refreshKey={usageKey} />
 			<section
 				className="card active-models"
 				aria-labelledby="active-models-heading"
@@ -667,11 +690,11 @@ export function ModelsView({
 			<VideoPanel
 				workspace={workspace}
 				active={tab === "video"}
-				onShowBudget={() => goTo("budget")}
+				onShowPolicies={() => goTo("policies")}
 			/>
 		),
-		budget: () => (
-			<BudgetPanel workspace={workspace} active={tab === "budget"} />
+		policies: () => (
+			<PoliciesPanel workspace={workspace} active={tab === "policies"} />
 		),
 		routing: () => (
 			// Remounted when a model is added, so its choices include the new one.
@@ -686,29 +709,35 @@ export function ModelsView({
 					<p className="eyebrow">Gateway</p>
 					<h1>Models</h1>
 					<p className="page-description">
-						The language and video models your agents use, what they may spend,
-						and how requests are routed between them.
+						The language and video models your agents use, the policies on what
+						they may spend and make, and how requests are routed between them.
 					</p>
 				</div>
 			</header>
-			<PageTabs
-				label="Models sections"
-				idPrefix="models"
-				tabs={TAB_LABELS}
-				selected={tab}
-				onSelect={showTab}
-			/>
-			<div
-				role="tabpanel"
-				id="models-panel"
-				aria-labelledby={`models-tab-${tab}`}
-			>
-				{TAB_LABELS.filter((item) => visited.has(item.id)).map((item) => (
-					<div key={item.id} hidden={item.id !== tab}>
-						{panels[item.id]()}
-					</div>
-				))}
+			<div className="page-tabs-bar">
+				<PageTabs
+					label="Models sections"
+					idPrefix="models"
+					tabs={TAB_LABELS}
+					selected={tab}
+					onSelect={showTab}
+				/>
+				{/* The selected tab's main action, such as Add model, sits here at the right. */}
+				<div className="page-tabs-actions" ref={setActionSlot} />
 			</div>
+			<TabActionSlot.Provider value={actionSlot}>
+				<div
+					role="tabpanel"
+					id="models-panel"
+					aria-labelledby={`models-tab-${tab}`}
+				>
+					{TAB_LABELS.filter((item) => visited.has(item.id)).map((item) => (
+						<div key={item.id} hidden={item.id !== tab}>
+							{panels[item.id]()}
+						</div>
+					))}
+				</div>
+			</TabActionSlot.Provider>
 		</div>
 	);
 }

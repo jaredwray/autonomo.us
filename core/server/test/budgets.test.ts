@@ -373,7 +373,7 @@ describe("BudgetService", () => {
 		await budgets.idle();
 		// The two agents share $5 a day and spent $5.50 together.
 		expect(await budgets.llmRefusal(WS.id, OTHER_AGENT, OPUS)).toBe(
-			'The budget "2 agents · All language models · $5.00 a day" is used up: $5.50 of $5.00 spent. It starts again at 2026-11-21 00:00 UTC. A workspace admin can change it on the Models page, under Budget.',
+			'The budget "2 agents · All language models · $5.00 a day" is used up: $5.50 of $5.00 spent. It starts again at 2026-11-21 00:00 UTC. A workspace admin can change it on the Models page, under Policies.',
 		);
 		// People are not in it, and videos are not language models.
 		expect(await budgets.llmRefusal(WS.id, PERSON, OPUS)).toBeNull();

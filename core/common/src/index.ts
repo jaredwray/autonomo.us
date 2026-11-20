@@ -367,7 +367,6 @@ export {
 	type VideoGenerateRequest,
 	type VideoJob,
 	type VideoJobErrorCode,
-	type VideoJobList,
 	type VideoJobStatus,
 	type VideoKind,
 	type VideoLimit,

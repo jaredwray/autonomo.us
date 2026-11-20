@@ -13,16 +13,9 @@ import {
 	VIDEO_MODELS,
 	videoModelLabel,
 } from "@autonomo.us/common";
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { AppliesToFields } from "./AppliesToFields.js";
-import {
-	createBudget,
-	deleteBudget,
-	fetchAgents,
-	fetchBudgets,
-	fetchModels,
-	updateBudget,
-} from "./api.js";
+import { createBudget, deleteBudget, updateBudget } from "./api.js";
 import { Dropdown } from "./Dropdown.js";
 import { Icon } from "./Icons.js";
 import { LoadingBanner } from "./LoadingBanner.js";
@@ -58,7 +51,7 @@ function resetDay(iso: string): string {
 	});
 }
 
-type Names = {
+export type Names = {
 	agent(id: string): string | undefined;
 	llm(id: string): string;
 };
@@ -99,12 +92,13 @@ export function budgetSentence(input: BudgetPolicyInput, names: Names): string {
 }
 
 /** Adds a budget, or changes one. */
-function BudgetForm({
+export function BudgetForm({
 	existing,
 	agents,
 	llmModels,
 	modelsFailed,
 	names,
+	typePicker,
 	onSaved,
 	onClose,
 }: {
@@ -114,6 +108,8 @@ function BudgetForm({
 	/** The language models could not be read, so none can be offered. */
 	modelsFailed: boolean;
 	names: Names;
+	/** Shown under the heading when adding: which kind of policy this is. It takes the focus. */
+	typePicker?: ReactNode;
 	onSaved(budget: BudgetPolicyView, added: boolean): void;
 	onClose(): void;
 }) {
@@ -144,9 +140,10 @@ function BudgetForm({
 	const [saving, setSaving] = useState(false);
 	const [error, setError] = useState("");
 	const first = useRef<HTMLInputElement>(null);
+	const pickerShown = Boolean(typePicker);
 	useEffect(() => {
-		first.current?.focus();
-	}, []);
+		if (!pickerShown) first.current?.focus();
+	}, [pickerShown]);
 
 	const input: BudgetPolicyInput = {
 		appliesTo:
@@ -202,6 +199,7 @@ function BudgetForm({
 					<Icon name="close" />
 				</button>
 			</div>
+			{typePicker}
 			<form
 				onSubmit={async (event) => {
 					event.preventDefault();
@@ -427,32 +425,41 @@ function Used({ budget }: { budget: BudgetPolicyView }) {
 }
 
 /**
- * The Models page's Budget tab: caps on what models may spend, for everyone
- * or for chosen agents, on all models, a kind, or one model. Members see
- * them; workspace admins add, change, switch off, and delete them.
+ * The budgets on the Models page's Policies tab: caps on what models may
+ * spend, for everyone or for chosen agents, on all models, a kind, or one
+ * model. Members see them; workspace admins change, switch off, and delete
+ * them here, and add them with Add policy.
  */
-export function BudgetPanel({
-	workspace,
-	active = true,
+export function BudgetsCard({
+	budgets,
+	agents,
+	llmModels,
+	modelsFailed,
+	canEdit,
+	loading,
+	onChange,
+	onNotice,
+	onRefresh,
+	onAdd,
 }: {
-	workspace?: { isDefault: boolean; role?: "admin" | "member" };
-	/** Whether the tab is showing: coming back to it reads spend afresh. */
-	active?: boolean;
+	/** Null until read. */
+	budgets: BudgetPolicyView[] | null;
+	agents: AgentSummary[];
+	llmModels: ModelInfo[];
+	modelsFailed: boolean;
+	canEdit: boolean;
+	loading: boolean;
+	/** Shows a change made here at once; a fresh read follows. */
+	onChange(update: (budgets: BudgetPolicyView[]) => BudgetPolicyView[]): void;
+	/** Says what was just done, at the top of the tab. */
+	onNotice(text: string): void;
+	/** Reads budgets and spend again. */
+	onRefresh(): void;
+	/** Opens Add policy on a budget. */
+	onAdd(): void;
 }) {
-	const canEdit = workspace?.role !== "member";
-	const [budgets, setBudgets] = useState<BudgetPolicyView[] | null>(null);
-	const [persistence, setPersistence] = useState<"mongodb" | "memory" | null>(
-		null,
-	);
-	const [agents, setAgents] = useState<AgentSummary[]>([]);
-	const [llmModels, setLlmModels] = useState<ModelInfo[]>([]);
-	const [loading, setLoading] = useState(true);
-	const [error, setError] = useState("");
-	const [notice, setNotice] = useState("");
 	const [rowError, setRowError] = useState("");
-	const [panel, setPanel] = useState<
-		{ kind: "add" } | { kind: "edit"; id: string } | null
-	>(null);
+	const [panel, setPanel] = useState<{ kind: "edit"; id: string } | null>(null);
 	const [confirming, setConfirming] = useState<string | null>(null);
 	const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
 	const working = (budgetId: string, on: boolean) =>
@@ -462,10 +469,7 @@ export function BudgetPanel({
 			else next.delete(budgetId);
 			return next;
 		});
-	const [modelsFailed, setModelsFailed] = useState(false);
-	const addButton = useRef<HTMLButtonElement>(null);
-	const focusAdd = useRef(false);
-	const sequence = useRef(0);
+	const heading = useRef<HTMLHeadingElement>(null);
 	// Delete and Cancel replace themselves: focus follows to what took their place.
 	const confirmDelete = useRef<HTMLButtonElement>(null);
 	const deleteButtons = useRef(new Map<string, HTMLButtonElement>());
@@ -479,58 +483,15 @@ export function BudgetPanel({
 		refocusDelete.current = null;
 		if (budgetId) deleteButtons.current.get(budgetId)?.focus();
 	}, [confirming]);
-
-	const refresh = useCallback(async () => {
-		const request = ++sequence.current;
-		setLoading(true);
-		const [list, agentList, models] = await Promise.allSettled([
-			fetchBudgets(),
-			fetchAgents(),
-			fetchModels(),
-		]);
-		if (request !== sequence.current) return;
-		if (list.status === "fulfilled") {
-			setBudgets(list.value.policies);
-			setPersistence(list.value.persistence);
-			setError("");
-		} else
-			setError(
-				errorText(
-					list.reason,
-					"Could not load budgets. Check the API connection and try again.",
-				),
-			);
-		if (agentList.status === "fulfilled") setAgents(agentList.value.agents);
-		if (models.status === "fulfilled") setLlmModels(models.value.models);
-		setModelsFailed(models.status !== "fulfilled");
-		setLoading(false);
-	}, []);
-	useEffect(() => {
-		void refresh();
-		return () => {
-			sequence.current++;
-		};
-	}, [refresh]);
-	const shownBefore = useRef(active);
-	useEffect(() => {
-		if (active && !shownBefore.current) void refresh();
-		shownBefore.current = active;
-	}, [active, refresh]);
-	// Closing a form returns focus to what opened it: Add budget, or the row's Edit.
+	// Closing an edit returns focus to the row's Edit, or the heading if the row is gone.
 	const editButtons = useRef(new Map<string, HTMLButtonElement>());
 	const focusEdit = useRef<string | null>(null);
 	useEffect(() => {
 		if (panel) return;
 		const budgetId = focusEdit.current;
 		focusEdit.current = null;
-		if (budgetId && editButtons.current.get(budgetId)) {
-			focusAdd.current = false;
-			editButtons.current.get(budgetId)?.focus();
-			return;
-		}
-		if (!focusAdd.current) return;
-		focusAdd.current = false;
-		addButton.current?.focus();
+		if (!budgetId) return;
+		(editButtons.current.get(budgetId) ?? heading.current)?.focus();
 	}, [panel]);
 
 	const names: Names = {
@@ -538,103 +499,34 @@ export function BudgetPanel({
 		llm: (model) => model,
 	};
 	const closePanel = () => {
-		if (panel?.kind === "edit") focusEdit.current = panel.id;
-		else focusAdd.current = true;
+		focusEdit.current = panel?.id ?? null;
 		setPanel(null);
 	};
-	const editing =
-		panel?.kind === "edit"
-			? budgets?.find((budget) => budget.id === panel.id)
-			: undefined;
-	// Used up, or $0: either way it refuses what it covers now.
-	const refusing = (budgets ?? []).filter(
-		(budget) => budget.enabled && budget.usage.spentUsd >= budget.limitUsd,
-	);
-	const form = (existing?: BudgetPolicyView) => (
-		<BudgetForm
-			key={existing?.id ?? "add"}
-			existing={existing}
-			agents={agents}
-			llmModels={llmModels.filter((model) => model.capability !== "decisions")}
-			modelsFailed={modelsFailed}
-			names={names}
-			onClose={closePanel}
-			onSaved={(saved, added) => {
-				setBudgets((current) =>
-					added
-						? [...(current ?? []), saved]
-						: (current ?? []).map((item) =>
-								item.id === saved.id ? saved : item,
-							),
-				);
-				setNotice(added ? "Budget added." : "Budget saved.");
-				closePanel();
-				void refresh();
-			}}
-		/>
-	);
+	const editing = panel
+		? budgets?.find((budget) => budget.id === panel.id)
+		: undefined;
 
 	return (
-		<div className="budget-page">
-			<div className="tab-intro">
-				{canEdit ? (
-					<button
-						ref={addButton}
-						className="button primary"
-						type="button"
-						disabled={!budgets || panel?.kind === "add"}
-						onClick={() => {
-							setPanel({ kind: "add" });
-							setNotice("");
-						}}
-					>
-						<Icon name="plus" /> Add budget
-					</button>
-				) : (
-					<p className="page-note">Ask a workspace admin to change budgets.</p>
-				)}
-				{persistence === "memory" && (
-					<p className="page-note">
-						Budgets are temporary and last until the API restarts. Connect
-						MongoDB to keep them.
-					</p>
-				)}
-			</div>
-			{notice && (
-				<p className="success-notice" role="status">
-					{notice}
-				</p>
+		<>
+			{editing && canEdit && (
+				<BudgetForm
+					key={editing.id}
+					existing={editing}
+					agents={agents}
+					llmModels={llmModels}
+					modelsFailed={modelsFailed}
+					names={names}
+					onClose={closePanel}
+					onSaved={(saved) => {
+						onChange((current) =>
+							current.map((item) => (item.id === saved.id ? saved : item)),
+						);
+						onNotice("Budget saved.");
+						closePanel();
+						onRefresh();
+					}}
+				/>
 			)}
-			{error && (
-				<div className="banner-error" role="alert">
-					{error}{" "}
-					<button
-						className="button"
-						type="button"
-						disabled={loading}
-						onClick={() => void refresh()}
-					>
-						Retry
-					</button>
-				</div>
-			)}
-			{panel?.kind === "add" && budgets && form()}
-			{editing && form(editing)}
-			<section className="models-overview" aria-label="Budget overview">
-				<div>
-					<span className="overview-value">
-						{budgets ? budgets.length : "—"}
-					</span>
-					<span>Budgets</span>
-				</div>
-				<div>
-					<span className="overview-value">
-						{budgets ? refusing.length : "—"}
-					</span>
-					<span>Refusing requests now</span>
-				</div>
-				<p>Estimated from list prices.</p>
-			</section>
 			<section
 				className="card active-models"
 				aria-labelledby="budgets-heading"
@@ -642,7 +534,9 @@ export function BudgetPanel({
 			>
 				<div className="section-heading">
 					<div>
-						<h2 id="budgets-heading">Budgets</h2>
+						<h2 id="budgets-heading" ref={heading} tabIndex={-1}>
+							Budgets
+						</h2>
 						<p className="card-note">
 							A request is refused while any budget that covers it is used up.
 							Spend counts in UTC days or months, from when a budget is added or
@@ -655,7 +549,7 @@ export function BudgetPanel({
 						disabled={loading}
 						onClick={() => {
 							setRowError("");
-							void refresh();
+							onRefresh();
 						}}
 					>
 						{loading ? "Refreshing…" : "Refresh"}
@@ -682,13 +576,8 @@ export function BudgetPanel({
 						<h3>No budgets</h3>
 						<p>Nothing limits what models spend in this workspace.</p>
 						{canEdit && (
-							<button
-								type="button"
-								className="button"
-								disabled={panel?.kind === "add"}
-								onClick={() => setPanel({ kind: "add" })}
-							>
-								<Icon name="plus" /> Add your first budget
+							<button type="button" className="button" onClick={onAdd}>
+								<Icon name="plus" /> Add a budget
 							</button>
 						)}
 					</div>
@@ -756,13 +645,13 @@ export function BudgetPanel({
 																	const saved = await updateBudget(budget.id, {
 																		enabled: event.target.checked,
 																	});
-																	setBudgets((current) =>
-																		(current ?? []).map((item) =>
+																	onChange((current) =>
+																		current.map((item) =>
 																			item.id === saved.id ? saved : item,
 																		),
 																	);
 																	// A list read before this change would undo it on screen.
-																	void refresh();
+																	onRefresh();
 																} catch (cause) {
 																	setRowError(
 																		errorText(cause, "Could not change it."),
@@ -797,7 +686,7 @@ export function BudgetPanel({
 															aria-label={`Edit the budget for ${label}`}
 															onClick={() => {
 																setPanel({ kind: "edit", id: budget.id });
-																setNotice("");
+																onNotice("");
 															}}
 														>
 															Edit
@@ -816,18 +705,17 @@ export function BudgetPanel({
 																		try {
 																			await deleteBudget(budget.id);
 																			setConfirming(null);
-																			if (
-																				panel?.kind === "edit" &&
-																				panel.id === budget.id
-																			)
+																			if (panel?.id === budget.id)
 																				setPanel(null);
-																			setBudgets((current) =>
-																				(current ?? []).filter(
+																			onChange((current) =>
+																				current.filter(
 																					(item) => item.id !== budget.id,
 																				),
 																			);
-																			setNotice("Budget deleted.");
-																			void refresh();
+																			onNotice("Budget deleted.");
+																			// Its row is gone: focus goes to the heading.
+																			heading.current?.focus();
+																			onRefresh();
 																		} catch (cause) {
 																			setRowError(
 																				errorText(
@@ -888,6 +776,6 @@ export function BudgetPanel({
 					before it starts.
 				</p>
 			</section>
-		</div>
+		</>
 	);
 }

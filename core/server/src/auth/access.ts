@@ -328,7 +328,6 @@ export const ROUTE_RULES = new Map<string, RouteRule>([
 	["DELETE /v1/:workspace/video/limits/:id", workspace("video:edit")],
 	// Starting a video spends the workspace's video budget, so admins only among people.
 	["POST /v1/:workspace/video/jobs", workspace("video:generate")],
-	["GET /v1/:workspace/video/jobs", workspace("video:generate")],
 	["GET /v1/:workspace/video/jobs/:id", workspace("video:generate")],
 	["POST /v1/:workspace/video/jobs/:id/cancel", workspace("video:generate")],
 	// Budgets cap what models spend: members look, admins change them.

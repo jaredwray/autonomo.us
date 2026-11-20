@@ -2,9 +2,11 @@
 
 *Built after the Video page ([jaredwray/autonomo.us#76](https://github.com/jaredwray/autonomo.us/pull/76)) merged. The Video page and the monthly video budget fold into this.*
 
+*Since 2026-11-20 the **Budget** tab is the **Policies** tab: it holds budgets and video limits, the two kinds of policy, and **Add policy** asks which kind to add. Video limits left the Video tab for it. Each tab's main action sits at the right of the tab bar rather than above the tab, and the LLM tab opens with a chart of usage by model. `/models/budget` links open Policies. Where this plan says Budget tab, read Policies tab.*
+
 ## What changed for people
 
-The **Models** page has four tabs: **LLM** (what was the Models tab), **Video** (what was the Video page, now one page with no tabs of its own), **Budget** (new), and **Routing** (unchanged). Each tab opens with its main action: **Add model**, **Add video provider**, **Add budget**. (At first each also had a line on what it is for; people know what the tabs are, so those lines went, and a tab mentions where its settings are kept only when they are temporary.) The **Video** item leaves the sidebar; `#/video`, `#/w/<id>/video`, and `#/w/<id>/video/settings` open the Video tab. A tab stays mounted once shown, so a typed prompt, a half-filled form, and the videos being followed survive a look at another tab.
+The **Models** page has four tabs: **LLM** (what was the Models tab), **Video** (what was the Video page, now one page with no tabs of its own), **Policies** (new, first named Budget), and **Routing** (unchanged). Each tab has its main action at the right of the tab bar: **Add model**, **Add video provider**, **Add policy**. (At first each also had a line on what it is for; people know what the tabs are, so those lines went, and a tab mentions where its settings are kept only when they are temporary.) The **Video** item leaves the sidebar; `#/video`, `#/w/<id>/video`, and `#/w/<id>/video/settings` open the Video tab. A tab stays mounted once shown, so a typed prompt, a half-filled form, and the videos being followed survive a look at another tab.
 
 ## Budgets
 
@@ -42,7 +44,7 @@ The video policy loses `monthlyBudgetUsd`. A workspace's first read of its budge
 
 ## Video limits
 
-The video policy's daily cap and longest video became policies too, so a workspace can have more than one: **video limits**, on the Video tab under its own card.
+The video policy's daily cap and longest video became policies too, so a workspace can have more than one: **video limits**, on the Policies tab under the budgets.
 
 - **A limit** applies to everyone or to chosen agents (the same `appliesTo` as a budget, and the same picker in the form), covers every video model or one, and sets **videos a day**, the **longest video** in seconds, or both (`null` leaves one unset; setting neither is refused). It can be switched off.
 - **Every limit that covers a video applies**, so the strictest wins: the shortest longest-video, and each limit's own count of the caller's videos today. Counts are per caller id (`user:`, `api-token:`, `agent:`), so "everyone" means each person, token, and agent on their own, and an agents limit counts each picked agent on its own (unlike a budget, which picked agents share).
@@ -51,12 +53,13 @@ The video policy's daily cap and longest video became policies too, so a workspa
 - **What callers see.** `GET /video/models` and `video_models` give the longest video the caller's limits allow on every model, and shorter caps for single models (`modelMaxDurationSeconds`). A request for a longer video than any limit allows is refused with that length; a provider whose model a limit keeps shorter is passed over for the next in the order, and when none is left the refusal says why each was passed over.
 - **Seeded.** A workspace's first read of its limits seeds one: everyone, every video model, at its old daily cap and longest video (10 and 10 by default), marked `origin: "video-policy"`. That limit keeps counting on the old per-caller daily counter, so today's videos still count after the change.
 - **Storage and API.** `gateway_video_limits`: one document per workspace, `{ limits, revision }`, written with a revision check; an edit is merged into the limit as it is on each retry. `POST /v1/<ws>/video/limits` (201), `PATCH` and `DELETE /video/limits/:id`, all `video:edit`; the limits come back in `GET /video`. At most 50 limits per workspace and 100 agents per limit. `PUT /video/policy` now takes `{ order, revision }` and refuses `callerVideosPerDay` and `maxDurationSeconds`, saying where they went.
-- **On the Video tab.** **Provider order** shows once there are two providers; each move up or down saves at once with the revision read, and focus stays on the moved row (on a stale revision the latest order is read again, with a message). **Video limits** lists who, what, videos a day, longest video, and On/Off, Edit, Delete for admins; the form has a sentence that says what the limit will do ("Researcher and Writer can each start up to 2 videos a day (UTC) on Runway Gen-4.5."). Members see both, read-only.
+- **On the Policies tab** (they were on the Video tab at first). **Provider order** stays on the Video tab and shows once there are two providers; each move up or down saves at once with the revision read, and focus stays on the moved row (on a stale revision the latest order is read again, with a message). **Video limits** lists who, what, videos a day, longest video, and On/Off, Edit, Delete for admins; the form has a sentence that says what the limit will do ("Researcher and Writer can each start up to 2 videos a day (UTC) on Runway Gen-4.5."). Members see both, read-only.
 
-## The Budget tab
+## The Policies tab
 
-- **Add budget**.
-- Overview: how many budgets, and how many are used up now.
+- **Add policy**, at the right of the tab bar. Its form starts with **Type**: Budget or Video limit (off, with the reason, when video is turned off or its settings cannot be read). Choosing one swaps the form below and keeps the focus on the choice.
+- Overview: how many budgets and video limits, and how many budgets are refusing requests now.
+- Below the budgets, the video limits (see [Video limits](#video-limits)). Each list's empty state offers to add one of its kind.
 - A table: who it applies to (agent names; "Shared by N agents"), what it covers, the limit, what is spent as a bar with "$X of $Y" and when it resets (red "Used up" when it is), and On/Off, Edit, Delete for admins. Delete asks to confirm; focus follows between Delete, Confirm, and Cancel.
 - The form: **Applies to** (everyone, or specific agents from a searchable checkbox list), **Covers**, the model when one is chosen (chat models only for language models), **Limit (USD)**, and **Resets** every day or month. Below it, one sentence says what the budget will do ("Researcher and Writer can together spend up to $20.00 a day (UTC) on anthropic/claude-opus-4-8."), or what is missing.
 - A footnote on how spend is estimated and when it can pass a limit.
@@ -65,4 +68,4 @@ The video policy's daily cap and longest video became policies too, so a workspa
 
 - `core/server/test/budgets.test.ts`: the store against memory and MongoDB (seeding once under concurrency, stale writes, periods rolling over, all-or-none holds, one of many concurrent holds taking the last of a budget, releases never below zero); the service (validation, removed agents, shared agent budgets, $0 and switched-off budgets, the refusal message); routes and permissions; and `POST /chat` answering 429, streaming or not, once spend reaches the limit.
 - `core/server/test/video-*.test.ts`: video holds against budgets and limits, given back on a refusal or an unbilled failure; limits added, changed, and deleted, the strictest applying, and seeded from the old policy; and the refused `monthlyBudgetUsd`, `callerVideosPerDay`, and `maxDurationSeconds`.
-- `core/ux/test/Budget.test.tsx`, `Video.test.tsx`, `Routing.test.tsx`: the tabs, the Budget tab and the video limits against a fake and a real gateway, the provider order, and old links.
+- `core/ux/test/Budget.test.tsx`, `Policies.test.tsx`, `Video.test.tsx`, `Routing.test.tsx`, `Models.test.tsx`: the tabs and their actions in the tab bar, budgets and video limits on the Policies tab and choosing between them, against a fake and a real gateway, the provider order, and old links. `ModelUsage.test.tsx`: the LLM tab's usage chart.

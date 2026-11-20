@@ -117,12 +117,8 @@ import type {
 	UpdateWorkspaceRequest,
 	UsageAnalytics,
 	VideoConnection,
-	VideoGenerateRequest,
-	VideoJob,
-	VideoJobList,
 	VideoLimit,
 	VideoLimitInput,
-	VideoModelList,
 	VideoPolicy,
 	VideoSettings,
 	WebFetchRequest,
@@ -1255,10 +1251,6 @@ const videoPath = (rest = "") => ws(`/video${rest}`);
 export function fetchVideoSettings(): Promise<VideoSettings> {
 	return apiRequest(videoPath());
 }
-/** What the workspace can make now, and whether the caller may start a video. */
-export function fetchVideoModels(): Promise<VideoModelList> {
-	return apiRequest(videoPath("/models"));
-}
 export function createVideoConnection(
 	input: CreateVideoConnectionRequest,
 ): Promise<VideoConnection> {
@@ -1285,39 +1277,6 @@ export function updateVideoPolicy(
 ): Promise<VideoPolicy> {
 	return apiRequest(videoPath("/policy"), { method: "PUT", body: input });
 }
-/** Starts a real, billable video; answers at once with its job. */
-export function generateVideo(input: VideoGenerateRequest): Promise<VideoJob> {
-	return apiRequest(videoPath("/jobs"), { method: "POST", body: input });
-}
-/** Every job in the workspace, newest first; `before` is the last id of the previous page. */
-export function fetchVideoJobs(
-	options: { before?: string; limit?: number } = {},
-): Promise<VideoJobList> {
-	const query = new URLSearchParams();
-	if (options.limit !== undefined) query.set("limit", String(options.limit));
-	if (options.before) query.set("before", options.before);
-	const search = query.toString();
-	return apiRequest(videoPath(`/jobs${search ? `?${search}` : ""}`));
-}
-/** One job, checked with its provider when due; `wait` holds the request up to that many seconds. */
-export function fetchVideoJob(
-	id: string,
-	options: { wait?: number; signal?: AbortSignal } = {},
-): Promise<VideoJob> {
-	const search =
-		options.wait !== undefined
-			? `?wait=${encodeURIComponent(options.wait)}`
-			: "";
-	return apiRequest(videoPath(`/jobs/${encodeURIComponent(id)}${search}`), {
-		...(options.signal ? { signal: options.signal } : {}),
-	});
-}
-export function cancelVideoJob(id: string): Promise<VideoJob> {
-	return apiRequest(videoPath(`/jobs/${encodeURIComponent(id)}/cancel`), {
-		method: "POST",
-	});
-}
-
 const videoLimitPath = (id?: string) =>
 	videoPath(`/limits${id ? `/${encodeURIComponent(id)}` : ""}`);
 /** Adds a video limit for everyone or chosen agents, on every video model or one. */

@@ -227,13 +227,18 @@ The dashboard has a collapsible sidebar with a workspace switcher and
 **Organization**, **Loops**, **Agents**, **API Tokens**, **Workspaces**, and **Team** views. All but Workspaces and
 Team show the selected workspace, and their URLs name it
 (`#/w/<workspace id>/models`).
-**Models** has four tabs, each opening with what it is for and its main action:
-**LLM** (`#/w/<workspace id>/models`), the language models; **Video**
-(`/models/video`), the video providers, their order and limits, and for admins
-the videos made (see [Video generation](#video-generation)); **Budget**
-(`/models/budget`), caps on what models may spend (see [Budgets](#budgets));
-and **Routing** (`/models/routing`). Older `#/routing` and `#/video` links open
-those tabs. A tab keeps what was typed in it while another is shown.
+**Models** has four tabs, with the selected tab's main action, such as **Add
+model**, at the right of the tab bar: **LLM** (`#/w/<workspace id>/models`),
+the language models and a chart of their usage; **Video** (`/models/video`),
+the video providers and their order (see [Video generation](#video-generation));
+**Policies** (`/models/policies`), the budgets on what models may spend and
+the video limits on how many videos and how long (see [Budgets](#budgets));
+and **Routing** (`/models/routing`). Older `#/routing`, `#/video`, and
+`/models/budget` links open those tabs. A tab keeps what was typed in it while
+another is shown.
+The **LLM** tab opens with **Usage by model**: the models called most in the
+last 30 days, by tokens (prompt and completion), calls, or estimated spend,
+from the same analytics as the Dashboard's Usage tab.
 In the **LLM** tab, search active models or choose **Add model** to connect Google
 Gemini, xAI Grok, Anthropic Claude, OpenAI, Groq, Mistral, DeepSeek, OpenRouter,
 Cloudflare Workers AI, or Jev (TypeSafe). Choose a catalog suggestion or enter a
@@ -392,7 +397,7 @@ within that workspace:
 | Proxies | None, Read, Edit | Read lists proxies, their usage, and the web policy. Edit also adds proxies, changes their keys, saves the policy, and runs a proxy's billable test. Keys are never returned. |
 | Web | None, Fetch | Fetch reads a page with `POST /v1/<workspace>/web/fetch`, through the workspace's proxies when needed, within its limits. |
 | Video | None, Read, Edit | Read lists video connections, their usage, the video policy, and the models the workspace can use. Edit also adds connections, changes their keys, and saves the policy. Keys are never returned. |
-| Video generation | None, Generate | Generate starts, follows, lists, and cancels videos with `/v1/<workspace>/video/jobs`, within the workspace's limits. It sees every job in the workspace. |
+| Video generation | None, Generate | Generate starts, follows, and cancels videos with `/v1/<workspace>/video/jobs`, within the workspace's limits. It reads any job in the workspace by its id. |
 | Budgets | None, Read, Edit | Read lists the workspace's budgets and what each has spent. Edit also adds, changes, switches off, and deletes them. |
 
 Edit includes Read for that resource, but never Run. API token management and
@@ -1126,10 +1131,10 @@ be added to its catalogue later without a new adapter.
   (`gateway.video`) keeps the provider, model, settings, status, and
   estimated cost, never the prompt or a link.
 
-Agents get five MCP tools: `video_models` (what the workspace can make),
+Agents get four MCP tools: `video_models` (what the workspace can make),
 `video_generate` (`{ prompt, provider?, model?, durationSeconds?, aspectRatio?, resolution?, imageUrl? }`),
-`video_status` (`{ id, waitSeconds? }`), `video_cancel` (`{ id }`), and
-`video_list` (`{ limit? }`, the agent's own jobs). When a workspace has no
+`video_status` (`{ id, waitSeconds? }`), and `video_cancel` (`{ id }`), each
+on the agent's own jobs. When a workspace has no
 usable connection the tools are still listed, and `video_models` says why
 nothing can be made.
 
@@ -1140,16 +1145,14 @@ counters in `gateway_video_usage`, and jobs in
 they last until restart. Connections from environment variables belong to
 the default workspace and cannot be changed here.
 
-Open the **Video** tab of **Models** in the dashboard to manage it. Workspace
-admins add providers, switch them on and off, choose a default model and
-Luma's credit price, and order them; under **Video limits** they add, change,
-switch off, and delete limits, each with a sentence that says what it does
-before it is saved. Members see the providers and limits only. Below them,
-admins make a video from a form that offers only what the chosen model can
-make, and see every job in the workspace: its status, what it was asked for,
-its estimated cost, and why it failed. Unfinished jobs update on their own,
-and **Stop** cancels one. A finished video plays in the page, or opens from
-its link. Members cannot see jobs, which need `video:generate`.
+Open the **Video** tab of **Models** in the dashboard to manage the providers.
+Workspace admins add providers, switch them on and off, choose a default model
+and Luma's credit price, and order them; members see them only. Video limits
+are policies: on the **Policies** tab, admins choose **Add policy**, then
+**Video limit**, and change, switch off, and delete limits there, each with a
+sentence that says what it does before it is saved. The dashboard does not
+make videos or list them; agents make them over MCP, and API tokens with
+`video:generate` through the routes below.
 
 REST routes under `/v1/<workspace id>`: `GET /video` (connections with this
 month's usage, their order, the limits, this month's estimated video spend,
@@ -1167,9 +1170,9 @@ body that still sends `monthlyBudgetUsd`, `callerVideosPerDay`, or
 `covers` is `{ kind: "video" }` or `{ kind: "video-model", model }`, and
 `null` leaves one unset); `PATCH|DELETE /video/limits/:id`; `POST /video/jobs` (the `video_generate`
 arguments; 202 with the job, also when no provider accepted it, 409 when
-video is not set up, 429 when a limit is reached); `GET /video/jobs`
-(`?limit=&before=<job id>`); `GET /video/jobs/:id` (`?wait=<seconds>`); and
-`POST /video/jobs/:id/cancel`. With `VIDEO_DISABLED` every video route
+video is not set up, 429 when a limit is reached); `GET /video/jobs/:id`
+(`?wait=<seconds>`); and `POST /video/jobs/:id/cancel`. There is no list of
+jobs: each is read by the id it was started with. With `VIDEO_DISABLED` every video route
 answers 503 except `GET /video`, which says `available: false`.
 
 ### Models for agents
@@ -1297,12 +1300,14 @@ budgets existed. A video started before budgets that later fails unbilled gives
 its estimate back to that budget.
 
 Budgets cap what videos cost; how many videos a day and how long they may be
-are [video limits](#video-generation), set on the **Video** tab.
+are [video limits](#video-generation). Both are policies, set on the same tab.
 
-Open the **Budget** tab of **Models** to see each budget, what it has spent in
-the period now running, and when it resets. Workspace admins add, change,
-switch off, and delete budgets; the form says in one sentence what a budget
-will do before it is saved. Members see them only. API tokens use
+Open the **Policies** tab of **Models** to see each budget, what it has spent
+in the period now running, and when it resets, and below them the video
+limits. Workspace admins choose **Add policy** and then **Budget** or **Video
+limit**, and change, switch off, and delete policies in their lists; the form
+says in one sentence what a policy will do before it is saved. Members see
+them only. API tokens use
 `budgets:read` and `budgets:edit`.
 
 REST routes under `/v1/<workspace id>`: `GET /budgets` (each budget with its

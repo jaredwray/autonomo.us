@@ -523,46 +523,6 @@ describe.each(jobStores())("VideoJobStore (%s)", (_name, make) => {
 		expect(await jobs.byToken("nope")).toBeNull();
 	});
 
-	it("lists newest first, one caller's own, and pages by the last id", async () => {
-		const jobs = await make();
-		const records = [
-			job({ createdAt: "2026-11-19T10:00:00.000Z" }),
-			job({
-				createdAt: "2026-11-19T11:00:00.000Z",
-				createdBy: { id: "agent:b", name: "B", kind: "agent" },
-			}),
-			job({ createdAt: "2026-11-19T12:00:00.000Z" }),
-			job({ createdAt: "2026-11-19T12:00:00.000Z", workspaceId: DEFAULT.id }),
-		];
-		for (const record of records) await jobs.insert(record);
-		const all = await jobs.list(OTHER.id, { limit: 2 });
-		expect(all.records.map((record) => record._id)).toEqual([
-			records[2]._id,
-			records[1]._id,
-		]);
-		expect(all.more).toBe(true);
-		const next = await jobs.list(OTHER.id, {
-			limit: 2,
-			before: records[1]._id,
-		});
-		expect(next.records.map((record) => record._id)).toEqual([records[0]._id]);
-		expect(next.more).toBe(false);
-		const own = await jobs.list(OTHER.id, {
-			limit: 10,
-			createdById: "agent:a",
-		});
-		expect(own.records.map((record) => record._id)).toEqual([
-			records[2]._id,
-			records[0]._id,
-		]);
-		expect(
-			await jobs.list(OTHER.id, { limit: 10, before: records[3]._id }),
-		).toEqual({
-			records: [],
-			more: false,
-		});
-	});
-
 	it("finishes a job for exactly one of two concurrent callers", async () => {
 		const jobs = await make();
 		const record = job({ status: "running" });

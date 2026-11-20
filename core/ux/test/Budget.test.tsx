@@ -2,6 +2,7 @@ import type {
 	AgentSummary,
 	BudgetList,
 	BudgetPolicyView,
+	VideoSettings,
 } from "@autonomo.us/common";
 import { createServer } from "@autonomo.us/server";
 import {
@@ -15,13 +16,14 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "../src/App.js";
 import { clearCredential, setCurrentWorkspace } from "../src/api.js";
-import { BudgetPanel, budgetSentence } from "../src/BudgetView.js";
+import { budgetSentence } from "../src/BudgetView.js";
 import { ModelsView } from "../src/ModelsView.js";
+import { PoliciesPanel } from "../src/PoliciesView.js";
 import { changeControl } from "./controls.js";
 import { defaultWorkspaceId, setUpOwner, stopServer } from "./session.js";
 
-// The Budget tab against a fake gateway that answers from `state` and
-// records what the page sent.
+// Budgets on the Policies tab, against a fake gateway that answers from
+// `state` and records what the page sent.
 
 const WORKSPACE = "11111111-1111-4111-8111-111111111111";
 const base = `/v1/${WORKSPACE}`;
@@ -91,6 +93,16 @@ function fakeGateway(
 			} satisfies BudgetList);
 		if (method === "GET" && path === `${base}/agents`)
 			return json({ agents: state.agents ?? [], persistence: "memory" });
+		if (method === "GET" && path === `${base}/video`)
+			return json({
+				available: true,
+				configured: false,
+				connections: [],
+				policy: { order: [], revision: 0 },
+				limits: [],
+				spend: { month: "2026-11", spentUsd: 0 },
+				persistence: "memory",
+			} satisfies VideoSettings);
 		if (method === "GET" && path === `${base}/models`)
 			return json({
 				models: [
@@ -113,7 +125,7 @@ const sent = (calls: Call[], method: string) =>
 
 function show(role: "admin" | "member" = "admin") {
 	setCurrentWorkspace(WORKSPACE);
-	return render(<BudgetPanel workspace={{ isDefault: true, role }} />);
+	return render(<PoliciesPanel workspace={{ isDefault: true, role }} />);
 }
 function change(label: string, value: string, scope: HTMLElement) {
 	changeControl(within(scope).getByLabelText(label), { target: { value } });
@@ -125,7 +137,7 @@ afterEach(() => {
 	window.history.replaceState(null, "", "/");
 });
 
-describe("Budget tab", () => {
+describe("Budgets on the Policies tab", () => {
 	it("lists budgets with who, what, the limit, and what is spent", async () => {
 		fakeGateway({
 			agents: [agent("a1", "Researcher"), agent("a2", "Writer")],
@@ -171,8 +183,8 @@ describe("Budget tab", () => {
 		expect(rows[3].textContent).toContain("Blocks every request it covers");
 		expect(rows[3].textContent).not.toContain("Used up");
 		expect(
-			within(screen.getByRole("region", { name: "Budget overview" })).getByText(
-				"Refusing requests now",
+			within(screen.getByRole("region", { name: "Policy overview" })).getByText(
+				"Budgets refusing requests now",
 			).parentElement?.textContent,
 		).toContain("2");
 	});
@@ -190,8 +202,12 @@ describe("Budget tab", () => {
 		});
 		show();
 		await screen.findByText("No budgets");
-		fireEvent.click(screen.getByRole("button", { name: "Add budget" }));
+		fireEvent.click(screen.getByRole("button", { name: "Add policy" }));
 		const form = screen.getByRole("region", { name: "Add a budget" });
+		// A new policy starts as a budget, with the focus on its type.
+		const type = within(form).getByRole("radio", { name: /^Budget/ });
+		expect((type as HTMLInputElement).checked).toBe(true);
+		expect(document.activeElement).toBe(type);
 		const add = within(form).getByRole("button", {
 			name: "Add budget",
 		}) as HTMLButtonElement;
@@ -233,7 +249,7 @@ describe("Budget tab", () => {
 		// Focus goes back to the button that opened the form.
 		await waitFor(() =>
 			expect(document.activeElement).toBe(
-				screen.getByRole("button", { name: "Add budget" }),
+				screen.getByRole("button", { name: "Add policy" }),
 			),
 		);
 	});
@@ -314,17 +330,21 @@ describe("Budget tab", () => {
 		expect(sent(calls, "DELETE")[0].path).toBe(
 			`${base}/budgets/${existing.id}`,
 		);
+		// Its row is gone, so the focus goes to the list's heading.
+		expect(document.activeElement).toBe(
+			screen.getByRole("heading", { name: "Budgets" }),
+		);
 	});
 
 	it("shows a member the budgets without ways to change them", async () => {
 		fakeGateway({ budgets: [budget()] });
 		show("member");
 		await screen.findByRole("table");
-		expect(screen.queryByRole("button", { name: "Add budget" })).toBeNull();
+		expect(screen.queryByRole("button", { name: "Add policy" })).toBeNull();
 		expect(screen.queryByRole("checkbox")).toBeNull();
 		expect(screen.queryByRole("button", { name: /^Edit/ })).toBeNull();
 		expect(
-			screen.getByText("Ask a workspace admin to change budgets."),
+			screen.getByText("Ask a workspace admin to change policies."),
 		).toBeDefined();
 	});
 
@@ -374,9 +394,7 @@ describe("Budget tab", () => {
 });
 
 describe("Models page tabs", () => {
-	it("opens the Budget tab from the Video tab's limits card", async () => {
-		setCurrentWorkspace(WORKSPACE);
-		window.history.replaceState(null, "", `#/w/${WORKSPACE}/models/video`);
+	function stubPages() {
 		vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
 			const path = String(input instanceof Request ? input.url : input).replace(
 				/^https?:\/\/[^/]+/,
@@ -396,36 +414,53 @@ describe("Models page tabs", () => {
 				return json({ policies: [], persistence: "memory" });
 			if (path === `${base}/agents`)
 				return json({ agents: [], persistence: "memory" });
-			if (path.endsWith("/video/jobs"))
-				return json({ jobs: [], nextBefore: null });
 			return json({ error: { message: "not here" } }, 404);
 		});
+	}
+
+	it("opens the Policies tab from the Video tab", async () => {
+		setCurrentWorkspace(WORKSPACE);
+		window.history.replaceState(null, "", `#/w/${WORKSPACE}/models/video`);
+		stubPages();
 		render(<ModelsView workspace={{ isDefault: true, role: "admin" }} />);
 		expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
 			"LLM",
 			"Video",
-			"Budget",
+			"Policies",
 			"Routing",
 		]);
 		expect(
 			screen.getByRole("tab", { name: "Video", selected: true }),
 		).toBeDefined();
 		fireEvent.click(
-			await screen.findByRole("button", { name: "See video budgets" }),
+			await screen.findByRole("button", { name: "Open Policies" }),
 		);
 		expect(
-			screen.getByRole("tab", { name: "Budget", selected: true }),
+			screen.getByRole("tab", { name: "Policies", selected: true }),
 		).toBeDefined();
 		// Focus lands on the tab it opened, not lost on the page.
 		expect(document.activeElement).toBe(
-			screen.getByRole("tab", { name: "Budget" }),
+			screen.getByRole("tab", { name: "Policies" }),
 		);
-		expect(window.location.hash).toBe(`#/w/${WORKSPACE}/models/budget`);
+		expect(window.location.hash).toBe(`#/w/${WORKSPACE}/models/policies`);
+		expect(await screen.findByText("No budgets")).toBeDefined();
+		expect(screen.getByText("No video limits")).toBeDefined();
+	});
+
+	it("opens Policies from a link to the old Budget tab", async () => {
+		setCurrentWorkspace(WORKSPACE);
+		window.history.replaceState(null, "", `#/w/${WORKSPACE}/models/budget`);
+		stubPages();
+		render(<ModelsView workspace={{ isDefault: true, role: "admin" }} />);
+		expect(
+			screen.getByRole("tab", { name: "Policies", selected: true }),
+		).toBeDefined();
+		expect(window.location.hash).toBe(`#/w/${WORKSPACE}/models/policies`);
 		expect(await screen.findByText("No budgets")).toBeDefined();
 	});
 });
 
-describe("Budget tab against the gateway", () => {
+describe("Budgets against the gateway", () => {
 	const closers: Array<() => Promise<void>> = [];
 	afterEach(async () => {
 		cleanup();
@@ -448,12 +483,13 @@ describe("Budget tab against the gateway", () => {
 		const workspaceId = await defaultWorkspaceId(url, owner);
 		window.history.replaceState(null, "", "#/models/budget");
 		render(<App />);
-		const table = await screen.findByRole("table");
+		const budgets = await screen.findByRole("region", { name: "Budgets" });
+		const table = await within(budgets).findByRole("table");
 		expect(within(table).getAllByRole("row")[1].textContent).toContain(
 			"All video models",
 		);
-		expect(window.location.hash).toBe(`#/w/${workspaceId}/models/budget`);
-		fireEvent.click(screen.getByRole("button", { name: "Add budget" }));
+		expect(window.location.hash).toBe(`#/w/${workspaceId}/models/policies`);
+		fireEvent.click(screen.getByRole("button", { name: "Add policy" }));
 		const form = screen.getByRole("region", { name: "Add a budget" });
 		fireEvent.change(within(form).getByLabelText("Limit (USD)"), {
 			target: { value: "150" },

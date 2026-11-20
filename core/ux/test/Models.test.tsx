@@ -62,7 +62,8 @@ const CATALOG = {
 
 const closers: Array<() => Promise<unknown>> = [];
 
-async function openForm(provider = "openai") {
+/** The Models page against a real gateway, once its usage chart has read. */
+async function openModels() {
 	const config: ApiConfig = {
 		providers: [
 			{
@@ -87,6 +88,13 @@ async function openForm(provider = "openai") {
 	window.history.replaceState(null, "", "#/models");
 	render(<App />);
 	await screen.findByText("openai/gpt-beta");
+	// Nothing has called a model yet, so the chart says so.
+	await screen.findByText("No model calls in the last 30 days");
+	return { url, token, workspaceId };
+}
+
+async function openForm(provider = "openai") {
+	const { url, token, workspaceId } = await openModels();
 	fireEvent.click(screen.getByRole("button", { name: "Add model" }));
 	changeControl(screen.getByLabelText("Provider"), {
 		target: { value: provider },
@@ -111,6 +119,61 @@ const options = () => {
 };
 const highlighted = () =>
 	options().find((item) => item.getAttribute("aria-selected") === "true");
+
+describe("Models page layout", () => {
+	afterEach(async () => {
+		cleanup();
+		clearCredential();
+		window.history.replaceState(null, "", "/");
+		window.localStorage.clear();
+		vi.unstubAllEnvs();
+		for (const close of closers.splice(0)) await close();
+	});
+
+	it("puts each tab's add button at the right of the tab bar, one at a time", async () => {
+		await openModels();
+		const bar = document.querySelector(".page-tabs-bar") as HTMLElement;
+		const actions = bar.querySelector(".page-tabs-actions") as HTMLElement;
+		const add = screen.getByRole("button", { name: "Add model" });
+		expect(actions.contains(add)).toBe(true);
+		// The tabs come first, then the action.
+		expect(
+			bar.querySelector('[role="tablist"]')?.compareDocumentPosition(add) ?? 0,
+		).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+		// Closing the form gives the focus back to the button in the bar.
+		fireEvent.click(add);
+		fireEvent.click(screen.getByRole("button", { name: "Close add model" }));
+		expect(document.activeElement).toBe(
+			screen.getByRole("button", { name: "Add model" }),
+		);
+		fireEvent.click(screen.getByRole("tab", { name: "Video" }));
+		const video = await screen.findByRole("button", {
+			name: "Add video provider",
+		});
+		expect(actions.contains(video)).toBe(true);
+		expect(screen.queryByRole("button", { name: "Add model" })).toBeNull();
+		fireEvent.click(screen.getByRole("tab", { name: "Policies" }));
+		expect(
+			actions.contains(
+				await screen.findByRole("button", { name: "Add policy" }),
+			),
+		).toBe(true);
+		expect(
+			screen.queryByRole("button", { name: "Add video provider" }),
+		).toBeNull();
+		fireEvent.click(screen.getByRole("tab", { name: "Routing" }));
+		expect(actions.childElementCount).toBe(0);
+	});
+
+	it("shows usage by model before the list of models", async () => {
+		await openModels();
+		const usage = screen.getByRole("heading", { name: "Usage by model" });
+		const active = screen.getByRole("heading", { name: "Active models" });
+		expect(usage.compareDocumentPosition(active)).toBe(
+			Node.DOCUMENT_POSITION_FOLLOWING,
+		);
+	});
+});
 
 describe("Model field", () => {
 	afterEach(async () => {

@@ -11,7 +11,6 @@ import {
 	type VideoGenerateRequest,
 	type VideoJob,
 	type VideoJobErrorCode,
-	type VideoJobList,
 	type VideoKind,
 	type VideoModel,
 	type VideoModelList,
@@ -811,32 +810,6 @@ export class VideoService {
 		const saved = (await jobs.get(workspace.id, id)) ?? record;
 		if (won) this.recordTelemetry(saved, "finished");
 		return this.view(saved, context.origin);
-	}
-
-	/** Jobs newest first: an agent's own, or every job in the workspace. */
-	async list(
-		workspace: WorkspaceRef,
-		viewer: VideoViewer,
-		options: { before?: string; limit?: number },
-		context: VideoContext,
-	): Promise<VideoJobList> {
-		this.refuseWhenDisabled();
-		const limit = Math.max(
-			1,
-			Math.min(
-				options.limit ?? VIDEO_LIMITS.defaultListLimit,
-				VIDEO_LIMITS.maxListLimit,
-			),
-		);
-		const { records, more } = await this.options.jobs.list(workspace.id, {
-			...(viewer.ownOnly ? { createdById: viewer.ownOnly } : {}),
-			...(options.before ? { before: options.before } : {}),
-			limit,
-		});
-		return {
-			jobs: records.map((record) => this.view(record, context.origin)),
-			nextBefore: more ? (records.at(-1)?._id ?? null) : null,
-		};
 	}
 
 	/**
