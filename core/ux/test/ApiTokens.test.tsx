@@ -20,6 +20,10 @@ import {
 	stopServer,
 } from "./session.js";
 
+// The token lifecycle is one long flow against a real gateway. It takes about
+// five seconds when the other test files run beside it.
+vi.setConfig({ testTimeout: 30_000 });
+
 const closers: Array<() => Promise<void>> = [];
 afterEach(async () => {
 	cleanup();
