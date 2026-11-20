@@ -42,6 +42,8 @@ export type ChatTelemetry = {
 
 /** A priced language model call, for budgets. */
 export type LlmSpend = {
+	/** The telemetry event's id: a charge retried with it counts once. */
+	id: string;
 	workspaceId: string;
 	caller?: TelemetryCaller;
 	/** Canonical routable id, e.g. `anthropic/claude-opus-4-8`. */
@@ -254,6 +256,7 @@ export class TelemetryService {
 			estimatedCostUsd > 0
 		)
 			this.spend?.({
+				id: event.id,
 				workspaceId: chat.workspaceId,
 				caller: chat.caller,
 				model: chat.model,

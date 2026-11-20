@@ -1263,12 +1263,14 @@ skip with a `failover` event. When a provider fails and the rest are refused,
 the answer is that provider's error, saying how many models a budget kept from
 being tried. Language model calls are checked before they start and counted
 after, from the estimate telemetry records (a write that fails is tried three
-times), so spend can pass a limit by the calls already running; models without
-a public list price are not counted. A video's estimate is held against every
-budget that covers it before the provider is called, all or none, and given
-back when the provider bills nothing; a model a used-up budget covers is passed
-over for the next provider in the order, and the video is refused only when
-budgets cover every one. A used-up budget refuses even a video estimated at $0.
+times, and each call counts once however often it is tried), so spend can pass
+a limit by the calls already running; models without a public list price are
+not counted. A video's estimate is held against every budget that covers it
+before the provider is called, all or none, and given back when the provider
+bills nothing; a model a used-up budget covers is passed over for the next
+provider in the order, and the video is refused with 429 only when budgets
+cover every one (otherwise the failed job says why each provider was not
+used). A used-up budget refuses even a video estimated at $0.
 
 Spend counts from when a budget is added, or last changed who it applies to,
 what it covers, or when it resets; a new limit keeps what was spent. Every

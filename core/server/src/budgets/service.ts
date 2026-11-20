@@ -299,14 +299,16 @@ export class BudgetService {
 
 	/**
 	 * Counts a language model call's estimated cost on every budget that
-	 * covers it. Written in the background, tried three times; `idle()` waits
-	 * for the writes.
+	 * covers it. Written in the background, tried three times; `chargeId`
+	 * makes a retry count once, even after a write whose answer was lost.
+	 * `idle()` waits for the writes.
 	 */
 	chargeLlm(
 		workspaceId: string,
 		caller: TelemetryCaller | undefined,
 		model: string,
 		costUsd: number,
+		chargeId: string = randomUUID(),
 	): void {
 		if (!(costUsd > 0)) return;
 		const write = (async () => {
@@ -316,7 +318,12 @@ export class BudgetService {
 			});
 			for (let attempt = 1; ; attempt++) {
 				try {
-					await this.store.charge(workspaceId, policies, toMicros(costUsd));
+					await this.store.charge(
+						workspaceId,
+						policies,
+						toMicros(costUsd),
+						chargeId,
+					);
 					return;
 				} catch (error) {
 					if (attempt >= 3) throw error;

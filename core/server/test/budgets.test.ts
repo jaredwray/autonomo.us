@@ -141,6 +141,25 @@ describe.each(stores())("BudgetStore (%s)", (_name, make) => {
 		expect(await store.spent(WS.id, [daily, monthly])).toEqual([0, 2_000_000]);
 	});
 
+	it("counts a retried charge once, and every one of many charges racing to a new counter", async () => {
+		const store = make();
+		const daily = policy({ id: "day", period: "day" });
+		const monthly = policy({ id: "month" });
+		await store.charge(WS.id, [daily, monthly], 1_000_000, "charge-1");
+		// The same charge again, as after a write whose answer was lost.
+		await store.charge(WS.id, [daily, monthly], 1_000_000, "charge-1");
+		expect(await store.spent(WS.id, [daily, monthly])).toEqual([
+			1_000_000, 1_000_000,
+		]);
+		const fresh = policy({ id: "fresh" });
+		await Promise.all(
+			Array.from({ length: 8 }, (_, index) =>
+				store.charge(WS.id, [fresh], 500_000, `race-${index}`),
+			),
+		);
+		expect(await store.spent(WS.id, [fresh])).toEqual([4_000_000]);
+	});
+
 	it("holds against every budget or none, and gives holds back", async () => {
 		const store = make();
 		const roomy = policy({ id: "roomy", limitUsd: 10 });

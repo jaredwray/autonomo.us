@@ -518,6 +518,7 @@ export class VideoService {
 		});
 
 		let budgetRefusal: string | undefined;
+		let budgetRefusals = 0;
 		for (const candidate of candidates) {
 			const { config } = candidate.entry;
 			const attempt = { provider: config.name, model: candidate.model.id };
@@ -542,6 +543,7 @@ export class VideoService {
 				// next provider in the order may be covered by none.
 				if (hold.by === "budget") {
 					budgetRefusal ??= hold.refused;
+					budgetRefusals += 1;
 					attempts.push({
 						...attempt,
 						outcome: "skipped",
@@ -667,7 +669,8 @@ export class VideoService {
 			...(held ? {} : { costUsd: 0 }),
 		};
 		// Nothing started because budgets covered every model: refused, as one call would be.
-		if (!inserted && budgetRefusal) throw new ServiceError(budgetRefusal, 429);
+		if (!inserted && budgetRefusal && budgetRefusals === candidates.length)
+			throw new ServiceError(budgetRefusal, 429);
 		if (!inserted) {
 			const first = candidates[0];
 			await jobs.insert({

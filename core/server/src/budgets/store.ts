@@ -27,7 +27,12 @@ type UsageDocument = {
 	/** Millionths of a US dollar, so sums stay exact. */
 	costMicros: number;
 	expiresAt: Date;
+	/** The latest charges counted here, so a retried charge counts once. */
+	charges?: string[];
 };
+
+/** How many recent charge ids a counter remembers. */
+const RECENT_CHARGES = 200;
 
 /** What a workspace starts with: the video budget it had before budgets existed. */
 export type BudgetSeed = {
@@ -44,6 +49,19 @@ export const BUDGET_USAGE_COLLECTION = "gateway_budget_usage";
 
 const DAY_MS = 86_400_000;
 
+/** The operations a bulk write failed on, when every failure was a duplicate key; otherwise null. */
+function duplicateKeyIndexes(error: unknown): number[] | null {
+	const errors = (error as { writeErrors?: unknown } | null)?.writeErrors;
+	const list = (
+		Array.isArray(errors) ? errors : errors ? [errors] : []
+	) as Array<{
+		code?: unknown;
+		index?: unknown;
+	}>;
+	if (!list.length || list.some((item) => item.code !== 11000)) return null;
+	return list.map((item) => Number(item.index));
+}
+
 /**
  * Budget policies, one document per workspace, and what each has spent in
  * the period running, one counter per policy and period. Read on every
@@ -57,6 +75,7 @@ export class BudgetStore {
 		{ policies: BudgetPolicy[]; revision: number; carried?: Carried }
 	>();
 	private readonly counters = new Map<string, number>();
+	private readonly recentCharges = new Map<string, string[]>();
 	private indexed = false;
 	private readonly now: () => Date;
 	private readonly seed?: (workspaceId: string) => Promise<BudgetSeed>;
@@ -290,40 +309,77 @@ export class BudgetStore {
 		}
 	}
 
-	/** Counts spend that already happened, with no cap: the call is over. */
+	/**
+	 * Counts spend that already happened, with no cap: the call is over.
+	 * With `chargeId`, a counter that already counted that charge is left
+	 * alone, so a retry after a lost answer, or after a write that reached
+	 * only some counters, counts each once.
+	 */
 	async charge(
 		workspaceId: string,
 		policies: BudgetPolicy[],
 		costMicros: number,
+		chargeId?: string,
 	): Promise<void> {
 		if (!policies.length || costMicros <= 0) return;
 		const now = this.now();
 		if (!this.mongo) {
 			for (const policy of policies) {
 				const key = this.key(workspaceId, policy, now);
+				if (chargeId) {
+					const seen = this.recentCharges.get(key) ?? [];
+					if (seen.includes(chargeId)) continue;
+					this.recentCharges.set(
+						key,
+						[...seen, chargeId].slice(-RECENT_CHARGES),
+					);
+				}
 				this.counters.set(key, (this.counters.get(key) ?? 0) + costMicros);
 			}
 			return;
 		}
-		try {
-			await this.usage().bulkWrite(
-				policies.map((policy) => ({
-					updateOne: {
-						filter: { _id: this.key(workspaceId, policy, now) },
-						update: {
-							$inc: { costMicros },
-							$setOnInsert: {
-								workspaceId,
-								expiresAt: this.expiry(policy, now),
-							},
-						},
-						upsert: true,
+		const ops = policies.map((policy) => ({
+			updateOne: {
+				filter: {
+					_id: this.key(workspaceId, policy, now),
+					...(chargeId ? { charges: { $ne: chargeId } } : {}),
+				},
+				update: {
+					$inc: { costMicros },
+					$setOnInsert: {
+						workspaceId,
+						expiresAt: this.expiry(policy, now),
 					},
-				})),
-				{ ordered: false },
-			);
-		} catch (error) {
-			this.unavailable(error);
+					...(chargeId
+						? {
+								$push: {
+									charges: {
+										$each: [chargeId],
+										$slice: -RECENT_CHARGES,
+									},
+								},
+							}
+						: {}),
+				},
+				upsert: true,
+			},
+		}));
+		// A duplicate key means another write created the counter first, or,
+		// with a charge id, that this counter already counted it. Trying those
+		// once more tells them apart: the counter exists now, so a second
+		// duplicate means the charge is in it.
+		let pending = ops;
+		for (let attempt = 1; pending.length; attempt++) {
+			try {
+				await this.usage().bulkWrite(pending, { ordered: false });
+				return;
+			} catch (error) {
+				const failed = duplicateKeyIndexes(error);
+				if (!failed) this.unavailable(error);
+				if (attempt >= 2 && chargeId) return;
+				if (attempt >= 3) this.unavailable(error);
+				pending = failed.map((index) => pending[index]);
+			}
 		}
 	}
 

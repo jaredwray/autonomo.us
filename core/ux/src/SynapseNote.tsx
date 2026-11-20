@@ -255,10 +255,15 @@ export function SynapseNote({
 			setBusy(false);
 		}
 	};
-	/** After a status, evidence, or history action: the parent refreshes and the note re-reads. */
+	/**
+	 * After a status, evidence, or history action: the note re-reads, then the
+	 * parent refreshes. In the other order the parent's refresh starts a newer
+	 * read that discards this one, so a form could close before the note shows
+	 * what changed.
+	 */
 	const acted = async () => {
-		onChanged(title);
 		await load();
+		onChanged(title);
 	};
 	/** Re-reads the note after a conflict; the editor keeps its draft but waits for the fresh revision. */
 	const reload = async () => {

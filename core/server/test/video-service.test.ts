@@ -557,6 +557,33 @@ describe("starting a video", () => {
 		});
 	});
 
+	it("records a failed job, not a budget refusal, when another provider was skipped for its own reason", async () => {
+		const { service, store, budgets } = await setup(
+			{ runway: scripted("runway").adapter, luma: scripted("luma").adapter },
+			[
+				{ name: "runway", kind: "runway" },
+				{ name: "luma", kind: "luma" },
+			],
+		);
+		await budgets.create(WS, {
+			appliesTo: { kind: "everyone" },
+			covers: { kind: "video-model", model: "seedance2_5" },
+			limitUsd: 0,
+			period: "month",
+		});
+		await store.setProblem(WS, "luma", {
+			kind: "key",
+			detail: "Luma: the API key was refused",
+			at: "2026-11-19T11:59:00.000Z",
+		});
+		const job = await service.generate(WS, AGENT, { prompt: "x" }, CONTEXT);
+		expect(job.status).toBe("failed");
+		expect(job.attempts).toMatchObject([
+			{ provider: "runway", detail: expect.stringContaining("is used up") },
+			{ provider: "luma", detail: expect.stringContaining("problem to fix") },
+		]);
+	});
+
 	it("starts nothing when a budget the agent shares has no room", async () => {
 		const runway = scripted("runway", { cost: 3 });
 		const { service, budgets } = await setup({ runway: runway.adapter });

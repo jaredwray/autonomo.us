@@ -567,6 +567,7 @@ export function createServer(options: CreateServerOptions = {}) {
 			spend.caller,
 			spend.model,
 			spend.costUsd,
+			spend.id,
 		),
 	);
 	const video = new VideoService({
