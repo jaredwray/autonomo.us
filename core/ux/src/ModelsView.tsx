@@ -394,7 +394,6 @@ export function ModelsView({
 	const addButton = useRef<HTMLButtonElement>(null);
 	const refresh = useCallback(async () => {
 		setLoading(true);
-		setUsageKey((key) => key + 1);
 		const [models, providers, choices] = await Promise.allSettled([
 			fetchModels(),
 			fetchProviderSettings(),
@@ -438,6 +437,15 @@ export function ModelsView({
 	const providerKind = (connection: string) =>
 		data?.providers.find((item) => item.name === connection)?.kind ??
 		connection;
+	/** A model's name in the catalog, such as Claude Opus 4.8, by its routable id. */
+	const displayName = (id: string) => {
+		const item = data?.models.find((model) => model.id === id);
+		return item
+			? catalog?.providers[providerKind(item.provider)]?.models.find(
+					(entry) => entry.id === item.model,
+				)?.name
+			: undefined;
+	};
 	const filtered = (data?.models ?? []).filter((item) =>
 		`${item.id} ${providerNames[providerKind(item.provider)] ?? item.provider}`
 			.toLowerCase()
@@ -481,7 +489,10 @@ export function ModelsView({
 						className="button"
 						type="button"
 						disabled={loading}
-						onClick={() => void refresh()}
+						onClick={() => {
+							setUsageKey((key) => key + 1);
+							void refresh();
+						}}
 					>
 						Retry
 					</button>
@@ -509,6 +520,7 @@ export function ModelsView({
 						setModelsAdded((count) => count + 1);
 						setSearch("");
 						closeForm();
+						setUsageKey((key) => key + 1);
 						void refresh();
 					}}
 				/>
@@ -534,7 +546,7 @@ export function ModelsView({
 				</div>
 				<p>One gateway. Your choice of models.</p>
 			</section>
-			<ModelUsageChart refreshKey={usageKey} />
+			<ModelUsageChart refreshKey={usageKey} nameOf={displayName} />
 			<section
 				className="card active-models"
 				aria-labelledby="active-models-heading"
@@ -549,7 +561,10 @@ export function ModelsView({
 						type="button"
 						className="button"
 						disabled={loading}
-						onClick={() => void refresh()}
+						onClick={() => {
+							setUsageKey((key) => key + 1);
+							void refresh();
+						}}
 					>
 						{loading ? "Refreshing…" : "Refresh"}
 					</button>

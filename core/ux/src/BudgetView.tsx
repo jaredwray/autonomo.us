@@ -441,6 +441,8 @@ export function BudgetsCard({
 	onNotice,
 	onRefresh,
 	onAdd,
+	editingId,
+	onEdit,
 }: {
 	/** Null until read. */
 	budgets: BudgetPolicyView[] | null;
@@ -457,9 +459,11 @@ export function BudgetsCard({
 	onRefresh(): void;
 	/** Opens Add policy on a budget. */
 	onAdd(): void;
+	/** The budget whose edit form is open. The tab keeps one form open at a time. */
+	editingId: string | null;
+	onEdit(id: string | null): void;
 }) {
 	const [rowError, setRowError] = useState("");
-	const [panel, setPanel] = useState<{ kind: "edit"; id: string } | null>(null);
 	const [confirming, setConfirming] = useState<string | null>(null);
 	const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
 	const working = (budgetId: string, on: boolean) =>
@@ -487,23 +491,23 @@ export function BudgetsCard({
 	const editButtons = useRef(new Map<string, HTMLButtonElement>());
 	const focusEdit = useRef<string | null>(null);
 	useEffect(() => {
-		if (panel) return;
+		if (editingId) return;
 		const budgetId = focusEdit.current;
 		focusEdit.current = null;
 		if (!budgetId) return;
 		(editButtons.current.get(budgetId) ?? heading.current)?.focus();
-	}, [panel]);
+	}, [editingId]);
 
 	const names: Names = {
 		agent: (agentId) => agents.find((agent) => agent.id === agentId)?.name,
 		llm: (model) => model,
 	};
 	const closePanel = () => {
-		focusEdit.current = panel?.id ?? null;
-		setPanel(null);
+		focusEdit.current = editingId;
+		onEdit(null);
 	};
-	const editing = panel
-		? budgets?.find((budget) => budget.id === panel.id)
+	const editing = editingId
+		? budgets?.find((budget) => budget.id === editingId)
 		: undefined;
 
 	return (
@@ -685,7 +689,7 @@ export function BudgetsCard({
 															type="button"
 															aria-label={`Edit the budget for ${label}`}
 															onClick={() => {
-																setPanel({ kind: "edit", id: budget.id });
+																onEdit(budget.id);
 																onNotice("");
 															}}
 														>
@@ -705,8 +709,7 @@ export function BudgetsCard({
 																		try {
 																			await deleteBudget(budget.id);
 																			setConfirming(null);
-																			if (panel?.id === budget.id)
-																				setPanel(null);
+																			if (editingId === budget.id) onEdit(null);
 																			onChange((current) =>
 																				current.filter(
 																					(item) => item.id !== budget.id,

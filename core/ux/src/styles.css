@@ -611,6 +611,11 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .model-usage-state h3 { margin: 0 0 6px; color: var(--text-primary); font-size: 15px; font-weight: 550; }
 .model-usage-state p { margin: 0; }
 .model-usage-foot { margin: 12px 0 0; }
+/* On a phone the name takes its own line, so long ids are not cut to the same prefix. */
+@media (max-width: 640px) {
+	.model-usage-list .model-row { grid-template-columns: 1fr auto; gap: 2px 12px; padding: 6px 0; }
+	.model-usage-list .name { grid-column: 1 / -1; white-space: normal; overflow-wrap: anywhere; }
+}
 .model-usage-foot a { color: var(--series-1); text-decoration: none; }
 .model-usage-foot a:hover { text-decoration: underline; }
 .model-search { display: flex; align-items: center; gap: 9px; border: 1px solid var(--hairline); border-radius: 7px; max-width: 360px; padding: 8px 10px; margin: 12px 0 24px; color: var(--text-muted); background: var(--page); }

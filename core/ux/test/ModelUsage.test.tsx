@@ -91,8 +91,9 @@ const bars = () =>
 	within(screen.getByRole("list")).getAllByRole("listitem") as HTMLElement[];
 const names = () =>
 	bars().map((item) => item.querySelector(".name")?.textContent);
+/** What each row shows, without the split read out to screen readers. */
 const values = () =>
-	bars().map((item) => item.querySelector(".value")?.textContent);
+	bars().map((item) => item.querySelector(".value")?.firstChild?.textContent);
 
 afterEach(() => {
 	cleanup();
@@ -138,6 +139,10 @@ describe("Usage by model", () => {
 		expect(values()).toEqual(["12K", "2,000", "500"]);
 		// Tokens split into prompt and completion; a model that reports only a total does not.
 		expect(bars()[0].querySelectorAll(".segment")).toHaveLength(2);
+		// The split is read out too, not only drawn.
+		expect(bars()[0].querySelector(".visually-hidden")?.textContent).toBe(
+			": 9,000 prompt, 3,000 completion",
+		);
 		expect(bars()[2].querySelectorAll(".segment")).toHaveLength(1);
 		expect(screen.getByText("Prompt")).toBeDefined();
 
@@ -162,10 +167,32 @@ describe("Usage by model", () => {
 			"local/free",
 		]);
 		expect(values()).toEqual(["$2.00", "$0.50", "—"]);
+		expect(bars()[2].querySelector(".bar")).toBeNull();
 		expect(screen.getByText(/Spend counts priced calls only/)).toBeDefined();
 		expect(
 			screen.getByRole("link", { name: "See all usage" }).getAttribute("href"),
 		).toBe(`#/w/${WORKSPACE}/dashboard/usage`);
+	});
+
+	it("names models as the catalog does, where it knows them", async () => {
+		stub([
+			analytics([
+				row("anthropic/claude-opus-4-8", { totalTokens: 20 }),
+				row("custom/my-model", { totalTokens: 10 }),
+			]),
+		]);
+		render(
+			<ModelUsageChart
+				nameOf={(id) =>
+					id === "anthropic/claude-opus-4-8" ? "Claude Opus 4.8" : undefined
+				}
+			/>,
+		);
+		await screen.findByRole("list");
+		expect(names()).toEqual(["Claude Opus 4.8 · anthropic", "custom/my-model"]);
+		expect(bars()[0].querySelector(".name")?.getAttribute("title")).toBe(
+			"anthropic/claude-opus-4-8",
+		);
 	});
 
 	it(`shows the top ${USAGE_TOP} and counts the rest`, async () => {

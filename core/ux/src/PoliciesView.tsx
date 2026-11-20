@@ -28,12 +28,12 @@ const errorText = (cause: unknown, fallback: string) =>
  */
 function PolicyTypePicker({
 	value,
-	videoDisabled,
+	disabled,
 	onChange,
 }: {
 	value: PolicyKind;
-	/** Why a video limit cannot be added now, or null when it can. */
-	videoDisabled: string | null;
+	/** Why each kind cannot be added now, or null when it can. */
+	disabled: Record<PolicyKind, string | null>;
 	onChange(kind: PolicyKind): void;
 }) {
 	const id = useId();
@@ -48,7 +48,7 @@ function PolicyTypePicker({
 				type="radio"
 				name={`${id}-type`}
 				checked={value === kind}
-				disabled={kind === "video-limit" && videoDisabled !== null}
+				disabled={disabled[kind] !== null}
 				onChange={() => onChange(kind)}
 			/>
 			<span>
@@ -63,12 +63,12 @@ function PolicyTypePicker({
 			{choice(
 				"budget",
 				"Budget",
-				"Caps what models may spend in a day or a month.",
+				disabled.budget ?? "Caps what models may spend in a day or a month.",
 			)}
 			{choice(
 				"video-limit",
 				"Video limit",
-				videoDisabled ??
+				disabled["video-limit"] ??
 					"Caps how many videos each caller may start in a day, and how long they may be.",
 			)}
 		</fieldset>
@@ -102,7 +102,15 @@ export function PoliciesPanel({
 	const [modelsFailed, setModelsFailed] = useState(false);
 	const [loading, setLoading] = useState(true);
 	const [notice, setNotice] = useState("");
-	const [adding, setAdding] = useState<PolicyKind | null>(null);
+	// One form at a time: adding a policy, or editing a budget or a video limit.
+	const [open, setOpen] = useState<
+		| { kind: "add"; type: PolicyKind }
+		| { kind: "edit"; type: PolicyKind; id: string }
+		| null
+	>(null);
+	const adding = open?.kind === "add" ? open.type : null;
+	const editingOf = (type: PolicyKind) =>
+		open?.kind === "edit" && open.type === type ? open.id : null;
 	const addButton = useRef<HTMLButtonElement>(null);
 	const sequence = useRef(0);
 
@@ -158,26 +166,35 @@ export function PoliciesPanel({
 	}, [adding]);
 	const closeAdd = () => {
 		focusAdd.current = true;
-		setAdding(null);
+		setOpen(null);
 	};
-	const openAdd = (kind: PolicyKind) => {
-		setAdding(kind);
+	const openAdd = (type: PolicyKind) => {
+		setOpen({ kind: "add", type });
 		setNotice("");
 	};
 
 	const videoAvailable = video?.available ?? false;
-	const videoDisabled = !video
-		? videoFailed
-			? "Video settings could not be loaded, so a video limit cannot be added now."
-			: "Loading video settings…"
-		: !video.available
-			? "Video generation is turned off on this gateway, so video limits cannot be added."
-			: null;
-	// Video turned off while its form was open: the form is gone, so close it.
+	const disabled: Record<PolicyKind, string | null> = {
+		budget: !budgets
+			? budgetError
+				? "Budgets could not be loaded, so a budget cannot be added now."
+				: "Loading budgets…"
+			: null,
+		"video-limit": !video
+			? videoFailed
+				? "Video settings could not be loaded, so a video limit cannot be added now."
+				: "Loading video settings…"
+			: !video.available
+				? "Video generation is turned off on this gateway, so video limits cannot be added."
+				: null,
+	};
+	const addingDisabled = adding ? disabled[adding] : null;
+	// Its kind can no longer be added (video turned off, say): the form is gone, so close it.
 	useEffect(() => {
-		if (adding === "video-limit" && videoDisabled !== null && !loading)
-			closeAdd();
-	});
+		if (addingDisabled === null || loading) return;
+		focusAdd.current = true;
+		setOpen(null);
+	}, [addingDisabled, loading]);
 	const connected = [
 		...new Set((video?.connections ?? []).map((item) => item.kind)),
 	];
@@ -193,11 +210,7 @@ export function PoliciesPanel({
 	const temporary =
 		budgetPersistence === "memory" || video?.persistence === "memory";
 	const picker = (value: PolicyKind) => (
-		<PolicyTypePicker
-			value={value}
-			videoDisabled={videoDisabled}
-			onChange={setAdding}
-		/>
+		<PolicyTypePicker value={value} disabled={disabled} onChange={openAdd} />
 	);
 
 	return (
@@ -218,8 +231,13 @@ export function PoliciesPanel({
 							ref={addButton}
 							className="button primary"
 							type="button"
-							disabled={!budgets || adding !== null}
-							onClick={() => openAdd("budget")}
+							disabled={
+								adding !== null ||
+								(disabled.budget !== null && disabled["video-limit"] !== null)
+							}
+							onClick={() =>
+								openAdd(disabled.budget === null ? "budget" : "video-limit")
+							}
 						>
 							<Icon name="plus" /> Add policy
 						</button>
@@ -244,7 +262,7 @@ export function PoliciesPanel({
 					</button>
 				</div>
 			)}
-			{canEdit && adding === "budget" && budgets && (
+			{canEdit && adding === "budget" && disabled.budget === null && (
 				<BudgetForm
 					key="add-budget"
 					agents={agents}
@@ -261,26 +279,28 @@ export function PoliciesPanel({
 					}}
 				/>
 			)}
-			{canEdit && adding === "video-limit" && videoDisabled === null && (
-				<VideoLimitForm
-					key="add-video-limit"
-					agents={agents}
-					names={names}
-					connected={connected}
-					typePicker={picker("video-limit")}
-					onClose={closeAdd}
-					onSaved={(saved) => {
-						setVideo((current) =>
-							current
-								? { ...current, limits: [...current.limits, saved] }
-								: current,
-						);
-						setNotice("Limit added.");
-						closeAdd();
-						void refresh();
-					}}
-				/>
-			)}
+			{canEdit &&
+				adding === "video-limit" &&
+				disabled["video-limit"] === null && (
+					<VideoLimitForm
+						key="add-video-limit"
+						agents={agents}
+						names={names}
+						connected={connected}
+						typePicker={picker("video-limit")}
+						onClose={closeAdd}
+						onSaved={(saved) => {
+							setVideo((current) =>
+								current
+									? { ...current, limits: [...current.limits, saved] }
+									: current,
+							);
+							setNotice("Limit added.");
+							closeAdd();
+							void refresh();
+						}}
+					/>
+				)}
 			<section className="models-overview" aria-label="Policy overview">
 				<div>
 					<span className="overview-value">
@@ -315,6 +335,10 @@ export function PoliciesPanel({
 				onNotice={setNotice}
 				onRefresh={() => void refresh()}
 				onAdd={() => openAdd("budget")}
+				editingId={editingOf("budget")}
+				onEdit={(id) =>
+					setOpen(id ? { kind: "edit", type: "budget", id } : null)
+				}
 			/>
 			<VideoLimitsCard
 				limits={video?.limits ?? null}
@@ -334,6 +358,10 @@ export function PoliciesPanel({
 				onNotice={setNotice}
 				onAdd={() => openAdd("video-limit")}
 				onRetry={() => void refresh()}
+				editingId={editingOf("video-limit")}
+				onEdit={(id) =>
+					setOpen(id ? { kind: "edit", type: "video-limit", id } : null)
+				}
 			/>
 		</div>
 	);

@@ -215,6 +215,83 @@ describe("Add policy", () => {
 	});
 });
 
+describe("One policy form at a time", () => {
+	it("closes an edit when Add policy opens, and the add form when an edit opens", async () => {
+		const budget = {
+			id: "b1",
+			appliesTo: { kind: "everyone" as const },
+			covers: { kind: "all" as const },
+			limitUsd: 100,
+			period: "month" as const,
+			enabled: true,
+			createdAt: "2026-11-01T00:00:00.000Z",
+			updatedAt: "2026-11-01T00:00:00.000Z",
+			usage: {
+				period: "2026-11",
+				spentUsd: 0,
+				resetsAt: "2026-12-01T00:00:00.000Z",
+			},
+		};
+		fakeGateway({ settings: settings({ limits: [limit()] }) }, (call) =>
+			call.method === "GET" && call.path === `${base}/budgets`
+				? json({ policies: [budget], persistence: "memory" })
+				: undefined,
+		);
+		show();
+		const forms = () =>
+			screen.queryAllByRole("region", { name: /^(Add a|Edit) / });
+		fireEvent.click(
+			await screen.findByRole("button", {
+				name: "Edit the budget for Everyone in this workspace on all models",
+			}),
+		);
+		expect(screen.getByRole("region", { name: "Edit budget" })).toBeDefined();
+		fireEvent.click(screen.getByRole("button", { name: "Add policy" }));
+		expect(screen.queryByRole("region", { name: "Edit budget" })).toBeNull();
+		expect(screen.getByRole("region", { name: "Add a budget" })).toBeDefined();
+		fireEvent.click(
+			screen.getByRole("button", {
+				name: "Edit the limit for Everyone in this workspace on all video models",
+			}),
+		);
+		expect(screen.queryByRole("region", { name: "Add a budget" })).toBeNull();
+		expect(
+			screen.getByRole("region", { name: "Edit video limit" }),
+		).toBeDefined();
+		expect(forms()).toHaveLength(1);
+		// Add policy is free again once its form has closed.
+		expect(
+			(screen.getByRole("button", { name: "Add policy" }) as HTMLButtonElement)
+				.disabled,
+		).toBe(false);
+	});
+
+	it("adds a video limit when budgets cannot be read", async () => {
+		fakeGateway({ settings: settings({ limits: [limit()] }) }, (call) =>
+			call.method === "GET" && call.path === `${base}/budgets`
+				? failure(503, "The database is unavailable.")
+				: undefined,
+		);
+		show();
+		await screen.findByRole("table");
+		const add = (await screen.findByRole("button", {
+			name: "Add policy",
+		})) as HTMLButtonElement;
+		await waitFor(() => expect(add.disabled).toBe(false));
+		fireEvent.click(add);
+		expect(
+			screen.getByRole("region", { name: "Add a video limit" }),
+		).toBeDefined();
+		const budgetType = screen.getByRole("radio", {
+			name: /^Budget/,
+		}) as HTMLInputElement;
+		expect(budgetType.disabled).toBe(true);
+		expect(budgetType.closest("label")?.textContent).toContain(
+			"Budgets could not be loaded",
+		);
+	});
+});
+
 describe("Video limits on the Policies tab", () => {
 	it("adds a limit for chosen agents on one model, reading back what it does", async () => {
 		const state: State = {

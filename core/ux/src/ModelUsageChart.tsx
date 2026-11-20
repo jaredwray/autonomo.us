@@ -23,9 +23,18 @@ function metricValue(row: AnalyticsBreakdown, metric: Metric): number {
 	return row[metric];
 }
 
-/** The model's name, and its connection when the name does not already say it. */
-function ModelName({ row }: { row: AnalyticsBreakdown }) {
-	const name = row.name || row.id;
+/**
+ * The model's display name where the catalog has one, else its id, and its
+ * connection when the name does not already say it.
+ */
+function ModelName({
+	row,
+	nameOf,
+}: {
+	row: AnalyticsBreakdown;
+	nameOf?(id: string): string | undefined;
+}) {
+	const name = nameOf?.(row.id) || row.name || row.id;
 	const provider =
 		row.provider && !name.startsWith(`${row.provider}/`) ? row.provider : "";
 	return (
@@ -44,9 +53,12 @@ function ModelName({ row }: { row: AnalyticsBreakdown }) {
  */
 export function ModelUsageChart({
 	refreshKey = 0,
+	nameOf,
 }: {
 	/** Changing it reads the usage again. */
 	refreshKey?: number;
+	/** A model's display name by its routable id, where one is known. */
+	nameOf?(id: string): string | undefined;
 }) {
 	const [data, setData] = useState<UsageAnalytics | null>(null);
 	const [error, setError] = useState(false);
@@ -188,7 +200,7 @@ export function ModelUsageChart({
 								row.promptTokens + row.completionTokens > 0;
 							return (
 								<li className="model-row" key={row.id}>
-									<ModelName row={row} />
+									<ModelName row={row} nameOf={nameOf} />
 									<span className="bar-track" aria-hidden="true">
 										{value > 0 && (
 											<span className="bar" style={{ width: `${width}%` }}>
@@ -220,6 +232,11 @@ export function ModelUsageChart({
 										{metric === "estimatedCostUsd"
 											? costLabel(row)
 											: count(value)}
+										{split && (
+											<span className="visually-hidden">
+												{`: ${count(row.promptTokens)} prompt, ${count(row.completionTokens)} completion`}
+											</span>
+										)}
 									</span>
 								</li>
 							);

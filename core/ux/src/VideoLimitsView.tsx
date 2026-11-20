@@ -377,6 +377,8 @@ export function VideoLimitsCard({
 	onNotice,
 	onAdd,
 	onRetry,
+	editingId,
+	onEdit,
 }: {
 	/** Null until read. */
 	limits: VideoLimit[] | null;
@@ -396,9 +398,11 @@ export function VideoLimitsCard({
 	/** Opens Add policy on a video limit. */
 	onAdd(): void;
 	onRetry(): void;
+	/** The limit whose edit form is open. The tab keeps one form open at a time. */
+	editingId: string | null;
+	onEdit(id: string | null): void;
 }) {
 	const canChange = canEdit && available;
-	const [panel, setPanel] = useState<{ kind: "edit"; id: string } | null>(null);
 	const [rowError, setRowError] = useState("");
 	const [confirming, setConfirming] = useState<string | null>(null);
 	const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
@@ -417,14 +421,14 @@ export function VideoLimitsCard({
 	const editButtons = useRef(new Map<string, HTMLButtonElement>());
 	const focusAfterClose = useRef<string | null>(null);
 	useEffect(() => {
-		if (panel || !focusAfterClose.current) return;
+		if (editingId || !focusAfterClose.current) return;
 		const target = focusAfterClose.current;
 		focusAfterClose.current = null;
 		(editButtons.current.get(target) ?? heading.current)?.focus();
-	}, [panel]);
+	}, [editingId]);
 	const closePanel = () => {
-		focusAfterClose.current = panel?.id ?? null;
-		setPanel(null);
+		focusAfterClose.current = editingId;
+		onEdit(null);
 	};
 	// Delete and Cancel replace themselves: focus follows to what took their place.
 	const confirmDelete = useRef<HTMLButtonElement>(null);
@@ -439,8 +443,8 @@ export function VideoLimitsCard({
 		refocusDelete.current = null;
 		if (limitId) deleteButtons.current.get(limitId)?.focus();
 	}, [confirming]);
-	const editing = panel
-		? limits?.find((limit) => limit.id === panel.id)
+	const editing = editingId
+		? limits?.find((limit) => limit.id === editingId)
 		: undefined;
 
 	return (
@@ -640,7 +644,7 @@ export function VideoLimitsCard({
 															type="button"
 															aria-label={`Edit the limit for ${label}`}
 															onClick={() => {
-																setPanel({ kind: "edit", id: limit.id });
+																onEdit(limit.id);
 																onNotice("");
 																setRowError("");
 															}}
@@ -661,8 +665,7 @@ export function VideoLimitsCard({
 																		try {
 																			await deleteVideoLimit(limit.id);
 																			setConfirming(null);
-																			if (panel?.id === limit.id)
-																				setPanel(null);
+																			if (editingId === limit.id) onEdit(null);
 																			onChange((current) =>
 																				current.filter(
 																					(item) => item.id !== limit.id,
