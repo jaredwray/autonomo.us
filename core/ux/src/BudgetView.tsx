@@ -378,6 +378,8 @@ function BudgetForm({
 								</Dropdown>
 							</div>
 						)}
+					</div>
+					<div className="model-form-grid">
 						<div className="form-field">
 							<label htmlFor={`${id}-limit`}>Limit (USD)</label>
 							<input
