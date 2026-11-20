@@ -218,6 +218,33 @@ describe("Usage by model", () => {
 		expect(screen.queryByRole("button", { name: "Tokens" })).toBeNull();
 	});
 
+	it("does not call a partly kept window empty of calls", async () => {
+		stub([
+			analytics([], {
+				partial: true,
+				source: "memory",
+				coverageFrom: "2026-11-19T00:00:00.000Z",
+			}),
+		]);
+		render(<ModelUsageChart />);
+		expect(
+			await screen.findByText("No model calls kept for the last 30 days"),
+		).toBeDefined();
+		expect(screen.getByText(/earlier calls may be missing/)).toBeDefined();
+		expect(screen.queryByText("No model calls in the last 30 days")).toBeNull();
+	});
+
+	it("says when a refresh of an empty chart fails", async () => {
+		stub([analytics([]), "fail"]);
+		const { rerender } = render(<ModelUsageChart refreshKey={0} />);
+		await screen.findByText("No model calls in the last 30 days");
+		rerender(<ModelUsageChart refreshKey={1} />);
+		expect(
+			await screen.findByText(/Usage could not be refreshed/),
+		).toBeDefined();
+		expect(screen.getByRole("button", { name: "Retry" })).toBeDefined();
+	});
+
 	it("fails on its own and reads again on Retry", async () => {
 		stub([
 			"fail",

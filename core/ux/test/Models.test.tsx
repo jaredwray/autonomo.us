@@ -88,8 +88,11 @@ async function openModels() {
 	window.history.replaceState(null, "", "#/models");
 	render(<App />);
 	await screen.findByText("openai/gpt-beta");
-	// Nothing has called a model yet, so the chart says so.
-	await screen.findByText("No model calls in the last 30 days");
+	// Nothing has called a model yet, so the chart says so. An in-memory
+	// gateway keeps only part of the window, and the chart says that too.
+	await screen.findByRole("heading", {
+		name: /^No model calls (kept for|in) the last 30 days$/,
+	});
 	return { url, token, workspaceId };
 }
 

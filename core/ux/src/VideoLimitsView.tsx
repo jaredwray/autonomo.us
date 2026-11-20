@@ -210,7 +210,6 @@ export function VideoLimitForm({
 					<Icon name="close" />
 				</button>
 			</div>
-			{typePicker}
 			<form
 				onSubmit={async (event) => {
 					event.preventDefault();
@@ -237,6 +236,8 @@ export function VideoLimitForm({
 				}}
 			>
 				<fieldset className="budget-form" disabled={saving}>
+					{/* Inside the fieldset, so the kind cannot change while a save is on its way. */}
+					{typePicker}
 					<AppliesToFields
 						id={id}
 						who={who}

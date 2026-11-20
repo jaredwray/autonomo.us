@@ -9,6 +9,35 @@ const models = {
 	],
 };
 const providers = { connections: [], providers: [], persistence: "memory" };
+// The LLM tab's usage chart: no model calls in its window.
+const metrics = {
+	requests: 0,
+	errors: 0,
+	promptTokens: 0,
+	completionTokens: 0,
+	totalTokens: 0,
+	estimatedCostUsd: 0,
+	pricedRequests: 0,
+};
+const analytics = {
+	query: {},
+	generatedAt: "2026-11-20T00:00:00.000Z",
+	source: "memory",
+	coverageFrom: null,
+	partial: false,
+	durableUnavailable: false,
+	bucket: "day",
+	totals: metrics,
+	activeCallers: 0,
+	unattributedRequests: 0,
+	byModel: [],
+	byProvider: [],
+	byCaller: [],
+	byOperation: [],
+	series: [],
+	web: {},
+	options: { models: [], providers: [], callers: [] },
+};
 
 async function holdModels(page: import("@playwright/test").Page) {
 	let release = () => {};
@@ -25,6 +54,8 @@ async function holdModels(page: import("@playwright/test").Page) {
 			await route.fulfill({ json: providers });
 		else if (path.endsWith("/catalog"))
 			await route.fulfill({ json: { providers: {} } });
+		else if (path.endsWith("/telemetry/analytics"))
+			await route.fulfill({ json: analytics });
 		else {
 			unexpected.push(path);
 			await route.abort();
@@ -138,21 +169,26 @@ test("failed initial load stops motion, retry succeeds, and refresh preserves da
 							? { providers: {} }
 							: path.endsWith("/providers")
 								? providers
-								: models,
+								: path.endsWith("/telemetry/analytics")
+									? analytics
+									: models,
 					},
 		);
 	});
 	await page.goto("/browser/loading.html");
-	await expect(page.getByRole("alert")).toContainText(
-		"Could not load active models",
-	);
+	const alert = page.getByRole("alert");
+	await expect(alert).toContainText("Could not load active models");
 	await expect(page.locator(".loading-banner")).toHaveCount(0);
+	// The usage chart fails on its own, with a Retry of its own.
+	await expect(page.getByText("Usage could not be loaded.")).toBeVisible();
 	fail = false;
 	pending = new Promise<void>((resolve) => {
 		release = resolve;
 	});
-	await page.getByRole("button", { name: "Retry", exact: true }).click();
-	await expect(page.locator(".loading-banner")).toBeVisible();
+	await alert.getByRole("button", { name: "Retry", exact: true }).click();
+	await expect(
+		page.locator(".loading-banner").filter({ hasText: "Loading models…" }),
+	).toBeVisible();
 	release();
 	await expect(
 		page.getByText("local/synthetic-model", { exact: true }),

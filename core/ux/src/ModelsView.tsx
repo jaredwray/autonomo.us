@@ -360,9 +360,15 @@ export function ModelsView({
 	useEffect(() => {
 		const sync = () => {
 			const next = parseModelsTab(window.location.hash);
-			// Policies was the Budget tab: an old link shows the address it has now.
-			if (/\/models\/budget\/?$/.test(window.location.hash))
-				window.history.replaceState(null, "", modelsHash(next));
+			// Policies was the Budget tab: an old link shows the address it has
+			// now, in the workspace the link names.
+			const hash = window.location.hash;
+			if (/\/models\/budget\/?$/.test(hash))
+				window.history.replaceState(
+					null,
+					"",
+					hash.replace(/\/models\/budget\/?$/, "/models/policies"),
+				);
 			setTab(next);
 		};
 		sync();

@@ -80,7 +80,7 @@ function settings(overrides: Partial<VideoSettings> = {}): VideoSettings {
 }
 
 type Call = { method: string; path: string; body?: Record<string, unknown> };
-type Handler = (call: Call) => Response | undefined;
+type Handler = (call: Call) => Response | Promise<Response> | undefined;
 type State = { settings: VideoSettings; agents?: AgentSummary[] };
 const json = (body: unknown, status = 200) =>
 	new Response(JSON.stringify(body), {
@@ -101,7 +101,7 @@ function fakeGateway(state: State, handler: Handler = () => undefined) {
 			typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
 		const call = { method, path, body };
 		calls.push(call);
-		const answer = handler(call);
+		const answer = await handler(call);
 		if (answer) return answer;
 		if (method === "GET" && path === `${base}/video`)
 			return json(structuredClone(state.settings));
@@ -172,6 +172,33 @@ describe("Add policy", () => {
 				screen.getByRole("button", { name: "Add policy" }),
 			),
 		);
+	});
+
+	it("keeps the type while a save is on its way", async () => {
+		let answer: (response: Response) => void = () => {};
+		fakeGateway({ settings: settings() }, (call) =>
+			call.method === "POST"
+				? new Promise<Response>((resolve) => {
+						answer = resolve;
+					})
+				: undefined,
+		);
+		show();
+		await screen.findByText("No video limits");
+		const form = await addVideoLimit();
+		type("Videos a day (optional)", "5", form);
+		fireEvent.click(within(form).getByRole("button", { name: "Add limit" }));
+		await waitFor(() =>
+			expect(
+				(
+					within(form).getByRole("radio", {
+						name: /^Budget/,
+					}) as HTMLInputElement
+				).closest("fieldset:disabled"),
+			).not.toBeNull(),
+		);
+		answer(json(limit({ id: "lim-9", videosPerDay: 5 }), 201));
+		expect(await screen.findByText("Limit added.")).toBeDefined();
 	});
 
 	it("opens on a video limit from the empty list", async () => {

@@ -110,6 +110,21 @@ export function ModelUsageChart({
 	const more = rows.length - shown.length;
 	const max = Math.max(...shown.map((item) => item.value), 0);
 	const empty = data !== null && data.totals.requests === 0;
+	// Only part of the window was kept, so a gap may be missing calls.
+	const coverage =
+		data && (data.partial || data.durableUnavailable)
+			? `Counts activity this gateway process kept${
+					data.coverageFrom ? ` since ${dateTime(data.coverageFrom)}` : ""
+				}; earlier calls may be missing.`
+			: null;
+	const stale = error && data && (
+		<p className="field-hint" role="status">
+			Usage could not be refreshed; this is the last read.{" "}
+			<button className="link-button" type="button" onClick={() => void load()}>
+				Retry
+			</button>
+		</p>
+	);
 	const unpriced =
 		metric === "estimatedCostUsd" &&
 		data !== null &&
@@ -160,23 +175,22 @@ export function ModelUsageChart({
 				</div>
 			) : empty ? (
 				<div className="model-usage-state">
-					<h3>No model calls in the last {USAGE_DAYS} days</h3>
-					<p>Usage shows here once agents or people call a model.</p>
+					{coverage ? (
+						<>
+							<h3>No model calls kept for the last {USAGE_DAYS} days</h3>
+							<p>{coverage}</p>
+						</>
+					) : (
+						<>
+							<h3>No model calls in the last {USAGE_DAYS} days</h3>
+							<p>Usage shows here once agents or people call a model.</p>
+						</>
+					)}
+					{stale}
 				</div>
 			) : (
 				<>
-					{error && (
-						<p className="field-hint" role="status">
-							Usage could not be refreshed; this is the last read.{" "}
-							<button
-								className="link-button"
-								type="button"
-								onClick={() => void load()}
-							>
-								Retry
-							</button>
-						</p>
-					)}
+					{stale}
 					{metric === "totalTokens" && (
 						<div className="legend" aria-hidden="true">
 							<span className="key">
@@ -251,15 +265,7 @@ export function ModelUsageChart({
 					<p className="card-note model-usage-foot">
 						{more > 0 && <>And {count(more)} more models. </>}
 						{unpriced && "Spend counts priced calls only. "}
-						{(data.partial || data.durableUnavailable) && (
-							<>
-								Counts activity this gateway process kept
-								{data.coverageFrom
-									? ` since ${dateTime(data.coverageFrom)}`
-									: ""}
-								; earlier calls may be missing.{" "}
-							</>
-						)}
+						{coverage && `${coverage} `}
 						<a href={dashboardHash("usage")}>See all usage</a>
 					</p>
 				</>
