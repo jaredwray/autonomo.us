@@ -245,7 +245,7 @@ export class BudgetService {
 		const resets = budgetResetsAt(policy.period, this.now())
 			.slice(0, 16)
 			.replace("T", " ");
-		return `It starts again at ${resets} UTC. A workspace admin can change it on the Models page, under Budget.`;
+		return `It starts again at ${resets} UTC. A workspace admin can change it on the Models page, under Policies.`;
 	}
 
 	private refusal(policy: BudgetPolicy, spentMicros: number): string {

@@ -6,6 +6,8 @@
 
 *Also since 2026-11-20 the daily cap and longest video are **video limits**, policies for everyone or chosen agents on every video model or one: see [BUDGETS_PLAN.md](BUDGETS_PLAN.md#video-limits). What this plan says about `callerVideosPerDay` and `maxDurationSeconds` on the policy describes what was built first; the policy now holds only the order.*
 
+*Also since 2026-11-20 video limits are set on the Models page's **Policies** tab, and the dashboard no longer makes or lists videos: the Video tab's **Make a video** and **Videos** sections are gone, and so are `GET /video/jobs` (the list) and the `video_list` MCP tool. Agents make videos with `video_generate` and follow each by its id with `video_status`; API tokens use `POST /video/jobs` and `GET /video/jobs/:id`. What this plan says about the dashboard's jobs list and `video_list` describes what was built first.*
+
 **Read this first.** Three things I found change the brief:
 
 1. **OpenAI Sora is gone.** OpenAI's docs say the Sora 2 models and the Videos API (`/v1/videos`) were shut down on 2026-09-24 with "no one-to-one replacement". It cannot be one of the three.

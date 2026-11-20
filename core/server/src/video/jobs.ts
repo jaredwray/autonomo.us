@@ -85,13 +85,6 @@ export class VideoJobStore {
 	async ensureIndexes(): Promise<void> {
 		if (!this.mongo || this.indexed) return;
 		await Promise.all([
-			this.collection().createIndex({ workspaceId: 1, createdAt: -1, _id: -1 }),
-			this.collection().createIndex({
-				workspaceId: 1,
-				"createdBy.id": 1,
-				createdAt: -1,
-				_id: -1,
-			}),
 			this.collection().createIndex({ downloadToken: 1 }, { unique: true }),
 			this.collection().createIndex(
 				{ expiresAt: 1 },
@@ -157,66 +150,6 @@ export class VideoJobStore {
 		}
 		try {
 			return await this.collection().findOne({ downloadToken: { $eq: token } });
-		} catch (error) {
-			this.unavailable(error);
-		}
-	}
-
-	/**
-	 * Jobs newest first. `createdById` keeps one caller's own; `before` is
-	 * the id of the last job of the previous page.
-	 */
-	async list(
-		workspaceId: string,
-		options: { createdById?: string; before?: string; limit: number },
-	): Promise<{ records: VideoJobRecord[]; more: boolean }> {
-		const cursor = options.before
-			? await this.get(workspaceId, options.before)
-			: null;
-		if (options.before && !cursor) return { records: [], more: false };
-		const newestFirst = (a: VideoJobRecord, b: VideoJobRecord) =>
-			b.createdAt.localeCompare(a.createdAt) || b._id.localeCompare(a._id);
-		const after = (record: VideoJobRecord) =>
-			!cursor ||
-			record.createdAt < cursor.createdAt ||
-			(record.createdAt === cursor.createdAt && record._id < cursor._id);
-		if (!this.mongo) {
-			const records = [...this.memory.values()]
-				.map((record) => this.live(record))
-				.filter(
-					(record): record is VideoJobRecord =>
-						record !== null &&
-						record.workspaceId === workspaceId &&
-						(!options.createdById ||
-							record.createdBy.id === options.createdById) &&
-						after(record),
-				)
-				.sort(newestFirst);
-			return {
-				records: records.slice(0, options.limit),
-				more: records.length > options.limit,
-			};
-		}
-		const filter: Record<string, unknown> = {
-			workspaceId: { $eq: workspaceId },
-		};
-		if (options.createdById)
-			filter["createdBy.id"] = { $eq: options.createdById };
-		if (cursor)
-			filter.$or = [
-				{ createdAt: { $lt: cursor.createdAt } },
-				{ createdAt: { $eq: cursor.createdAt }, _id: { $lt: cursor._id } },
-			];
-		try {
-			const records = await this.collection()
-				.find(filter)
-				.sort({ createdAt: -1, _id: -1 })
-				.limit(options.limit + 1)
-				.toArray();
-			return {
-				records: records.slice(0, options.limit),
-				more: records.length > options.limit,
-			};
 		} catch (error) {
 			this.unavailable(error);
 		}

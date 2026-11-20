@@ -5,12 +5,13 @@ import { currentWorkspaceId } from "./api.js";
  * and shared links land on the same tab:
  *   #/w/<workspace id>/models            the LLM tab
  *   #/w/<workspace id>/models/video      the Video tab
- *   #/w/<workspace id>/models/budget     the Budget tab
+ *   #/w/<workspace id>/models/policies   the Policies tab
  *   #/w/<workspace id>/models/routing    the Routing tab
  * Routing and Video were views of their own before they became tabs, so
- * #/routing, #/video and their workspace forms open those tabs too.
+ * #/routing, #/video and their workspace forms open those tabs too. The
+ * Policies tab was the Budget tab, so .../models/budget opens it.
  */
-export const MODELS_TABS = ["llm", "video", "budget", "routing"] as const;
+export const MODELS_TABS = ["llm", "video", "policies", "routing"] as const;
 export type ModelsTab = (typeof MODELS_TABS)[number];
 
 export function parseModelsTab(hash: string): ModelsTab {
@@ -21,7 +22,8 @@ export function parseModelsTab(hash: string): ModelsTab {
 	if (view === "routing") return "routing";
 	if (view === "video") return "video";
 	if (view !== "models") return "llm";
-	return tab === "video" || tab === "budget" || tab === "routing" ? tab : "llm";
+	if (tab === "budget" || tab === "policies") return "policies";
+	return tab === "video" || tab === "routing" ? tab : "llm";
 }
 
 export function modelsHash(tab: ModelsTab): string {

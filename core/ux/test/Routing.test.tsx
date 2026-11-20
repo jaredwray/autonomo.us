@@ -215,7 +215,7 @@ it("keeps Routing as a tab of Models, moved to with the arrow keys", async () =>
 	expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
 		"LLM",
 		"Video",
-		"Budget",
+		"Policies",
 		"Routing",
 	]);
 	// Adding a model belongs to the LLM tab.
@@ -224,11 +224,13 @@ it("keeps Routing as a tab of Models, moved to with the arrow keys", async () =>
 	fireEvent.keyDown(routingTab, { key: "ArrowLeft" });
 	await waitFor(() =>
 		expect(
-			screen.getByRole("tab", { name: "Budget" }).getAttribute("aria-selected"),
+			screen
+				.getByRole("tab", { name: "Policies" })
+				.getAttribute("aria-selected"),
 		).toBe("true"),
 	);
-	expect(window.location.hash).toBe(`${workspaceHash}/models/budget`);
-	fireEvent.keyDown(screen.getByRole("tab", { name: "Budget" }), {
+	expect(window.location.hash).toBe(`${workspaceHash}/models/policies`);
+	fireEvent.keyDown(screen.getByRole("tab", { name: "Policies" }), {
 		key: "Home",
 	});
 	const llmTab = screen.getByRole("tab", { name: "LLM" });

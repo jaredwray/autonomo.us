@@ -2,7 +2,6 @@ import type {
 	TelemetryEvent,
 	VideoConnection,
 	VideoJob,
-	VideoJobList,
 	VideoLimit,
 	VideoModelList,
 	VideoPolicy,
@@ -189,9 +188,8 @@ describe("video over the REST API", () => {
 		expect(download.headers.get("cache-control")).toBe("private, no-store");
 		expect(download.headers.get("referrer-policy")).toBe("no-referrer");
 
-		const list = await api.ok<VideoJobList>("GET", "/v1/video/jobs?limit=10");
-		expect(list.jobs.map((item) => item.id)).toEqual([job.id]);
-		expect(list.nextBefore).toBeNull();
+		// Jobs are read one at a time by id: there is no list of them.
+		expect((await api.call("GET", "/v1/video/jobs")).status).toBe(404);
 		expect(
 			await api.refused("GET", `/v1/video/jobs/vid_${crypto.randomUUID()}`),
 		).toEqual({
@@ -352,7 +350,6 @@ describe("video over the REST API", () => {
 		expect(models.canGenerate).toBe(false);
 		for (const [method, path, body] of [
 			["POST", "/v1/video/jobs", { prompt: "x" }],
-			["GET", "/v1/video/jobs", undefined],
 			[
 				"POST",
 				"/v1/video/connections",
@@ -411,7 +408,7 @@ describe("video over the REST API", () => {
 		const routes = [...ROUTE_RULES.keys()].filter((key) =>
 			key.includes("/video"),
 		);
-		expect(routes).toHaveLength(13);
+		expect(routes).toHaveLength(12);
 		for (const key of routes)
 			expect(ROUTE_RULES.get(key)).toMatchObject({ scope: "workspace" });
 	});
@@ -433,7 +430,6 @@ describe("video over MCP", () => {
 			"video_generate",
 			"video_status",
 			"video_cancel",
-			"video_list",
 		]);
 		const none = await api.tool<VideoModelList>(plain.secret, "video_models");
 		expect(none.data.available).toBe(false);
@@ -502,11 +498,14 @@ describe("video over MCP", () => {
 		expect(
 			(await api.tool(first.secret, "video_cancel", { id: person.id })).text,
 		).toBe("Video job not found.");
-		const own = await api.tool<VideoJobList>(first.secret, "video_list", {});
-		expect(own.data.jobs.map((job) => job.id)).toEqual([started.data.id]);
-		expect(
-			(await api.tool<VideoJobList>(second.secret, "video_list", {})).text,
-		).toBe("You have no video jobs.");
+		const listed = await api.rpc(first.secret, "tools/call", {
+			name: "video_list",
+			arguments: {},
+		});
+		expect(listed.error).toMatchObject({
+			code: -32602,
+			message: "Unknown tool: video_list",
+		});
 		const bad = await api.rpc(first.secret, "tools/call", {
 			name: "video_status",
 			arguments: { id: "nope" },
@@ -606,7 +605,6 @@ describe("provider keys", () => {
 			JSON.stringify(await api.ok("GET", `/v1/video/jobs/${started.id}`)),
 		);
 		seen.push(JSON.stringify(await api.ok("GET", "/v1/video")));
-		seen.push(JSON.stringify(await api.ok("GET", "/v1/video/jobs")));
 		const events = await api.ok<{ events: TelemetryEvent[] }>(
 			"GET",
 			"/v1/telemetry/events",

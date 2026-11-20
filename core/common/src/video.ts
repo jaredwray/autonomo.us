@@ -37,10 +37,6 @@ export const VIDEO_LIMITS = {
 	minDurationSeconds: 2,
 	maxDurationSeconds: 30,
 	maxWaitSeconds: 60,
-	defaultListLimit: 20,
-	maxListLimit: 100,
-	/** What an agent may ask `video_list` for. */
-	maxAgentListLimit: 20,
 	maxCallerVideosPerDay: 10_000,
 	/** Video limits per workspace. */
 	limitPolicies: 50,
@@ -422,8 +418,6 @@ export type VideoJob = {
 	/** What was tried to start it. */
 	attempts: VideoAttempt[];
 };
-
-export type VideoJobList = { jobs: VideoJob[]; nextBefore: string | null };
 
 /** What `video_models` and `GET /video/models` return. */
 export type VideoModelList = {

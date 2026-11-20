@@ -302,6 +302,12 @@ describe("starting a video", () => {
 		const { service, jobs } = await setup({
 			runway: scripted("runway").adapter,
 		});
+		let written = 0;
+		const insert = jobs.insert.bind(jobs);
+		jobs.insert = async (record) => {
+			written += 1;
+			return insert(record);
+		};
 		const cases: Array<[Record<string, unknown>, string]> = [
 			[{ prompt: "   " }, "Describe the video"],
 			[{ prompt: "x".repeat(4001) }, "at most 4000"],
@@ -323,7 +329,7 @@ describe("starting a video", () => {
 				status: 400,
 				message: expect.stringContaining(message),
 			});
-		expect((await jobs.list(WS.id, { limit: 10 })).records).toHaveLength(0);
+		expect(written).toBe(0);
 	});
 
 	it("needs a usable connection", async () => {
@@ -965,17 +971,10 @@ describe("following a video", () => {
 				),
 			),
 		).toMatchObject({ status: 404 });
-		expect(
-			(await service.list(WS, own, {}, CONTEXT)).jobs.map((job) => job.id),
-		).toEqual([mine.id]);
-		const everyone = await service.list(WS, {}, { limit: 1 }, CONTEXT);
-		expect(everyone.jobs.map((job) => job.id)).toEqual([theirs.id]);
-		expect(everyone.nextBefore).toBe(theirs.id);
-		expect(
-			(await service.list(WS, {}, { before: theirs.id }, CONTEXT)).jobs.map(
-				(job) => job.id,
-			),
-		).toEqual([mine.id]);
+		// A person or API token reads any job in the workspace by its id.
+		expect((await service.status(WS, {}, theirs.id, {}, CONTEXT)).id).toBe(
+			theirs.id,
+		);
 	});
 
 	it("cancels at the provider, keeps the estimated cost, and leaves finished jobs alone", async () => {
@@ -1070,10 +1069,15 @@ describe("review fixes", () => {
 			],
 		);
 		jobs = context.jobs;
+		let started: string | undefined;
+		const insert = jobs.insert.bind(jobs);
+		jobs.insert = async (record) => {
+			started = record._id;
+			return insert(record);
+		};
 		const create = runway.adapter.create.bind(runway.adapter);
 		runway.adapter.create = async (...args) => {
-			const [listed] = (await jobs?.list(WS.id, { limit: 1 }))?.records ?? [];
-			if (listed) await jobs?.update(WS.id, listed._id, { status: "canceled" });
+			if (started) await jobs?.update(WS.id, started, { status: "canceled" });
 			return create(...args);
 		};
 		const job = await context.service.generate(
@@ -1206,7 +1210,7 @@ describe("download links", () => {
 			resultTtlMs: 3_600_000,
 		});
 		advance(3_600_001);
-		expect((await service.list(WS, {}, {}, CONTEXT)).jobs[0]).toMatchObject({
+		expect(await service.status(WS, {}, job.id, {}, CONTEXT)).toMatchObject({
 			status: "expired",
 			video: null,
 		});
@@ -1276,7 +1280,6 @@ describe("availability", () => {
 			service.generate(WS, AGENT, { prompt: "x" }, CONTEXT),
 			service.status(WS, {}, "vid_x", {}, CONTEXT),
 			service.cancel(WS, {}, "vid_x", CONTEXT),
-			service.list(WS, {}, {}, CONTEXT),
 			service.download("x".repeat(43)),
 		])
 			expect(await refusal(promise)).toMatchObject({ status: 503 });

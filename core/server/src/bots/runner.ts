@@ -476,7 +476,7 @@ export class BotRunner {
 				caller,
 				trigger,
 				outcome.status === "budget_exceeded"
-					? "I could not reply: a budget that covers me is used up. A workspace admin can change it on the Models page, under Budget."
+					? "I could not reply: a budget that covers me is used up. A workspace admin can change it on the Models page, under Policies."
 					: "I could not reply: the model call failed. A workspace admin can see why under Bots.",
 				"notice",
 			).catch(() => {});

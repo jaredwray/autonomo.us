@@ -154,8 +154,8 @@ function closeSignal(reply: FastifyReply) {
 /**
  * Video connections, settings, and jobs under `/v1/:workspace`. Members read
  * the settings; workspace admins change them and start videos, since every
- * video spends the workspace's money. An API token or a person sees every
- * job in the workspace; agents use the MCP tools and see their own.
+ * video spends the workspace's money. An API token or a person reads any
+ * job in the workspace by its id; agents use the MCP tools and read their own.
  */
 export async function videoRoutes(
 	server: FastifyInstance,
@@ -268,11 +268,11 @@ export async function videoRoutes(
 			const body = request.body as object;
 			if ("monthlyBudgetUsd" in body)
 				throw new ServiceError(
-					"The monthly video budget is a budget now. Change it with PATCH /v1/<workspace>/budgets/<id>, or on the Models page under Budget.",
+					"The monthly video budget is a budget now. Change it with PATCH /v1/<workspace>/budgets/<id>, or on the Models page under Policies.",
 				);
 			if ("callerVideosPerDay" in body || "maxDurationSeconds" in body)
 				throw new ServiceError(
-					"Videos a day and the longest video are video limits now. Change them with /v1/<workspace>/video/limits, or on the Models page under Video.",
+					"Videos a day and the longest video are video limits now. Change them with /v1/<workspace>/video/limits, or on the Models page under Policies.",
 				);
 			const policy = await store.updatePolicy(
 				requestWorkspace(request),
@@ -345,37 +345,6 @@ export async function videoRoutes(
 			);
 			return reply.code(202).send(job);
 		},
-	);
-	server.get<{ Querystring: { limit?: number; before?: string } }>(
-		"/video/jobs",
-		{
-			schema: {
-				querystring: {
-					type: "object",
-					additionalProperties: false,
-					properties: {
-						limit: {
-							type: "integer",
-							minimum: 1,
-							maximum: VIDEO_LIMITS.maxListLimit,
-						},
-						before: JOB_ID,
-					},
-				},
-			},
-		},
-		(request) =>
-			video.list(
-				requestWorkspace(request),
-				{},
-				{
-					...(request.query.limit !== undefined
-						? { limit: request.query.limit }
-						: {}),
-					...(request.query.before ? { before: request.query.before } : {}),
-				},
-				{ origin: origin(request) },
-			),
 	);
 	server.get<{ Params: { id: string }; Querystring: { wait?: number } }>(
 		"/video/jobs/:id",
