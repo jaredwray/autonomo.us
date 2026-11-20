@@ -26,7 +26,6 @@ import { Dropdown } from "./Dropdown.js";
 import { Icon } from "./Icons.js";
 import { LoadingBanner } from "./LoadingBanner.js";
 import { usd } from "./ProxiesView.js";
-import { TabAction } from "./TabAction.js";
 
 const SUGGESTED_NAMES: Record<VideoKind, string> = {
 	google: "google-video",
@@ -546,6 +545,40 @@ export function VideoPanel({
 
 	const settingsPanel = (
 		<>
+			<section className="models-overview" aria-label="Video overview">
+				<div>
+					<span className="overview-value">
+						{settings ? usd(settings.spend.spentUsd) : "—"}
+					</span>
+					<span>Estimated video spend this month</span>
+				</div>
+				<div>
+					<span className="overview-value">
+						{settings ? count(videos) : "—"}
+					</span>
+					<span>Videos this month</span>
+				</div>
+				<div>
+					<span className="overview-value">
+						{settings ? connections.length : "—"}
+					</span>
+					<span>Video providers</span>
+				</div>
+				{canEdit && (
+					<button
+						ref={addButton}
+						className="button primary overview-action"
+						type="button"
+						disabled={!settings || !available || panel?.kind === "add"}
+						onClick={() => {
+							setPanel({ kind: "add" });
+							setNotice("");
+						}}
+					>
+						<Icon name="plus" /> Add video provider
+					</button>
+				)}
+			</section>
 			{panel?.kind === "add" && settings && (
 				<ConnectionForm
 					taken={connections.map((item) => item.name)}
@@ -572,26 +605,6 @@ export function VideoPanel({
 					}}
 				/>
 			)}
-			<section className="models-overview" aria-label="Video overview">
-				<div>
-					<span className="overview-value">
-						{settings ? usd(settings.spend.spentUsd) : "—"}
-					</span>
-					<span>Estimated video spend this month</span>
-				</div>
-				<div>
-					<span className="overview-value">
-						{settings ? count(videos) : "—"}
-					</span>
-					<span>Videos this month</span>
-				</div>
-				<div>
-					<span className="overview-value">
-						{settings ? connections.length : "—"}
-					</span>
-					<span>Video providers</span>
-				</div>
-			</section>
 			<section
 				className="card active-models"
 				aria-labelledby="video-connections-heading"
@@ -863,22 +876,6 @@ export function VideoPanel({
 						Video settings are temporary and last until the API restarts.
 						Connect MongoDB to keep them.
 					</p>
-				)}
-				{canEdit && (
-					<TabAction active={active}>
-						<button
-							ref={addButton}
-							className="button primary"
-							type="button"
-							disabled={!settings || !available || panel?.kind === "add"}
-							onClick={() => {
-								setPanel({ kind: "add" });
-								setNotice("");
-							}}
-						>
-							<Icon name="plus" /> Add video provider
-						</button>
-					</TabAction>
 				)}
 			</div>
 			{settings && !settings.available && (

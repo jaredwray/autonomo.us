@@ -29,7 +29,6 @@ import { type ModelsTab, modelsHash, parseModelsTab } from "./models-route.js";
 import { PageTabs } from "./PageTabs.js";
 import { PoliciesPanel } from "./PoliciesView.js";
 import { RoutingView } from "./RoutingView.js";
-import { TabAction, TabActionSlot } from "./TabAction.js";
 import { VideoPanel } from "./VideoView.js";
 
 const providerNames: Record<string, string> = PROVIDER_NAMES;
@@ -396,7 +395,6 @@ export function ModelsView({
 	const [notice, setNotice] = useState("");
 	const [modelsAdded, setModelsAdded] = useState(0);
 	const [usageKey, setUsageKey] = useState(0);
-	const [actionSlot, setActionSlot] = useState<HTMLElement | null>(null);
 	const addButton = useRef<HTMLButtonElement>(null);
 	const refresh = useCallback(async () => {
 		setLoading(true);
@@ -460,22 +458,7 @@ export function ModelsView({
 
 	const modelsPanel = (
 		<>
-			{canEdit ? (
-				<TabAction active={tab === "llm"}>
-					<button
-						ref={addButton}
-						className="button primary"
-						type="button"
-						disabled={!settings || adding}
-						onClick={() => {
-							setAdding(true);
-							setNotice("");
-						}}
-					>
-						<Icon name="plus" /> Add model
-					</button>
-				</TabAction>
-			) : (
+			{!canEdit && (
 				<div className="tab-intro">
 					<p className="page-note">
 						Ask a workspace admin to add models or change keys.
@@ -504,6 +487,34 @@ export function ModelsView({
 					</button>
 				</div>
 			) : null}
+			<section className="models-overview" aria-label="Model overview">
+				<div>
+					<span className="overview-value">
+						{data ? data.models.length : "—"}
+					</span>
+					<span>Active models</span>
+				</div>
+				<div>
+					<span className="overview-value">
+						{data ? data.providers.length : "—"}
+					</span>
+					<span>Provider connections</span>
+				</div>
+				{canEdit && (
+					<button
+						ref={addButton}
+						className="button primary overview-action"
+						type="button"
+						disabled={!settings || adding}
+						onClick={() => {
+							setAdding(true);
+							setNotice("");
+						}}
+					>
+						<Icon name="plus" /> Add model
+					</button>
+				)}
+			</section>
 			{adding && settings ? (
 				<AddModelForm
 					settings={settings}
@@ -537,21 +548,6 @@ export function ModelsView({
 					your provider.
 				</p>
 			) : null}
-			<section className="models-overview" aria-label="Model overview">
-				<div>
-					<span className="overview-value">
-						{data ? data.models.length : "—"}
-					</span>
-					<span>Active models</span>
-				</div>
-				<div>
-					<span className="overview-value">
-						{data ? data.providers.length : "—"}
-					</span>
-					<span>Provider connections</span>
-				</div>
-				<p>One gateway. Your choice of models.</p>
-			</section>
 			<ModelUsageChart refreshKey={usageKey} nameOf={displayName} />
 			<section
 				className="card active-models"
@@ -735,30 +731,24 @@ export function ModelsView({
 					</p>
 				</div>
 			</header>
-			<div className="page-tabs-bar">
-				<PageTabs
-					label="Models sections"
-					idPrefix="models"
-					tabs={TAB_LABELS}
-					selected={tab}
-					onSelect={showTab}
-				/>
-				{/* The selected tab's main action, such as Add model, sits here at the right. */}
-				<div className="page-tabs-actions" ref={setActionSlot} />
+			<PageTabs
+				label="Models sections"
+				idPrefix="models"
+				tabs={TAB_LABELS}
+				selected={tab}
+				onSelect={showTab}
+			/>
+			<div
+				role="tabpanel"
+				id="models-panel"
+				aria-labelledby={`models-tab-${tab}`}
+			>
+				{TAB_LABELS.filter((item) => visited.has(item.id)).map((item) => (
+					<div key={item.id} hidden={item.id !== tab}>
+						{panels[item.id]()}
+					</div>
+				))}
 			</div>
-			<TabActionSlot.Provider value={actionSlot}>
-				<div
-					role="tabpanel"
-					id="models-panel"
-					aria-labelledby={`models-tab-${tab}`}
-				>
-					{TAB_LABELS.filter((item) => visited.has(item.id)).map((item) => (
-						<div key={item.id} hidden={item.id !== tab}>
-							{panels[item.id]()}
-						</div>
-					))}
-				</div>
-			</TabActionSlot.Provider>
 		</div>
 	);
 }

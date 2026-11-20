@@ -774,10 +774,10 @@ export function BudgetsCard({
 					</div>
 				)}
 				<p className="card-note budget-footnote">
-					A language model call that starts under budget finishes, so spend can
-					pass a limit by the calls already running. Language models without a
-					public list price are not counted. A video&apos;s estimate is held
-					before it starts.
+					Spend is estimated from list prices. A language model call that starts
+					under budget finishes, so spend can pass a limit by the calls already
+					running. Language models without a public list price are not counted.
+					A video&apos;s estimate is held before it starts.
 				</p>
 			</section>
 		</>

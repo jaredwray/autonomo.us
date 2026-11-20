@@ -227,8 +227,8 @@ The dashboard has a collapsible sidebar with a workspace switcher and
 **Organization**, **Loops**, **Agents**, **API Tokens**, **Workspaces**, and **Team** views. All but Workspaces and
 Team show the selected workspace, and their URLs name it
 (`#/w/<workspace id>/models`).
-**Models** has four tabs, with the selected tab's main action, such as **Add
-model**, at the right of the tab bar: **LLM** (`#/w/<workspace id>/models`),
+**Models** has four tabs, each with its main action, such as **Add model**, at
+the right of the counts at its top: **LLM** (`#/w/<workspace id>/models`),
 the language models and a chart of their usage; **Video** (`/models/video`),
 the video providers and their order (see [Video generation](#video-generation));
 **Policies** (`/models/policies`), the budgets on what models may spend and

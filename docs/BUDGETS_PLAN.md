@@ -2,11 +2,11 @@
 
 *Built after the Video page ([jaredwray/autonomo.us#76](https://github.com/jaredwray/autonomo.us/pull/76)) merged. The Video page and the monthly video budget fold into this.*
 
-*Since 2026-11-20 the **Budget** tab is the **Policies** tab: it holds budgets and video limits, the two kinds of policy, and **Add policy** asks which kind to add. Video limits left the Video tab for it. Each tab's main action sits at the right of the tab bar rather than above the tab, and the LLM tab opens with a chart of usage by model. `/models/budget` links open Policies. Where this plan says Budget tab, read Policies tab.*
+*Since 2026-11-20 the **Budget** tab is the **Policies** tab: it holds budgets and video limits, the two kinds of policy, and **Add policy** asks which kind to add. Video limits left the Video tab for it. Each tab's main action ends its overview row (the counts at the top of the tab) rather than sitting above the tab, and the LLM tab opens with a chart of usage by model. `/models/budget` links open Policies. Where this plan says Budget tab, read Policies tab.*
 
 ## What changed for people
 
-The **Models** page has four tabs: **LLM** (what was the Models tab), **Video** (what was the Video page, now one page with no tabs of its own), **Policies** (new, first named Budget), and **Routing** (unchanged). Each tab has its main action at the right of the tab bar: **Add model**, **Add video provider**, **Add policy**. (At first each also had a line on what it is for; people know what the tabs are, so those lines went, and a tab mentions where its settings are kept only when they are temporary.) The **Video** item leaves the sidebar; `#/video`, `#/w/<id>/video`, and `#/w/<id>/video/settings` open the Video tab. A tab stays mounted once shown, so a typed prompt, a half-filled form, and the videos being followed survive a look at another tab.
+The **Models** page has four tabs: **LLM** (what was the Models tab), **Video** (what was the Video page, now one page with no tabs of its own), **Policies** (new, first named Budget), and **Routing** (unchanged). Each tab's main action ends its overview row, at the right: **Add model**, **Add video provider**, **Add policy**; its form opens below that row. (At first each also had a line on what it is for; people know what the tabs are, so those lines went, and a tab mentions where its settings are kept only when they are temporary.) The **Video** item leaves the sidebar; `#/video`, `#/w/<id>/video`, and `#/w/<id>/video/settings` open the Video tab. A tab stays mounted once shown, so a typed prompt, a half-filled form, and the videos being followed survive a look at another tab.
 
 ## Budgets
 
@@ -57,7 +57,7 @@ The video policy's daily cap and longest video became policies too, so a workspa
 
 ## The Policies tab
 
-- **Add policy**, at the right of the tab bar. Its form starts with **Type**: Budget or Video limit (off, with the reason, when video is turned off or its settings cannot be read). Choosing one swaps the form below and keeps the focus on the choice.
+- **Add policy**, at the right of the overview row. Its form starts with **Type**: Budget or Video limit (off, with the reason, when video is turned off or its settings cannot be read). Choosing one swaps the form below and keeps the focus on the choice.
 - Overview: how many budgets and video limits, and how many budgets are refusing requests now.
 - Below the budgets, the video limits (see [Video limits](#video-limits)). Each list's empty state offers to add one of its kind.
 - A table: who it applies to (agent names; "Shared by N agents"), what it covers, the limit, what is spent as a bar with "$X of $Y" and when it resets (red "Used up" when it is), and On/Off, Edit, Delete for admins. Delete asks to confirm; focus follows between Delete, Confirm, and Cancel.
@@ -68,4 +68,4 @@ The video policy's daily cap and longest video became policies too, so a workspa
 
 - `core/server/test/budgets.test.ts`: the store against memory and MongoDB (seeding once under concurrency, stale writes, periods rolling over, all-or-none holds, one of many concurrent holds taking the last of a budget, releases never below zero); the service (validation, removed agents, shared agent budgets, $0 and switched-off budgets, the refusal message); routes and permissions; and `POST /chat` answering 429, streaming or not, once spend reaches the limit.
 - `core/server/test/video-*.test.ts`: video holds against budgets and limits, given back on a refusal or an unbilled failure; limits added, changed, and deleted, the strictest applying, and seeded from the old policy; and the refused `monthlyBudgetUsd`, `callerVideosPerDay`, and `maxDurationSeconds`.
-- `core/ux/test/Budget.test.tsx`, `Policies.test.tsx`, `Video.test.tsx`, `Routing.test.tsx`, `Models.test.tsx`: the tabs and their actions in the tab bar, budgets and video limits on the Policies tab and choosing between them, against a fake and a real gateway, the provider order, and old links. `ModelUsage.test.tsx`: the LLM tab's usage chart.
+- `core/ux/test/Budget.test.tsx`, `Policies.test.tsx`, `Video.test.tsx`, `Routing.test.tsx`, `Models.test.tsx`: the tabs and their actions in the overview rows, budgets and video limits on the Policies tab and choosing between them, against a fake and a real gateway, the provider order, and old links. `ModelUsage.test.tsx`: the LLM tab's usage chart.
