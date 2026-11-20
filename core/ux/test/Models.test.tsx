@@ -133,39 +133,41 @@ describe("Models page layout", () => {
 		for (const close of closers.splice(0)) await close();
 	});
 
-	it("puts each tab's add button at the right of the tab bar, one at a time", async () => {
+	it("ends each tab's overview row with its add button", async () => {
 		await openModels();
-		const bar = document.querySelector(".page-tabs-bar") as HTMLElement;
-		const actions = bar.querySelector(".page-tabs-actions") as HTMLElement;
-		const add = screen.getByRole("button", { name: "Add model" });
-		expect(actions.contains(add)).toBe(true);
-		// The tabs come first, then the action.
+		/** The button is the last thing in the tab's overview row. */
+		const endsRow = (region: string, button: string) => {
+			const row = screen.getByRole("region", { name: region });
+			const add = within(row).getByRole("button", { name: button });
+			expect(row.lastElementChild).toBe(add);
+			return add;
+		};
+		const add = endsRow("Model overview", "Add model");
 		expect(
-			bar.querySelector('[role="tablist"]')?.compareDocumentPosition(add) ?? 0,
-		).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
-		// Closing the form gives the focus back to the button in the bar.
+			screen.queryByText("One gateway. Your choice of models."),
+		).toBeNull();
+		// The form opens below the row, and closing it gives the focus back.
 		fireEvent.click(add);
-		fireEvent.click(screen.getByRole("button", { name: "Close add model" }));
-		expect(document.activeElement).toBe(
-			screen.getByRole("button", { name: "Add model" }),
+		const form = screen.getByRole("region", { name: "Add a model" });
+		expect(add.compareDocumentPosition(form)).toBe(
+			Node.DOCUMENT_POSITION_FOLLOWING,
 		);
+		fireEvent.click(screen.getByRole("button", { name: "Close add model" }));
+		expect(document.activeElement).toBe(add);
 		fireEvent.click(screen.getByRole("tab", { name: "Video" }));
-		const video = await screen.findByRole("button", {
-			name: "Add video provider",
-		});
-		expect(actions.contains(video)).toBe(true);
+		await screen.findByRole("heading", { name: "Video providers" });
+		endsRow("Video overview", "Add video provider");
 		expect(screen.queryByRole("button", { name: "Add model" })).toBeNull();
 		fireEvent.click(screen.getByRole("tab", { name: "Policies" }));
+		await screen.findByRole("heading", { name: "Video limits" });
+		endsRow("Policy overview", "Add policy");
 		expect(
-			actions.contains(
-				await screen.findByRole("button", { name: "Add policy" }),
-			),
-		).toBe(true);
-		expect(
-			screen.queryByRole("button", { name: "Add video provider" }),
+			screen.queryByText("Spend is estimated from list prices."),
 		).toBeNull();
 		fireEvent.click(screen.getByRole("tab", { name: "Routing" }));
-		expect(actions.childElementCount).toBe(0);
+		expect(
+			screen.queryByRole("button", { name: /^Add (model|policy|video)/ }),
+		).toBeNull();
 	});
 
 	it("shows usage by model before the list of models", async () => {

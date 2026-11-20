@@ -13,7 +13,6 @@ import {
 } from "./api.js";
 import { BudgetForm, BudgetsCard } from "./BudgetView.js";
 import { Icon } from "./Icons.js";
-import { TabAction } from "./TabAction.js";
 import { VideoLimitForm, VideoLimitsCard } from "./VideoLimitsView.js";
 
 /** The kinds of policy a workspace can add. */
@@ -225,24 +224,6 @@ export function PoliciesPanel({
 						MongoDB to keep them.
 					</p>
 				)}
-				{canEdit && (
-					<TabAction active={active}>
-						<button
-							ref={addButton}
-							className="button primary"
-							type="button"
-							disabled={
-								adding !== null ||
-								(disabled.budget !== null && disabled["video-limit"] !== null)
-							}
-							onClick={() =>
-								openAdd(disabled.budget === null ? "budget" : "video-limit")
-							}
-						>
-							<Icon name="plus" /> Add policy
-						</button>
-					</TabAction>
-				)}
 			</div>
 			{notice && (
 				<p className="success-notice" role="status">
@@ -262,6 +243,42 @@ export function PoliciesPanel({
 					</button>
 				</div>
 			)}
+			<section className="models-overview" aria-label="Policy overview">
+				<div>
+					<span className="overview-value">
+						{budgets ? budgets.length : "—"}
+					</span>
+					<span>Budgets</span>
+				</div>
+				<div>
+					<span className="overview-value">
+						{video ? video.limits.length : "—"}
+					</span>
+					<span>Video limits</span>
+				</div>
+				<div>
+					<span className="overview-value">
+						{budgets ? refusing.length : "—"}
+					</span>
+					<span>Budgets refusing requests now</span>
+				</div>
+				{canEdit && (
+					<button
+						ref={addButton}
+						className="button primary overview-action"
+						type="button"
+						disabled={
+							adding !== null ||
+							(disabled.budget !== null && disabled["video-limit"] !== null)
+						}
+						onClick={() =>
+							openAdd(disabled.budget === null ? "budget" : "video-limit")
+						}
+					>
+						<Icon name="plus" /> Add policy
+					</button>
+				)}
+			</section>
 			{canEdit && adding === "budget" && disabled.budget === null && (
 				<BudgetForm
 					key="add-budget"
@@ -301,27 +318,6 @@ export function PoliciesPanel({
 						}}
 					/>
 				)}
-			<section className="models-overview" aria-label="Policy overview">
-				<div>
-					<span className="overview-value">
-						{budgets ? budgets.length : "—"}
-					</span>
-					<span>Budgets</span>
-				</div>
-				<div>
-					<span className="overview-value">
-						{video ? video.limits.length : "—"}
-					</span>
-					<span>Video limits</span>
-				</div>
-				<div>
-					<span className="overview-value">
-						{budgets ? refusing.length : "—"}
-					</span>
-					<span>Budgets refusing requests now</span>
-				</div>
-				<p>Spend is estimated from list prices.</p>
-			</section>
 			<BudgetsCard
 				budgets={budgets}
 				agents={agents}
