@@ -27,17 +27,11 @@ import {
 import { Dropdown } from "./Dropdown.js";
 import { Icon } from "./Icons.js";
 import { LoadingBanner } from "./LoadingBanner.js";
-import { PageTabs } from "./PageTabs.js";
 import { usd } from "./ProxiesView.js";
 import { VideoJobsPanel } from "./VideoJobs.js";
-import { parseVideoTab, type VideoTab, videoHash } from "./video-route.js";
 
 export { formChoices, videoRequestProblem } from "./VideoJobs.js";
 
-const VIDEO_TABS: readonly { id: VideoTab; label: string }[] = [
-	{ id: "videos", label: "Videos" },
-	{ id: "settings", label: "Settings" },
-];
 const SUGGESTED_NAMES: Record<VideoKind, string> = {
 	google: "google-video",
 	runway: "runway",
@@ -68,13 +62,6 @@ export function videoPolicyProblem(policy: VideoPolicy): string | null {
 		perDay > VIDEO_LIMITS.maxCallerVideosPerDay
 	)
 		return `Videos a day is a whole number from 0 to ${count(VIDEO_LIMITS.maxCallerVideosPerDay)}.`;
-	const budget = policy.monthlyBudgetUsd;
-	if (
-		!Number.isFinite(budget) ||
-		budget < 0 ||
-		budget > VIDEO_LIMITS.maxMonthlyBudgetUsd
-	)
-		return `The monthly budget is from $0 to $${count(VIDEO_LIMITS.maxMonthlyBudgetUsd)}.`;
 	const longest = policy.maxDurationSeconds;
 	if (
 		!Number.isInteger(longest) ||
@@ -360,7 +347,6 @@ function ConnectionForm({
 function VideoPolicyEditor({
 	policy,
 	connections,
-	budget,
 	canEdit,
 	dirty,
 	saving,
@@ -369,10 +355,10 @@ function VideoPolicyEditor({
 	onChange,
 	onSave,
 	onReload,
+	onShowBudget,
 }: {
 	policy: VideoPolicy;
 	connections: VideoConnection[];
-	budget: VideoSettings["budget"];
 	canEdit: boolean;
 	dirty: boolean;
 	saving: boolean;
@@ -381,6 +367,7 @@ function VideoPolicyEditor({
 	onChange(policy: VideoPolicy): void;
 	onSave(): void;
 	onReload(): void;
+	onShowBudget(): void;
 }) {
 	const id = useId();
 	const problem = videoPolicyProblem(policy);
@@ -402,18 +389,19 @@ function VideoPolicyEditor({
 		>
 			<div className="section-heading">
 				<div>
-					<h2 id={`${id}-title`}>Limits and order</h2>
+					<h2 id={`${id}-title`}>Order and limits</h2>
 					<p className="card-note">
-						A video starts on the first connection in this order that can make
-						it. If that provider fails without charging, the next one is tried.
+						A video starts on the first provider in this order that can make it.
+						If that provider fails without charging, the next one is tried.
 					</p>
 				</div>
 			</div>
 			<fieldset className="routing-fields" disabled={!canEdit || saving}>
+				<h3>Order</h3>
 				{order.length === 0 ? (
 					<p className="card-note">Add a provider to set the order.</p>
 				) : (
-					<ol className="routing-list" aria-label="Connection order">
+					<ol className="routing-list" aria-label="Provider order">
 						{order.map((name, index) => {
 							const item = connections.find((other) => other.name === name);
 							const hint = !item?.keyConfigured
@@ -475,30 +463,6 @@ function VideoPolicyEditor({
 						</span>
 					</div>
 					<div className="form-field">
-						<label htmlFor={`${id}-budget`}>Monthly budget (USD)</label>
-						<input
-							id={`${id}-budget`}
-							type="number"
-							required
-							min={0}
-							max={VIDEO_LIMITS.maxMonthlyBudgetUsd}
-							step={0.01}
-							value={policy.monthlyBudgetUsd}
-							onChange={(event) =>
-								onChange({
-									...policy,
-									monthlyBudgetUsd: Number(event.target.value),
-								})
-							}
-						/>
-						<span className="field-hint">
-							What every video together may cost in a calendar month (UTC),
-							estimated from list prices. New videos stop once it is reached.{" "}
-							{usd(budget.spentUsd)} of {usd(budget.limitUsd)} used in{" "}
-							{budget.month}.
-						</span>
-					</div>
-					<div className="form-field">
 						<label htmlFor={`${id}-longest`}>Longest video (seconds)</label>
 						<input
 							id={`${id}-longest`}
@@ -521,6 +485,12 @@ function VideoPolicyEditor({
 						</span>
 					</div>
 				</div>
+				<p className="card-note">
+					What videos may cost is set on the Budget tab.{" "}
+					<button className="link-button" type="button" onClick={onShowBudget}>
+						See video budgets
+					</button>
+				</p>
 				{error && (
 					<div className="banner-error" role="alert">
 						{error.message}{" "}
@@ -556,28 +526,22 @@ function VideoPolicyEditor({
 	);
 }
 
-export function VideoView({
+/**
+ * The Models page's Video tab: providers, the order and limits, and, for
+ * admins, making videos and every video made. Members see providers and
+ * limits; admins change them, make videos, and see every job.
+ */
+export function VideoPanel({
 	workspace,
+	active = true,
+	onShowBudget,
 }: {
 	workspace?: { isDefault: boolean; role?: "admin" | "member" };
-} = {}) {
-	// Members see providers and limits; admins change them, make videos, and see every job.
+	/** Whether the tab is showing: coming back to it reads spend afresh. */
+	active?: boolean;
+	onShowBudget(): void;
+}) {
 	const canEdit = workspace?.role !== "member";
-	const [tab, setTab] = useState<VideoTab>(() =>
-		parseVideoTab(window.location.hash),
-	);
-	useEffect(() => {
-		const sync = () => setTab(parseVideoTab(window.location.hash));
-		window.addEventListener("hashchange", sync);
-		return () => window.removeEventListener("hashchange", sync);
-	}, []);
-	const showTab = useCallback((next: VideoTab) => {
-		const hash = videoHash(next);
-		if (window.location.hash !== hash) window.history.pushState(null, "", hash);
-		setTab(next);
-	}, []);
-	const shownTab: VideoTab = canEdit ? tab : "settings";
-
 	const [settings, setSettings] = useState<VideoSettings | null>(null);
 	const [models, setModels] = useState<VideoModelList | null>(null);
 	const [modelsError, setModelsError] = useState("");
@@ -674,6 +638,11 @@ export function VideoView({
 			modelSequence.current++;
 		};
 	}, [refresh]);
+	const shownBefore = useRef(active);
+	useEffect(() => {
+		if (active && !shownBefore.current) void refresh();
+		shownBefore.current = active;
+	}, [active, refresh]);
 
 	const savePolicy = async (policy: VideoPolicy) => {
 		setSaving(true);
@@ -776,11 +745,9 @@ export function VideoView({
 			<section className="models-overview" aria-label="Video overview">
 				<div>
 					<span className="overview-value">
-						{settings
-							? `${usd(settings.budget.spentUsd)} / ${usd(settings.budget.limitUsd)}`
-							: "—"}
+						{settings ? usd(settings.spend.spentUsd) : "—"}
 					</span>
-					<span>Estimated spend this month</span>
+					<span>Estimated video spend this month</span>
 				</div>
 				<div>
 					<span className="overview-value">
@@ -792,7 +759,7 @@ export function VideoView({
 					<span className="overview-value">
 						{settings ? connections.length : "—"}
 					</span>
-					<span>Connections</span>
+					<span>Video providers</span>
 				</div>
 			</section>
 			{!canEdit && (
@@ -805,9 +772,9 @@ export function VideoView({
 			>
 				<div className="section-heading">
 					<div>
-						<h2 id="video-connections-heading">Connections</h2>
+						<h2 id="video-connections-heading">Video providers</h2>
 						<p className="card-note">
-							Keys stay on the server. A video uses the first connection in the
+							Keys stay on the server. A video uses the first provider in the
 							order that can make it.
 						</p>
 					</div>
@@ -855,7 +822,7 @@ export function VideoView({
 						<table className="models-table proxy-table video-table">
 							<thead>
 								<tr>
-									<th>Connection</th>
+									<th>Provider</th>
 									<th>Key</th>
 									<th>Default model</th>
 									<th>Credit price</th>
@@ -1026,7 +993,6 @@ export function VideoView({
 				<VideoPolicyEditor
 					policy={draft}
 					connections={connections}
-					budget={settings.budget}
 					canEdit={canChange}
 					dirty={dirty}
 					saving={saving}
@@ -1038,39 +1004,31 @@ export function VideoView({
 						setSaveError(null);
 						void refresh("discard");
 					}}
+					onShowBudget={onShowBudget}
 				/>
 			)}
 		</>
 	);
 
 	return (
-		<div className="dashboard models-page proxies-page video-page">
-			<header className="dashboard-header">
-				<div>
-					<p className="eyebrow">Gateway</p>
-					<h1>Video</h1>
-					<p className="page-description">
-						Providers that make short videos for agents and scripts, and the
-						limits on what they spend.
-					</p>
-				</div>
+		<div className="video-page">
+			<div className="tab-intro">
+				<p className="card-note">
+					Providers that make short videos for agents and scripts, the order
+					they are tried in, and every video made in this workspace.
+				</p>
 				{canEdit ? (
 					<button
 						ref={addButton}
 						className="button primary"
 						type="button"
-						disabled={
-							!settings ||
-							!available ||
-							(shownTab === "settings" && panel?.kind === "add")
-						}
+						disabled={!settings || !available || panel?.kind === "add"}
 						onClick={() => {
-							showTab("settings");
 							setPanel({ kind: "add" });
 							setNotice("");
 						}}
 					>
-						<Icon name="plus" /> Add provider
+						<Icon name="plus" /> Add video provider
 					</button>
 				) : (
 					<p className="card-note">
@@ -1078,7 +1036,7 @@ export function VideoView({
 						make videos.
 					</p>
 				)}
-			</header>
+			</div>
 			{settings && !settings.available && (
 				<p className="banner-warning" role="status">
 					{TURNED_OFF}
@@ -1109,46 +1067,14 @@ export function VideoView({
 						: "Video settings are temporary and last until the API restarts. Connect MongoDB to keep them."}
 				</p>
 			)}
-			{canEdit ? (
-				<>
-					<PageTabs
-						label="Video sections"
-						idPrefix="video"
-						tabs={VIDEO_TABS}
-						selected={shownTab}
-						onSelect={showTab}
-					/>
-					<div
-						role="tabpanel"
-						id="video-panel"
-						aria-labelledby={`video-tab-${shownTab}`}
-					>
-						{/* Both stay mounted, so a typed prompt and followed jobs survive a tab switch. */}
-						<div hidden={shownTab !== "settings"}>{settingsPanel}</div>
-						<div hidden={shownTab !== "videos"}>
-							{!settings ? null : !settings.available ? (
-								<section className="card">
-									<div className="models-empty">
-										<span className="empty-icon">
-											<Icon name="video" />
-										</span>
-										<p>{TURNED_OFF}</p>
-									</div>
-								</section>
-							) : (
-								<VideoJobsPanel
-									models={models}
-									modelsError={modelsError}
-									onFinished={() => void refresh()}
-									onRetryModels={() => void loadModels()}
-									onShowSettings={() => showTab("settings")}
-								/>
-							)}
-						</div>
-					</div>
-				</>
-			) : (
-				settingsPanel
+			{settingsPanel}
+			{canEdit && settings?.available && (
+				<VideoJobsPanel
+					models={models}
+					modelsError={modelsError}
+					onFinished={() => void refresh()}
+					onRetryModels={() => void loadModels()}
+				/>
 			)}
 		</div>
 	);

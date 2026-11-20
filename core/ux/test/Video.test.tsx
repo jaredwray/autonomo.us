@@ -20,13 +20,13 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "../src/App.js";
 import { clearCredential, setCurrentWorkspace } from "../src/api.js";
+import { modelsHash, parseModelsTab } from "../src/models-route.js";
 import {
 	formChoices,
-	VideoView,
+	VideoPanel,
 	videoPolicyProblem,
 	videoRequestProblem,
 } from "../src/VideoView.js";
-import { parseVideoTab, videoHash } from "../src/video-route.js";
 import { changeControl, dropdownOptions } from "./controls.js";
 import { defaultWorkspaceId, setUpOwner, stopServer } from "./session.js";
 
@@ -53,7 +53,6 @@ function policy(overrides: Partial<VideoPolicy> = {}): VideoPolicy {
 	return {
 		order: [],
 		callerVideosPerDay: 10,
-		monthlyBudgetUsd: 25,
 		maxDurationSeconds: 10,
 		revision: 2,
 		...overrides,
@@ -65,7 +64,7 @@ function settings(overrides: Partial<VideoSettings> = {}): VideoSettings {
 		configured: true,
 		connections: [],
 		policy: policy(),
-		budget: { month: "2026-11", spentUsd: 0, limitUsd: 25 },
+		spend: { month: "2026-11", spentUsd: 0 },
 		persistence: "memory",
 		...overrides,
 	};
@@ -184,7 +183,12 @@ const sent = (calls: Call[], method: string) =>
 function show(role: "admin" | "member" = "admin", hash = "") {
 	setCurrentWorkspace(WORKSPACE);
 	window.history.replaceState(null, "", hash || "/");
-	return render(<VideoView workspace={{ isDefault: true, role }} />);
+	return render(
+		<VideoPanel
+			workspace={{ isDefault: true, role }}
+			onShowBudget={() => {}}
+		/>,
+	);
 }
 function type(
 	label: string,
@@ -224,7 +228,7 @@ describe("Video view: settings", () => {
 						},
 					}),
 				],
-				budget: { month: "2026-11", spentUsd: 4.5, limitUsd: 25 },
+				spend: { month: "2026-11", spentUsd: 4.5 },
 			}),
 		});
 		show("admin", `#/w/${WORKSPACE}/video/settings`);
@@ -239,7 +243,7 @@ describe("Video view: settings", () => {
 		expect(rows[2].textContent).toContain("Luma Ray 3.2");
 		expect(rows[2].textContent).toContain("$0.008");
 		expect(rows[2].textContent).toContain("the API key was refused");
-		expect(screen.getByText("$4.50 / $25.00")).toBeDefined();
+		expect(screen.getByText("$4.50")).toBeDefined();
 		expect(
 			screen.getByText(/temporary and last until the API restarts/),
 		).toBeDefined();
@@ -257,16 +261,17 @@ describe("Video view: settings", () => {
 			await screen.findAllByText(
 				/Video generation is turned off on this gateway/,
 			),
-		).toHaveLength(2);
+		).toHaveLength(1);
 		expect(
 			(
 				screen.getByRole("button", {
-					name: "Add provider",
+					name: "Add video provider",
 				}) as HTMLButtonElement
 			).disabled,
 		).toBe(true);
-		fireEvent.click(screen.getByRole("tab", { name: "Settings" }));
 		expect(screen.queryByRole("checkbox", { name: "Use runway" })).toBeNull();
+		// No form to make a video while it is off.
+		expect(screen.queryByRole("heading", { name: "Make a video" })).toBeNull();
 		await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
 		expect(calls.some((call) => call.path.includes("/video/models"))).toBe(
 			false,
@@ -289,9 +294,8 @@ describe("Video view: settings", () => {
 		});
 		show("admin");
 		await screen.findByText("No videos yet");
-		fireEvent.click(screen.getByRole("button", { name: "Add provider" }));
+		fireEvent.click(screen.getByRole("button", { name: "Add video provider" }));
 		const form = screen.getByRole("region", { name: "Add a video provider" });
-		expect(window.location.hash).toBe(`#/w/${WORKSPACE}/video/settings`);
 		expect(within(form).queryByLabelText(/Credit price/)).toBeNull();
 		type("Provider", "luma", form);
 		expect(
@@ -316,19 +320,15 @@ describe("Video view: settings", () => {
 		});
 	});
 
-	it("keeps Add provider working after its form is left, and focuses it on close", async () => {
+	it("disables Add video provider while its form is open, and focuses it on close", async () => {
 		fakeGateway({ settings: settings() });
 		show("admin");
 		await screen.findByText("No videos yet");
-		// The page's own button; the form's submit button shares its name.
 		const add = screen.getByRole("button", {
-			name: "Add provider",
+			name: "Add video provider",
 		}) as HTMLButtonElement;
 		fireEvent.click(add);
 		expect(add.disabled).toBe(true);
-		fireEvent.click(screen.getByRole("tab", { name: "Videos" }));
-		expect(add.disabled).toBe(false);
-		fireEvent.click(add);
 		const form = screen.getByRole("region", { name: "Add a video provider" });
 		fireEvent.click(within(form).getByRole("button", { name: "Cancel" }));
 		expect(
@@ -345,7 +345,7 @@ describe("Video view: settings", () => {
 		);
 		show("admin", `#/w/${WORKSPACE}/video/settings`);
 		await screen.findByText("No video providers yet");
-		fireEvent.click(screen.getByRole("button", { name: "Add provider" }));
+		fireEvent.click(screen.getByRole("button", { name: "Add video provider" }));
 		const form = screen.getByRole("region", { name: "Add a video provider" });
 		type("API key", "k", form);
 		fireEvent.click(within(form).getByRole("button", { name: "Add provider" }));
@@ -496,18 +496,17 @@ describe("Video view: settings", () => {
 		);
 		expect(
 			await within(
-				screen.getByRole("form", { name: "Limits and order" }),
+				screen.getByRole("form", { name: "Order and limits" }),
 			).findByText("Saved"),
 		).toBeDefined();
 		expect(sent(calls, "PUT")[0].body).toEqual({
 			order: ["luma", "runway"],
 			callerVideosPerDay: 4,
-			monthlyBudgetUsd: 25,
 			maxDurationSeconds: 8,
 			revision: 2,
 		});
 		stale = true;
-		type("Monthly budget (USD)", "40");
+		type("Videos a day", "6");
 		fireEvent.click(
 			screen.getByRole("button", { name: "Save limits and order" }),
 		);
@@ -532,7 +531,9 @@ describe("Video view: settings", () => {
 		show("member", `#/w/${WORKSPACE}/video`);
 		await screen.findByRole("table");
 		expect(screen.queryByRole("tab")).toBeNull();
-		expect(screen.queryByRole("button", { name: "Add provider" })).toBeNull();
+		expect(
+			screen.queryByRole("button", { name: "Add video provider" }),
+		).toBeNull();
 		expect(screen.queryByRole("checkbox", { name: "Use runway" })).toBeNull();
 		expect(
 			screen.getByText("Only workspace admins see and make videos."),
@@ -662,7 +663,14 @@ describe("Video view: making and following videos", () => {
 				.map((item) => item.querySelector(".video-prompt")?.textContent ?? "");
 
 		// A list read sent before the video was saved answers after it started.
-		fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+		fireEvent.click(
+			within(screen.getByRole("region", { name: "Videos" })).getByRole(
+				"button",
+				{
+					name: "Refresh",
+				},
+			),
+		);
 		type("Prompt", "First");
 		fireEvent.click(screen.getByRole("button", { name: "Make video" }));
 		await waitFor(() => expect(held.post).toBeDefined());
@@ -679,7 +687,14 @@ describe("Video view: making and following videos", () => {
 		fireEvent.click(screen.getByRole("button", { name: "Make video" }));
 		await waitFor(() => expect(held.post).toBeDefined());
 		state.jobs = [next, first, old];
-		fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+		fireEvent.click(
+			within(screen.getByRole("region", { name: "Videos" })).getByRole(
+				"button",
+				{
+					name: "Refresh",
+				},
+			),
+		);
 		await act(async () => held.list?.());
 		await act(async () => held.post?.());
 		expect(prompts()).toEqual(["Second", "First", "An old video"]);
@@ -750,8 +765,9 @@ describe("Video view: making and following videos", () => {
 		expect(
 			screen.getByText(/This workspace has no video provider/),
 		).toBeDefined();
-		fireEvent.click(screen.getByRole("button", { name: "Open settings" }));
-		expect(window.location.hash).toBe(`#/w/${WORKSPACE}/video/settings`);
+		expect(
+			screen.getByText(/Add a video provider, or switch one on/),
+		).toBeDefined();
 	});
 
 	it("shows each job's status, error, link and player, and loads more", async () => {
@@ -905,7 +921,7 @@ describe("Video view: making and following videos", () => {
 			await screen.findAllByText(
 				/Video generation is turned off on this gateway/,
 			),
-		).toHaveLength(2);
+		).toHaveLength(1);
 		expect(calls.filter((call) => call.path.endsWith("?wait=10"))).toHaveLength(
 			1,
 		);
@@ -961,9 +977,6 @@ describe("Video helpers", () => {
 		expect(videoPolicyProblem(policy({ callerVideosPerDay: -1 }))).toContain(
 			"Videos a day",
 		);
-		expect(videoPolicyProblem(policy({ monthlyBudgetUsd: 200_000 }))).toContain(
-			"monthly budget",
-		);
 		expect(videoPolicyProblem(policy({ maxDurationSeconds: 1 }))).toContain(
 			"longest video",
 		);
@@ -1013,11 +1026,15 @@ describe("Video helpers", () => {
 
 	it("keeps the tab in the address", () => {
 		setCurrentWorkspace(WORKSPACE);
-		expect(parseVideoTab(`#/w/${WORKSPACE}/video`)).toBe("videos");
-		expect(parseVideoTab(`#/w/${WORKSPACE}/video/settings`)).toBe("settings");
-		expect(parseVideoTab("#/video/settings")).toBe("settings");
-		expect(videoHash("settings")).toBe(`#/w/${WORKSPACE}/video/settings`);
-		expect(videoHash("videos")).toBe(`#/w/${WORKSPACE}/video`);
+		expect(parseModelsTab(`#/w/${WORKSPACE}/models`)).toBe("llm");
+		expect(parseModelsTab(`#/w/${WORKSPACE}/models/video`)).toBe("video");
+		expect(parseModelsTab(`#/w/${WORKSPACE}/models/budget`)).toBe("budget");
+		expect(parseModelsTab(`#/w/${WORKSPACE}/models/routing`)).toBe("routing");
+		// Links to the Video page before it became a tab of Models.
+		expect(parseModelsTab(`#/w/${WORKSPACE}/video/settings`)).toBe("video");
+		expect(parseModelsTab("#/video")).toBe("video");
+		expect(modelsHash("video")).toBe(`#/w/${WORKSPACE}/models/video`);
+		expect(modelsHash("llm")).toBe(`#/w/${WORKSPACE}/models`);
 	});
 });
 
@@ -1048,15 +1065,20 @@ describe("Video against the gateway", () => {
 					headers: { authorization: `Bearer ${owner}` },
 				})
 			).json()) as VideoSettings;
+		// A link to the Video page from before it became a tab of Models.
 		window.history.replaceState(null, "", "#/video/settings");
 		render(<App />);
 		await screen.findByText("No video providers yet");
+		expect(screen.queryByRole("link", { name: "Video" })).toBeNull();
 		expect(
-			screen.getByRole("link", { name: "Video" }).getAttribute("aria-current"),
+			screen.getByRole("link", { name: "Models" }).getAttribute("aria-current"),
 		).toBe("page");
-		expect(window.location.hash).toBe(`#/w/${workspaceId}/video/settings`);
+		expect(
+			screen.getByRole("tab", { name: "Video", selected: true }),
+		).toBeDefined();
+		expect(window.location.hash).toBe(`#/w/${workspaceId}/models/video`);
 
-		fireEvent.click(screen.getByRole("button", { name: "Add provider" }));
+		fireEvent.click(screen.getByRole("button", { name: "Add video provider" }));
 		const form = screen.getByRole("region", { name: "Add a video provider" });
 		type("API key", "rw-secret", form);
 		fireEvent.click(within(form).getByRole("button", { name: "Add provider" }));
@@ -1073,7 +1095,7 @@ describe("Video against the gateway", () => {
 		);
 		expect(
 			await within(
-				screen.getByRole("form", { name: "Limits and order" }),
+				screen.getByRole("form", { name: "Order and limits" }),
 			).findByText("Saved"),
 		).toBeDefined();
 		expect((await read()).policy.callerVideosPerDay).toBe(3);

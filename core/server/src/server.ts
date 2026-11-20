@@ -26,6 +26,8 @@ import { BotService } from "./bots/bots.js";
 import { MemoryBotRepository, MongoBotRepository } from "./bots/repository.js";
 import { BotRunner } from "./bots/runner.js";
 import { BotWebRequestStore } from "./bots/web-requests.js";
+import { BudgetService } from "./budgets/service.js";
+import { BudgetStore } from "./budgets/store.js";
 import { ChannelService } from "./channels/channels.js";
 import { channelToolSet } from "./channels/mcp.js";
 import { MemoryChannelRepository } from "./channels/memory-repository.js";
@@ -76,6 +78,7 @@ import { agentRoutes, oauthSignInRoutes } from "./routes/agents.js";
 import { apiTokenRoutes } from "./routes/api-tokens.js";
 import { authRoutes } from "./routes/auth.js";
 import { botRoutes } from "./routes/bots.js";
+import { budgetRoutes } from "./routes/budgets.js";
 import { channelRoutes } from "./routes/channels.js";
 import { chatRoutes } from "./routes/chat.js";
 import { decisionsRoutes } from "./routes/decisions.js";
@@ -548,11 +551,31 @@ export function createServer(options: CreateServerOptions = {}) {
 	const webTools = web.available ? webToolSet(web) : undefined;
 	const videoStore = new VideoStore(config.video?.connections ?? [], mongo);
 	const videoJobs = new VideoJobStore(mongo);
+	// A workspace's first budget is the monthly video budget it had before.
+	const budgetStore = new BudgetStore(mongo, {
+		seed: (workspaceId) => videoStore.budgetSeed(workspaceId),
+	});
+	const budgets = new BudgetService(budgetStore, {
+		knownAgents: (workspace) => agentIds.ids(workspace),
+		onChargeError: (error) =>
+			console.error("gateway.budget_charge_failed", mongoErrorDetails(error)),
+	});
+	// Every priced language model call counts on the budgets that cover it.
+	telemetry.setSpendListener((spend) =>
+		budgets.chargeLlm(
+			spend.workspaceId,
+			spend.caller,
+			spend.model,
+			spend.costUsd,
+			spend.id,
+		),
+	);
 	const video = new VideoService({
 		store: videoStore,
 		jobs: videoJobs,
 		...(options.videoFetch ? { fetchImpl: options.videoFetch } : {}),
 		telemetry,
+		budgets,
 		disabled: config.video?.disabled ?? false,
 	});
 	// The operator's off switch removes the tools, as it does `web_fetch`.
@@ -636,7 +659,7 @@ export function createServer(options: CreateServerOptions = {}) {
 				: {}),
 		}),
 		channelToolSet(channels),
-		modelToolSet({ providers, routing, router, telemetry }),
+		modelToolSet({ providers, routing, router, telemetry, budgets }),
 		// The operator's off switch removes the tool, not just its answers.
 		...(webTools ? [webTools] : []),
 		...(videoTools ? [videoTools] : []),
@@ -644,7 +667,7 @@ export function createServer(options: CreateServerOptions = {}) {
 	const botRunner: BotRunner = new BotRunner({
 		bots: botRepository,
 		channels,
-		chat: { providers, routing, router, telemetry },
+		chat: { providers, routing, router, telemetry, budgets },
 		workspaces,
 		toolSets,
 		webRequests: botWebRequests,
@@ -796,9 +819,11 @@ export function createServer(options: CreateServerOptions = {}) {
 				routing,
 				router,
 				telemetry,
+				budgets,
 				corsOrigins: config.corsOrigins,
 			});
-			scoped.register(decisionsRoutes, { providers, telemetry });
+			scoped.register(decisionsRoutes, { providers, telemetry, budgets });
+			scoped.register(budgetRoutes, { budgets });
 			scoped.register(telemetryRoutes, { telemetry });
 			scoped.register(apiTokenRoutes, { tokens });
 			scoped.register(agentTokenRoutes, {
@@ -901,6 +926,7 @@ export function createServer(options: CreateServerOptions = {}) {
 				proxies.ensureIndexes(),
 				videoStore.ensureIndexes(),
 				videoJobs.ensureIndexes(),
+				budgetStore.ensureIndexes(),
 			]);
 			await providers.check(defaultWorkspace);
 		} catch (error) {
@@ -953,6 +979,7 @@ export function createServer(options: CreateServerOptions = {}) {
 			proxies.close(),
 			videoStore.close(),
 			videoJobs.close(),
+			budgetStore.close(),
 		]);
 		const failed = results.find(
 			(result): result is PromiseRejectedResult => result.status === "rejected",
@@ -984,6 +1011,8 @@ export function createServer(options: CreateServerOptions = {}) {
 			await agentWebhooks.idle();
 			await mcpEvents?.idle();
 			await knowledge.maintenance.idle();
+			// Budget charges for calls this request made.
+			await budgets.idle();
 		},
 		sweep: async (maxMcpEvents = 50) => {
 			await Promise.all([

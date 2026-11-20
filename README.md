@@ -223,16 +223,18 @@ Use **Loops** in a workspace to track a metric, review pending decisions, and de
 ## Gateway
 
 The dashboard has a collapsible sidebar with a workspace switcher and
-**Dashboard**, **Models**, **Proxies**, **Video**, **Synapse**, **Channels**,
+**Dashboard**, **Models**, **Proxies**, **Synapse**, **Channels**,
 **Organization**, **Loops**, **Agents**, **API Tokens**, **Workspaces**, and **Team** views. All but Workspaces and
 Team show the selected workspace, and their URLs name it
 (`#/w/<workspace id>/models`).
-**Models** has two tabs: **Models** and **Routing** (`#/w/<workspace id>/models/routing`;
-older `#/routing` links open it too). **Video** has two too: **Videos**, where
-admins make, follow, play, and stop videos, and **Settings**
-(`#/w/<workspace id>/video/settings`), with the providers and limits; see
-[Video generation](#video-generation).
-In the **Models** tab, search active models or choose **Add model** to connect Google
+**Models** has four tabs, each opening with what it is for and its main action:
+**LLM** (`#/w/<workspace id>/models`), the language models; **Video**
+(`/models/video`), the video providers, their order and limits, and for admins
+the videos made (see [Video generation](#video-generation)); **Budget**
+(`/models/budget`), caps on what models may spend (see [Budgets](#budgets));
+and **Routing** (`/models/routing`). Older `#/routing` and `#/video` links open
+those tabs. A tab keeps what was typed in it while another is shown.
+In the **LLM** tab, search active models or choose **Add model** to connect Google
 Gemini, xAI Grok, Anthropic Claude, OpenAI, Groq, Mistral, DeepSeek, OpenRouter,
 Cloudflare Workers AI, or Jev (TypeSafe). Choose a catalog suggestion or enter a
 provider-native model ID and supply your API key. Cloudflare also requires your
@@ -391,6 +393,7 @@ within that workspace:
 | Web | None, Fetch | Fetch reads a page with `POST /v1/<workspace>/web/fetch`, through the workspace's proxies when needed, within its limits. |
 | Video | None, Read, Edit | Read lists video connections, their usage, the video policy, and the models the workspace can use. Edit also adds connections, changes their keys, and saves the policy. Keys are never returned. |
 | Video generation | None, Generate | Generate starts, follows, lists, and cancels videos with `/v1/<workspace>/video/jobs`, within the workspace's limits. It sees every job in the workspace. |
+| Budgets | None, Read, Edit | Read lists the workspace's budgets and what each has spent. Edit also adds, changes, switches off, and deletes them. |
 
 Edit includes Read for that resource, but never Run. API token management and
 action history remain owner-only. Requests without the required permission
@@ -1092,10 +1095,13 @@ be added to its catalogue later without a new adapter.
   answers 410. The gateway masks the token in its own request logs, but
   Cloudflare's invocation logs record request URLs on a Worker deployment,
   so whoever can read those logs can open the videos.
-- **Spend.** Each workspace has a **monthly budget** (default $25), a
+- **Spend.** What videos may cost is set with [budgets](#budgets): every
+  workspace starts with one for all video models of $25 a month (its old
+  monthly video budget, if it had set another). Each workspace also has a
   **daily limit** of videos per person, token, or agent (default 10), and a
-  **longest video** (default 10 seconds). The estimated cost is held before
-  the provider is called; it is given back when the provider bills nothing.
+  **longest video** (default 10 seconds). The estimated cost is held against
+  every budget that covers the video before the provider is called; it is
+  given back when the provider bills nothing.
   A canceled job, or one that was started but never reported back, stays
   counted, so counters read high, never low. Costs are estimates from list
   prices; the provider's bill is the actual charge.
@@ -1126,10 +1132,10 @@ Connections live in `gateway_video_connections`, the policy in
 they last until restart. Connections from environment variables belong to
 the default workspace and cannot be changed here.
 
-Open **Video** in the dashboard to manage it. On **Settings**, workspace
+Open the **Video** tab of **Models** in the dashboard to manage it. Workspace
 admins add providers, switch them on and off, choose a default model and
-Luma's credit price, order them, and set the daily limit, monthly budget, and
-longest video; members see the providers and limits only. On **Videos**,
+Luma's credit price, order them, and set the daily limit and longest video;
+members see the providers and limits only. Below them,
 admins make a video from a form that offers only what the chosen model can
 make, and see every job in the workspace: its status, what it was asked for,
 its estimated cost, and why it failed. Unfinished jobs update on their own,
@@ -1137,12 +1143,13 @@ and **Stop** cancels one. A finished video plays in the page, or opens from
 its link. Members cannot see jobs, which need `video:generate`.
 
 REST routes under `/v1/<workspace id>`: `GET /video` (connections with this
-month's usage, the policy, the budget, and whether video is available and
+month's usage, the policy, this month's estimated video spend, and whether video is available and
 set up); `GET /video/models`; `POST /video/connections`
 (`{ name, kind, apiKey, enabled?, defaultModel?, creditPriceUsd? }`, `kind` is
 `google`, `runway`, or `luma`); `PATCH|DELETE /video/connections/:name`;
-`PUT /video/policy` (`{ order, callerVideosPerDay, monthlyBudgetUsd, maxDurationSeconds, revision }`,
-409 if the revision is stale); `POST /video/jobs` (the `video_generate`
+`PUT /video/policy` (`{ order, callerVideosPerDay, maxDurationSeconds, revision }`,
+409 if the revision is stale; a body that still sends `monthlyBudgetUsd` is
+refused with a pointer to budgets); `POST /video/jobs` (the `video_generate`
 arguments; 202 with the job, also when no provider accepted it, 409 when
 video is not set up, 429 when a limit is reached); `GET /video/jobs`
 (`?limit=&before=<job id>`); `GET /video/jobs/:id` (`?wait=<seconds>`); and
@@ -1231,12 +1238,70 @@ pnpm --filter @autonomo.us/server models:update
 To collect another provider, add a spec to `PROVIDERS` in
 `core/server/src/model-catalog.ts` (and its key to the workflow env).
 
+### Budgets
+
+A budget caps what a workspace's models may spend, estimated from list
+prices, over a UTC day or a UTC month. Each one says:
+
+- **Who it applies to:** everyone in the workspace (people, API tokens, and
+  agents together), or agents you pick. Picked agents share one budget.
+- **What it covers:** all models, all language models, all video models, one
+  language model (its routable id, such as `anthropic/claude-opus-4-8`), or
+  one video model.
+- **The limit** in US dollars, and whether it resets every day or every month.
+  A limit of $0 refuses everything it covers; a limit between $0 and $0.01 is
+  refused.
+
+A request is refused while any budget that covers it is used up, with a
+message that names the budget and when it resets: `429` with
+`{ error: { type: "budget_exceeded", message } }` from `POST /chat` (before a
+stream opens, too) and `POST /decisions`, a tool error from `models_chat`, and
+a notice in the channel from a bot. A model a used-up budget covers is passed
+over like one that failed, so failover moves on to the next target; each
+target is checked again just before it is tried, and a stream announces the
+skip with a `failover` event. When a provider fails and the rest are refused,
+the answer is that provider's error, saying how many models a budget kept from
+being tried. Language model calls are checked before they start and counted
+after, from the estimate telemetry records (a write that fails is tried three
+times, and each call counts once however often it is tried), so spend can pass
+a limit by the calls already running; models without a public list price are
+not counted. A video's estimate is held against every budget that covers it
+before the provider is called, all or none, and given back when the provider
+bills nothing; a model a used-up budget covers is passed over for the next
+provider in the order, and the video is refused with 429 only when budgets
+cover every one (otherwise the failed job says why each provider was not
+used). A used-up budget refuses even a video estimated at $0.
+
+Spend counts from when a budget is added, or last changed who it applies to,
+what it covers, or when it resets; a new limit keeps what was spent. Every
+workspace starts with one budget, for all video models at $25 a month, carrying
+over the monthly video budget and this month's video spend it had before
+budgets existed. A video started before budgets that later fails unbilled gives
+its estimate back to that budget.
+
+Open the **Budget** tab of **Models** to see each budget, what it has spent in
+the period now running, and when it resets. Workspace admins add, change,
+switch off, and delete budgets; the form says in one sentence what a budget
+will do before it is saved. Members see them only. API tokens use
+`budgets:read` and `budgets:edit`.
+
+REST routes under `/v1/<workspace id>`: `GET /budgets` (each budget with its
+`usage`: `period`, `spentUsd`, `resetsAt`); `POST /budgets`
+(`{ appliesTo, covers, limitUsd, period, enabled? }`, where `appliesTo` is
+`{ kind: "everyone" }` or `{ kind: "agents", agentIds }` and `covers` is
+`{ kind: "all" | "llm" | "video" }` or
+`{ kind: "llm-model" | "video-model", model }`); `PATCH /budgets/:id` (any of
+those fields); and `DELETE /budgets/:id`. A workspace holds at most 50
+budgets, and a budget names at most 100 agents. Budgets live in
+`gateway_budget_policies` and their spend in `gateway_budget_usage`; without
+MongoDB they last until restart.
+
 ### Routing
 
 Open the **Routing** tab in **Models** to configure these features and send a
 test request using **Auto**, a pool, or a specific model. The tester uses saved
 settings and makes real provider calls. Add models and account connections in
-the **Models** tab first.
+the **LLM** tab first.
 
 - **Auto mode:** choose Jev or any configured chat model (including OpenAI) as
   the decision model. Add at least two allowed models or pools, describe the
@@ -1391,7 +1456,7 @@ sites fetched most (hosts only), and who fetched. A proxy step that was
 skipped (a spent budget, a missing key) made no request and is not counted.
 Fetches recorded before the gateway kept their outcome and cost are left out
 and counted separately. Configuration, including failover, remains on the
-Models page's Models and Routing tabs.
+Models page's LLM, Budget, and Routing tabs.
 
 Calls include chat completions, decisions, routing selectors, and failed
 fallback attempts; they are not a count of end-user requests. Caller attribution

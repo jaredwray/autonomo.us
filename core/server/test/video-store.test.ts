@@ -266,14 +266,12 @@ describe.each(stores())("VideoStore (%s)", (_name, make) => {
 		const saved = await store.updatePolicy(OTHER, {
 			order: ["b", "a"],
 			callerVideosPerDay: 3,
-			monthlyBudgetUsd: 12.345,
 			maxDurationSeconds: 8,
 			revision: 0,
 		});
 		expect(saved).toEqual({
 			order: ["b", "a"],
 			callerVideosPerDay: 3,
-			monthlyBudgetUsd: 12.35,
 			maxDurationSeconds: 8,
 			revision: 1,
 		});
@@ -288,45 +286,63 @@ describe.each(stores())("VideoStore (%s)", (_name, make) => {
 		expect(await store.policy(DEFAULT)).toMatchObject({ revision: 0 });
 	});
 
-	it("holds against the budget and the caller's day, and gives holds back", async () => {
+	it("holds against the caller's day, counts the month's spend, and gives holds back", async () => {
 		const store = await make();
 		const hold = (callerId: string, costUsd: number, callerCap = 2) =>
-			store.hold(OTHER, {
-				connection: "a",
-				callerId,
-				callerCap,
-				budgetUsd: 3,
-				costUsd,
-			});
+			store.hold(OTHER, { connection: "a", callerId, callerCap, costUsd });
 		const first = await hold("agent:1", 1.5);
 		expect(first).toMatchObject({ costMicros: 1_500_000 });
 		expect(await hold("agent:1", 1)).toMatchObject({ costMicros: 1_000_000 });
 		expect(await hold("agent:1", 0.1)).toEqual({ refused: "caller" });
-		expect(await hold("agent:2", 1)).toEqual({ refused: "budget" });
-		const policy = await store.policy(OTHER);
-		expect((await store.budget(OTHER, policy)).spentUsd).toBeCloseTo(2.5);
+		// Spend has no cap here any more: budgets hold their part first.
+		expect(await hold("agent:2", 100)).toMatchObject({
+			costMicros: 100_000_000,
+		});
+		expect((await store.spend(OTHER)).spentUsd).toBeCloseTo(102.5);
 		if ("refused" in first) throw new Error("held");
 		await store.release(first);
-		expect((await store.budget(OTHER, policy)).spentUsd).toBeCloseTo(1);
+		expect((await store.spend(OTHER)).spentUsd).toBeCloseTo(101);
 		expect(await hold("agent:1", 0.5)).toMatchObject({ costMicros: 500_000 });
 	});
 
-	it("lets only one of many concurrent holds take the last of the budget", async () => {
+	it("seeds the first budget from the video budget a workspace had before", async () => {
 		const store = await make();
-		const results = await Promise.all(
-			Array.from({ length: 8 }, (_, index) =>
-				store.hold(OTHER, {
-					connection: "a",
-					callerId: `agent:${index}`,
-					callerCap: 10,
-					budgetUsd: 1,
-					costUsd: 1,
-				}),
-			),
-		);
-		expect(results.filter((result) => !("refused" in result))).toHaveLength(1);
-		const budget = await store.budget(OTHER, await store.policy(OTHER));
-		expect(budget.spentUsd).toBe(1);
+		expect(await store.budgetSeed(OTHER.id)).toEqual({
+			videoMonthlyBudgetUsd: 25,
+			videoSpentUsd: 0,
+		});
+		await store.hold(OTHER, {
+			connection: "a",
+			callerId: "agent:1",
+			callerCap: 5,
+			costUsd: 2,
+		});
+		if (store.persistence === "mongodb") {
+			// A policy saved before budgets, with its own monthly budget.
+			const internal = store as unknown as {
+				policies: () => {
+					insertOne: (doc: unknown) => Promise<unknown>;
+				};
+			};
+			await internal.policies().insertOne({
+				_id: OTHER.id,
+				policy: {
+					order: [],
+					callerVideosPerDay: 4,
+					monthlyBudgetUsd: 7.5,
+					maxDurationSeconds: 10,
+				},
+				revision: 1,
+			});
+			// Saving the video limits keeps it until it seeds a budget.
+			const policy = await store.policy(OTHER);
+			expect(policy).not.toHaveProperty("monthlyBudgetUsd");
+			await store.updatePolicy(OTHER, { ...policy, callerVideosPerDay: 6 });
+		}
+		expect(await store.budgetSeed(OTHER.id)).toEqual({
+			videoMonthlyBudgetUsd: store.persistence === "mongodb" ? 7.5 : 25,
+			videoSpentUsd: 2,
+		});
 	});
 
 	it("treats a lost race to create a period's counter as a retry, not a refusal", async () => {
@@ -375,17 +391,16 @@ describe.each(stores())("VideoStore (%s)", (_name, make) => {
 			connection: "a",
 			callerId: "agent:1",
 			callerCap: 5,
-			budgetUsd: 25,
 			costUsd: 0.35,
 		});
 		expect(held).toMatchObject({ costMicros: 350_000 });
-		const budget = await store.budget(OTHER, await store.policy(OTHER));
+		const budget = await store.spend(OTHER);
 		expect(budget.spentUsd).toBeCloseTo(
 			store.persistence === "mongodb" ? 0.45 : 0.35,
 		);
 	});
 
-	it("gives the budget back when the caller's counter cannot be written", async () => {
+	it("gives the month's spend back when the caller's counter cannot be written", async () => {
 		const store = await make();
 		const internal = store as unknown as {
 			increment: (...args: unknown[]) => Promise<boolean>;
@@ -404,14 +419,11 @@ describe.each(stores())("VideoStore (%s)", (_name, make) => {
 					connection: "a",
 					callerId: "agent:1",
 					callerCap: 5,
-					budgetUsd: 10,
 					costUsd: 2,
 				}),
 			),
 		).toMatchObject({ status: 503 });
-		expect(
-			(await store.budget(OTHER, await store.policy(OTHER))).spentUsd,
-		).toBe(0);
+		expect((await store.spend(OTHER)).spentUsd).toBe(0);
 	});
 });
 
@@ -419,7 +431,6 @@ describe("validateVideoPolicy", () => {
 	const valid = {
 		order: [],
 		callerVideosPerDay: 1,
-		monthlyBudgetUsd: 1,
 		maxDurationSeconds: 5,
 		revision: 0,
 	};
@@ -436,8 +447,6 @@ describe("validateVideoPolicy", () => {
 		expect(message({ order: ["a", "a"] as never })).toContain("twice");
 		expect(message({ callerVideosPerDay: -1 })).toContain("Videos a day");
 		expect(message({ callerVideosPerDay: 1.5 })).toContain("Videos a day");
-		expect(message({ monthlyBudgetUsd: Number.NaN })).toContain("budget");
-		expect(message({ monthlyBudgetUsd: 200_000 })).toContain("budget");
 		expect(message({ maxDurationSeconds: 1 })).toContain("longest video");
 		expect(message({ maxDurationSeconds: 31 })).toContain("longest video");
 		expect(

@@ -3,6 +3,10 @@ import { MongoClient } from "mongodb";
 import { AGENT_WEBHOOKS_COLLECTION } from "./agent-webhooks/repository.js";
 import { BOT_RUNS_COLLECTION, BOTS_COLLECTION } from "./bots/repository.js";
 import {
+	BUDGET_POLICIES_COLLECTION,
+	BUDGET_USAGE_COLLECTION,
+} from "./budgets/store.js";
+import {
 	CHANNEL_MESSAGES_COLLECTION,
 	CHANNEL_READS_COLLECTION,
 	CHANNELS_COLLECTION,
@@ -65,6 +69,8 @@ export const GATEWAY_COLLECTIONS = [
 	VIDEO_POLICY_COLLECTION,
 	VIDEO_USAGE_COLLECTION,
 	VIDEO_JOBS_COLLECTION,
+	BUDGET_POLICIES_COLLECTION,
+	BUDGET_USAGE_COLLECTION,
 	"gateway_routing",
 	"gateway_workspaces",
 	WORKSPACE_ORGANIZATIONS_COLLECTION,

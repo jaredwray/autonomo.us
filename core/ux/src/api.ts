@@ -24,6 +24,9 @@ import type {
 	BotList,
 	BotWebRequest,
 	BotWebRequestList,
+	BudgetList,
+	BudgetPolicyInput,
+	BudgetPolicyView,
 	ChannelAgentAccess,
 	ChannelAgentOption,
 	ChannelDetails,
@@ -102,6 +105,7 @@ import type {
 	UpdateAgentWebhookRequest,
 	UpdateApiTokenRequest,
 	UpdateBotRequest,
+	UpdateBudgetPolicyRequest,
 	UpdateChannelRequest,
 	UpdateProxyRequest,
 	UpdateSynapseNoteRequest,
@@ -1309,6 +1313,27 @@ export function cancelVideoJob(id: string): Promise<VideoJob> {
 	return apiRequest(videoPath(`/jobs/${encodeURIComponent(id)}/cancel`), {
 		method: "POST",
 	});
+}
+
+const budgetPath = (id?: string) =>
+	ws(`/budgets${id ? `/${encodeURIComponent(id)}` : ""}`);
+/** The workspace's budgets, each with what it has spent in its period now. */
+export function fetchBudgets(): Promise<BudgetList> {
+	return apiRequest(budgetPath());
+}
+export function createBudget(
+	input: BudgetPolicyInput,
+): Promise<BudgetPolicyView> {
+	return apiRequest(budgetPath(), { method: "POST", body: input });
+}
+export function updateBudget(
+	id: string,
+	input: UpdateBudgetPolicyRequest,
+): Promise<BudgetPolicyView> {
+	return apiRequest(budgetPath(id), { method: "PATCH", body: input });
+}
+export function deleteBudget(id: string): Promise<void> {
+	return apiRequest(budgetPath(id), { method: "DELETE" });
 }
 
 /** Use an explicit workspace so asynchronous organization actions stay in their original scope. */

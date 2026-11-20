@@ -43,17 +43,12 @@ const connectionFields = {
 const policySchema = {
 	type: "object",
 	additionalProperties: false,
-	required: [
-		"order",
-		"callerVideosPerDay",
-		"monthlyBudgetUsd",
-		"maxDurationSeconds",
-		"revision",
-	],
+	required: ["order", "callerVideosPerDay", "maxDurationSeconds", "revision"],
 	properties: {
 		order: { type: "array", maxItems: VIDEO_LIMITS.connections, items: name },
 		callerVideosPerDay: { type: "integer" },
-		monthlyBudgetUsd: { type: "number" },
+		/** Moved to budgets; listed so it is refused, not silently dropped. */
+		monthlyBudgetUsd: {},
 		maxDurationSeconds: { type: "integer" },
 		revision: { type: "integer", minimum: 0 },
 	},
@@ -233,6 +228,10 @@ export async function videoRoutes(
 		{ schema: { body: policySchema } },
 		async (request) => {
 			refuseWhenDisabled();
+			if ("monthlyBudgetUsd" in (request.body as object))
+				throw new ServiceError(
+					"The monthly video budget is a budget now. Change it with PATCH /v1/<workspace>/budgets/<id>, or on the Models page under Budget.",
+				);
 			const policy = await store.updatePolicy(
 				requestWorkspace(request),
 				request.body,

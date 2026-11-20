@@ -19,6 +19,8 @@ export const API_TOKEN_PERMISSIONS = {
 	"video:read": "Video: Read",
 	"video:edit": "Video: Edit",
 	"video:generate": "Video: Generate",
+	"budgets:read": "Budgets: Read",
+	"budgets:edit": "Budgets: Edit",
 } as const;
 export type ApiTokenPermission = keyof typeof API_TOKEN_PERMISSIONS;
 export const DEFAULT_API_TOKEN_PERMISSIONS: readonly ApiTokenPermission[] = [

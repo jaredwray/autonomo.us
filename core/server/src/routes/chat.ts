@@ -9,6 +9,7 @@ import type {
 import { generateText, type LanguageModelUsage, streamText } from "ai";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { requestWorkspace } from "../auth/access.js";
+import type { BudgetService } from "../budgets/service.js";
 import type { ResolvedModel } from "../providers/registry.js";
 import { UnknownProviderError } from "../providers/registry.js";
 import type { ProviderSettingsStore } from "../providers/settings.js";
@@ -22,6 +23,8 @@ export type ChatRouteOptions = {
 	routing: RoutingSettingsStore;
 	router: ModelRouter;
 	telemetry: TelemetryService;
+	/** Refuses calls a used-up budget covers. Omitted: nothing is limited. */
+	budgets?: BudgetService;
 	/** Origins allowed on the SSE path; `["*"]` allows any. */
 	corsOrigins?: string[];
 };
@@ -125,7 +128,7 @@ function startAttemptTimeout(timeoutMs: number): AttemptTimeout {
 
 export type ChatDependencies = Pick<
 	ChatRouteOptions,
-	"providers" | "routing" | "router" | "telemetry"
+	"providers" | "routing" | "router" | "telemetry" | "budgets"
 >;
 /** Extra `generateText` settings for callers that run tools, such as bots. */
 export type ChatExtras = Pick<
@@ -137,7 +140,34 @@ export type ChatOutcome =
 	/** The caller's signal fired; nothing was returned. */
 	| { status: "aborted" }
 	| { status: "unknown_model"; message: string }
+	/** Every model it could use is covered by a used-up budget. */
+	| { status: "budget_exceeded"; message: string }
 	| { status: "provider_error"; message: string; attempts: FailoverAttempt[] };
+
+/**
+ * Why each candidate may not be called now, by model id: a used-up budget
+ * that covers it. Checked before the first attempt, and again for each
+ * failover target before it is tried.
+ */
+export async function budgetRefusals(
+	budgets: BudgetService | undefined,
+	workspaceId: string,
+	caller: TelemetryCaller | undefined,
+	candidates: ResolvedModel[],
+): Promise<Map<string, string>> {
+	if (!budgets) return new Map();
+	return budgets.llmRefusals(
+		workspaceId,
+		caller,
+		candidates.map((candidate) => candidate.id),
+	);
+}
+
+/** A provider's error, with how many models a budget kept from being tried. */
+function withSkipped(error: string, skipped: number): string {
+	if (!skipped) return error;
+	return `${error} (${skipped === 1 ? "another model was" : `${skipped} other models were`} skipped: a budget that covers ${skipped === 1 ? "it" : "them"} is used up)`;
+}
 
 type AttemptInput = {
 	workspaceId: string;
@@ -156,7 +186,7 @@ type AttemptInput = {
  * completion outside a request, such as a bot's reply.
  */
 export async function runAttempts(
-	options: Pick<ChatDependencies, "router" | "telemetry">,
+	options: Pick<ChatDependencies, "router" | "telemetry" | "budgets">,
 	{
 		workspaceId,
 		body,
@@ -171,8 +201,36 @@ export async function runAttempts(
 	const requested = plan.candidates[0];
 	const attemptTimeoutMs = plan.timeoutMs;
 	const attempts: FailoverAttempt[] = [];
+	// A model a used-up budget covers is passed over, like one that failed.
+	const refused = await budgetRefusals(
+		options.budgets,
+		workspaceId,
+		caller,
+		plan.candidates,
+	);
+	if (refused.size === plan.candidates.length)
+		return {
+			status: "budget_exceeded",
+			message: refused.get(requested.id) ?? [...refused.values()][0],
+		};
+	let providerError: string | undefined;
+	let skipped = 0;
 	for (const candidate of plan.candidates) {
 		if (signal.aborted) return { status: "aborted" };
+		// A failover target is checked again: another call may have used up its budget meanwhile.
+		if (providerError !== undefined && !refused.has(candidate.id)) {
+			const fresh = await budgetRefusals(options.budgets, workspaceId, caller, [
+				candidate,
+			]);
+			const answer = fresh.get(candidate.id);
+			if (answer) refused.set(candidate.id, answer);
+		}
+		const refusal = refused.get(candidate.id);
+		if (refusal) {
+			attempts.push({ model: candidate.id, error: refusal });
+			skipped += 1;
+			continue;
+		}
 		const release =
 			candidate === requested
 				? plan.release
@@ -248,14 +306,21 @@ export async function runAttempts(
 			onAttemptError?.(error, candidate.id);
 			if (signal.aborted) return { status: "aborted" };
 			attempts.push({ model: candidate.id, error: message });
+			providerError = message;
 		} finally {
 			timeout.clear();
 			release?.();
 		}
 	}
+	if (providerError === undefined)
+		return {
+			status: "budget_exceeded",
+			message: refused.get(requested.id) ?? attempts[0].error,
+		};
 	return {
 		status: "provider_error",
-		message: attempts[attempts.length - 1].error,
+		// The last provider's own error, not a budget's: that is what failed.
+		message: withSkipped(providerError, skipped),
 		attempts,
 	};
 }
@@ -363,6 +428,21 @@ export async function chatRoutes(
 				const attemptTimeoutMs = plan.timeoutMs;
 
 				if (body.stream) {
+					// Refused before the stream opens, so a client gets a status code.
+					const refused = await budgetRefusals(
+						options.budgets,
+						workspace.id,
+						request.telemetryCaller,
+						candidates,
+					);
+					if (refused.size === candidates.length)
+						return reply.status(429).send({
+							error: {
+								type: "budget_exceeded",
+								message:
+									refused.get(candidates[0].id) ?? [...refused.values()][0],
+							},
+						});
 					return await streamChat(
 						server,
 						reply,
@@ -373,6 +453,7 @@ export async function chatRoutes(
 						client.signal,
 						workspace.id,
 						plan,
+						refused,
 					);
 				}
 
@@ -390,6 +471,10 @@ export async function chatRoutes(
 				});
 				if (outcome.status === "aborted") return reply.hijack();
 				if (outcome.status === "ok") return outcome.response;
+				if (outcome.status === "budget_exceeded")
+					return reply.status(429).send({
+						error: { type: "budget_exceeded", message: outcome.message },
+					});
 				return reply.status(502).send({
 					error: {
 						type: "provider_error",
@@ -417,6 +502,7 @@ async function streamChat(
 	clientSignal: AbortSignal,
 	workspaceId: string,
 	plan?: RoutingPlan,
+	refused: Map<string, string> = new Map(),
 ) {
 	const { telemetry } = options;
 	const requested = candidates[0];
@@ -449,11 +535,56 @@ async function streamChat(
 	let servedBy: string | undefined;
 	let finalError: string | undefined;
 
+	let skipped = 0;
 	for (let index = 0; index < candidates.length; index++) {
 		if (clientSignal.aborted || raw.destroyed) break;
 		const candidate = candidates[index];
+		// A failover target is checked again: another call may have used up its budget meanwhile.
+		if (finalError !== undefined && !refused.has(candidate.id)) {
+			const fresh = await budgetRefusals(
+				options.budgets,
+				workspaceId,
+				reply.request.telemetryCaller,
+				[candidate],
+			);
+			const answer = fresh.get(candidate.id);
+			if (answer) refused.set(candidate.id, answer);
+		}
+		// A model a used-up budget covers is passed over, like one that failed,
+		// and the client hears so as it would of a failure.
+		const refusal = refused.get(candidate.id);
+		if (refusal) {
+			attempts.push({ model: candidate.id, error: refusal });
+			skipped += 1;
+			const next = candidates
+				.slice(index + 1)
+				.find((item) => !refused.has(item.id));
+			if (next) {
+				send({
+					type: "failover",
+					from: candidate.id,
+					to: next.id,
+					error: refusal,
+				});
+				continue;
+			}
+			if (!raw.writableEnded && !raw.destroyed) {
+				send({
+					type: "error",
+					error: {
+						message:
+							finalError !== undefined
+								? withSkipped(finalError, skipped)
+								: refusal,
+					},
+				});
+				raw.write("data: [DONE]\n\n");
+				raw.end();
+			}
+			break;
+		}
 		const release =
-			index === 0
+			candidate === requested
 				? plan?.release
 				: options.router.acquire(workspaceId, candidate.id);
 		const started = performance.now();
@@ -558,7 +689,9 @@ async function streamChat(
 
 		attempts.push({ model: candidate.id, error });
 		finalError = error;
-		const next = candidates[index + 1];
+		const next = candidates
+			.slice(index + 1)
+			.find((item) => !refused.has(item.id));
 		const clientGone = clientSignal.aborted || raw.destroyed;
 
 		// Fail over only while nothing has been streamed to the client yet; once

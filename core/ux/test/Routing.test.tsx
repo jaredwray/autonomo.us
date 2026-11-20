@@ -125,11 +125,14 @@ it("saves a weighted account pool, uses it for a real request, and restores it w
 	fireEvent.click(screen.getByRole("button", { name: "Send request" }));
 	await screen.findByText("Hello there");
 	expect(screen.getByText("work/chat", { selector: "strong" })).toBeDefined();
-	fireEvent.click(screen.getByRole("tab", { name: "Models" }));
+	fireEvent.click(screen.getByRole("tab", { name: "LLM" }));
 	await screen.findByRole("heading", { name: "Active models" });
-	expect(screen.queryByLabelText("Weight for work/chat")).toBeNull();
+	// Routing stays mounted but hidden while another tab shows.
+	expect(
+		screen.queryByRole("spinbutton", { name: "Weight for work/chat" }),
+	).toBeNull();
 	fireEvent.click(screen.getByRole("tab", { name: "Routing" }));
-	await screen.findByLabelText("Weight for work/chat");
+	await screen.findByRole("spinbutton", { name: "Weight for work/chat" });
 	expect(
 		(screen.getByLabelText("Weight for work/chat") as HTMLInputElement).value,
 	).toBe("3");
@@ -208,25 +211,43 @@ it("keeps Routing as a tab of Models, moved to with the arrow keys", async () =>
 	expect(screen.getByRole("tabpanel").getAttribute("aria-labelledby")).toBe(
 		"models-tab-routing",
 	);
-	// Adding a model belongs to the Models tab.
+	// The tabs, in order: language models, video, budgets, routing.
+	expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+		"LLM",
+		"Video",
+		"Budget",
+		"Routing",
+	]);
+	// Adding a model belongs to the LLM tab.
 	expect(screen.queryByRole("button", { name: "Add model" })).toBeNull();
 	routingTab.focus();
 	fireEvent.keyDown(routingTab, { key: "ArrowLeft" });
-	const modelsTab = screen.getByRole("tab", { name: "Models" });
 	await waitFor(() =>
-		expect(modelsTab.getAttribute("aria-selected")).toBe("true"),
+		expect(
+			screen.getByRole("tab", { name: "Budget" }).getAttribute("aria-selected"),
+		).toBe("true"),
 	);
-	expect(document.activeElement).toBe(modelsTab);
-	expect(modelsTab.tabIndex).toBe(0);
+	expect(window.location.hash).toBe(`${workspaceHash}/models/budget`);
+	fireEvent.keyDown(screen.getByRole("tab", { name: "Budget" }), {
+		key: "Home",
+	});
+	const llmTab = screen.getByRole("tab", { name: "LLM" });
+	await waitFor(() =>
+		expect(llmTab.getAttribute("aria-selected")).toBe("true"),
+	);
+	expect(document.activeElement).toBe(llmTab);
+	expect(llmTab.tabIndex).toBe(0);
 	expect(screen.getByRole("tab", { name: "Routing" }).tabIndex).toBe(-1);
 	expect(window.location.hash).toBe(`${workspaceHash}/models`);
 	expect(screen.getByRole("tabpanel").getAttribute("aria-labelledby")).toBe(
-		"models-tab-models",
+		"models-tab-llm",
 	);
 	await screen.findByRole("button", { name: "Add model" });
-	expect(screen.queryByLabelText("Enable Auto routing")).toBeNull();
-	fireEvent.keyDown(modelsTab, { key: "End" });
-	await screen.findByLabelText("Enable Auto routing");
+	expect(
+		screen.queryByRole("checkbox", { name: "Enable Auto routing" }),
+	).toBeNull();
+	fireEvent.keyDown(llmTab, { key: "End" });
+	await screen.findByRole("checkbox", { name: "Enable Auto routing" });
 	expect(document.activeElement).toBe(
 		screen.getByRole("tab", { name: "Routing" }),
 	);
@@ -241,11 +262,11 @@ it("opens the Routing tab from links to the former Routing view", async () => {
 	await waitFor(() =>
 		expect(window.location.hash).toBe(`${workspaceHash}/models/routing`),
 	);
-	fireEvent.click(screen.getByRole("tab", { name: "Models" }));
+	fireEvent.click(screen.getByRole("tab", { name: "LLM" }));
 	await screen.findByRole("button", { name: "Add model" });
 	// A link into the workspace, from before Routing joined Models.
 	window.location.hash = `${workspaceHash}/routing`;
-	await screen.findByLabelText("Enable Auto routing");
+	await screen.findByRole("checkbox", { name: "Enable Auto routing" });
 	expect(
 		screen.getByRole("tab", { name: "Routing", selected: true }),
 	).toBeDefined();
@@ -254,15 +275,15 @@ it("opens the Routing tab from links to the former Routing view", async () => {
 	);
 });
 
-it("sends a workspace with no chat models to the Models tab to add them", async () => {
+it("sends a workspace with no chat models to the LLM tab to add them", async () => {
 	await start({ chat: false });
 	fireEvent.click(
 		screen.getByRole("link", {
-			name: "Add chat models and account connections",
+			name: "Add a language model on the LLM tab",
 		}),
 	);
 	expect(
-		screen.getByRole("tab", { name: "Models", selected: true }),
+		screen.getByRole("tab", { name: "LLM", selected: true }),
 	).toBeDefined();
 	expect(window.location.hash).toBe(`${workspaceHash}/models`);
 	await screen.findByRole("button", { name: "Add model" });
