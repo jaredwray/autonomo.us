@@ -346,9 +346,11 @@ export type {
 export { PROVIDER_NAMES } from "./types.js";
 export {
 	type CreateVideoConnectionRequest,
+	DEFAULT_VIDEO_LIMIT,
 	DEFAULT_VIDEO_MODEL,
 	DEFAULT_VIDEO_POLICY,
 	type UpdateVideoConnectionRequest,
+	type UpdateVideoLimitRequest,
 	type UpdateVideoPolicyRequest,
 	VIDEO_ASPECT_RATIOS,
 	VIDEO_JOB_ID_PATTERN,
@@ -368,6 +370,9 @@ export {
 	type VideoJobList,
 	type VideoJobStatus,
 	type VideoKind,
+	type VideoLimit,
+	type VideoLimitCovers,
+	type VideoLimitInput,
 	type VideoModel,
 	type VideoModelList,
 	type VideoPolicy,
@@ -377,6 +382,8 @@ export {
 	videoDurationAllowed,
 	videoDurationsText,
 	videoJobFinished,
+	videoLimitCovers,
+	videoLimitProblem,
 	videoModel,
 	videoModelProblem,
 } from "./video.js";

@@ -427,10 +427,6 @@ export function ModelsView({
 	const modelsPanel = (
 		<>
 			<div className="tab-intro">
-				<p className="card-note">
-					Language models your agents and apps can call through the gateway,
-					from the providers you connect.
-				</p>
 				{canEdit ? (
 					<button
 						ref={addButton}
@@ -678,16 +674,8 @@ export function ModelsView({
 			<BudgetPanel workspace={workspace} active={tab === "budget"} />
 		),
 		routing: () => (
-			<>
-				<div className="tab-intro">
-					<p className="card-note">
-						Let the gateway choose a model for each request, share traffic
-						across accounts, and fall back to another model when one fails.
-					</p>
-				</div>
-				{/* Remounted when a model is added, so its choices include the new one. */}
-				<RoutingView key={modelsAdded} onShowModels={() => goTo("llm")} />
-			</>
+			// Remounted when a model is added, so its choices include the new one.
+			<RoutingView key={modelsAdded} onShowModels={() => goTo("llm")} />
 		),
 	};
 

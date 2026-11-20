@@ -4,6 +4,8 @@
 
 *Since 2026-11-20 the monthly video budget is a budget, and the Video page is the Video tab of Models: see [BUDGETS_PLAN.md](BUDGETS_PLAN.md). What this plan says about `monthlyBudgetUsd` and the Video page's two tabs describes what was built first.*
 
+*Also since 2026-11-20 the daily cap and longest video are **video limits**, policies for everyone or chosen agents on every video model or one: see [BUDGETS_PLAN.md](BUDGETS_PLAN.md#video-limits). What this plan says about `callerVideosPerDay` and `maxDurationSeconds` on the policy describes what was built first; the policy now holds only the order.*
+
 **Read this first.** Three things I found change the brief:
 
 1. **OpenAI Sora is gone.** OpenAI's docs say the Sora 2 models and the Videos API (`/v1/videos`) were shut down on 2026-09-24 with "no one-to-one replacement". It cannot be one of the three.

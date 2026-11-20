@@ -374,7 +374,7 @@ describe("Budget tab", () => {
 });
 
 describe("Models page tabs", () => {
-	it("opens the Budget tab from the Video tab's limits", async () => {
+	it("opens the Budget tab from the Video tab's limits card", async () => {
 		setCurrentWorkspace(WORKSPACE);
 		window.history.replaceState(null, "", `#/w/${WORKSPACE}/models/video`);
 		vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
@@ -387,12 +387,8 @@ describe("Models page tabs", () => {
 					available: true,
 					configured: false,
 					connections: [],
-					policy: {
-						order: [],
-						callerVideosPerDay: 10,
-						maxDurationSeconds: 10,
-						revision: 0,
-					},
+					policy: { order: [], revision: 0 },
+					limits: [],
 					spend: { month: "2026-11", spentUsd: 0 },
 					persistence: "memory",
 				});

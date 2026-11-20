@@ -169,7 +169,13 @@ export function videoModelsText(list: VideoModelList): string {
 				.join("; ")}`,
 	);
 	return [
-		`This workspace can make videos of up to ${list.limits.maxDurationSeconds} seconds.${list.canGenerate ? "" : " This agent lacks the video:generate grant, so it cannot start one."}`,
+		`This agent may make videos of up to ${list.limits.maxDurationSeconds} seconds${
+			list.limits.modelMaxDurationSeconds
+				? ` (${Object.entries(list.limits.modelMaxDurationSeconds)
+						.map(([model, seconds]) => `${model}: up to ${seconds}`)
+						.join("; ")})`
+				: ""
+		}.${list.canGenerate ? "" : " This agent lacks the video:generate grant, so it cannot start one."}`,
 		...lines,
 	].join("\n");
 }
@@ -201,6 +207,7 @@ export function videoToolSet(video: VideoService): McpToolSet {
 				video.models(
 					agent.workspace,
 					agent.token.permissions.includes("video:generate"),
+					callerOf(agent),
 				),
 			video_generate: async (agent, args, context) => {
 				requireGrant(agent, "video:generate");

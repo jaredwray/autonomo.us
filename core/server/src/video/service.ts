@@ -28,6 +28,7 @@ import type { TelemetryService } from "../telemetry/telemetry.js";
 import { checkTargetUrl } from "../web/url-guard.js";
 import type { WorkspaceRef } from "../workspaces/store.js";
 import type { VideoJobPatch, VideoJobRecord, VideoJobStore } from "./jobs.js";
+import { VideoLimits } from "./limits.js";
 import { VIDEO_ADAPTERS } from "./providers/index.js";
 import type { VideoHold, VideoHoldRefusal, VideoStore } from "./store.js";
 import type {
@@ -62,6 +63,8 @@ export type VideoServiceOptions = {
 	budgets?: Pick<BudgetService, "holdVideo" | "release" | "releaseCarried">;
 	/** `VIDEO_DISABLED`: every video call is refused. */
 	disabled?: boolean;
+	/** The ids of the workspace's agents, to check the agents a video limit names. */
+	knownAgents?: (workspace: WorkspaceRef) => Promise<Set<string>>;
 	now?: () => number;
 	/** How a wait sleeps; tests replace it. */
 	sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
@@ -155,12 +158,18 @@ export class VideoService {
 	private readonly sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
 	/** Connections that asked the gateway to slow down, until when. */
 	private readonly backoff = new Map<string, number>();
+	/** How many videos a day, and how long, each caller may make. */
+	readonly limits: VideoLimits;
 
 	constructor(private readonly options: VideoServiceOptions) {
 		this.adapters = options.adapters ?? VIDEO_ADAPTERS;
 		this.fetchImpl = options.fetchImpl ?? ((input, init) => fetch(input, init));
 		this.now = options.now ?? (() => Date.now());
 		this.sleep = options.sleep ?? defaultSleep;
+		this.limits = new VideoLimits(options.store, {
+			now: () => new Date(this.now()),
+			...(options.knownAgents ? { knownAgents: options.knownAgents } : {}),
+		});
 	}
 
 	get available(): boolean {
@@ -200,7 +209,6 @@ export class VideoService {
 		input: {
 			connection: string;
 			model: string;
-			callerCap: number;
 			costUsd: number;
 		},
 	): Promise<VideoHold | { refused: string; by: "budget" | "caller" }> {
@@ -217,10 +225,14 @@ export class VideoService {
 			return { refused: budget.refused, by: "budget" };
 		let held: Awaited<ReturnType<VideoStore["hold"]>>;
 		try {
+			const { counts } = await this.limits.forVideo(
+				workspace,
+				caller,
+				input.model,
+			);
 			held = await store.hold(workspace, {
 				connection: input.connection,
-				callerId: caller.id,
-				callerCap: input.callerCap,
+				limits: counts,
 				costUsd: input.costUsd,
 			});
 		} catch (error) {
@@ -259,16 +271,18 @@ export class VideoService {
 	async settings(workspace: WorkspaceRef): Promise<VideoSettings> {
 		const { store } = this.options;
 		const policy = await store.policy(workspace);
-		const [connections, spend, entries] = await Promise.all([
+		const [connections, spend, entries, limits] = await Promise.all([
 			store.list(workspace),
 			store.spend(workspace),
 			store.entries(workspace),
+			this.limits.list(workspace),
 		]);
 		return {
 			available: this.available,
 			configured: this.available && this.usable(entries, policy).length > 0,
 			connections,
 			policy,
+			limits,
 			spend,
 			persistence: store.persistence,
 		};
@@ -278,6 +292,7 @@ export class VideoService {
 	async models(
 		workspace: WorkspaceRef,
 		canGenerate: boolean,
+		caller?: VideoCaller,
 	): Promise<VideoModelList> {
 		this.refuseWhenDisabled();
 		const policy = await this.options.store.policy(workspace);
@@ -291,20 +306,28 @@ export class VideoService {
 			defaultModel: config.defaultModel ?? DEFAULT_VIDEO_MODEL[config.kind],
 			models: [...VIDEO_MODELS[config.kind]],
 		}));
+		const durations = await this.limits.durations(
+			workspace,
+			caller,
+			providers.flatMap((provider) => provider.models.map((model) => model.id)),
+		);
 		return {
 			available: providers.length > 0,
 			...(providers.length ? {} : { reason: NO_PROVIDER }),
 			canGenerate,
 			providers,
 			limits: {
-				maxDurationSeconds: policy.maxDurationSeconds,
+				maxDurationSeconds: durations.all,
+				...(Object.keys(durations.byModel).length
+					? { modelMaxDurationSeconds: durations.byModel }
+					: {}),
 				promptLength: VIDEO_LIMITS.promptLength,
 			},
 		};
 	}
 
 	/** Checks what the caller sent, before anything is read or written. */
-	private checkRequest(request: VideoGenerateRequest, policy: VideoPolicy) {
+	private checkRequest(request: VideoGenerateRequest) {
 		const prompt =
 			typeof request.prompt === "string" ? request.prompt.trim() : "";
 		if (!prompt) throw new ServiceError("Describe the video in prompt.");
@@ -321,10 +344,6 @@ export class VideoService {
 			)
 				throw new ServiceError(
 					`durationSeconds is a whole number from ${VIDEO_LIMITS.minDurationSeconds} to ${VIDEO_LIMITS.maxDurationSeconds}.`,
-				);
-			if (seconds > policy.maxDurationSeconds)
-				throw new ServiceError(
-					`This workspace allows videos of up to ${policy.maxDurationSeconds} seconds.`,
 				);
 		}
 		if (
@@ -359,7 +378,7 @@ export class VideoService {
 	private candidates(
 		usable: Entry[],
 		request: VideoGenerateRequest,
-		policy: VideoPolicy,
+		capFor: (model: string) => number,
 		prompt: string,
 		imageUrl: string | undefined,
 	): Candidate[] {
@@ -386,10 +405,20 @@ export class VideoService {
 				);
 				continue;
 			}
+			const cap = capFor(model.id);
+			if (
+				request.durationSeconds !== undefined &&
+				request.durationSeconds > cap
+			) {
+				problems.push(
+					`${config.name}: a video limit allows ${model.label} videos of up to ${cap} seconds.`,
+				);
+				continue;
+			}
 			const want = {
 				durationSeconds:
 					request.durationSeconds ??
-					Math.min(model.defaults.durationSeconds, policy.maxDurationSeconds),
+					Math.min(model.defaults.durationSeconds, cap),
 				aspectRatio: request.aspectRatio ?? model.defaults.aspectRatio,
 				resolution: request.resolution ?? model.defaults.resolution,
 			};
@@ -462,13 +491,28 @@ export class VideoService {
 		this.refuseWhenDisabled();
 		const { store, jobs } = this.options;
 		const policy = await store.policy(workspace);
-		const { prompt, imageUrl } = this.checkRequest(request, policy);
+		const { prompt, imageUrl } = this.checkRequest(request);
 		const usable = this.usable(await store.entries(workspace), policy);
 		if (!usable.length) throw new ServiceError(NOT_SET_UP, 409);
+		// The longest video the caller's limits allow, on every model and on each.
+		const durations = await this.limits.durations(
+			workspace,
+			caller,
+			usable.flatMap(({ config }) =>
+				VIDEO_MODELS[config.kind].map((model) => model.id),
+			),
+		);
+		if (
+			request.durationSeconds !== undefined &&
+			request.durationSeconds > durations.all
+		)
+			throw new ServiceError(
+				`A video limit allows videos of up to ${durations.all} seconds.`,
+			);
 		const candidates = this.candidates(
 			usable,
 			request,
-			policy,
+			(model) => durations.byModel[model] ?? durations.all,
 			prompt,
 			imageUrl,
 		);
@@ -535,7 +579,6 @@ export class VideoService {
 			const hold = await this.hold(workspace, caller, {
 				connection: config.name,
 				model: candidate.model.id,
-				callerCap: policy.callerVideosPerDay,
 				costUsd,
 			});
 			if ("refused" in hold) {

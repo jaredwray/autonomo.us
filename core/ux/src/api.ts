@@ -111,6 +111,7 @@ import type {
 	UpdateSynapseNoteRequest,
 	UpdateTeamMemberRequest,
 	UpdateVideoConnectionRequest,
+	UpdateVideoLimitRequest,
 	UpdateVideoPolicyRequest,
 	UpdateWebPolicyRequest,
 	UpdateWorkspaceRequest,
@@ -119,6 +120,8 @@ import type {
 	VideoGenerateRequest,
 	VideoJob,
 	VideoJobList,
+	VideoLimit,
+	VideoLimitInput,
 	VideoModelList,
 	VideoPolicy,
 	VideoSettings,
@@ -1313,6 +1316,22 @@ export function cancelVideoJob(id: string): Promise<VideoJob> {
 	return apiRequest(videoPath(`/jobs/${encodeURIComponent(id)}/cancel`), {
 		method: "POST",
 	});
+}
+
+const videoLimitPath = (id?: string) =>
+	videoPath(`/limits${id ? `/${encodeURIComponent(id)}` : ""}`);
+/** Adds a video limit for everyone or chosen agents, on every video model or one. */
+export function createVideoLimit(input: VideoLimitInput): Promise<VideoLimit> {
+	return apiRequest(videoLimitPath(), { method: "POST", body: input });
+}
+export function updateVideoLimit(
+	id: string,
+	input: UpdateVideoLimitRequest,
+): Promise<VideoLimit> {
+	return apiRequest(videoLimitPath(id), { method: "PATCH", body: input });
+}
+export function deleteVideoLimit(id: string): Promise<void> {
+	return apiRequest(videoLimitPath(id), { method: "DELETE" });
 }
 
 const budgetPath = (id?: string) =>

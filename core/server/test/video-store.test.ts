@@ -265,16 +265,9 @@ describe.each(stores())("VideoStore (%s)", (_name, make) => {
 		expect(first).toEqual({ ...DEFAULT_VIDEO_POLICY, revision: 0 });
 		const saved = await store.updatePolicy(OTHER, {
 			order: ["b", "a"],
-			callerVideosPerDay: 3,
-			maxDurationSeconds: 8,
 			revision: 0,
 		});
-		expect(saved).toEqual({
-			order: ["b", "a"],
-			callerVideosPerDay: 3,
-			maxDurationSeconds: 8,
-			revision: 1,
-		});
+		expect(saved).toEqual({ order: ["b", "a"], revision: 1 });
 		expect(
 			await refusal(store.updatePolicy(OTHER, { ...saved, revision: 0 })),
 		).toMatchObject({ status: 409 });
@@ -286,14 +279,26 @@ describe.each(stores())("VideoStore (%s)", (_name, make) => {
 		expect(await store.policy(DEFAULT)).toMatchObject({ revision: 0 });
 	});
 
-	it("holds against the caller's day, counts the month's spend, and gives holds back", async () => {
+	it("holds against each limit's count, all or none, counts the month's spend, and gives holds back", async () => {
 		const store = await make();
 		const hold = (callerId: string, costUsd: number, callerCap = 2) =>
-			store.hold(OTHER, { connection: "a", callerId, callerCap, costUsd });
+			store.hold(OTHER, {
+				connection: "a",
+				limits: [
+					{ key: `${OTHER.id}:limit:roomy:${callerId}`, cap: 100 },
+					{ key: `${OTHER.id}:limit:tight:${callerId}`, cap: callerCap },
+				],
+				costUsd,
+			});
 		const first = await hold("agent:1", 1.5);
 		expect(first).toMatchObject({ costMicros: 1_500_000 });
 		expect(await hold("agent:1", 1)).toMatchObject({ costMicros: 1_000_000 });
 		expect(await hold("agent:1", 0.1)).toEqual({ refused: "caller" });
+		// The roomy limit gave back what the refused hold took from it.
+		const roomy = { key: `${OTHER.id}:limit:roomy:agent:1`, cap: 2 };
+		expect(
+			await store.hold(OTHER, { connection: "a", limits: [roomy], costUsd: 0 }),
+		).toEqual({ refused: "caller" });
 		// Spend has no cap here any more: budgets hold their part first.
 		expect(await hold("agent:2", 100)).toMatchObject({
 			costMicros: 100_000_000,
@@ -313,8 +318,7 @@ describe.each(stores())("VideoStore (%s)", (_name, make) => {
 		});
 		await store.hold(OTHER, {
 			connection: "a",
-			callerId: "agent:1",
-			callerCap: 5,
+			limits: [{ key: `${OTHER.id}:limit:x:agent:1`, cap: 5 }],
 			costUsd: 2,
 		});
 		if (store.persistence === "mongodb") {
@@ -334,10 +338,20 @@ describe.each(stores())("VideoStore (%s)", (_name, make) => {
 				},
 				revision: 1,
 			});
-			// Saving the video limits keeps it until it seeds a budget.
+			// Saving the order keeps it until it seeds a budget.
 			const policy = await store.policy(OTHER);
-			expect(policy).not.toHaveProperty("monthlyBudgetUsd");
-			await store.updatePolicy(OTHER, { ...policy, callerVideosPerDay: 6 });
+			expect(policy).toEqual({ order: [], revision: 1 });
+			await store.updatePolicy(OTHER, policy);
+			// The old videos a day and longest video seed the first limit.
+			expect((await store.limits(OTHER.id)).limits).toMatchObject([
+				{
+					appliesTo: { kind: "everyone" },
+					covers: { kind: "video" },
+					videosPerDay: 4,
+					maxDurationSeconds: 10,
+					origin: "video-policy",
+				},
+			]);
 		}
 		expect(await store.budgetSeed(OTHER.id)).toEqual({
 			videoMonthlyBudgetUsd: store.persistence === "mongodb" ? 7.5 : 25,
@@ -367,7 +381,12 @@ describe.each(stores())("VideoStore (%s)", (_name, make) => {
 							unknown,
 							{ upsert?: boolean } | undefined,
 						];
-						if (options?.upsert && !raced) {
+						// The month's spend is the counter that races here.
+						if (
+							options?.upsert &&
+							!raced &&
+							filter._id.$eq.startsWith(`${OTHER.id}:budget:`)
+						) {
 							raced = true;
 							await collection.insertOne({
 								_id: filter._id.$eq,
@@ -389,8 +408,7 @@ describe.each(stores())("VideoStore (%s)", (_name, make) => {
 		}
 		const held = await store.hold(OTHER, {
 			connection: "a",
-			callerId: "agent:1",
-			callerCap: 5,
+			limits: [{ key: `${OTHER.id}:limit:x:agent:1`, cap: 5 }],
 			costUsd: 0.35,
 		});
 		expect(held).toMatchObject({ costMicros: 350_000 });
@@ -417,8 +435,7 @@ describe.each(stores())("VideoStore (%s)", (_name, make) => {
 			await refusal(
 				store.hold(OTHER, {
 					connection: "a",
-					callerId: "agent:1",
-					callerCap: 5,
+					limits: [{ key: `${OTHER.id}:limit:x:agent:1`, cap: 5 }],
 					costUsd: 2,
 				}),
 			),
@@ -428,12 +445,7 @@ describe.each(stores())("VideoStore (%s)", (_name, make) => {
 });
 
 describe("validateVideoPolicy", () => {
-	const valid = {
-		order: [],
-		callerVideosPerDay: 1,
-		maxDurationSeconds: 5,
-		revision: 0,
-	};
+	const valid = { order: [], revision: 0 };
 	const message = (input: Partial<typeof valid>) => {
 		try {
 			validateVideoPolicy({ ...valid, ...input }, new Set(["a"]));
@@ -445,10 +457,6 @@ describe("validateVideoPolicy", () => {
 	it("checks every field", () => {
 		expect(message({})).toBeNull();
 		expect(message({ order: ["a", "a"] as never })).toContain("twice");
-		expect(message({ callerVideosPerDay: -1 })).toContain("Videos a day");
-		expect(message({ callerVideosPerDay: 1.5 })).toContain("Videos a day");
-		expect(message({ maxDurationSeconds: 1 })).toContain("longest video");
-		expect(message({ maxDurationSeconds: 31 })).toContain("longest video");
 		expect(
 			message({ order: Array.from({ length: 11 }, () => "a") as never }),
 		).toContain("at most");

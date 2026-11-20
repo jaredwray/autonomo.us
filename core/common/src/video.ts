@@ -4,6 +4,7 @@
  * See docs/VIDEO_MODELS_PLAN.md.
  */
 import type { TelemetryCaller } from "./analytics.js";
+import type { BudgetAppliesTo } from "./budgets.js";
 
 /** Provider kinds a video connection can be. */
 export const VIDEO_KINDS = ["google", "runway", "luma"] as const;
@@ -41,6 +42,10 @@ export const VIDEO_LIMITS = {
 	/** What an agent may ask `video_list` for. */
 	maxAgentListLimit: 20,
 	maxCallerVideosPerDay: 10_000,
+	/** Video limits per workspace. */
+	limitPolicies: 50,
+	/** Agents one video limit may name, as many as a budget may. */
+	agentsPerLimit: 100,
 	keyLength: 4096,
 	/** How long the gateway keeps a job record. */
 	jobRetentionDays: 30,
@@ -191,22 +196,102 @@ export function videoModelProblem(
 	return null;
 }
 
-/** One workspace's video settings. */
+/** One workspace's video settings: the order its connections are tried in. */
 export type VideoPolicy = {
 	/** Connection names, first tried first. Ones not listed follow in the order added. */
 	order: string[];
-	/** Videos one person, token, or agent may start in a UTC day. */
-	callerVideosPerDay: number;
-	/** The longest video anyone may ask for, in seconds. */
-	maxDurationSeconds: number;
 	revision: number;
 };
 
 export const DEFAULT_VIDEO_POLICY: Omit<VideoPolicy, "revision"> = {
 	order: [],
-	callerVideosPerDay: 10,
-	maxDurationSeconds: 10,
 };
+
+/** What videos a limit counts: every video model, or one. */
+export type VideoLimitCovers =
+	| { kind: "video" }
+	/** A video model's id, e.g. `gen4.5`. */
+	| { kind: "video-model"; model: string };
+
+/**
+ * A video limit: how many videos each person, API token, or agent it applies
+ * to may start in a UTC day, and how long a video may be. Every limit that
+ * covers a video applies, so the strictest wins. Null leaves that one unset.
+ */
+export type VideoLimitInput = {
+	appliesTo: BudgetAppliesTo;
+	covers: VideoLimitCovers;
+	videosPerDay?: number | null;
+	maxDurationSeconds?: number | null;
+	/** Defaults to true. */
+	enabled?: boolean;
+};
+
+export type VideoLimit = {
+	id: string;
+	appliesTo: BudgetAppliesTo;
+	covers: VideoLimitCovers;
+	videosPerDay: number | null;
+	maxDurationSeconds: number | null;
+	enabled: boolean;
+	/** `video-policy`: the limits a workspace had before limits were policies. */
+	origin?: "video-policy";
+	createdAt: string;
+	updatedAt: string;
+};
+
+/** Fields to change. */
+export type UpdateVideoLimitRequest = Partial<VideoLimitInput>;
+
+/** The limits a workspace starts with, and had before limits were policies. */
+export const DEFAULT_VIDEO_LIMIT = { videosPerDay: 10, maxDurationSeconds: 10 };
+
+/** Whether a limit counts this caller's video on this model. */
+export function videoLimitCovers(
+	limit: Pick<VideoLimit, "appliesTo" | "covers" | "enabled">,
+	caller: TelemetryCaller | undefined,
+	model: string,
+): boolean {
+	if (!limit.enabled) return false;
+	if (limit.appliesTo.kind === "agents") {
+		if (caller?.kind !== "agent" || !caller.id.startsWith("agent:"))
+			return false;
+		if (!limit.appliesTo.agentIds.includes(caller.id.slice("agent:".length)))
+			return false;
+	}
+	return limit.covers.kind === "video" || limit.covers.model === model;
+}
+
+/** Why a limit cannot be saved, or null. Checked again on the server. */
+export function videoLimitProblem(input: VideoLimitInput): string | null {
+	if (input.appliesTo.kind === "agents") {
+		const ids = input.appliesTo.agentIds;
+		if (!ids.length) return "Pick at least one agent.";
+		if (ids.length > VIDEO_LIMITS.agentsPerLimit)
+			return `A limit names at most ${VIDEO_LIMITS.agentsPerLimit} agents.`;
+	}
+	if (input.covers.kind === "video-model" && !input.covers.model.trim())
+		return "Pick a video model.";
+	const perDay = input.videosPerDay ?? null;
+	const longest = input.maxDurationSeconds ?? null;
+	if (perDay === null && longest === null)
+		return "Set videos a day, the longest video, or both.";
+	if (
+		perDay !== null &&
+		(!Number.isInteger(perDay) ||
+			perDay < 0 ||
+			perDay > VIDEO_LIMITS.maxCallerVideosPerDay)
+	)
+		return `Videos a day is a whole number from 0 to ${VIDEO_LIMITS.maxCallerVideosPerDay.toLocaleString("en-US")}.`;
+	if (
+		longest !== null &&
+		(!Number.isInteger(longest) ||
+			longest < VIDEO_LIMITS.minDurationSeconds ||
+			longest > VIDEO_LIMITS.maxDurationSeconds)
+	)
+		return `The longest video is a whole number of seconds from ${VIDEO_LIMITS.minDurationSeconds} to ${VIDEO_LIMITS.maxDurationSeconds}.`;
+	return null;
+}
 
 export type UpdateVideoPolicyRequest = Omit<VideoPolicy, "revision"> & {
 	/** The revision the caller read; a stale one is refused with 409. */
@@ -255,6 +340,7 @@ export type VideoSettings = {
 	configured: boolean;
 	connections: VideoConnection[];
 	policy: VideoPolicy;
+	limits: VideoLimit[];
 	/** Estimated video spend this month (UTC). Limits on it are budgets. */
 	spend: { month: string; spentUsd: number };
 	persistence: "mongodb" | "memory";
@@ -353,5 +439,11 @@ export type VideoModelList = {
 		defaultModel: string;
 		models: VideoModel[];
 	}>;
-	limits: { maxDurationSeconds: number; promptLength: number };
+	limits: {
+		/** The longest video the limits that cover every model allow this caller. */
+		maxDurationSeconds: number;
+		/** Shorter caps for single models, by model id, where a limit sets one. */
+		modelMaxDurationSeconds?: Record<string, number>;
+		promptLength: number;
+	};
 };

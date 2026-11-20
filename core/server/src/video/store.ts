@@ -1,5 +1,7 @@
+import { randomUUID } from "node:crypto";
 import {
 	type CreateVideoConnectionRequest,
+	DEFAULT_VIDEO_LIMIT,
 	DEFAULT_VIDEO_POLICY,
 	type UpdateVideoConnectionRequest,
 	type UpdateVideoPolicyRequest,
@@ -7,6 +9,7 @@ import {
 	VIDEO_LIMITS,
 	VIDEO_NAME_PATTERN,
 	type VideoConnection,
+	type VideoLimit,
 	type VideoPolicy,
 	type VideoProblem,
 	videoModel,
@@ -30,10 +33,19 @@ type ConnectionDocument = {
 };
 type PolicyDocument = {
 	_id: string;
-	/** `monthlyBudgetUsd` is from before budgets; it seeds the first one. */
-	policy: Omit<VideoPolicy, "revision"> & { monthlyBudgetUsd?: number };
+	/**
+	 * `monthlyBudgetUsd` is from before budgets and seeds the first one;
+	 * `callerVideosPerDay` and `maxDurationSeconds` are from before limits
+	 * were policies and seed the first limit.
+	 */
+	policy: Omit<VideoPolicy, "revision"> & {
+		monthlyBudgetUsd?: number;
+		callerVideosPerDay?: number;
+		maxDurationSeconds?: number;
+	};
 	revision: number;
 };
+type LimitsDocument = { _id: string; limits: VideoLimit[]; revision: number };
 type UsageDocument = {
 	_id: string;
 	workspaceId: string;
@@ -50,10 +62,23 @@ type Entry = {
 };
 
 const DAY_MS = 86_400_000;
+
+/** A stored whole number within bounds, or the fallback. */
+function wholeIn(value: unknown, min: number, max: number, fallback: number) {
+	return typeof value === "number" &&
+		Number.isInteger(value) &&
+		value >= min &&
+		value <= max
+		? value
+		: fallback;
+}
 const fromMicros = (micros: number) => micros / 1_000_000;
 
 /** What a hold was refused for. Budgets refuse on their own, before this. */
 export type VideoHoldRefusal = "caller";
+
+/** One limit's count of a caller's videos today, and the most it allows. */
+export type VideoLimitCount = { key: string; cap: number };
 
 /** The video budget every workspace had before budgets existed. */
 export const LEGACY_VIDEO_BUDGET_USD = 25;
@@ -64,14 +89,24 @@ export const LEGACY_VIDEO_BUDGET_USD = 25;
  * budgets that cover it (`budget`).
  */
 export type VideoHold = {
-	/** `budget` is the month's video spend, kept under its old name. */
-	keys: { budget: string; caller: string; connection: string };
+	/**
+	 * `budget` is the month's video spend, kept under its old name. `limits`
+	 * are the limits' day counts this video took; `caller` is the one day
+	 * count of a hold taken before limits were policies.
+	 */
+	keys: {
+		budget: string;
+		connection: string;
+		limits?: string[];
+		caller?: string;
+	};
 	costMicros: number;
 	budget?: BudgetHold;
 };
 
 export const VIDEO_CONNECTIONS_COLLECTION = "gateway_video_connections";
 export const VIDEO_POLICY_COLLECTION = "gateway_video_policy";
+export const VIDEO_LIMITS_COLLECTION = "gateway_video_limits";
 export const VIDEO_USAGE_COLLECTION = "gateway_video_usage";
 
 /**
@@ -89,6 +124,10 @@ export class VideoStore {
 		Map<string, { config: VideoConfig; problem: VideoProblem | null }>
 	>();
 	private readonly memoryPolicies = new Map<string, VideoPolicy>();
+	private readonly memoryLimits = new Map<
+		string,
+		{ limits: VideoLimit[]; revision: number }
+	>();
 	private readonly envProblems = new Map<string, VideoProblem | null>();
 	private readonly counters = new Map<string, Counter>();
 	private indexed = false;
@@ -115,6 +154,11 @@ export class VideoStore {
 	private policies() {
 		return (this.mongo as MongoConnection).collection<PolicyDocument>(
 			VIDEO_POLICY_COLLECTION,
+		);
+	}
+	private limitDocuments() {
+		return (this.mongo as MongoConnection).collection<LimitsDocument>(
+			VIDEO_LIMITS_COLLECTION,
 		);
 	}
 	private usage() {
@@ -434,8 +478,11 @@ export class VideoStore {
 				_id: { $eq: workspace.id },
 			});
 			if (!saved) return seed;
-			const { monthlyBudgetUsd: _legacy, ...policy } = saved.policy;
-			return { ...DEFAULT_VIDEO_POLICY, ...policy, revision: saved.revision };
+			return {
+				...DEFAULT_VIDEO_POLICY,
+				order: saved.policy.order ?? [],
+				revision: saved.revision,
+			};
 		} catch (error) {
 			this.unavailable(error);
 		}
@@ -466,11 +513,7 @@ export class VideoStore {
 				"The video settings changed during your request. Reload and try again.",
 				409,
 			);
-		const stored = {
-			order: policy.order,
-			callerVideosPerDay: policy.callerVideosPerDay,
-			maxDurationSeconds: policy.maxDurationSeconds,
-		};
+		const stored = { order: policy.order };
 		if (!this.mongo) {
 			if ((this.memoryPolicies.get(workspace.id)?.revision ?? 0) !== revision)
 				throw changed();
@@ -490,12 +533,7 @@ export class VideoStore {
 				const result = await this.policies().updateOne(
 					{ _id: { $eq: workspace.id }, revision: { $eq: revision } },
 					{
-						$set: {
-							"policy.order": stored.order,
-							"policy.callerVideosPerDay": stored.callerVideosPerDay,
-							"policy.maxDurationSeconds": stored.maxDurationSeconds,
-							revision: revision + 1,
-						},
+						$set: { "policy.order": stored.order, revision: revision + 1 },
 					},
 				);
 				if (!result.matchedCount) throw changed();
@@ -505,6 +543,138 @@ export class VideoStore {
 			this.unavailable(error);
 		}
 		return { ...stored, revision: revision + 1 };
+	}
+
+	/**
+	 * The workspace's video limits. The first read gives a workspace one: the
+	 * videos a day and longest video it had before limits were policies.
+	 */
+	async limits(
+		workspaceId: string,
+	): Promise<{ limits: VideoLimit[]; revision: number }> {
+		const stored = await this.readLimits(workspaceId);
+		if (stored) return stored;
+		let legacy: PolicyDocument["policy"] | undefined;
+		if (!this.mongo) legacy = undefined;
+		else
+			try {
+				legacy = (await this.policies().findOne({ _id: { $eq: workspaceId } }))
+					?.policy;
+			} catch (error) {
+				this.unavailable(error);
+			}
+		const at = this.now().toISOString();
+		const seed: VideoLimit = {
+			id: randomUUID(),
+			appliesTo: { kind: "everyone" },
+			covers: { kind: "video" },
+			videosPerDay: wholeIn(
+				legacy?.callerVideosPerDay,
+				0,
+				VIDEO_LIMITS.maxCallerVideosPerDay,
+				DEFAULT_VIDEO_LIMIT.videosPerDay,
+			),
+			maxDurationSeconds: wholeIn(
+				legacy?.maxDurationSeconds,
+				VIDEO_LIMITS.minDurationSeconds,
+				VIDEO_LIMITS.maxDurationSeconds,
+				DEFAULT_VIDEO_LIMIT.maxDurationSeconds,
+			),
+			enabled: true,
+			origin: "video-policy",
+			createdAt: at,
+			updatedAt: at,
+		};
+		if (!this.mongo) {
+			if (!this.memoryLimits.has(workspaceId))
+				this.memoryLimits.set(workspaceId, { limits: [seed], revision: 1 });
+			return structuredClone(
+				this.memoryLimits.get(workspaceId) ?? { limits: [], revision: 0 },
+			);
+		}
+		try {
+			await this.limitDocuments().insertOne({
+				_id: workspaceId,
+				limits: [seed],
+				revision: 1,
+			});
+		} catch (error) {
+			// Another request seeded it first; its document stands.
+			if (!isDuplicateKey(error)) this.unavailable(error);
+			const winner = await this.readLimits(workspaceId);
+			if (winner) return winner;
+			this.unavailable(error);
+		}
+		return { limits: [seed], revision: 1 };
+	}
+
+	private async readLimits(
+		workspaceId: string,
+	): Promise<{ limits: VideoLimit[]; revision: number } | null> {
+		if (!this.mongo) {
+			const saved = this.memoryLimits.get(workspaceId);
+			return saved ? structuredClone(saved) : null;
+		}
+		try {
+			const saved = await this.limitDocuments().findOne({
+				_id: { $eq: workspaceId },
+			});
+			return saved ? { limits: saved.limits, revision: saved.revision } : null;
+		} catch (error) {
+			this.unavailable(error);
+		}
+	}
+
+	/** Replaces the workspace's limits if nobody changed them since `revision`. */
+	async writeLimits(
+		workspaceId: string,
+		limits: VideoLimit[],
+		revision: number,
+	): Promise<void> {
+		const changed = () =>
+			new ServiceError(
+				"The video limits changed during your request. Reload and try again.",
+				409,
+			);
+		if (!this.mongo) {
+			if ((this.memoryLimits.get(workspaceId)?.revision ?? 0) !== revision)
+				throw changed();
+			this.memoryLimits.set(workspaceId, {
+				limits: structuredClone(limits),
+				revision: revision + 1,
+			});
+			return;
+		}
+		try {
+			const result = await this.limitDocuments().updateOne(
+				{ _id: { $eq: workspaceId }, revision: { $eq: revision } },
+				{ $set: { limits, revision: revision + 1 } },
+			);
+			if (!result.matchedCount) throw changed();
+		} catch (error) {
+			this.unavailable(error);
+		}
+	}
+
+	/**
+	 * Where a limit counts a caller's videos today. The first limit counts
+	 * where the videos a day did before limits were policies, so today's
+	 * count carries over.
+	 */
+	limitKey(
+		workspace: WorkspaceRef,
+		limit: VideoLimit,
+		callerId: string,
+		day: string,
+	) {
+		return limit.origin === "video-policy"
+			? this.callerKey(workspace, callerId, day)
+			: `${workspace.id}:limit:${limit.id}:${callerId}:${day}`;
+	}
+
+	/** Today, as limits count it. */
+	today(): string {
+		return usagePeriods(this.now()).day;
 	}
 
 	connectionKey(workspace: WorkspaceRef, name: string, month: string) {
@@ -661,59 +831,71 @@ export class VideoStore {
 	}
 
 	/**
-	 * Holds one video against the caller's daily cap, and counts its
-	 * estimated cost on the month's and the connection's spend for the usage
-	 * shown. Budgets hold their part before this, in BudgetService.
+	 * Holds one video against each limit's count of the caller's videos
+	 * today, all or none, and counts its estimated cost on the month's and
+	 * the connection's spend for the usage shown. Budgets hold their part
+	 * before this, in BudgetService.
 	 */
 	async hold(
 		workspace: WorkspaceRef,
 		input: {
 			connection: string;
-			callerId: string;
-			callerCap: number;
+			limits: VideoLimitCount[];
 			costUsd: number;
 		},
 	): Promise<VideoHold | { refused: VideoHoldRefusal }> {
 		const now = this.now();
 		const { month, day } = usagePeriods(now);
-		const keys = {
-			budget: this.budgetKey(workspace, month),
-			caller: this.callerKey(workspace, input.callerId, day),
-			connection: this.connectionKey(workspace, input.connection, month),
-		};
 		const costMicros = toMicros(input.costUsd);
 		const monthEnd = new Date(
 			Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1),
 		);
 		const monthExpiry = new Date(monthEnd.getTime() + 400 * DAY_MS);
 		const dayExpiry = new Date(Date.parse(`${day}T00:00:00Z`) + 2 * DAY_MS);
-		await this.increment(
-			workspace.id,
-			keys.budget,
-			{ videos: 1, costMicros },
-			{},
-			monthExpiry,
-		);
-		const giveBackBudget = () =>
-			this.adjust(keys.budget, { videos: -1, costMicros: -costMicros }).catch(
-				() => {},
-			);
-		let callerHeld: boolean;
+		const taken: string[] = [];
+		const keys = {
+			budget: this.budgetKey(workspace, month),
+			connection: this.connectionKey(workspace, input.connection, month),
+			limits: taken,
+		};
+		const giveBack = (counted: { budget?: boolean } = {}) =>
+			Promise.allSettled([
+				...taken.map((key) => this.adjust(key, { videos: -1, costMicros: 0 })),
+				...(counted.budget
+					? [this.adjust(keys.budget, { videos: -1, costMicros: -costMicros })]
+					: []),
+			]);
+		for (const limit of input.limits) {
+			let held: boolean;
+			try {
+				held = await this.increment(
+					workspace.id,
+					limit.key,
+					{ videos: 1, costMicros: 0 },
+					{ videos: limit.cap },
+					dayExpiry,
+				);
+			} catch (error) {
+				await giveBack();
+				throw error;
+			}
+			if (!held) {
+				await giveBack();
+				return { refused: "caller" };
+			}
+			taken.push(limit.key);
+		}
 		try {
-			callerHeld = await this.increment(
+			await this.increment(
 				workspace.id,
-				keys.caller,
-				{ videos: 1, costMicros: 0 },
-				{ videos: input.callerCap },
-				dayExpiry,
+				keys.budget,
+				{ videos: 1, costMicros },
+				{},
+				monthExpiry,
 			);
 		} catch (error) {
-			await giveBackBudget();
+			await giveBack();
 			throw error;
-		}
-		if (!callerHeld) {
-			await giveBackBudget();
-			return { refused: "caller" };
 		}
 		try {
 			await this.increment(
@@ -724,31 +906,29 @@ export class VideoStore {
 				monthExpiry,
 			);
 		} catch (error) {
-			await this.release({ keys, costMicros }, { connection: false });
+			await giveBack({ budget: true });
 			throw error;
 		}
 		return { keys, costMicros };
 	}
 
 	/** Gives a hold back: the provider charged nothing. */
-	async release(
-		hold: VideoHold,
-		counters: { connection?: boolean } = {},
-	): Promise<void> {
+	async release(hold: VideoHold): Promise<void> {
 		await Promise.allSettled([
 			this.adjust(hold.keys.budget, {
 				videos: -1,
 				costMicros: -hold.costMicros,
 			}),
-			this.adjust(hold.keys.caller, { videos: -1, costMicros: 0 }),
-			...(counters.connection === false
-				? []
-				: [
-						this.adjust(hold.keys.connection, {
-							videos: -1,
-							costMicros: -hold.costMicros,
-						}),
-					]),
+			this.adjust(hold.keys.connection, {
+				videos: -1,
+				costMicros: -hold.costMicros,
+			}),
+			...(hold.keys.limits ?? []).map((key) =>
+				this.adjust(key, { videos: -1, costMicros: 0 }),
+			),
+			...(hold.keys.caller
+				? [this.adjust(hold.keys.caller, { videos: -1, costMicros: 0 })]
+				: []),
 		]);
 	}
 
@@ -805,27 +985,5 @@ export function validateVideoPolicy(
 			throw new ServiceError(`${name} is in the order twice.`);
 		seen.add(name);
 	}
-	const perDay = input.callerVideosPerDay;
-	if (
-		!Number.isInteger(perDay) ||
-		perDay < 0 ||
-		perDay > VIDEO_LIMITS.maxCallerVideosPerDay
-	)
-		throw new ServiceError(
-			`Videos a day is a whole number from 0 to ${VIDEO_LIMITS.maxCallerVideosPerDay.toLocaleString("en-US")}.`,
-		);
-	const longest = input.maxDurationSeconds;
-	if (
-		!Number.isInteger(longest) ||
-		longest < VIDEO_LIMITS.minDurationSeconds ||
-		longest > VIDEO_LIMITS.maxDurationSeconds
-	)
-		throw new ServiceError(
-			`The longest video is a whole number of seconds from ${VIDEO_LIMITS.minDurationSeconds} to ${VIDEO_LIMITS.maxDurationSeconds}.`,
-		);
-	return {
-		order: [...input.order],
-		callerVideosPerDay: perDay,
-		maxDurationSeconds: longest,
-	};
+	return { order: [...input.order] };
 }

@@ -323,6 +323,9 @@ export const ROUTE_RULES = new Map<string, RouteRule>([
 	["PATCH /v1/:workspace/video/connections/:name", workspace("video:edit")],
 	["DELETE /v1/:workspace/video/connections/:name", workspace("video:edit")],
 	["PUT /v1/:workspace/video/policy", workspace("video:edit")],
+	["POST /v1/:workspace/video/limits", workspace("video:edit")],
+	["PATCH /v1/:workspace/video/limits/:id", workspace("video:edit")],
+	["DELETE /v1/:workspace/video/limits/:id", workspace("video:edit")],
 	// Starting a video spends the workspace's video budget, so admins only among people.
 	["POST /v1/:workspace/video/jobs", workspace("video:generate")],
 	["GET /v1/:workspace/video/jobs", workspace("video:generate")],

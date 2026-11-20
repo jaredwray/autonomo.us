@@ -405,7 +405,7 @@ function roundLimit(limit: number): number {
 	return Math.round(limit * 100) / 100;
 }
 
-function normalizeAppliesTo(input: BudgetAppliesTo): BudgetAppliesTo {
+export function normalizeAppliesTo(input: BudgetAppliesTo): BudgetAppliesTo {
 	if (input?.kind === "everyone") return { kind: "everyone" };
 	if (input?.kind === "agents") {
 		const listed: unknown[] = Array.isArray(input.agentIds)
@@ -421,7 +421,7 @@ function normalizeAppliesTo(input: BudgetAppliesTo): BudgetAppliesTo {
 		];
 		return { kind: "agents", agentIds: ids };
 	}
-	throw new ServiceError("A budget applies to everyone or to agents.");
+	throw new ServiceError("It applies to everyone or to chosen agents.");
 }
 
 function normalizeCovers(input: BudgetCovers): BudgetCovers {
