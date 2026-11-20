@@ -551,6 +551,69 @@ describe("starting a video", () => {
 		});
 	});
 
+	it("passes over a model a used-up limit covers, and refuses when limits cover every one", async () => {
+		const runway = scripted("runway");
+		const luma = scripted("luma");
+		const { service } = await setup(
+			{ runway: runway.adapter, luma: luma.adapter },
+			[
+				{ name: "runway", kind: "runway" },
+				{ name: "luma", kind: "luma" },
+			],
+		);
+		await service.limits.create(WS, {
+			appliesTo: { kind: "everyone" },
+			covers: { kind: "video-model", model: "seedance2_5" },
+			videosPerDay: 0,
+		});
+		await service.limits.create(WS, {
+			appliesTo: { kind: "everyone" },
+			covers: { kind: "video-model", model: "ray-3.2" },
+			videosPerDay: 1,
+		});
+		// Runway's default model is blocked by a limit; Luma's has room.
+		const job = await service.generate(WS, AGENT, { prompt: "x" }, CONTEXT);
+		expect(job).toMatchObject({
+			provider: "luma",
+			attempts: [
+				{
+					provider: "runway",
+					outcome: "skipped",
+					detail: "A video limit blocks your Seedance 2.5 videos.",
+				},
+				{ provider: "luma", outcome: "accepted" },
+			],
+		});
+		expect(runway.seen.creates).toHaveLength(0);
+		// Luma Ray's one video today is the one above, so limits refuse both.
+		expect(
+			await refusal(service.generate(WS, AGENT, { prompt: "x" }, CONTEXT)),
+		).toMatchObject({
+			status: 429,
+			message: "A video limit blocks your Seedance 2.5 videos.",
+		});
+		const job2 = await service.generate(
+			WS,
+			OTHER_AGENT,
+			{ prompt: "x" },
+			CONTEXT,
+		);
+		expect(job2.provider).toBe("luma");
+		expect(
+			await refusal(
+				service.generate(
+					WS,
+					OTHER_AGENT,
+					{ prompt: "x", provider: "luma" },
+					CONTEXT,
+				),
+			),
+		).toMatchObject({
+			status: 429,
+			message: "Your Luma Ray 3.2 videos for today are used up.",
+		});
+	});
+
 	it("records a failed job, not a budget refusal, when another provider was skipped for its own reason", async () => {
 		const { service, store, budgets } = await setup(
 			{ runway: scripted("runway").adapter, luma: scripted("luma").adapter },

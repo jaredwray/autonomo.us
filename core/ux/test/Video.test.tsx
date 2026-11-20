@@ -549,9 +549,11 @@ describe("Video view: settings", () => {
 			screen.queryByRole("button", { name: "Add video provider" }),
 		).toBeNull();
 		expect(screen.queryByRole("checkbox", { name: "Use runway" })).toBeNull();
+		// One note says why there is nothing to change.
 		expect(
-			screen.getByText("Only workspace admins see and make videos."),
-		).toBeDefined();
+			screen.getAllByText(/Only workspace admins change video settings/),
+		).toHaveLength(1);
+		expect(screen.queryByText(/Ask a workspace admin/)).toBeNull();
 		// Limits and the order are shown, not changed.
 		expect(screen.queryByRole("button", { name: "Add limit" })).toBeNull();
 		expect(
@@ -591,6 +593,13 @@ describe("Video view: limits", () => {
 		const add = within(form).getByRole("button", {
 			name: "Add limit",
 		}) as HTMLButtonElement;
+		// Nothing is connected, so every model says so.
+		type("Covers", "video-model", form);
+		expect(
+			dropdownOptions(within(form).getByLabelText("Video model"))[0]
+				.textContent,
+		).toBe("Gemini Omni 1.2 Flash (Google Gemini Omni, not connected)");
+		type("Covers", "video", form);
 		expect(
 			within(form).getByText("Set videos a day, the longest video, or both."),
 		).toBeDefined();
@@ -631,6 +640,7 @@ describe("Video view: limits", () => {
 			.getAllByRole("row")
 			.find((item) => item.textContent?.includes("Researcher and Writer"));
 		expect(row?.textContent).toContain("Runway Gen-4.5");
+		expect(row?.textContent).toContain("2per agent");
 		expect(row?.textContent).toContain("6 seconds");
 		await waitFor(() =>
 			expect(document.activeElement).toBe(
@@ -672,12 +682,8 @@ describe("Video view: limits", () => {
 		).toBeDefined();
 		fireEvent.click(within(form).getByRole("button", { name: "Save changes" }));
 		expect(await screen.findByText("Limit saved.")).toBeDefined();
-		expect(sent(calls, "PATCH")[0].body).toEqual({
-			appliesTo: { kind: "everyone" },
-			covers: { kind: "video" },
-			videosPerDay: null,
-			maxDurationSeconds: 10,
-		});
+		// Only what changed is sent.
+		expect(sent(calls, "PATCH")[0].body).toEqual({ videosPerDay: null });
 		await waitFor(() =>
 			expect(document.activeElement).toBe(
 				screen.getByRole("button", { name: `Edit ${label}` }),
@@ -704,6 +710,27 @@ describe("Video view: limits", () => {
 		expect(document.activeElement).toBe(
 			screen.getByRole("button", { name: "Add limit" }),
 		);
+	});
+
+	it("offers the connected providers' models first, and starts on one", async () => {
+		fakeGateway({
+			settings: settings({
+				connections: [connection({ name: "runway", kind: "runway" })],
+			}),
+		});
+		show("admin", `#/w/${WORKSPACE}/video/settings`);
+		fireEvent.click(await screen.findByRole("button", { name: "Add limit" }));
+		const form = screen.getByRole("region", { name: "Add a video limit" });
+		type("Covers", "video-model", form);
+		const options = dropdownOptions(within(form).getByLabelText("Video model"));
+		expect(options[0].textContent).toBe("Seedance 2.5 (Runway)");
+		expect(options.at(-1)?.textContent).toContain(", not connected)");
+		type("Videos a day (optional)", "1", form);
+		expect(
+			within(form).getByText(
+				"Each person, API token, and agent can start up to 1 video a day (UTC) on Seedance 2.5.",
+			),
+		).toBeDefined();
 	});
 
 	it("shows the gateway's reason when a limit cannot be saved", async () => {

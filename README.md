@@ -1286,8 +1286,8 @@ not counted. A video's estimate is held against every budget that covers it
 before the provider is called, all or none, and given back when the provider
 bills nothing; a model a used-up budget covers is passed over for the next
 provider in the order, and the video is refused with 429 only when budgets
-cover every one (otherwise the failed job says why each provider was not
-used). A used-up budget refuses even a video estimated at $0.
+or video limits refuse every one (otherwise the failed job says why each
+provider was not used). A used-up budget refuses even a video estimated at $0.
 
 Spend counts from when a budget is added, or last changed who it applies to,
 what it covers, or when it resets; a new limit keeps what was spent. Every

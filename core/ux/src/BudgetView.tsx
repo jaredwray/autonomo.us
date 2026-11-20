@@ -591,7 +591,13 @@ export function BudgetPanel({
 						<Icon name="plus" /> Add budget
 					</button>
 				) : (
-					<p className="card-note">Ask a workspace admin to change budgets.</p>
+					<p className="page-note">Ask a workspace admin to change budgets.</p>
+				)}
+				{persistence === "memory" && (
+					<p className="page-note">
+						Budgets are temporary and last until the API restarts. Connect
+						MongoDB to keep them.
+					</p>
 				)}
 			</div>
 			{notice && (
@@ -882,12 +888,6 @@ export function BudgetPanel({
 					before it starts.
 				</p>
 			</section>
-			{persistence === "memory" && (
-				<p className="card-note">
-					Budgets are temporary and last until the API restarts. Connect MongoDB
-					to keep them.
-				</p>
-			)}
 		</div>
 	);
 }

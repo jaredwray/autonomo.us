@@ -66,7 +66,7 @@ const limitFields = {
 			kind: { enum: ["everyone", "agents"] },
 			agentIds: {
 				type: "array",
-				maxItems: 100,
+				maxItems: VIDEO_LIMITS.agentsPerLimit,
 				items: { type: "string", minLength: 1, maxLength: 200 },
 			},
 		},

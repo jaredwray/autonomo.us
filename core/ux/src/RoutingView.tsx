@@ -245,7 +245,7 @@ export function RoutingView({ onShowModels }: { onShowModels(): void }) {
 			) : (
 				<>
 					{persistence !== "mongodb" && (
-						<p className="card-note">
+						<p className="page-note">
 							Routing settings are temporary and last until the API restarts.
 							Connect MongoDB to keep them.
 						</p>

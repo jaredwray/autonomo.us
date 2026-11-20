@@ -20,6 +20,7 @@ import {
 	type VideoSettings,
 	videoJobFinished,
 	videoModel,
+	videoModelLabel,
 	videoModelProblem,
 } from "@autonomo.us/common";
 import type { BudgetService } from "../budgets/service.js";
@@ -30,7 +31,7 @@ import type { WorkspaceRef } from "../workspaces/store.js";
 import type { VideoJobPatch, VideoJobRecord, VideoJobStore } from "./jobs.js";
 import { VideoLimits } from "./limits.js";
 import { VIDEO_ADAPTERS } from "./providers/index.js";
-import type { VideoHold, VideoHoldRefusal, VideoStore } from "./store.js";
+import type { VideoHold, VideoLimitCount, VideoStore } from "./store.js";
 import type {
 	FetchLike,
 	VideoAdapter,
@@ -102,9 +103,17 @@ const NOT_SET_UP =
 const NO_PROVIDER =
 	"This workspace has no video provider. A workspace admin can add one.";
 const TURNED_OFF = "Video generation is turned off on this gateway.";
-const REFUSALS: Record<VideoHoldRefusal, string> = {
-	caller: "Your videos for today are used up.",
-};
+/** Why a video limit refused: it blocks the videos it covers, or today's are used up. */
+function limitRefusal(count: VideoLimitCount | undefined): string {
+	const label = count?.model ? videoModelLabel(count.model) : undefined;
+	if (count?.cap === 0)
+		return label
+			? `A video limit blocks your ${label} videos.`
+			: "A video limit blocks your videos.";
+	return label
+		? `Your ${label} videos for today are used up.`
+		: "Your videos for today are used up.";
+}
 
 type Entry = Awaited<ReturnType<VideoStore["entries"]>>[number];
 type Candidate = {
@@ -201,7 +210,8 @@ export class VideoService {
 
 	/**
 	 * Holds one video: its estimate against every budget that covers it,
-	 * then the caller's daily cap. Either refusal gives back what was taken.
+	 * then a count against every video limit that does. Either refusal gives
+	 * back what was taken.
 	 */
 	private async hold(
 		workspace: WorkspaceRef,
@@ -211,7 +221,7 @@ export class VideoService {
 			model: string;
 			costUsd: number;
 		},
-	): Promise<VideoHold | { refused: string; by: "budget" | "caller" }> {
+	): Promise<VideoHold | { refused: string; by: "budget" | "limit" }> {
 		const { store, budgets } = this.options;
 		const budget = budgets
 			? await budgets.holdVideo(
@@ -224,12 +234,9 @@ export class VideoService {
 		if (budget && "refused" in budget)
 			return { refused: budget.refused, by: "budget" };
 		let held: Awaited<ReturnType<VideoStore["hold"]>>;
+		let counts: VideoLimitCount[];
 		try {
-			const { counts } = await this.limits.forVideo(
-				workspace,
-				caller,
-				input.model,
-			);
+			({ counts } = await this.limits.forVideo(workspace, caller, input.model));
 			held = await store.hold(workspace, {
 				connection: input.connection,
 				limits: counts,
@@ -241,7 +248,11 @@ export class VideoService {
 		}
 		if ("refused" in held) {
 			if (budget) await budgets?.release(budget).catch(() => {});
-			return { refused: REFUSALS[held.refused], by: "caller" };
+			const { key } = held;
+			return {
+				refused: limitRefusal(counts.find((count) => count.key === key)),
+				by: "limit",
+			};
 		}
 		return budget ? { ...held, budget } : held;
 	}
@@ -561,8 +572,8 @@ export class VideoService {
 			),
 		});
 
-		let budgetRefusal: string | undefined;
-		let budgetRefusals = 0;
+		let refusal: string | undefined;
+		let refusals = 0;
 		for (const candidate of candidates) {
 			const { config } = candidate.entry;
 			const attempt = { provider: config.name, model: candidate.model.id };
@@ -582,27 +593,17 @@ export class VideoService {
 				costUsd,
 			});
 			if ("refused" in hold) {
-				// A used-up budget passes this model over, as a failure would; the
-				// next provider in the order may be covered by none.
-				if (hold.by === "budget") {
-					budgetRefusal ??= hold.refused;
-					budgetRefusals += 1;
-					attempts.push({
-						...attempt,
-						outcome: "skipped",
-						detail: hold.refused,
-					});
-					last = { outcome: "skipped", detail: hold.refused };
-					continue;
-				}
-				if (!inserted) throw new ServiceError(hold.refused, 429);
+				// A used-up budget or limit passes this model over, as a failure
+				// would; the next provider in the order may be covered by neither.
+				refusal ??= hold.refused;
+				refusals += 1;
 				attempts.push({
 					...attempt,
 					outcome: "skipped",
 					detail: hold.refused,
 				});
 				last = { outcome: "skipped", detail: hold.refused };
-				break;
+				continue;
 			}
 			held = hold;
 			let current = true;
@@ -711,9 +712,10 @@ export class VideoService {
 			// A hold given back cost nothing; one kept shows what it holds.
 			...(held ? {} : { costUsd: 0 }),
 		};
-		// Nothing started because budgets covered every model: refused, as one call would be.
-		if (!inserted && budgetRefusal && budgetRefusals === candidates.length)
-			throw new ServiceError(budgetRefusal, 429);
+		// Nothing started because budgets or limits refused every model:
+		// refused, as one call would be.
+		if (!inserted && refusal && refusals === candidates.length)
+			throw new ServiceError(refusal, 429);
 		if (!inserted) {
 			const first = candidates[0];
 			await jobs.insert({

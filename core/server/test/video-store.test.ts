@@ -293,12 +293,15 @@ describe.each(stores())("VideoStore (%s)", (_name, make) => {
 		const first = await hold("agent:1", 1.5);
 		expect(first).toMatchObject({ costMicros: 1_500_000 });
 		expect(await hold("agent:1", 1)).toMatchObject({ costMicros: 1_000_000 });
-		expect(await hold("agent:1", 0.1)).toEqual({ refused: "caller" });
+		expect(await hold("agent:1", 0.1)).toEqual({
+			refused: "caller",
+			key: `${OTHER.id}:limit:tight:agent:1`,
+		});
 		// The roomy limit gave back what the refused hold took from it.
 		const roomy = { key: `${OTHER.id}:limit:roomy:agent:1`, cap: 2 };
 		expect(
 			await store.hold(OTHER, { connection: "a", limits: [roomy], costUsd: 0 }),
-		).toEqual({ refused: "caller" });
+		).toEqual({ refused: "caller", key: roomy.key });
 		// Spend has no cap here any more: budgets hold their part first.
 		expect(await hold("agent:2", 100)).toMatchObject({
 			costMicros: 100_000_000,
@@ -418,7 +421,10 @@ describe.each(stores())("VideoStore (%s)", (_name, make) => {
 		);
 	});
 
-	it("gives the month's spend back when the caller's counter cannot be written", async () => {
+	it.each([
+		["the month's spend", 2],
+		["the connection's spend", 3],
+	])("gives back what it took when %s cannot be written", async (_, failing) => {
 		const store = await make();
 		const internal = store as unknown as {
 			increment: (...args: unknown[]) => Promise<boolean>;
@@ -427,20 +433,29 @@ describe.each(stores())("VideoStore (%s)", (_name, make) => {
 		let calls = 0;
 		internal.increment = async (...args: unknown[]) => {
 			calls += 1;
-			if (calls === 2)
+			// The limit's count is written first, then the month's, then the connection's.
+			if (calls === failing)
 				throw new ServiceError("Video settings are unavailable.", 503);
 			return increment(...args);
 		};
+		const limit = { key: `${OTHER.id}:limit:x:agent:1`, cap: 1 };
 		expect(
 			await refusal(
-				store.hold(OTHER, {
-					connection: "a",
-					limits: [{ key: `${OTHER.id}:limit:x:agent:1`, cap: 5 }],
-					costUsd: 2,
-				}),
+				store.hold(OTHER, { connection: "a", limits: [limit], costUsd: 2 }),
 			),
 		).toMatchObject({ status: 503 });
+		internal.increment = increment;
 		expect((await store.spend(OTHER)).spentUsd).toBe(0);
+		// The limit's one video a day was given back, so a hold can take it.
+		const held = await store.hold(OTHER, {
+			connection: "a",
+			limits: [limit],
+			costUsd: 0,
+		});
+		expect(held).toMatchObject({ keys: { limits: [limit.key] } });
+		expect(
+			await store.hold(OTHER, { connection: "a", limits: [limit], costUsd: 0 }),
+		).toEqual({ refused: "caller", key: limit.key });
 	});
 });
 

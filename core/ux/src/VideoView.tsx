@@ -5,6 +5,7 @@ import {
 	type CreateVideoConnectionRequest,
 	DEFAULT_VIDEO_MODEL,
 	type UpdateVideoConnectionRequest,
+	type UpdateVideoLimitRequest,
 	VIDEO_KIND_LABELS,
 	VIDEO_KINDS,
 	VIDEO_LIMITS,
@@ -524,16 +525,23 @@ function VideoLimitForm({
 	existing,
 	agents,
 	names,
+	connected,
 	onSaved,
 	onClose,
 }: {
 	existing?: VideoLimit;
 	agents: AgentSummary[];
 	names: Names;
+	/** Provider kinds this workspace has a connection for: their models come first. */
+	connected: VideoKind[];
 	onSaved(limit: VideoLimit, added: boolean): void;
 	onClose(): void;
 }) {
 	const id = useId();
+	const kinds = [
+		...VIDEO_KINDS.filter((kind) => connected.includes(kind)),
+		...VIDEO_KINDS.filter((kind) => !connected.includes(kind)),
+	];
 	const [who, setWho] = useState<"everyone" | "agents">(
 		existing?.appliesTo.kind ?? "everyone",
 	);
@@ -546,7 +554,7 @@ function VideoLimitForm({
 	const [model, setModel] = useState(
 		existing?.covers.kind === "video-model"
 			? existing.covers.model
-			: VIDEO_MODELS[VIDEO_KINDS[0]][0].id,
+			: VIDEO_MODELS[kinds[0]][0].id,
 	);
 	const [perDay, setPerDay] = useState(
 		existing?.videosPerDay != null ? String(existing.videosPerDay) : "",
@@ -572,6 +580,24 @@ function VideoLimitForm({
 		maxDurationSeconds: optional(longest),
 	};
 	const problem = videoLimitProblem(input);
+	// An edit sends only what changed, so a limit on a model the gateway has
+	// since dropped can still have its numbers changed.
+	const changes = (limit: VideoLimit): UpdateVideoLimitRequest => {
+		const same = (a: unknown, b: unknown) =>
+			JSON.stringify(a) === JSON.stringify(b);
+		return {
+			...(same(input.appliesTo, limit.appliesTo)
+				? {}
+				: { appliesTo: input.appliesTo }),
+			...(same(input.covers, limit.covers) ? {} : { covers: input.covers }),
+			...(input.videosPerDay === limit.videosPerDay
+				? {}
+				: { videosPerDay: input.videosPerDay }),
+			...(input.maxDurationSeconds === limit.maxDurationSeconds
+				? {}
+				: { maxDurationSeconds: input.maxDurationSeconds }),
+		};
+	};
 
 	return (
 		<section
@@ -618,10 +644,17 @@ function VideoLimitForm({
 					setSaving(true);
 					setError("");
 					try {
-						const saved = existing
-							? await updateVideoLimit(existing.id, input)
-							: await createVideoLimit(input);
-						onSaved(saved, !existing);
+						if (!existing) {
+							onSaved(await createVideoLimit(input), true);
+							return;
+						}
+						const patch = changes(existing);
+						onSaved(
+							Object.keys(patch).length
+								? await updateVideoLimit(existing.id, patch)
+								: existing,
+							false,
+						);
 					} catch (cause) {
 						setError(errorText(cause, "Could not save the limit."));
 					} finally {
@@ -664,10 +697,10 @@ function VideoLimitForm({
 									value={model}
 									onValueChange={setModel}
 								>
-									{VIDEO_KINDS.flatMap((kind) =>
+									{kinds.flatMap((kind) =>
 										VIDEO_MODELS[kind].map((item) => (
 											<option key={item.id} value={item.id}>
-												{`${item.label} (${VIDEO_KIND_LABELS[kind]})`}
+												{`${item.label} (${VIDEO_KIND_LABELS[kind]}${connected.includes(kind) ? "" : ", not connected"})`}
 											</option>
 										)),
 									)}
@@ -760,12 +793,14 @@ function VideoLimitForm({
 function VideoLimitsCard({
 	limits,
 	agents,
+	connected,
 	canEdit,
 	onChange,
 	onShowBudget,
 }: {
 	limits: VideoLimit[];
 	agents: AgentSummary[];
+	connected: VideoKind[];
 	canEdit: boolean;
 	/** Shows a change made here at once; a fresh read follows. */
 	onChange(update: (limits: VideoLimit[]) => VideoLimit[]): void;
@@ -790,6 +825,7 @@ function VideoLimitsCard({
 	};
 	// Closing a form returns focus to what opened it: Add limit, or the row's Edit.
 	const addButton = useRef<HTMLButtonElement>(null);
+	const heading = useRef<HTMLHeadingElement>(null);
 	const editButtons = useRef(new Map<string, HTMLButtonElement>());
 	const focusAfterClose = useRef<string | null>(null);
 	useEffect(() => {
@@ -825,6 +861,7 @@ function VideoLimitsCard({
 			existing={existing}
 			agents={agents}
 			names={names}
+			connected={connected}
 			onClose={closePanel}
 			onSaved={(saved, added) => {
 				onChange((current) =>
@@ -848,7 +885,9 @@ function VideoLimitsCard({
 			>
 				<div className="section-heading">
 					<div>
-						<h2 id="video-limits-heading">Video limits</h2>
+						<h2 id="video-limits-heading" ref={heading} tabIndex={-1}>
+							Video limits
+						</h2>
 						<p className="card-note">
 							How many videos each person, API token, or agent may start in a
 							day, and how long a video may be. When several limits cover a
@@ -864,6 +903,7 @@ function VideoLimitsCard({
 							onClick={() => {
 								setPanel({ kind: "add" });
 								setNotice("");
+								setRowError("");
 							}}
 						>
 							<Icon name="plus" /> Add limit
@@ -934,7 +974,13 @@ function VideoLimitsCard({
 												) : (
 													<>
 														{count(limit.videosPerDay)}
-														<span className="field-hint">each</span>
+														{limit.appliesTo.kind === "everyone" ? (
+															<span className="field-hint">
+																per person, token, or agent
+															</span>
+														) : limit.appliesTo.agentIds.length > 1 ? (
+															<span className="field-hint">per agent</span>
+														) : null}
 													</>
 												)}
 											</td>
@@ -1003,6 +1049,7 @@ function VideoLimitsCard({
 															onClick={() => {
 																setPanel({ kind: "edit", id: limit.id });
 																setNotice("");
+																setRowError("");
 															}}
 														>
 															Edit
@@ -1032,8 +1079,13 @@ function VideoLimitsCard({
 																				),
 																			);
 																			setNotice("Limit deleted.");
-																			// Its row is gone, so focus goes to Add limit.
-																			addButton.current?.focus();
+																			// Its row is gone: focus goes to Add limit,
+																			// or the heading while the add form has it off.
+																			const add = addButton.current;
+																			(add && !add.disabled
+																				? add
+																				: heading.current
+																			)?.focus();
 																		} catch (cause) {
 																			setRowError(
 																				errorText(
@@ -1271,9 +1323,6 @@ export function VideoPanel({
 					<span>Video providers</span>
 				</div>
 			</section>
-			{!canEdit && (
-				<p className="card-note">Only workspace admins see and make videos.</p>
-			)}
 			<section
 				className="card active-models"
 				aria-labelledby="video-connections-heading"
@@ -1515,6 +1564,7 @@ export function VideoPanel({
 				<VideoLimitsCard
 					limits={settings.limits}
 					agents={agents}
+					connected={[...new Set(connections.map((item) => item.kind))]}
 					canEdit={canChange}
 					onChange={(update) => {
 						setSettings((current) =>
@@ -1548,9 +1598,15 @@ export function VideoPanel({
 						<Icon name="plus" /> Add video provider
 					</button>
 				) : (
-					<p className="card-note">
-						Ask a workspace admin to add video providers, change the limits, or
-						make videos.
+					<p className="page-note">
+						Only workspace admins change video settings, make videos, and see
+						the videos made.
+					</p>
+				)}
+				{settings?.persistence === "memory" && (
+					<p className="page-note">
+						Video settings are temporary and last until the API restarts.
+						Connect MongoDB to keep them.
 					</p>
 				)}
 			</div>
@@ -1576,12 +1632,6 @@ export function VideoPanel({
 						Retry
 					</button>
 				</div>
-			)}
-			{settings?.persistence === "memory" && (
-				<p className="card-note">
-					Video settings are temporary and last until the API restarts. Connect
-					MongoDB to keep them.
-				</p>
 			)}
 			{settingsPanel}
 			{canEdit && settings?.available && (

@@ -78,7 +78,12 @@ const fromMicros = (micros: number) => micros / 1_000_000;
 export type VideoHoldRefusal = "caller";
 
 /** One limit's count of a caller's videos today, and the most it allows. */
-export type VideoLimitCount = { key: string; cap: number };
+export type VideoLimitCount = {
+	key: string;
+	cap: number;
+	/** The one model the limit covers, if it covers one, for its refusal. */
+	model?: string;
+};
 
 /** The video budget every workspace had before budgets existed. */
 export const LEGACY_VIDEO_BUDGET_USD = 25;
@@ -843,7 +848,7 @@ export class VideoStore {
 			limits: VideoLimitCount[];
 			costUsd: number;
 		},
-	): Promise<VideoHold | { refused: VideoHoldRefusal }> {
+	): Promise<VideoHold | { refused: VideoHoldRefusal; key: string }> {
 		const now = this.now();
 		const { month, day } = usagePeriods(now);
 		const costMicros = toMicros(input.costUsd);
@@ -881,7 +886,7 @@ export class VideoStore {
 			}
 			if (!held) {
 				await giveBack();
-				return { refused: "caller" };
+				return { refused: "caller", key: limit.key };
 			}
 			taken.push(limit.key);
 		}

@@ -202,6 +202,9 @@ export class VideoLimits {
 				.map((limit) => ({
 					key: this.store.limitKey(workspace, limit, caller.id, day),
 					cap: limit.videosPerDay ?? 0,
+					...(limit.covers.kind === "video-model"
+						? { model: limit.covers.model }
+						: {}),
 				})),
 		};
 	}

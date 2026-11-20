@@ -441,7 +441,7 @@ export function ModelsView({
 						<Icon name="plus" /> Add model
 					</button>
 				) : (
-					<p className="card-note">
+					<p className="page-note">
 						Ask a workspace admin to add models or change keys.
 					</p>
 				)}
