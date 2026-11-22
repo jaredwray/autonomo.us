@@ -2,13 +2,17 @@ import {
 	type AppendSynapseNoteRequest,
 	type CiteSynapseEvidenceRequest,
 	type CreateSynapseCommitmentRequest,
+	type CreateSynapseFlagRequest,
 	type CreateSynapseNoteRequest,
 	type DecideSynapseFindingsRequest,
 	type DecideSynapseProposalRequest,
+	type ResolveSynapseFlagRequest,
 	type SaveSynapseAnswerRequest,
 	type SetSynapseDecisionStatusRequest,
 	SYNAPSE_COMMITMENT_STATUSES,
 	SYNAPSE_DECISION_STATUSES,
+	SYNAPSE_FLAG_KINDS,
+	SYNAPSE_FLAG_STATUSES,
 	SYNAPSE_GLOBAL_SPACE,
 	SYNAPSE_SHARED_SPACE,
 	SYNAPSE_SPACE_ID_PATTERN,
@@ -17,6 +21,7 @@ import {
 	type SynapseCommitmentEvent,
 	type SynapseCommitmentStatus,
 	type SynapseContextRequest,
+	type SynapseFlagStatus,
 	type SynapseImportRequest,
 	type SynapseNoteSort,
 	type SynapseProposal,
@@ -36,6 +41,12 @@ import {
 import { MAX_TASK_LENGTH } from "../synapse/context.js";
 import { SynapseError } from "../synapse/errors.js";
 import { type SynapseFeatures, synapseFeatures } from "../synapse/features.js";
+import {
+	MAX_FLAG_LIMIT,
+	MAX_FLAG_PROBLEM_LENGTH,
+	MAX_FLAG_SUGGESTION_LENGTH,
+	MAX_FLAG_TASK_LENGTH,
+} from "../synapse/flags.js";
 import { MAX_FINDINGS } from "../synapse/maintenance.js";
 import {
 	MAX_ANSWER_EVIDENCE,
@@ -181,7 +192,7 @@ export async function synapseRoutes(
 		) => Promise<unknown>;
 	},
 ) {
-	const { capture, retriever, commitments, briefing, maintenance } =
+	const { capture, retriever, commitments, briefing, maintenance, flags } =
 		features ?? synapseFeatures(synapse);
 	/** A person, for what only a person may do: approve an answer, review a batch. */
 	const person = (request: FastifyRequest): SynapseActor => {
@@ -845,6 +856,85 @@ export async function synapseRoutes(
 		},
 		(request) =>
 			maintenance.decide(request.params.space, request.body, person(request)),
+	);
+	// People and API tokens work on the whole workspace's flags, as they do
+	// on its notes: over REST everyone who may edit Synapse is a curator.
+	server.get<{
+		Querystring: {
+			status?: SynapseFlagStatus;
+			limit?: number;
+			before?: string;
+		};
+	}>(
+		"/synapse/flags",
+		{
+			schema: {
+				querystring: {
+					type: "object",
+					properties: {
+						status: { enum: [...SYNAPSE_FLAG_STATUSES] },
+						limit: { type: "integer", minimum: 1, maximum: MAX_FLAG_LIMIT },
+						before: { type: "string", format: "uuid" },
+					},
+				},
+			},
+		},
+		async (request) => ({
+			flags: await flags.list(
+				sharedSpaceId(requestWorkspace(request)),
+				{ actor: actorOf(request), curator: true },
+				request.query,
+			),
+		}),
+	);
+	server.post<{ Body: CreateSynapseFlagRequest }>(
+		"/synapse/flags",
+		{
+			schema: {
+				body: body(
+					{
+						kind: { enum: [...SYNAPSE_FLAG_KINDS] },
+						title: string,
+						problem: { ...string, maxLength: MAX_FLAG_PROBLEM_LENGTH },
+						suggestion: { ...string, maxLength: MAX_FLAG_SUGGESTION_LENGTH },
+						task: { ...string, maxLength: MAX_FLAG_TASK_LENGTH },
+					},
+					["kind", "problem"],
+				),
+			},
+		},
+		async (request, reply) =>
+			reply
+				.code(201)
+				.send(
+					await flags.file(
+						actorOf(request),
+						request.body,
+						sharedSpaceId(requestWorkspace(request)),
+					),
+				),
+	);
+	server.post<{ Params: { id: string }; Body: ResolveSynapseFlagRequest }>(
+		"/synapse/flags/:id/resolve",
+		{
+			schema: {
+				params: idParams,
+				body: body(
+					{
+						status: { enum: ["resolved", "dismissed"] },
+						reason: { ...string, maxLength: MAX_REASON_LENGTH },
+					},
+					["status", "reason"],
+				),
+			},
+		},
+		(request) =>
+			flags.resolve(
+				request.params.id,
+				request.body,
+				sharedSpaceId(requestWorkspace(request)),
+				{ actor: actorOf(request), curator: true },
+			),
 	);
 	server.get<{ Querystring: { status?: SynapseProposalStatus } }>(
 		"/synapse/proposals",

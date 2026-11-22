@@ -10,7 +10,8 @@ import { currentWorkspaceId } from "./api.js";
  * same space and note:
  *   .../synapse                      shared space, no note
  *   .../synapse/<tab>                a tab other than Notes: capture, ask,
- *                                    commitments, maintenance, or proposals
+ *                                    commitments, maintenance, flags, or
+ *                                    proposals
  *   .../synapse/<space>              a space (shared, global, or agent-<id>)
  *   .../synapse/<space>/<title>      a note (title URL-encoded)
  *
@@ -25,6 +26,7 @@ export const SYNAPSE_TAB_IDS = [
 	"ask",
 	"commitments",
 	"maintenance",
+	"flags",
 	"proposals",
 ] as const;
 export type SynapseTab = (typeof SYNAPSE_TAB_IDS)[number];

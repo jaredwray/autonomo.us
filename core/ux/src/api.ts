@@ -42,6 +42,7 @@ import type {
 	CreateChannelRequest,
 	CreateProxyRequest,
 	CreateSynapseCommitmentRequest,
+	CreateSynapseFlagRequest,
 	CreateSynapseNoteRequest,
 	CreateTeamInviteRequest,
 	CreateVideoConnectionRequest,
@@ -60,6 +61,7 @@ import type {
 	ProxyConnection,
 	ProxyList,
 	ProxyTestRequest,
+	ResolveSynapseFlagRequest,
 	RollAgentTokenRequest,
 	RollApiTokenRequest,
 	RoutingConfig,
@@ -78,6 +80,9 @@ import type {
 	SynapseDaily,
 	SynapseEvidence,
 	SynapseExport,
+	SynapseFlag,
+	SynapseFlagList,
+	SynapseFlagStatus,
 	SynapseGraph,
 	SynapseHistory,
 	SynapseImportRequest,
@@ -950,6 +955,30 @@ export function decideSynapseProposal(
 		ws(`/synapse/proposals/${encodeURIComponent(id)}/decide`, workspace),
 		{ method: "POST", body: input },
 	);
+}
+export function fetchSynapseFlags(
+	options: { status?: SynapseFlagStatus; limit?: number; before?: string } = {},
+): Promise<SynapseFlagList> {
+	const query = new URLSearchParams();
+	if (options.status) query.set("status", options.status);
+	if (options.limit !== undefined) query.set("limit", String(options.limit));
+	if (options.before) query.set("before", options.before);
+	const search = query.toString();
+	return apiRequest(ws(`/synapse/flags${search ? `?${search}` : ""}`));
+}
+export function createSynapseFlag(
+	input: CreateSynapseFlagRequest,
+): Promise<SynapseFlag> {
+	return apiRequest(ws("/synapse/flags"), { method: "POST", body: input });
+}
+export function resolveSynapseFlag(
+	id: string,
+	input: ResolveSynapseFlagRequest,
+): Promise<SynapseFlag> {
+	return apiRequest(ws(`/synapse/flags/${encodeURIComponent(id)}/resolve`), {
+		method: "POST",
+		body: input,
+	});
 }
 
 const channelPath = (id?: string, rest = "") =>

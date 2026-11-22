@@ -1,10 +1,15 @@
 import type {
+	SynapseFlag,
+	SynapseFlagStatus,
 	SynapseMaintenanceBatch,
 	SynapseProposal,
 	SynapseSpaceId,
 } from "@autonomo.us/common";
 import type {
 	FindOptions,
+	FlagCursor,
+	FlagFilter,
+	FlagState,
 	InstantRange,
 	MaintenanceLease,
 	MaintenanceRecord,
@@ -19,7 +24,7 @@ import type {
 	StoredRevision,
 	SynapseRepository,
 } from "./repository.js";
-import { DAILY_DATE_PROPERTIES } from "./repository.js";
+import { DAILY_DATE_PROPERTIES, FLAG_STATE_FIELDS } from "./repository.js";
 
 function matches(note: StoredNote, filter: NoteFilter): boolean {
 	if (note.space !== filter.space) return false;
@@ -123,6 +128,7 @@ export class MemorySynapseRepository implements SynapseRepository {
 	private readonly proposals = new Map<string, SynapseProposal>();
 	/** Kept apart from proposals so claims never reach callers. */
 	private readonly claims = new Map<string, ProposalClaim>();
+	private readonly flags = new Map<string, SynapseFlag>();
 	private readonly revisions = new Map<string, StoredRevision>();
 	private readonly maintenance = new Map<
 		string,
@@ -312,6 +318,52 @@ export class MemorySynapseRepository implements SynapseRepository {
 	async releaseProposalClaim(id: string, claimId: string) {
 		if (this.claims.get(id)?.id !== claimId) return false;
 		return this.claims.delete(id);
+	}
+	async insertFlag(flag: SynapseFlag) {
+		this.flags.set(flag.id, structuredClone(flag));
+	}
+	async getFlag(id: string) {
+		const flag = this.flags.get(id);
+		return flag ? structuredClone(flag) : null;
+	}
+	private selectFlags(filter: FlagFilter) {
+		return [...this.flags.values()].filter(
+			(flag) =>
+				(filter.space === undefined || flag.space === filter.space) &&
+				(filter.authorId === undefined || flag.author.id === filter.authorId) &&
+				(filter.status === undefined || flag.status === filter.status) &&
+				(filter.proposalId === undefined ||
+					flag.proposalId === filter.proposalId),
+		);
+	}
+	async listFlags(filter: FlagFilter, limit: number, before?: FlagCursor) {
+		const newestFirst = (a: FlagCursor, b: FlagCursor) =>
+			b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id);
+		return this.selectFlags(filter)
+			.filter((flag) => !before || newestFirst(before, flag) < 0)
+			.sort(newestFirst)
+			.slice(0, limit)
+			.map((flag) => structuredClone(flag));
+	}
+	async countFlags(filter: FlagFilter) {
+		return this.selectFlags(filter).length;
+	}
+	async setFlagState(
+		id: string,
+		from: { status: readonly SynapseFlagStatus[]; proposalId?: string },
+		state: FlagState,
+	) {
+		const current = this.flags.get(id);
+		if (
+			!current ||
+			!from.status.includes(current.status) ||
+			(from.proposalId !== undefined && current.proposalId !== from.proposalId)
+		)
+			return false;
+		const next: SynapseFlag = { ...current };
+		for (const field of FLAG_STATE_FIELDS) delete next[field as "resolution"];
+		this.flags.set(id, { ...next, ...structuredClone(state) });
+		return true;
 	}
 	async insertRevision(revision: StoredRevision) {
 		if (!this.revisions.has(revision.id))

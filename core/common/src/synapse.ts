@@ -443,6 +443,69 @@ export type DecideSynapseProposalRequest = {
 
 export type SynapseProposalList = { proposals: SynapseProposal[] };
 
+export const SYNAPSE_FLAG_KINDS = ["missing", "wrong", "outdated"] as const;
+/**
+ * What is the matter with the shared knowledge: something the reporter
+ * needed is not written down, something written is not true, or something
+ * written was true once.
+ */
+export type SynapseFlagKind = (typeof SYNAPSE_FLAG_KINDS)[number];
+export const SYNAPSE_FLAG_STATUSES = [
+	"open",
+	"proposed",
+	"resolved",
+	"dismissed",
+] as const;
+/**
+ * `open`: nobody has dealt with it. `proposed`: a pending proposal answers
+ * it. `resolved`: the knowledge was put right. `dismissed`: nothing was to
+ * be done.
+ */
+export type SynapseFlagStatus = (typeof SYNAPSE_FLAG_STATUSES)[number];
+
+/**
+ * A report that a workspace's shared knowledge is missing something or has
+ * it wrong, filed while doing the work. A flag changes no note: a curator
+ * (an agent with `synapse:curate`, or a person) turns it into a proposal or
+ * dismisses it. See docs/SYNAPSE.md §19.
+ */
+export type SynapseFlag = {
+	id: string;
+	/** Always `shared` in responses: the shared space of the workspace it was filed in. */
+	space: SynapseSpaceId;
+	kind: SynapseFlagKind;
+	/** The note it is about, when there is one. */
+	title?: string;
+	/** What is missing or wrong. */
+	problem: string;
+	/** What the knowledge should say, when the reporter knows. */
+	suggestion?: string;
+	/** What the reporter was doing when it noticed. */
+	task?: string;
+	status: SynapseFlagStatus;
+	author: SynapseActor;
+	createdAt: string;
+	/** The proposal that answers it, while it is `proposed` and once that proposal resolved it. */
+	proposalId?: string;
+	resolvedAt?: string;
+	resolvedBy?: SynapseActor;
+	/** What was done about it, or why nothing was. */
+	resolution?: string;
+};
+
+export type CreateSynapseFlagRequest = Pick<
+	SynapseFlag,
+	"kind" | "title" | "problem" | "suggestion" | "task"
+>;
+
+export type ResolveSynapseFlagRequest = {
+	status: "resolved" | "dismissed";
+	/** What was done about it, or why nothing was. */
+	reason: string;
+};
+
+export type SynapseFlagList = { flags: SynapseFlag[] };
+
 /** What `synapse_capture` and "Save to Synapse" take: one of a URL, text, or a document. */
 export type SynapseCaptureRequest = {
 	/** The page's address. Fetched when no `text` comes with it; otherwise recorded as where the text came from. */
@@ -664,6 +727,10 @@ export type SynapseContext = {
 	goals: SynapseContextItem[];
 	/** Decisions in force. Superseded ones are left out. */
 	decisions: SynapseContextItem[];
+	/** How the team does the kinds of work the task involves: the skill notes to read first. */
+	skills: SynapseContextItem[];
+	/** Where the data the task needs lives, and which source to trust. */
+	datasets: SynapseContextItem[];
 	/** Passages that bear on the task. */
 	evidence: SynapsePassage[];
 	/** Open questions. */

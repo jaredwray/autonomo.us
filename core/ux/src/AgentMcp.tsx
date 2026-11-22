@@ -70,6 +70,12 @@ export const agentTokenConfig: TokenViewConfig<AgentTokenPermission> = {
 			hint: "Lets this agent decide cases currently assigned to one of its positions.",
 		},
 		{
+			resource: "synapse",
+			label: "Synapse",
+			choices: ["synapse:curate"],
+			hint: "Makes this agent a curator: it reads every flag in the workspace, answers them with proposals, and resolves or dismisses them. It still changes shared notes only through proposals a person approves.",
+		},
+		{
 			resource: "web",
 			label: "Web",
 			choices: ["web:fetch"],

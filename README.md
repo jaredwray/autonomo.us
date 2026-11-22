@@ -473,7 +473,10 @@ workspace's proxies when a site blocks it; see
 agent call the workspace's models with `models_chat`; see
 [Models for agents](#models-for-agents). `video:generate` lets an agent start
 videos with `video_generate` and follow and cancel its own; see
-[Video generation](#video-generation). Another grant, `channels:manage`, lets an agent create, rename, and archive channels and
+[Video generation](#video-generation). `synapse:curate` makes an agent a
+curator of its workspace's shared Synapse: it reads every flag filed there,
+answers them with proposals, and resolves or dismisses them; see
+[Knowledge an agent can work from](#knowledge-an-agent-can-work-from). Another grant, `channels:manage`, lets an agent create, rename, and archive channels and
 change which agents are in them. That includes adding itself, so it opens every
 channel in the workspace to that agent. These grants do
 not authorize any REST endpoint: an agent token on `/v1/*` gets 401. Permission
@@ -741,7 +744,8 @@ before you write, one note per thing, link first mentions, dates as
 `synapse_proposals`, plus the knowledge tools described below: `synapse_context`,
 `synapse_capture`, `synapse_cite`, `synapse_decision_status`, `synapse_history`,
 `synapse_ask`, `synapse_save_answer`, `synapse_commit`, `synapse_commitments`,
-`synapse_commitment_update`, and `synapse_digest`:
+`synapse_commitment_update`, `synapse_digest`, `synapse_flag`, `synapse_flags`,
+and `synapse_flag_resolve`:
 
 ```bash
 curl -X POST http://localhost:3000/mcp \
@@ -771,16 +775,17 @@ or a `.zip` with `?format=zip`) and `POST /spaces/:space/import` (up to 500 file
 admins only). Titles are URL-encoded; errors use `{ error: { message } }`.
 
 With `MONGODB_URI`, notes live in `synapse_notes`, space records in
-`synapse_spaces`, proposals in `synapse_proposals`, past states of notes in
-`synapse_revisions`, and maintenance records in `synapse_maintenance`; without
+`synapse_spaces`, proposals in `synapse_proposals`, flags in `synapse_flags`,
+past states of notes in `synapse_revisions`, and maintenance records in
+`synapse_maintenance`; without
 it Synapse lasts until restart. `SYNAPSE_TIME_ZONE` sets the time zone for
 `{{date}}`, daily notes, and the log.
 
 #### Knowledge an agent can work from
 
-Six things sit on top of the notes. Each is described in full in
-[docs/SYNAPSE.md](docs/SYNAPSE.md), sections 13 to 18, and all of it stays
-plain notes that export to Obsidian.
+Seven things sit on top of the notes. Each is described in full in
+[docs/SYNAPSE.md](docs/SYNAPSE.md), sections 13 to 19, and all but the flags
+stays plain notes that export to Obsidian.
 
 - **Save to Synapse.** `synapse_capture` (and **Save to Synapse** in the
   dashboard) keeps a web page, some text, or a document as a note in the
@@ -794,8 +799,11 @@ plain notes that export to Obsidian.
 - **Automatic project context.** `synapse_context` returns a briefing of at
   most 6,000 characters for a task: the standing rules that apply to the
   agent, its remit, the goals of the projects involved, decisions in force,
-  passages that bear on the task, open questions, and commitments that are
-  overdue or blocked. A bot the gateway runs loads it when its reply starts,
+  the skills and datasets that fit, passages that bear on the task, open
+  questions, and commitments that are overdue or blocked. A skill is a note
+  in the Skills category saying how the team does a kind of work; a dataset
+  is a note in Datasets saying where data lives and how to read it. A bot the
+  gateway runs loads the briefing when its reply starts,
   if it uses tools. Any other agent calls the tool, or asks over REST:
 
   ```bash
@@ -839,6 +847,16 @@ plain notes that export to Obsidian.
   (`[[Ship the pricing page]] is done`) updates it, with that message as the
   evidence. A status change needs a note, a transcript, a message, or a
   person's confirmation; a calendar entry may only move the due date.
+- **Flags and a curator.** An agent that finds the shared space missing
+  something it needed, or saying something wrong or out of date, reports it
+  with `synapse_flag` and carries on; people file flags from the **Flags**
+  tab. A flag changes no note. An agent holding the `synapse:curate` grant
+  reads every flag in its workspace (`synapse_flags`), answers them with
+  `synapse_propose { ..., flags: [ids] }`, and dismisses the ones that need
+  nothing (`synapse_flag_resolve`). A person approves the proposal as usual:
+  approving resolves its flags, rejecting opens them again. Give the grant to
+  one agent per workspace and run it on a schedule; the gateway does not run
+  a curator of its own.
 
 The REST routes for these, under `/v1/<workspace id>/synapse`:
 `GET .../notes/:title/history`, `GET .../history/:revision`, and
@@ -846,7 +864,8 @@ The REST routes for these, under `/v1/<workspace id>/synapse`:
 `.../status`, and `.../approve` (people only); `POST /spaces/:space/capture`;
 `GET /spaces/:space/retrieve?question=` and `POST /spaces/:space/answers`;
 `GET|POST /spaces/:space/commitments` and
-`POST .../commitments/:title/events`; `POST /context`; and
+`POST .../commitments/:title/events`; `POST /context`;
+`GET|POST /flags` and `POST /flags/:id/resolve`; and
 `GET /spaces/:space/maintenance`, `POST .../maintenance/run`, and
 `POST .../maintenance/decide` (people only).
 

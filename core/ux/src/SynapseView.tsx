@@ -26,6 +26,7 @@ import { PageTabs } from "./PageTabs.js";
 import { SynapseAsk } from "./SynapseAsk.js";
 import { SynapseCapture } from "./SynapseCapture.js";
 import { SynapseCommitments } from "./SynapseCommitments.js";
+import { SynapseFlags } from "./SynapseFlags.js";
 import { SynapseGraph } from "./SynapseGraph.js";
 import { SynapseMaintenance } from "./SynapseMaintenance.js";
 import { SynapseNote, shortDate } from "./SynapseNote.js";
@@ -52,6 +53,7 @@ const SYNAPSE_TABS: readonly { id: SynapseTab; label: string }[] = [
 	{ id: "ask", label: "Ask" },
 	{ id: "commitments", label: "Commitments" },
 	{ id: "maintenance", label: "Maintenance" },
+	{ id: "flags", label: "Flags" },
 	{ id: "proposals", label: "Proposals" },
 ];
 
@@ -847,6 +849,10 @@ export function SynapseView({
 						version={version}
 						onDecided={changed}
 					/>
+				) : route.tab === "flags" ? (
+					<div className="synapse-tool">
+						<SynapseFlags version={version} />
+					</div>
 				) : route.tab !== "notes" ? (
 					<div className="synapse-tool">
 						{spacePicker}

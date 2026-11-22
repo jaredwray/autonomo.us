@@ -258,6 +258,7 @@ describe("OAuth sign-in to the MCP endpoint", () => {
 					"loops:report",
 					"loops:act",
 					"organization:decide",
+					"synapse:curate",
 				],
 			});
 		for (const path of [

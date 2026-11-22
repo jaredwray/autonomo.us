@@ -188,6 +188,7 @@ it("orders the tabs, keeps the chosen space across them, and opens a note titled
 		"Ask",
 		"Commitments",
 		"Maintenance",
+		"Flags",
 		"Proposals",
 	]);
 	fireEvent.click(tab("Save to Synapse"));

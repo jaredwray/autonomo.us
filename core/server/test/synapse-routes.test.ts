@@ -91,7 +91,7 @@ describe("Synapse REST routes", () => {
 		const templates = await call("GET", "/v1/synapse/templates");
 		expect(
 			((await templates.json()) as { templates: unknown[] }).templates,
-		).toHaveLength(18);
+		).toHaveLength(20);
 
 		const created = await call("POST", "/v1/synapse/spaces/shared/notes", {
 			body: {

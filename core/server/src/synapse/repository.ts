@@ -1,5 +1,7 @@
 import type {
 	SynapseActor,
+	SynapseFlag,
+	SynapseFlagStatus,
 	SynapseMaintenanceBatch,
 	SynapseNote,
 	SynapseProperties,
@@ -105,6 +107,32 @@ export type ProposalDecision = Required<
 > &
 	Pick<SynapseProposal, "decisionReason">;
 
+export type FlagFilter = {
+	/** The shared space a flag is about: one per workspace. */
+	space?: SynapseSpaceId;
+	authorId?: string;
+	status?: SynapseFlagStatus;
+	/** The proposal that answers it. */
+	proposalId?: string;
+};
+/** A flag's place in the newest-first order. */
+export type FlagCursor = Pick<SynapseFlag, "createdAt" | "id">;
+/**
+ * Where a flag stands: its status and what belongs to it. Setting a state
+ * replaces the whole of it, so a reopened flag keeps no proposal or resolution.
+ */
+export type FlagState = Pick<
+	SynapseFlag,
+	"status" | "proposalId" | "resolvedAt" | "resolvedBy" | "resolution"
+>;
+export const FLAG_STATE_FIELDS = [
+	"status",
+	"proposalId",
+	"resolvedAt",
+	"resolvedBy",
+	"resolution",
+] as const satisfies readonly (keyof FlagState)[];
+
 /** A past state of a note. A `deleted` revision holds what was deleted. */
 export type StoredRevision = {
 	/** `<note id>:<revision>`, so recording the same state twice is one record. */
@@ -138,7 +166,7 @@ export type MaintenanceRecord = {
 };
 
 /**
- * Storage for notes, space records, and proposals. The memory and MongoDB
+ * Storage for notes, space records, proposals, and flags. The memory and MongoDB
  * implementations satisfy the same contract (test/synapse-repository.test.ts).
  */
 export interface SynapseRepository {
@@ -201,6 +229,28 @@ export interface SynapseRepository {
 	): Promise<boolean>;
 	/** Drops a claim whose approval failed, so the proposal can be decided at once. */
 	releaseProposalClaim(id: string, claimId: string): Promise<boolean>;
+	insertFlag(flag: SynapseFlag): Promise<void>;
+	getFlag(id: string): Promise<SynapseFlag | null>;
+	/**
+	 * Newest first. With `before`, only the flags older than that one in
+	 * this order, wherever it stands now: a place to read on from that does
+	 * not move when flags are filed or settled meanwhile.
+	 */
+	listFlags(
+		filter: FlagFilter,
+		limit: number,
+		before?: FlagCursor,
+	): Promise<SynapseFlag[]>;
+	countFlags(filter: FlagFilter): Promise<number>;
+	/**
+	 * Moves a flag to `state`, only while its status is one of `from`. With
+	 * `proposalId`, only while that proposal is the one answering it.
+	 */
+	setFlagState(
+		id: string,
+		from: { status: readonly SynapseFlagStatus[]; proposalId?: string },
+		state: FlagState,
+	): Promise<boolean>;
 	/** Records a past state once: a second record with the same id changes nothing. */
 	insertRevision(revision: StoredRevision): Promise<void>;
 	/** A note's states by its id, or by a title it had in the space, newest first. */

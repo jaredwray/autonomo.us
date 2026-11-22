@@ -902,6 +902,30 @@ describe("bots and Synapse", () => {
 		expect(system(before)).not.toContain("Briefing");
 	});
 
+	it.each([
+		["Skills", "Write the weekly update", "## Skills to read before you start"],
+		["Datasets", "Signups by week", "## Where the data lives"],
+	])("briefs a bot when only a note in %s fits", async (template, title, heading) => {
+		const { ok, createChannel, addAgent, post, bot, reply, system } =
+			await withModels(["tool-model"]);
+		await ok(
+			"POST",
+			notes,
+			{ body: { title, template, body: "How it is done here." } },
+			201,
+		);
+		const channel = await createChannel("general");
+		const scribe = await bot({
+			name: "Scribe",
+			model: "stub/tool-model",
+			tools: true,
+		});
+		await addAgent(channel.id, scribe.id);
+		const asked = await post(channel.id, `<@agent:${scribe.id}> what is next?`);
+		await reply(channel.id, asked.seq);
+		expect(system(0)).toContain(`${heading}\n- [[${title}]]`);
+	});
+
 	it("stops a reply from writing once it has read captured material", async () => {
 		const { ok, createChannel, addAgent, post, bot, reply } = await withModels([
 			"read-source-model",
