@@ -691,6 +691,8 @@ export function createServer(options: CreateServerOptions = {}) {
 					brief.rules,
 					brief.goals,
 					brief.decisions,
+					brief.skills,
+					brief.datasets,
 					brief.evidence,
 					brief.questions,
 					brief.commitments,
