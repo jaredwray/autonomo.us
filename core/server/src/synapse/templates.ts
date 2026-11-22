@@ -158,6 +158,32 @@ export const BUILTIN_TEMPLATES: readonly SynapseTemplate[] = [
 		},
 	),
 	template(
+		"Skills",
+		"Skills",
+		"How the team does a kind of work: when it applies, the steps, and what a good result looks like. A briefing lists the ones that fit the task; read one before you do that work.",
+		{
+			when: null,
+			status: [link("Active")],
+			applies_to: [],
+			topics: [],
+			created: DATE_TOKEN,
+		},
+	),
+	template(
+		"Datasets",
+		"References",
+		"Where data lives and how to read it: the system, what it is the source of truth for, how to query it, and what to watch for. The numbers themselves stay in the system.",
+		{
+			system: null,
+			use_for: null,
+			access: null,
+			owner: [],
+			status: [link("Active")],
+			topics: [],
+			created: DATE_TOKEN,
+		},
+	),
+	template(
 		"Questions",
 		"",
 		"Questions nobody has answered yet. Briefings list the open ones, so whoever works on the topic next can settle them.",

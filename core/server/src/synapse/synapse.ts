@@ -97,6 +97,8 @@ export const MAX_BODY_LENGTH = 100_000;
 export const MAX_APPEND_LENGTH = 20_000;
 export const MAX_NOTES_PER_SPACE = 10_000;
 export const MAX_PENDING_PROPOSALS = 50;
+/** Flags one proposal may answer. */
+export const MAX_FLAGS_PER_PROPOSAL = 20;
 /** How long an approval holds a proposal while it applies; a crash only delays the decision this long. */
 export const PROPOSAL_CLAIM_MS = 60_000;
 export const MAX_REASON_LENGTH = 2000;
@@ -1226,7 +1228,7 @@ export class SynapseService {
 			proposal.author.id !== author.id
 		)
 			return false;
-		return this.repository.decideProposal(
+		const withdrawn = await this.repository.decideProposal(
 			id,
 			{
 				status: "rejected",
@@ -1236,6 +1238,39 @@ export class SynapseService {
 			},
 			{ now: this.now() },
 		);
+		if (withdrawn) await this.settleFlags(id, false, author).catch(() => {});
+		return withdrawn;
+	}
+
+	/**
+	 * What a decided proposal means for the flags it answered: approved, they
+	 * are resolved; rejected or withdrawn, they are open again for another
+	 * answer. The decision stands whatever happens here, so callers swallow
+	 * its failures: a flag left `proposed` can still be resolved by hand.
+	 */
+	private async settleFlags(
+		proposalId: string,
+		approved: boolean,
+		actor: SynapseActor,
+	) {
+		const flags = await this.repository.listFlags(
+			{ proposalId, status: "proposed" },
+			MAX_FLAGS_PER_PROPOSAL,
+		);
+		for (const flag of flags)
+			await this.repository.setFlagState(
+				flag.id,
+				{ status: ["proposed"], proposalId },
+				approved
+					? {
+							status: "resolved",
+							proposalId,
+							resolvedAt: this.now(),
+							resolvedBy: actor,
+							resolution: "The proposal that answers it was approved.",
+						}
+					: { status: "open" },
+			);
 	}
 
 	/** Retries a compare-and-set change against a fresh copy of the note. */
@@ -2178,6 +2213,9 @@ export class SynapseService {
 					409,
 				);
 		}
+		await this.settleFlags(id, request.decision !== "reject", actor).catch(
+			() => {},
+		);
 		return publicProposal((await this.repository.getProposal(id)) ?? proposal);
 	}
 

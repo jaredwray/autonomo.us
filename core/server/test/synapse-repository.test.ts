@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type {
 	SynapseActor,
+	SynapseFlag,
 	SynapseMaintenanceBatch,
 	SynapseProposal,
 	SynapseSpaceId,
@@ -589,6 +590,111 @@ function contract(name: string, open: () => SynapseRepository) {
 			}
 		});
 
+		it("keeps flags and moves them between states", async () => {
+			const repo = open();
+			try {
+				const space: SynapseSpaceId = `shared-${randomUUID()}`;
+				const author = randomUUID();
+				const make = (
+					problem: string,
+					createdAt: string,
+					extra: Partial<SynapseFlag> = {},
+				): SynapseFlag => ({
+					id: randomUUID(),
+					space,
+					kind: "missing",
+					problem,
+					status: "open",
+					author: { kind: "agent", id: author, name: "A" },
+					createdAt,
+					...extra,
+				});
+				const first = make("First", "2026-11-08T00:00:00.000Z", {
+					title: "Pricing",
+					suggestion: "Say it.",
+					task: "Report",
+				});
+				const second = make("Second", "2026-11-08T00:00:01.000Z");
+				const other = make("Other", "2026-11-08T00:00:02.000Z", {
+					author: { kind: "user", id: "u", name: "U" },
+				});
+				const elsewhere = make("Elsewhere", "2026-11-08T00:00:03.000Z", {
+					space: `shared-${randomUUID()}`,
+				});
+				for (const flag of [first, second, other, elsewhere])
+					await repo.insertFlag(flag);
+				expect(await repo.getFlag(first.id)).toEqual(first);
+				expect(await repo.getFlag(randomUUID())).toBeNull();
+				const problems = async (
+					filter: Parameters<SynapseRepository["listFlags"]>[0],
+					limit = 10,
+				) => (await repo.listFlags(filter, limit)).map((flag) => flag.problem);
+				expect(await problems({ space })).toEqual(["Other", "Second", "First"]);
+				expect(await problems({ space }, 2)).toEqual(["Other", "Second"]);
+				expect(await problems({ space, authorId: author })).toEqual([
+					"Second",
+					"First",
+				]);
+				expect(await repo.countFlags({ space, status: "open" })).toBe(3);
+
+				const proposalId = randomUUID();
+				const proposed = { status: "proposed" as const, proposalId };
+				expect(
+					await repo.setFlagState(first.id, { status: ["open"] }, proposed),
+				).toBe(true);
+				// Only from the states named, and only for a flag that exists.
+				expect(
+					await repo.setFlagState(first.id, { status: ["open"] }, proposed),
+				).toBe(false);
+				expect(
+					await repo.setFlagState(randomUUID(), { status: ["open"] }, proposed),
+				).toBe(false);
+				expect(await repo.getFlag(first.id)).toEqual({ ...first, ...proposed });
+				expect(await problems({ proposalId, status: "proposed" })).toEqual([
+					"First",
+				]);
+				expect(await problems({ space, status: "open" })).toEqual([
+					"Other",
+					"Second",
+				]);
+				// Another proposal's decision does not move it.
+				expect(
+					await repo.setFlagState(
+						first.id,
+						{ status: ["proposed"], proposalId: randomUUID() },
+						{ status: "open" },
+					),
+				).toBe(false);
+				const resolved = {
+					status: "resolved" as const,
+					proposalId,
+					resolvedAt: "2026-11-08T01:00:00.000Z",
+					resolvedBy: actor,
+					resolution: "Approved.",
+				};
+				expect(
+					await repo.setFlagState(
+						first.id,
+						{ status: ["proposed"], proposalId },
+						resolved,
+					),
+				).toBe(true);
+				expect(await repo.getFlag(first.id)).toEqual({ ...first, ...resolved });
+				// A state replaces the one before it: a reopened flag keeps nothing of its answer.
+				expect(
+					await repo.setFlagState(
+						first.id,
+						{ status: ["resolved"] },
+						{ status: "open" },
+					),
+				).toBe(true);
+				expect(await repo.getFlag(first.id)).toEqual(first);
+				expect(await repo.countFlags({ proposalId })).toBe(0);
+			} finally {
+				await repo.close();
+			}
+		});
+
 		it("matches any of several terms and returns alias keys with the index", async () => {
 			const repo = open();
 			try {
@@ -916,6 +1022,11 @@ describe.skipIf(!available)("mongodb", () => {
 					.map((index) => index.name)
 					.sort(),
 			).toEqual(["_id_", "note_revision", "space_at", "space_title_at"]);
+			expect(
+				(await cleanup.db().collection("synapse_flags").indexes())
+					.map((index) => index.name)
+					.sort(),
+			).toEqual(["_id_", "author_status", "proposal", "space_status"]);
 		} finally {
 			await repo.close();
 		}

@@ -133,6 +133,9 @@ const synapseRoutes = (base: string) =>
 			`POST ${base}/spaces/:space/maintenance/decide`,
 			workspace("synapse:edit"),
 		],
+		[`GET ${base}/flags`, workspace("synapse:read")],
+		[`POST ${base}/flags`, workspace("synapse:edit")],
+		[`POST ${base}/flags/:id/resolve`, workspace("synapse:edit")],
 		[`GET ${base}/proposals`, workspace("synapse:read")],
 		// Not a token permission: approvals need a person.
 		[`POST ${base}/proposals/:id/decide`, workspace("synapse:decide")],

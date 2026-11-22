@@ -730,6 +730,11 @@ export class SynapseMaintenance {
 				needsYou.push(
 					`${plural(pending, "proposal waits", "proposals wait")} for a decision.`,
 				);
+			const flagged = await repository.countFlags({ space, status: "open" });
+			if (flagged)
+				needsYou.push(
+					`${plural(flagged, "flag waits", "flags wait")} for a curator.`,
+				);
 		}
 		if (!needsYou.length) needsYou.push("Nothing needs you.");
 		return { since, changed, needsYou };

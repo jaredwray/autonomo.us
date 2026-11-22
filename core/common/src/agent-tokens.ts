@@ -21,6 +21,10 @@ export { API_TOKEN_TTLS as AGENT_TOKEN_TTLS } from "./api-tokens.js";
  * It is not the API token grant `inference:run`, which agents cannot hold.
  * `video:generate` lets an agent start videos on the workspace's video
  * providers, and read and cancel its own, within the workspace's limits.
+ * `synapse:curate` makes an agent a curator of its workspace's shared
+ * Synapse: it reads every flag filed there, not only its own, answers them
+ * with proposals, and resolves or dismisses them. It still changes the
+ * shared notes only through proposals a person approves.
  */
 export const AGENT_TOKEN_PERMISSIONS = {
 	"mcp:read": "MCP: Read",
@@ -33,6 +37,7 @@ export const AGENT_TOKEN_PERMISSIONS = {
 	"loops:report": "Loops: Report observations",
 	"loops:act": "Loops: Perform assigned steps",
 	"organization:decide": "Organization: Decide assigned cases",
+	"synapse:curate": "Synapse: Curate flags",
 } as const;
 export const LOOP_AGENT_PERMISSIONS = [
 	"loops:read",

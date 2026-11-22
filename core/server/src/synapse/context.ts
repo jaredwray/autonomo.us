@@ -40,6 +40,8 @@ const LIMITS = {
 	rules: 12,
 	goals: 3,
 	decisions: 8,
+	skills: 6,
+	datasets: 6,
 	evidence: 5,
 	questions: 6,
 	commitments: 8,
@@ -81,9 +83,9 @@ const dateOf = (note: StoredNote) =>
 
 /**
  * A compact briefing for a task: the rules that apply, what the agent is
- * for, the goals of the projects involved, decisions in force, passages
- * that bear on the task, open questions, and commitments that are late or
- * stuck. See docs/SYNAPSE.md §15.
+ * for, the goals of the projects involved, decisions in force, the skills
+ * and datasets that fit, passages that bear on the task, open questions,
+ * and commitments that are late or stuck. See docs/SYNAPSE.md §15.
  */
 export class SynapseBriefing {
 	constructor(
@@ -158,17 +160,27 @@ export class SynapseBriefing {
 				),
 			),
 		);
-		const [rules, projects, decisions, questions, commitments, remitNote] =
-			await Promise.all([
-				this.category(scope, "rules", shown),
-				this.category(scope, "projects", shown),
-				this.category(scope, "decisions", shown),
-				this.category(scope, "questions", shown),
-				this.category(scope, COMMITMENTS_KEY, shown),
-				scope.own
-					? this.synapse.repository.getNote(scope.own, "remit")
-					: Promise.resolve(null),
-			]);
+		const [
+			rules,
+			projects,
+			decisions,
+			questions,
+			commitments,
+			skills,
+			datasets,
+			remitNote,
+		] = await Promise.all([
+			this.category(scope, "rules", shown),
+			this.category(scope, "projects", shown),
+			this.category(scope, "decisions", shown),
+			this.category(scope, "questions", shown),
+			this.category(scope, COMMITMENTS_KEY, shown),
+			this.category(scope, "skills", shown),
+			this.category(scope, "datasets", shown),
+			scope.own
+				? this.synapse.repository.getNote(scope.own, "remit")
+				: Promise.resolve(null),
+		]);
 
 		// The projects the task is about: the one named, and any it mentions.
 		const projectKeys = new Set<string>();
@@ -245,6 +257,19 @@ export class SynapseBriefing {
 			typeof note.properties.goal === "string" && note.properties.goal.trim()
 				? note.properties.goal.trim()
 				: ownWords(note.body);
+		/** A property that says a thing in a line, when the note has one. */
+		const said = (note: StoredNote, key: string) => {
+			const value = note.properties[key];
+			return typeof value === "string" && value.trim() ? value.trim() : null;
+		};
+		/** A skill by when to use it: the briefing names it, the note holds the steps. */
+		const whenOf = (note: StoredNote) =>
+			said(note, "when") ?? ownWords(note.body);
+		/** A dataset by the system it lives in and what to use it for. */
+		const useOf = (note: StoredNote) =>
+			[said(note, "system"), said(note, "use_for") ?? ownWords(note.body)]
+				.filter(Boolean)
+				.join(": ");
 		const active = projects.filter((note) => {
 			const status = propertyTargets(note.properties.status).map(titleKey);
 			return !status.some((item) =>
@@ -270,6 +295,13 @@ export class SynapseBriefing {
 			decisions: pick(decisions.filter(current), LIMITS.decisions).map((note) =>
 				this.item(note),
 			),
+			skills: pick(
+				skills.filter((note) => current(note) && applies(note)),
+				LIMITS.skills,
+			).map((note) => this.item(note, whenOf(note))),
+			datasets: pick(datasets.filter(current), LIMITS.datasets).map((note) =>
+				this.item(note, useOf(note)),
+			),
 			questions: pick(
 				questions.filter((note) => {
 					const status = propertyTargets(note.properties.status).map(titleKey);
@@ -280,7 +312,14 @@ export class SynapseBriefing {
 			commitments: owed,
 		};
 		const named = new Set(
-			[listed.rules, listed.goals, listed.decisions, listed.questions]
+			[
+				listed.rules,
+				listed.goals,
+				listed.decisions,
+				listed.skills,
+				listed.datasets,
+				listed.questions,
+			]
 				.flat()
 				.map((item) => titleKey(item.title)),
 		);
@@ -347,6 +386,8 @@ export function render(
 		],
 		["Project goals", context.goals.map(line)],
 		["Decisions in force", context.decisions.map(line)],
+		["Skills to read before you start", context.skills.map(line)],
+		["Where the data lives", context.datasets.map(line)],
 		["Open questions", context.questions.map(line)],
 		[
 			"Relevant evidence",

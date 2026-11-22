@@ -80,7 +80,7 @@ describe("time", () => {
 });
 
 describe("templates and categories", () => {
-	it("ships 18 templates with plural names, descriptions, and {{date}} filling", async () => {
+	it("ships 20 templates with plural names, descriptions, and {{date}} filling", async () => {
 		const { service } = synapse();
 		const templates = service.templates();
 		expect(templates.map((item) => item.name)).toEqual([
@@ -98,6 +98,8 @@ describe("templates and categories", () => {
 			"Journal",
 			"Sources",
 			"Rules",
+			"Skills",
+			"Datasets",
 			"Questions",
 			"Answers",
 			"Commitments",
@@ -867,7 +869,7 @@ describe("export and import", () => {
 			]),
 		);
 		expect(paths.filter((path) => path.startsWith("Templates/"))).toHaveLength(
-			18,
+			20,
 		);
 		expect(exported.files.find((f) => f.path === "Loose.md")?.content).toBe(
 			"No properties",

@@ -1,6 +1,7 @@
 import { SynapseCapture } from "./capture.js";
 import { SynapseCommitments } from "./commitments.js";
 import { SynapseBriefing } from "./context.js";
+import { SynapseFlags } from "./flags.js";
 import { type MaintenanceOptions, SynapseMaintenance } from "./maintenance.js";
 import { SynapseRetriever } from "./retrieval.js";
 import type { SynapseService } from "./synapse.js";
@@ -13,6 +14,7 @@ export type SynapseFeatures = {
 	commitments: SynapseCommitments;
 	briefing: SynapseBriefing;
 	maintenance: SynapseMaintenance;
+	flags: SynapseFlags;
 };
 
 export function synapseFeatures(
@@ -27,5 +29,6 @@ export function synapseFeatures(
 		commitments: new SynapseCommitments(synapse),
 		briefing: new SynapseBriefing(synapse, retriever),
 		maintenance: new SynapseMaintenance(synapse, options.maintenance),
+		flags: new SynapseFlags(synapse),
 	};
 }

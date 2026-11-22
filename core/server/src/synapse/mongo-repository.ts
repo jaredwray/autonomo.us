@@ -1,4 +1,6 @@
 import type {
+	SynapseFlag,
+	SynapseFlagStatus,
 	SynapseMaintenanceBatch,
 	SynapseProposal,
 	SynapseSpaceId,
@@ -13,6 +15,8 @@ import { mongoFailureDetails, type SynapseDiagnostic } from "./diagnostics.js";
 import { SynapseError, synapseUnavailable } from "./errors.js";
 import type {
 	FindOptions,
+	FlagFilter,
+	FlagState,
 	InstantRange,
 	MaintenanceLease,
 	MaintenanceRecord,
@@ -27,11 +31,16 @@ import type {
 	StoredRevision,
 	SynapseRepository,
 } from "./repository.js";
-import { DAILY_DATE_PROPERTIES, escapeRegex } from "./repository.js";
+import {
+	DAILY_DATE_PROPERTIES,
+	escapeRegex,
+	FLAG_STATE_FIELDS,
+} from "./repository.js";
 
 export const SYNAPSE_NOTES_COLLECTION = "synapse_notes";
 export const SYNAPSE_SPACES_COLLECTION = "synapse_spaces";
 export const SYNAPSE_PROPOSALS_COLLECTION = "synapse_proposals";
+export const SYNAPSE_FLAGS_COLLECTION = "synapse_flags";
 export const SYNAPSE_REVISIONS_COLLECTION = "synapse_revisions";
 export const SYNAPSE_MAINTENANCE_COLLECTION = "synapse_maintenance";
 
@@ -44,6 +53,11 @@ type ProposalDocument = Omit<SynapseProposal, "id"> & {
 };
 const proposalOf = ({ _id, claim, ...rest }: ProposalDocument) =>
 	({ id: _id, ...rest }) as SynapseProposal;
+type FlagDocument = Omit<SynapseFlag, "id"> & { _id: string };
+const flagOf = ({ _id, ...rest }: FlagDocument): SynapseFlag => ({
+	id: _id,
+	...rest,
+});
 type RevisionDocument = Omit<StoredRevision, "id"> & { _id: string };
 /** One document per space, keyed by its storage key. */
 type MaintenanceDocument = Omit<MaintenanceRecord, "space"> & {
@@ -136,7 +150,7 @@ function sortSpec(sort: FindOptions["sort"]): Document {
 	return { [sort.by]: direction, _id: direction };
 }
 
-/** Notes, space records, and proposals in MongoDB; see docs/SYNAPSE.md §11. */
+/** Notes, space records, proposals, and flags in MongoDB; see docs/SYNAPSE.md §11. */
 export class MongoSynapseRepository implements SynapseRepository {
 	readonly persistence = "mongodb" as const;
 	private readonly mongo: SharedMongoClient;
@@ -168,6 +182,9 @@ export class MongoSynapseRepository implements SynapseRepository {
 		return this.database().collection<ProposalDocument>(
 			SYNAPSE_PROPOSALS_COLLECTION,
 		);
+	}
+	private flags() {
+		return this.database().collection<FlagDocument>(SYNAPSE_FLAGS_COLLECTION);
 	}
 	private revisions() {
 		return this.database().collection<RevisionDocument>(
@@ -201,6 +218,18 @@ export class MongoSynapseRepository implements SynapseRepository {
 				// Each workspace lists the proposals for its own shared space.
 				{ key: { space: 1, status: 1, createdAt: -1 }, name: "space_status" },
 				{ key: { space: 1, decidedAt: -1 }, name: "space_decided" },
+			]),
+		);
+		await this.diagnose("initialize", "indexes.flags", () =>
+			this.flags().createIndexes([
+				// A curator lists its workspace's flags; an agent lists its own.
+				{ key: { space: 1, status: 1, createdAt: -1 }, name: "space_status" },
+				{
+					key: { "author.id": 1, status: 1, createdAt: -1 },
+					name: "author_status",
+				},
+				// A decided proposal settles the flags it answered.
+				{ key: { proposalId: 1 }, name: "proposal", sparse: true },
 			]),
 		);
 		await this.diagnose("initialize", "indexes.revisions", () =>
@@ -519,6 +548,72 @@ export class MongoSynapseRepository implements SynapseRepository {
 			this.proposals().updateOne(
 				{ _id: id, "claim.id": claimId },
 				{ $unset: { claim: "" } },
+			),
+		);
+		return result.matchedCount > 0;
+	}
+	async insertFlag(flag: SynapseFlag) {
+		await this.storage("insertFlag", () =>
+			this.flags().insertOne(toDocument(flag)),
+		);
+	}
+	async getFlag(id: string) {
+		const found = await this.storage("getFlag", () =>
+			this.flags().findOne({ _id: is(id) }),
+		);
+		return found ? flagOf(found) : null;
+	}
+	private flagQuery(filter: FlagFilter): Document {
+		return {
+			...(filter.space === undefined ? {} : { space: is(filter.space) }),
+			...(filter.authorId === undefined
+				? {}
+				: { "author.id": is(filter.authorId) }),
+			...(filter.status === undefined ? {} : { status: is(filter.status) }),
+			...(filter.proposalId === undefined
+				? {}
+				: { proposalId: is(filter.proposalId) }),
+		};
+	}
+	async listFlags(filter: FlagFilter, limit: number) {
+		const found = await this.storage("listFlags", () =>
+			this.flags()
+				.find(this.flagQuery(filter))
+				.sort({ createdAt: -1, _id: -1 })
+				.limit(limit)
+				.toArray(),
+		);
+		return found.map(flagOf);
+	}
+	async countFlags(filter: FlagFilter) {
+		return this.storage("countFlags", () =>
+			this.flags().countDocuments(this.flagQuery(filter)),
+		);
+	}
+	async setFlagState(
+		id: string,
+		from: { status: readonly SynapseFlagStatus[]; proposalId?: string },
+		state: FlagState,
+	) {
+		// A state replaces the one before it: what it leaves out is removed.
+		const set: Partial<FlagState> = {};
+		const unset: Partial<Record<keyof FlagState, "">> = {};
+		for (const field of FLAG_STATE_FIELDS)
+			if (state[field] === undefined) unset[field] = "";
+			else Object.assign(set, { [field]: state[field] });
+		const result = await this.storage("setFlagState", () =>
+			this.flags().updateOne(
+				{
+					_id: is(id),
+					status: { $in: [...from.status] },
+					...(from.proposalId === undefined
+						? {}
+						: { proposalId: is(from.proposalId) }),
+				},
+				{
+					$set: set,
+					...(Object.keys(unset).length ? { $unset: unset } : {}),
+				},
 			),
 		);
 		return result.matchedCount > 0;
