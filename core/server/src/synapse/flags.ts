@@ -128,11 +128,19 @@ export class SynapseFlags {
 		return publicFlag(flag);
 	}
 
-	/** A space's flags, newest first: all of them for a curator, else the viewer's own. */
+	/**
+	 * A space's flags, newest first: all of them for a curator, else the
+	 * viewer's own. `offset` skips the newest ones, to read further back.
+	 */
 	async list(
 		space: SynapseSpaceId,
 		viewer: FlagViewer,
-		filter: { status?: SynapseFlagStatus; mine?: boolean; limit?: number } = {},
+		filter: {
+			status?: SynapseFlagStatus;
+			mine?: boolean;
+			limit?: number;
+			offset?: number;
+		} = {},
 	): Promise<SynapseFlag[]> {
 		if (
 			filter.status !== undefined &&
@@ -150,6 +158,7 @@ export class SynapseFlags {
 					: { authorId: viewer.actor.id }),
 			},
 			Math.min(MAX_FLAG_LIMIT, Math.max(1, filter.limit ?? DEFAULT_FLAG_LIMIT)),
+			Math.max(0, filter.offset ?? 0),
 		);
 		return flags.map(publicFlag);
 	}

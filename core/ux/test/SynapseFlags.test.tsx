@@ -12,6 +12,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { agentTokenConfig, grantsText } from "../src/AgentMcp.js";
 import { App } from "../src/App.js";
 import { clearCredential } from "../src/api.js";
+import { FLAG_PAGE } from "../src/SynapseFlags.js";
 import { changeControl } from "./controls.js";
 import {
 	defaultWorkspaceId,
@@ -355,6 +356,46 @@ it("says what went wrong when a flag cannot be loaded, filed, or settled", async
 		target: { value: "resolved" },
 	});
 	await screen.findByText("The gateway is unreachable.");
+});
+
+it("loads older flags a page at a time", async () => {
+	const { inject, agent, mcp, open } = await start();
+	// More than a page, from two reporters: each may have 50 open at most.
+	const scout = await agent("Scout", []);
+	for (let index = 0; index < 30; index++)
+		await inject("POST", "/v1/synapse/flags", {
+			kind: "missing",
+			problem: `Gap ${index} from a person.`,
+		});
+	for (let index = 0; index < 25; index++)
+		await mcp(scout, "synapse_flag", {
+			kind: "missing",
+			problem: `Gap ${index} from an agent.`,
+		});
+	open();
+	const older = await screen.findByRole("button", {
+		name: "Show older flags",
+	});
+	expect(screen.getAllByRole("article")).toHaveLength(FLAG_PAGE);
+	expect(screen.queryByText("Gap 0 from a person.")).toBeNull();
+	fireEvent.click(older);
+	await screen.findByText("Gap 0 from a person.");
+	expect(screen.getAllByRole("article")).toHaveLength(55);
+	// The last page was not full, so there is nothing further back.
+	expect(screen.queryByRole("button", { name: "Show older flags" })).toBeNull();
+
+	// A failure to load more is said, and what is shown stays.
+	changeControl(screen.getByLabelText("Status"), { target: { value: "" } });
+	const again = await screen.findByRole("button", { name: "Show older flags" });
+	vi.stubGlobal(
+		"fetch",
+		vi.fn(async () => {
+			throw new Error("The gateway is unreachable.");
+		}),
+	);
+	fireEvent.click(again);
+	await screen.findByText("The gateway is unreachable.");
+	expect(screen.getAllByRole("article")).toHaveLength(FLAG_PAGE);
 });
 
 it("offers the curator grant when creating an agent", () => {

@@ -957,13 +957,14 @@ export function decideSynapseProposal(
 	);
 }
 export function fetchSynapseFlags(
-	status?: SynapseFlagStatus,
+	options: { status?: SynapseFlagStatus; limit?: number; offset?: number } = {},
 ): Promise<SynapseFlagList> {
-	return apiRequest(
-		ws(
-			`/synapse/flags${status ? `?status=${encodeURIComponent(status)}` : ""}`,
-		),
-	);
+	const query = new URLSearchParams();
+	if (options.status) query.set("status", options.status);
+	if (options.limit !== undefined) query.set("limit", String(options.limit));
+	if (options.offset) query.set("offset", String(options.offset));
+	const search = query.toString();
+	return apiRequest(ws(`/synapse/flags${search ? `?${search}` : ""}`));
 }
 export function createSynapseFlag(
 	input: CreateSynapseFlagRequest,

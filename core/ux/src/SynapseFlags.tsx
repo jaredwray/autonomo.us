@@ -27,6 +27,8 @@ const KIND_HINT: Record<SynapseFlagKind, string> = {
 	wrong: "Something written down is not true",
 	outdated: "Something written down was true once",
 };
+/** Flags loaded at a time; older ones are a button away. */
+export const FLAG_PAGE = 50;
 const STATUS_LABEL: Record<SynapseFlagStatus, string> = {
 	open: "Open",
 	proposed: "Proposed",
@@ -335,6 +337,8 @@ function FlagCard({
 export function SynapseFlags({ version }: { version: number }) {
 	const [status, setStatus] = useState<SynapseFlagStatus | "">("open");
 	const [flags, setFlags] = useState<SynapseFlag[] | null>(null);
+	/** The last page came back full, so there may be older flags. */
+	const [more, setMore] = useState(false);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState("");
 	const [notice, setNotice] = useState("");
@@ -344,9 +348,13 @@ export function SynapseFlags({ version }: { version: number }) {
 		const request = ++sequence.current;
 		setLoading(true);
 		try {
-			const result = await fetchSynapseFlags(status || undefined);
+			const result = await fetchSynapseFlags({
+				status: status || undefined,
+				limit: FLAG_PAGE,
+			});
 			if (request === sequence.current) {
 				setFlags(result.flags);
+				setMore(result.flags.length === FLAG_PAGE);
 				setError("");
 			}
 		} catch (cause) {
@@ -363,6 +371,33 @@ export function SynapseFlags({ version }: { version: number }) {
 			sequence.current++;
 		};
 	}, [refresh, version]);
+	const showOlder = async () => {
+		if (loading || !flags) return;
+		const request = ++sequence.current;
+		setLoading(true);
+		try {
+			const result = await fetchSynapseFlags({
+				status: status || undefined,
+				limit: FLAG_PAGE,
+				offset: flags.length,
+			});
+			if (request === sequence.current) {
+				// A flag filed meanwhile pushes one already shown onto this page.
+				const shown = new Set(flags.map(({ id }) => id));
+				setFlags([
+					...flags,
+					...result.flags.filter(({ id }) => !shown.has(id)),
+				]);
+				setMore(result.flags.length === FLAG_PAGE);
+				setError("");
+			}
+		} catch (cause) {
+			if (request === sequence.current)
+				setError(failureMessage(cause, "Could not load older flags."));
+		} finally {
+			if (request === sequence.current) setLoading(false);
+		}
+	};
 	const written = (message: string) => {
 		setNotice(message);
 		void refresh();
@@ -428,6 +463,18 @@ export function SynapseFlags({ version }: { version: number }) {
 					{flags.map((flag) => (
 						<FlagCard key={flag.id} flag={flag} onSettled={written} />
 					))}
+					{more && (
+						<div className="form-actions">
+							<button
+								className="button"
+								type="button"
+								disabled={loading}
+								onClick={() => void showOlder()}
+							>
+								{loading ? "Loading…" : "Show older flags"}
+							</button>
+						</div>
+					)}
 				</div>
 			) : loading && !flags ? (
 				<LoadingBanner>Loading flags…</LoadingBanner>

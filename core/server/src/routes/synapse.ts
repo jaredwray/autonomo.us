@@ -859,7 +859,13 @@ export async function synapseRoutes(
 	);
 	// People and API tokens work on the whole workspace's flags, as they do
 	// on its notes: over REST everyone who may edit Synapse is a curator.
-	server.get<{ Querystring: { status?: SynapseFlagStatus; limit?: number } }>(
+	server.get<{
+		Querystring: {
+			status?: SynapseFlagStatus;
+			limit?: number;
+			offset?: number;
+		};
+	}>(
 		"/synapse/flags",
 		{
 			schema: {
@@ -868,6 +874,7 @@ export async function synapseRoutes(
 					properties: {
 						status: { enum: [...SYNAPSE_FLAG_STATUSES] },
 						limit: { type: "integer", minimum: 1, maximum: MAX_FLAG_LIMIT },
+						offset: { type: "integer", minimum: 0 },
 					},
 				},
 			},

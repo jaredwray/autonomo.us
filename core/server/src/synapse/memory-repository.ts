@@ -335,13 +335,13 @@ export class MemorySynapseRepository implements SynapseRepository {
 					flag.proposalId === filter.proposalId),
 		);
 	}
-	async listFlags(filter: FlagFilter, limit: number) {
+	async listFlags(filter: FlagFilter, limit: number, offset = 0) {
 		return this.selectFlags(filter)
 			.sort(
 				(a, b) =>
 					b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id),
 			)
-			.slice(0, limit)
+			.slice(offset, offset + limit)
 			.map((flag) => structuredClone(flag));
 	}
 	async countFlags(filter: FlagFilter) {

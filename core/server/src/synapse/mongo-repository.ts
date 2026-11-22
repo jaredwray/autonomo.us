@@ -575,11 +575,12 @@ export class MongoSynapseRepository implements SynapseRepository {
 				: { proposalId: is(filter.proposalId) }),
 		};
 	}
-	async listFlags(filter: FlagFilter, limit: number) {
+	async listFlags(filter: FlagFilter, limit: number, offset = 0) {
 		const found = await this.storage("listFlags", () =>
 			this.flags()
 				.find(this.flagQuery(filter))
 				.sort({ createdAt: -1, _id: -1 })
+				.skip(offset)
 				.limit(limit)
 				.toArray(),
 		);

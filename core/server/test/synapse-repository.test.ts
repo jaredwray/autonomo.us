@@ -631,6 +631,11 @@ function contract(name: string, open: () => SynapseRepository) {
 				) => (await repo.listFlags(filter, limit)).map((flag) => flag.problem);
 				expect(await problems({ space })).toEqual(["Other", "Second", "First"]);
 				expect(await problems({ space }, 2)).toEqual(["Other", "Second"]);
+				// Further back: the next page, and nothing past the end.
+				expect(
+					(await repo.listFlags({ space }, 2, 2)).map((flag) => flag.problem),
+				).toEqual(["First"]);
+				expect(await repo.listFlags({ space }, 2, 3)).toEqual([]);
 				expect(await problems({ space, authorId: author })).toEqual([
 					"Second",
 					"First",

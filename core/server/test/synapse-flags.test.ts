@@ -181,6 +181,16 @@ describe("flags", () => {
 			(await flags.list("shared-w2", asCurator)).map(({ id }) => id),
 		).toEqual([elsewhere.id]);
 		expect(await flags.list("shared", asCurator, { limit: 1 })).toHaveLength(1);
+		// Older flags are read by skipping the newer ones.
+		expect(
+			(await flags.list("shared", asCurator, { limit: 1, offset: 1 })).map(
+				({ id }) => id,
+			),
+		).toEqual([first.id]);
+		expect(await flags.list("shared", asCurator, { offset: 2 })).toEqual([]);
+		expect(await flags.list("shared", asCurator, { offset: -5 })).toHaveLength(
+			2,
+		);
 		expect(
 			await flags.list("shared", asCurator, { status: "resolved" }),
 		).toEqual([]);
@@ -707,6 +717,7 @@ describe("flags over MCP and REST", () => {
 		expect(await listed(quillToken)).toEqual([]);
 		expect(await listed(curatorToken, { status: "open" })).toEqual([flag.id]);
 		expect(await listed(curatorToken, { mine: true })).toEqual([]);
+		expect(await listed(curatorToken, { offset: 1 })).toEqual([]);
 		const text = (await tool(curatorToken, "synapse_flags")).content[0].text;
 		expect(text).toContain("about [[Revenue by month]]");
 		expect(text).toContain("Suggestion: Query the net_revenue column.");
@@ -862,6 +873,14 @@ describe("flags over MCP and REST", () => {
 		expect((await rest("GET", "/v1/synapse/flags?status=odd")).status).toBe(
 			400,
 		);
+		expect(
+			(
+				(await rest("GET", "/v1/synapse/flags?limit=2&offset=2")).json as {
+					flags: SynapseFlag[];
+				}
+			).flags.map(({ problem }) => problem),
+		).toEqual(["It still describes the 2025 tone."]);
+		expect((await rest("GET", "/v1/synapse/flags?offset=-1")).status).toBe(400);
 
 		const id = (byMember.json as SynapseFlag).id;
 		const settle = (body: unknown, token?: string, flag = id) =>

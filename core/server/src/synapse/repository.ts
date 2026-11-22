@@ -229,8 +229,12 @@ export interface SynapseRepository {
 	releaseProposalClaim(id: string, claimId: string): Promise<boolean>;
 	insertFlag(flag: SynapseFlag): Promise<void>;
 	getFlag(id: string): Promise<SynapseFlag | null>;
-	/** Newest first. */
-	listFlags(filter: FlagFilter, limit: number): Promise<SynapseFlag[]>;
+	/** Newest first, `limit` of them after skipping `offset`. */
+	listFlags(
+		filter: FlagFilter,
+		limit: number,
+		offset?: number,
+	): Promise<SynapseFlag[]>;
 	countFlags(filter: FlagFilter): Promise<number>;
 	/**
 	 * Moves a flag to `state`, only while its status is one of `from`. With
