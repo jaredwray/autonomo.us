@@ -1,6 +1,7 @@
 import { createServer } from "@autonomo.us/server";
 import {
 	cleanup,
+	configure,
 	fireEvent,
 	render,
 	screen,
@@ -23,6 +24,12 @@ import {
 
 // The Flags tab runs against a real gateway API server (no fetch mocks), as
 // the other Synapse dashboard tests do.
+
+// One test files more than a page of flags, one request each.
+vi.setConfig({ testTimeout: 30_000 });
+// The suite runs its files side by side, each with a real server, so a wait
+// that takes milliseconds alone can take more than the default second.
+configure({ asyncUtilTimeout: 5000 });
 
 const closers: Array<() => Promise<void>> = [];
 afterEach(async () => {
