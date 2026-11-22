@@ -367,11 +367,11 @@ export const MCP_TOOLS: McpToolDefinition[] = [
 				minimum: 1,
 				maximum: MAX_FLAG_LIMIT,
 			},
-			offset: {
-				type: "integer",
+			before: {
+				type: "string",
 				description:
-					"How many of the newest to skip, to read further back (default 0).",
-				minimum: 0,
+					"The ID of the last flag you were given, to read the ones older than it.",
+				minLength: 1,
 			},
 		}),
 	},
@@ -1141,7 +1141,7 @@ export function synapseToolSet(
 					status: args.status as SynapseFlagStatus | undefined,
 					mine: args.mine as boolean | undefined,
 					limit: args.limit as number | undefined,
-					offset: args.offset as number | undefined,
+					before: args.before as string | undefined,
 				}),
 			}),
 			synapse_flag_resolve: (agent, args) =>

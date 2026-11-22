@@ -130,7 +130,8 @@ export class SynapseFlags {
 
 	/**
 	 * A space's flags, newest first: all of them for a curator, else the
-	 * viewer's own. `offset` skips the newest ones, to read further back.
+	 * viewer's own. `before` is the ID of a flag the viewer has: the list
+	 * goes on from the flags older than it.
 	 */
 	async list(
 		space: SynapseSpaceId,
@@ -139,7 +140,7 @@ export class SynapseFlags {
 			status?: SynapseFlagStatus;
 			mine?: boolean;
 			limit?: number;
-			offset?: number;
+			before?: string;
 		} = {},
 	): Promise<SynapseFlag[]> {
 		if (
@@ -149,6 +150,10 @@ export class SynapseFlags {
 			throw new SynapseError(
 				`A flag's status is one of ${SYNAPSE_FLAG_STATUSES.join(", ")}.`,
 			);
+		const before =
+			filter.before === undefined
+				? undefined
+				: await this.visible(filter.before, space, viewer);
 		const flags = await this.synapse.repository.listFlags(
 			{
 				space,
@@ -158,7 +163,7 @@ export class SynapseFlags {
 					: { authorId: viewer.actor.id }),
 			},
 			Math.min(MAX_FLAG_LIMIT, Math.max(1, filter.limit ?? DEFAULT_FLAG_LIMIT)),
-			Math.max(0, filter.offset ?? 0),
+			before && { createdAt: before.createdAt, id: before.id },
 		);
 		return flags.map(publicFlag);
 	}

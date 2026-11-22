@@ -15,6 +15,7 @@ import { mongoFailureDetails, type SynapseDiagnostic } from "./diagnostics.js";
 import { SynapseError, synapseUnavailable } from "./errors.js";
 import type {
 	FindOptions,
+	FlagCursor,
 	FlagFilter,
 	FlagState,
 	InstantRange,
@@ -575,12 +576,21 @@ export class MongoSynapseRepository implements SynapseRepository {
 				: { proposalId: is(filter.proposalId) }),
 		};
 	}
-	async listFlags(filter: FlagFilter, limit: number, offset = 0) {
+	async listFlags(filter: FlagFilter, limit: number, before?: FlagCursor) {
 		const found = await this.storage("listFlags", () =>
 			this.flags()
-				.find(this.flagQuery(filter))
+				.find({
+					...this.flagQuery(filter),
+					...(before
+						? {
+								$or: [
+									{ createdAt: { $lt: before.createdAt } },
+									{ createdAt: is(before.createdAt), _id: { $lt: before.id } },
+								],
+							}
+						: {}),
+				})
 				.sort({ createdAt: -1, _id: -1 })
-				.skip(offset)
 				.limit(limit)
 				.toArray(),
 		);

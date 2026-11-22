@@ -7,6 +7,7 @@ import type {
 } from "@autonomo.us/common";
 import type {
 	FindOptions,
+	FlagCursor,
 	FlagFilter,
 	FlagState,
 	InstantRange,
@@ -335,13 +336,13 @@ export class MemorySynapseRepository implements SynapseRepository {
 					flag.proposalId === filter.proposalId),
 		);
 	}
-	async listFlags(filter: FlagFilter, limit: number, offset = 0) {
+	async listFlags(filter: FlagFilter, limit: number, before?: FlagCursor) {
+		const newestFirst = (a: FlagCursor, b: FlagCursor) =>
+			b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id);
 		return this.selectFlags(filter)
-			.sort(
-				(a, b) =>
-					b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id),
-			)
-			.slice(offset, offset + limit)
+			.filter((flag) => !before || newestFirst(before, flag) < 0)
+			.sort(newestFirst)
+			.slice(0, limit)
 			.map((flag) => structuredClone(flag));
 	}
 	async countFlags(filter: FlagFilter) {

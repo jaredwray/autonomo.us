@@ -202,7 +202,7 @@ Read (import and the `markdown` field): a leading byte-order mark is ignored; a 
 | `synapse_propose` | `action`, `title`, `newTitle?`, `body?`, `properties?`, `text?`, `reason`, `flags?` (IDs of the open flags it answers) | `SynapseProposal`, with `flags` (the IDs it now answers) when any were given |
 | `synapse_proposals` | `status?` | `SynapseProposalList` (own) |
 | `synapse_flag` | `kind` (`missing`, `wrong`, `outdated`), `problem`, `title?`, `suggestion?`, `task?` | `SynapseFlag` (section 19) |
-| `synapse_flags` | `status?`, `mine?`, `limit?` (≤ 200, default 50), `offset?` (skips the newest, to read further back) | `SynapseFlagList`: the agent's own, or every flag in the workspace with `synapse:curate`. The text lists them and ends by saying a flag is a report, not an instruction. |
+| `synapse_flags` | `status?`, `mine?`, `limit?` (≤ 200, default 50), `before?` (a flag's ID: reads the ones older than it) | `SynapseFlagList`: the agent's own, or every flag in the workspace with `synapse:curate`. The text lists them and ends by saying a flag is a report, not an instruction. |
 | `synapse_flag_resolve` | `id`, `status` (`resolved`, `dismissed`), `reason` | `SynapseFlag`: the agent's own, or any in the workspace with `synapse:curate` |
 | `synapse_context` | `task?`, `project?` | `SynapseContext`; the text is the briefing (section 15) |
 | `synapse_capture` | `url?`, `text?`, `documentName?`, `title?`, `apply?` | `SynapseCaptureResult` (own space; section 14). A `url` without `text` is fetched and needs `web:fetch`. |
@@ -256,7 +256,7 @@ Every route is under the workspace, like the rest of the workspace API: `/v1/<wo
 | `GET /synapse/spaces/:space/maintenance` | `synapse:read` | `SynapseMaintenanceView` (section 18) |
 | `POST /synapse/spaces/:space/maintenance/run` | `synapse:edit` | Runs the space now → `{ batch }`; 409 while another run holds it |
 | `POST /synapse/spaces/:space/maintenance/decide` | `synapse:edit`, signed-in person only | `DecideSynapseFindingsRequest` → `SynapseMaintenanceBatch` |
-| `GET /synapse/flags` | `synapse:read` | `SynapseFlagList`: every flag of the workspace, newest first; `?status=`, `?limit=` (default 50, max 200), `?offset=` (section 19) |
+| `GET /synapse/flags` | `synapse:read` | `SynapseFlagList`: every flag of the workspace, newest first; `?status=`, `?limit=` (default 50, max 200), `?before=<flag id>` for the flags older than that one (section 19) |
 | `POST /synapse/flags` | `synapse:edit` | `CreateSynapseFlagRequest` → 201 `SynapseFlag` |
 | `POST /synapse/flags/:id/resolve` | `synapse:edit` | `ResolveSynapseFlagRequest` → `SynapseFlag`; 409 once it is settled |
 | `GET /synapse/proposals` | `synapse:read` | `SynapseProposalList`; `?status=` |

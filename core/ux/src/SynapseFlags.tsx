@@ -372,22 +372,20 @@ export function SynapseFlags({ version }: { version: number }) {
 		};
 	}, [refresh, version]);
 	const showOlder = async () => {
-		if (loading || !flags) return;
+		const last = flags?.at(-1);
+		if (loading || !flags || !last) return;
 		const request = ++sequence.current;
 		setLoading(true);
 		try {
 			const result = await fetchSynapseFlags({
 				status: status || undefined,
 				limit: FLAG_PAGE,
-				offset: flags.length,
+				// From the last flag shown, not a count: flags filed or settled
+				// meanwhile do not shift where the older ones begin.
+				before: last.id,
 			});
 			if (request === sequence.current) {
-				// A flag filed meanwhile pushes one already shown onto this page.
-				const shown = new Set(flags.map(({ id }) => id));
-				setFlags([
-					...flags,
-					...result.flags.filter(({ id }) => !shown.has(id)),
-				]);
+				setFlags([...flags, ...result.flags]);
 				setMore(result.flags.length === FLAG_PAGE);
 				setError("");
 			}

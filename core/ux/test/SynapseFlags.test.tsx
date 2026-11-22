@@ -378,8 +378,21 @@ it("loads older flags a page at a time", async () => {
 	});
 	expect(screen.getAllByRole("article")).toHaveLength(FLAG_PAGE);
 	expect(screen.queryByText("Gap 0 from a person.")).toBeNull();
+	// Flags that leave the list meanwhile do not shift where the older ones
+	// begin: the next page starts from the last flag shown, not from a count.
+	const { flags: newest } = (await inject(
+		"GET",
+		"/v1/synapse/flags?status=open&limit=3",
+	)) as { flags: Array<{ id: string }> };
+	for (const { id } of newest)
+		await inject("POST", `/v1/synapse/flags/${id}/resolve`, {
+			status: "dismissed",
+			reason: "Settled elsewhere.",
+		});
 	fireEvent.click(older);
 	await screen.findByText("Gap 0 from a person.");
+	for (let index = 0; index < 5; index++)
+		expect(screen.getByText(`Gap ${index} from a person.`)).toBeDefined();
 	expect(screen.getAllByRole("article")).toHaveLength(55);
 	// The last page was not full, so there is nothing further back.
 	expect(screen.queryByRole("button", { name: "Show older flags" })).toBeNull();

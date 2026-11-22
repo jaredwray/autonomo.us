@@ -633,9 +633,44 @@ function contract(name: string, open: () => SynapseRepository) {
 				expect(await problems({ space }, 2)).toEqual(["Other", "Second"]);
 				// Further back: the next page, and nothing past the end.
 				expect(
-					(await repo.listFlags({ space }, 2, 2)).map((flag) => flag.problem),
+					(await repo.listFlags({ space }, 2, second)).map(
+						(flag) => flag.problem,
+					),
 				).toEqual(["First"]);
-				expect(await repo.listFlags({ space }, 2, 3)).toEqual([]);
+				expect(await repo.listFlags({ space }, 2, first)).toEqual([]);
+				// The place holds whatever the filter: a flag of another status or
+				// another space still says where the older ones begin.
+				expect(
+					(await repo.listFlags({ space, authorId: author }, 5, other)).map(
+						(flag) => flag.problem,
+					),
+				).toEqual(["Second", "First"]);
+				expect(
+					(await repo.listFlags({ space }, 5, elsewhere)).map(
+						(flag) => flag.problem,
+					),
+				).toEqual(["Other", "Second", "First"]);
+				// Flags filed at the same instant are told apart by their IDs.
+				const twinSpace: SynapseSpaceId = `shared-${randomUUID()}`;
+				const twins = ["a", "b"].map((letter) =>
+					make(`Twin ${letter}`, "2026-11-07T00:00:00.000Z", {
+						id: `${letter}${randomUUID().slice(1)}`,
+						space: twinSpace,
+					}),
+				);
+				for (const twin of twins) await repo.insertFlag(twin);
+				const twinSpaceOnly = { space: twinSpace };
+				expect(
+					(await repo.listFlags(twinSpaceOnly, 5, first)).map(
+						(flag) => flag.problem,
+					),
+				).toEqual(["Twin b", "Twin a"]);
+				expect(
+					(await repo.listFlags(twinSpaceOnly, 5, twins[1])).map(
+						(flag) => flag.problem,
+					),
+				).toEqual(["Twin a"]);
+				expect(await repo.listFlags(twinSpaceOnly, 5, twins[0])).toEqual([]);
 				expect(await problems({ space, authorId: author })).toEqual([
 					"Second",
 					"First",

@@ -863,7 +863,7 @@ export async function synapseRoutes(
 		Querystring: {
 			status?: SynapseFlagStatus;
 			limit?: number;
-			offset?: number;
+			before?: string;
 		};
 	}>(
 		"/synapse/flags",
@@ -874,7 +874,7 @@ export async function synapseRoutes(
 					properties: {
 						status: { enum: [...SYNAPSE_FLAG_STATUSES] },
 						limit: { type: "integer", minimum: 1, maximum: MAX_FLAG_LIMIT },
-						offset: { type: "integer", minimum: 0 },
+						before: { type: "string", format: "uuid" },
 					},
 				},
 			},

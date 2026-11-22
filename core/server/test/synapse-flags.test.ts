@@ -181,16 +181,25 @@ describe("flags", () => {
 			(await flags.list("shared-w2", asCurator)).map(({ id }) => id),
 		).toEqual([elsewhere.id]);
 		expect(await flags.list("shared", asCurator, { limit: 1 })).toHaveLength(1);
-		// Older flags are read by skipping the newer ones.
+		// Older flags are read on from the last one given.
 		expect(
-			(await flags.list("shared", asCurator, { limit: 1, offset: 1 })).map(
-				({ id }) => id,
-			),
+			(
+				await flags.list("shared", asCurator, { limit: 1, before: second.id })
+			).map(({ id }) => id),
 		).toEqual([first.id]);
-		expect(await flags.list("shared", asCurator, { offset: 2 })).toEqual([]);
-		expect(await flags.list("shared", asCurator, { offset: -5 })).toHaveLength(
-			2,
+		expect(await flags.list("shared", asCurator, { before: first.id })).toEqual(
+			[],
 		);
+		// Only from a flag the viewer has: not another reporter's, another
+		// workspace's, or one that does not exist.
+		for (const [viewer, before] of [
+			[asScout, second.id],
+			[asCurator, elsewhere.id],
+			[asCurator, "nope"],
+		] as const)
+			await expect(
+				flags.list("shared", viewer, { before }),
+			).rejects.toMatchObject({ statusCode: 404 });
 		expect(
 			await flags.list("shared", asCurator, { status: "resolved" }),
 		).toEqual([]);
@@ -717,7 +726,7 @@ describe("flags over MCP and REST", () => {
 		expect(await listed(quillToken)).toEqual([]);
 		expect(await listed(curatorToken, { status: "open" })).toEqual([flag.id]);
 		expect(await listed(curatorToken, { mine: true })).toEqual([]);
-		expect(await listed(curatorToken, { offset: 1 })).toEqual([]);
+		expect(await listed(curatorToken, { before: flag.id })).toEqual([]);
 		const text = (await tool(curatorToken, "synapse_flags")).content[0].text;
 		expect(text).toContain("about [[Revenue by month]]");
 		expect(text).toContain("Suggestion: Query the net_revenue column.");
@@ -875,12 +884,25 @@ describe("flags over MCP and REST", () => {
 		);
 		expect(
 			(
-				(await rest("GET", "/v1/synapse/flags?limit=2&offset=2")).json as {
-					flags: SynapseFlag[];
-				}
+				(
+					await rest(
+						"GET",
+						`/v1/synapse/flags?limit=2&before=${all.flags[1].id}`,
+					)
+				).json as { flags: SynapseFlag[] }
 			).flags.map(({ problem }) => problem),
 		).toEqual(["It still describes the 2025 tone."]);
-		expect((await rest("GET", "/v1/synapse/flags?offset=-1")).status).toBe(400);
+		expect((await rest("GET", "/v1/synapse/flags?before=nope")).status).toBe(
+			400,
+		);
+		expect(
+			(
+				await rest(
+					"GET",
+					"/v1/synapse/flags?before=00000000-0000-4000-8000-000000000000",
+				)
+			).status,
+		).toBe(404);
 
 		const id = (byMember.json as SynapseFlag).id;
 		const settle = (body: unknown, token?: string, flag = id) =>

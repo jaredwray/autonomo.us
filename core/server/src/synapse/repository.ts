@@ -115,6 +115,8 @@ export type FlagFilter = {
 	/** The proposal that answers it. */
 	proposalId?: string;
 };
+/** A flag's place in the newest-first order. */
+export type FlagCursor = Pick<SynapseFlag, "createdAt" | "id">;
 /**
  * Where a flag stands: its status and what belongs to it. Setting a state
  * replaces the whole of it, so a reopened flag keeps no proposal or resolution.
@@ -229,11 +231,15 @@ export interface SynapseRepository {
 	releaseProposalClaim(id: string, claimId: string): Promise<boolean>;
 	insertFlag(flag: SynapseFlag): Promise<void>;
 	getFlag(id: string): Promise<SynapseFlag | null>;
-	/** Newest first, `limit` of them after skipping `offset`. */
+	/**
+	 * Newest first. With `before`, only the flags older than that one in
+	 * this order, wherever it stands now: a place to read on from that does
+	 * not move when flags are filed or settled meanwhile.
+	 */
 	listFlags(
 		filter: FlagFilter,
 		limit: number,
-		offset?: number,
+		before?: FlagCursor,
 	): Promise<SynapseFlag[]>;
 	countFlags(filter: FlagFilter): Promise<number>;
 	/**
